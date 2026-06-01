@@ -1,0 +1,724 @@
+/* Claude Companion — styled with the "unreasonable effectiveness of HTML"
+   gallery palette so the panel feels native to the artifacts it produces. */
+
+.cc-root {
+  --cc-ivory: #faf9f5;
+  --cc-slate: #141413;
+  --cc-clay: #d97757;
+  --cc-oat: #e3dacc;
+  --cc-gray-150: #f0eee6;
+  --cc-gray-300: #d1cfc5;
+  --cc-gray-500: #87867f;
+  --cc-gray-700: #3d3d3a;
+  --cc-serif: ui-serif, Georgia, "Times New Roman", serif;
+  --cc-mono: ui-monospace, "SF Mono", Menlo, Monaco, monospace;
+
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 0;
+  gap: 0;
+}
+
+/* ---------- header ---------- */
+.cc-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+.cc-title {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.2;
+}
+.cc-eyebrow {
+  font-family: var(--cc-mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  color: var(--cc-gray-500);
+}
+.cc-model {
+  font-family: var(--cc-serif);
+  font-size: 15px;
+  color: var(--text-normal);
+}
+.cc-header-actions {
+  display: flex;
+  gap: 4px;
+}
+.cc-icon-btn {
+  background: transparent;
+  border: none;
+  padding: 5px;
+  border-radius: 6px;
+  cursor: pointer;
+  color: var(--text-muted);
+  box-shadow: none;
+}
+.cc-icon-btn:hover {
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+}
+
+/* ---------- context chips ---------- */
+.cc-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+.cc-chip {
+  font-size: 11px;
+  font-family: var(--cc-mono);
+  letter-spacing: 0.02em;
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-secondary);
+  color: var(--text-muted);
+  cursor: pointer;
+  box-shadow: none;
+}
+.cc-chip.is-active {
+  background: var(--cc-clay);
+  border-color: var(--cc-clay);
+  color: #fff;
+}
+
+/* ---------- messages ---------- */
+.cc-messages {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 14px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.cc-msg {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.cc-role {
+  font-family: var(--cc-mono);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--cc-gray-500);
+}
+.cc-body {
+  font-size: var(--font-text-size, 15px);
+  line-height: 1.55;
+}
+.cc-user .cc-body {
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 10px;
+  padding: 8px 12px;
+}
+.cc-assistant .cc-body {
+  padding: 2px 0;
+}
+.cc-body > :first-child {
+  margin-top: 0;
+}
+.cc-body > :last-child {
+  margin-bottom: 0;
+}
+.cc-cursor {
+  color: var(--cc-clay);
+  animation: cc-blink 1s steps(2) infinite;
+}
+@keyframes cc-blink {
+  50% {
+    opacity: 0;
+  }
+}
+.cc-context-note {
+  font-family: var(--cc-mono);
+  font-size: 10px;
+  color: var(--cc-gray-500);
+  margin-top: 2px;
+}
+.cc-error {
+  /* Explicit high-contrast colors so the message is always readable,
+     regardless of theme (don't rely on --text-error/--background-modifier-error,
+     which collapse to low-contrast orange-on-orange in some themes). */
+  color: #5c1a10;
+  background: #fbeae5;
+  border: 1px solid var(--cc-clay);
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.theme-dark .cc-error {
+  color: #ffd9cc;
+  background: #3a1610;
+}
+.cc-error .cc-error-title {
+  font-weight: 600;
+  display: block;
+  margin-bottom: 2px;
+}
+.cc-error .cc-error-hint {
+  margin-top: 6px;
+  opacity: 0.85;
+  font-size: 12px;
+}
+
+/* ---------- message actions ---------- */
+.cc-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+.cc-action {
+  font-size: 11px;
+  padding: 3px 9px;
+  border-radius: 6px;
+  border: 1px solid var(--background-modifier-border);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  box-shadow: none;
+}
+.cc-action:hover {
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+}
+.cc-action.cc-accent {
+  border-color: var(--cc-clay);
+  color: var(--cc-clay);
+}
+.cc-action.cc-accent:hover {
+  background: var(--cc-clay);
+  color: #fff;
+}
+
+/* ---------- empty state ---------- */
+.cc-empty {
+  margin: auto;
+  text-align: center;
+  max-width: 280px;
+  color: var(--text-muted);
+}
+.cc-empty-title {
+  font-family: var(--cc-serif);
+  font-size: 20px;
+  color: var(--text-normal);
+  margin-bottom: 8px;
+}
+.cc-empty-sub {
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+/* ---------- composer ---------- */
+.cc-composer {
+  border-top: 1px solid var(--background-modifier-border);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.cc-input {
+  width: 100%;
+  resize: vertical;
+  min-height: 56px;
+  font-family: inherit;
+  font-size: 14px;
+  border-radius: 8px;
+}
+/* usage bar: context gauge + session totals */
+.cc-usage {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.cc-gauge {
+  flex: 0 0 64px;
+  height: 5px;
+  border-radius: 3px;
+  background: var(--cc-gray-300);
+  overflow: hidden;
+}
+.cc-gauge-fill {
+  height: 100%;
+  width: 0%;
+  background: var(--olive, #788c5d);
+  transition: width 0.2s ease;
+}
+.cc-gauge-fill.is-warn {
+  background: var(--cc-clay);
+}
+.cc-gauge-fill.is-danger {
+  background: #c0392b;
+}
+.cc-usage-text {
+  font-family: var(--cc-mono);
+  font-size: 10.5px;
+  color: var(--cc-gray-500);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cc-send-row {
+  display: flex;
+  justify-content: flex-end;
+}
+.cc-send {
+  padding: 6px 18px;
+  border-radius: 8px;
+  background: var(--cc-clay);
+  color: #fff;
+  border: none;
+  cursor: pointer;
+  font-weight: 600;
+}
+.cc-send:hover {
+  filter: brightness(0.95);
+}
+.cc-send.is-stop {
+  background: var(--cc-gray-700);
+}
+
+/* ---------- settings: connection status ---------- */
+.cc-conn-status {
+  font-size: 13px;
+  padding: 6px 10px;
+  margin: 4px 0 8px;
+  border-radius: 8px;
+  min-height: 0;
+}
+.cc-conn-status:empty {
+  display: none;
+}
+.cc-conn-status.is-ok {
+  color: #1e5631;
+  background: #e7f4ec;
+}
+.cc-conn-status.is-err {
+  color: #5c1a10;
+  background: #fbeae5;
+}
+.theme-dark .cc-conn-status.is-ok {
+  color: #b7e8c6;
+  background: #16301f;
+}
+.theme-dark .cc-conn-status.is-err {
+  color: #ffd9cc;
+  background: #3a1610;
+}
+
+/* ---------- settings: MCP connection snippets ---------- */
+.cc-snippet {
+  margin: 6px 0 14px;
+}
+.cc-snippet-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+}
+.cc-snippet-pre {
+  margin: 0;
+  padding: 10px 12px;
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  overflow-x: auto;
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre;
+}
+
+/* ---------- inline artifacts ---------- */
+.cc-artifact {
+  border: 1.5px solid var(--cc-gray-300);
+  border-radius: 12px;
+  overflow: hidden;
+  margin: 12px 0;
+  background: var(--cc-ivory);
+}
+.cc-artifact-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 12px;
+  background: var(--cc-gray-150);
+  border-bottom: 1px solid var(--cc-gray-300);
+}
+.cc-artifact-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--cc-mono);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: var(--cc-gray-700);
+}
+.cc-artifact-icon {
+  display: inline-flex;
+  color: var(--cc-clay);
+}
+.cc-artifact-open {
+  font-size: 11px;
+  padding: 2px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--cc-gray-300);
+  background: #fff;
+  color: var(--cc-gray-700);
+  cursor: pointer;
+  box-shadow: none;
+}
+.cc-artifact-open:hover {
+  border-color: var(--cc-clay);
+  color: var(--cc-clay);
+}
+.cc-artifact-frame {
+  width: 100%;
+  border: none;
+  display: block;
+  background: var(--cc-ivory);
+}
+
+/* ---- conversation history picker ---- */
+.cc-conv-suggestion {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.cc-conv-title {
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cc-conv-meta {
+  color: var(--cc-gray-500, #87867F);
+  font-family: var(--cc-mono, ui-monospace, monospace);
+  font-size: 11px;
+}
+
+/* ---- chat controls row ---- */
+.cc-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0 8px;
+}
+.cc-ctl {
+  font-size: 11px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.cc-ctl-select,
+.cc-ctl-num {
+  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: 6px;
+  border: 1px solid var(--cc-gray-300, #d1cfc5);
+  background: #fff;
+  color: var(--cc-gray-700, #3d3d3a);
+}
+.cc-ctl-num {
+  width: 72px;
+}
+.cc-ctl-toggle {
+  font-size: 11px;
+  padding: 2px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--cc-gray-300, #d1cfc5);
+  background: #fff;
+  color: var(--cc-gray-700, #3d3d3a);
+  cursor: pointer;
+}
+.cc-ctl-toggle.is-active {
+  background: var(--cc-clay, #d97757);
+  border-color: var(--cc-clay, #d97757);
+  color: #fff;
+}
+.cc-ctl-label {
+  color: var(--cc-gray-500, #87867f);
+  font-family: var(--cc-mono, ui-monospace, monospace);
+}
+.cc-ctl-val {
+  min-width: 28px;
+  font-family: var(--cc-mono, ui-monospace, monospace);
+  color: var(--cc-gray-700, #3d3d3a);
+}
+.cc-ctl-range {
+  width: 72px;
+}
+.cc-ctl-note {
+  font-size: 11px;
+  color: var(--cc-gray-500, #87867f);
+  font-style: italic;
+}
+
+/* ---- reasoning panel ---- */
+.cc-thinking {
+  margin: 4px 0 8px;
+  border-left: 2px solid var(--cc-oat, #e3dacc);
+  padding-left: 10px;
+}
+.cc-thinking-summary {
+  font-size: 11px;
+  font-family: var(--cc-mono, ui-monospace, monospace);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--cc-gray-500, #87867f);
+  cursor: pointer;
+}
+.cc-thinking-body {
+  white-space: pre-wrap;
+  font-size: 12.5px;
+  color: var(--cc-gray-700, #3d3d3a);
+  margin: 6px 0 0;
+  font-family: var(--cc-sans, system-ui, sans-serif);
+  background: transparent;
+  padding: 0;
+}
+
+/* ---- backend pill + fallback note ---- */
+.cc-backend-pill {
+  font-size: 10px;
+  font-family: var(--cc-mono, ui-monospace, monospace);
+  margin-left: 8px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--cc-gray-300, #d1cfc5);
+  color: var(--cc-gray-500, #87867f);
+  white-space: nowrap;
+}
+.cc-backend-pill:empty {
+  display: none;
+}
+.cc-backend-pill.is-ok {
+  color: var(--cc-olive, #788c5d);
+  border-color: var(--cc-olive, #788c5d);
+}
+.cc-backend-pill.is-warn {
+  color: var(--cc-clay, #d97757);
+  border-color: var(--cc-clay, #d97757);
+}
+.cc-fallback-note {
+  font-size: 11px;
+  font-style: italic;
+  color: var(--cc-clay, #d97757);
+  margin: 2px 0 6px;
+}
+
+/* ============================================================
+   v0.5 "master touch" — clarity, motion, and a little wow
+   ============================================================ */
+
+/* Respect reduced-motion: disable all the springy bits. */
+@media (prefers-reduced-motion: reduce) {
+  .cc-root * { transition: none !important; animation: none !important; }
+}
+
+/* ---- context chips: label + clearer states + hover ---- */
+.cc-chips { align-items: center; }
+.cc-chips-label {
+  font-size: 10px;
+  font-family: var(--cc-mono);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--cc-gray-500);
+  margin-right: 2px;
+}
+.cc-chip {
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease, transform 0.08s ease;
+}
+.cc-chip:hover {
+  border-color: var(--cc-clay);
+  color: var(--text-normal);
+}
+.cc-chip:active { transform: scale(0.94); }
+.cc-chip.is-active {
+  box-shadow: 0 1px 6px rgba(217, 119, 87, 0.35);
+}
+
+/* ---- empty state: icon + clickable example cards ---- */
+.cc-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 8px;
+  margin: auto;
+  padding: 24px 16px;
+  max-width: 460px;
+}
+.cc-empty-icon {
+  color: var(--cc-clay);
+  opacity: 0.9;
+  display: grid;
+  place-items: center;
+  animation: cc-float 4s ease-in-out infinite;
+}
+.cc-empty-icon svg { width: 32px; height: 32px; }
+@keyframes cc-float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-5px); }
+}
+.cc-empty-title { font-family: var(--cc-serif); font-size: 22px; color: var(--text-normal); }
+.cc-empty-sub { font-size: 13px; color: var(--text-muted); line-height: 1.5; }
+.cc-empty-examples {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 12px;
+  width: 100%;
+}
+.cc-example {
+  text-align: left;
+  font-size: 12.5px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-secondary);
+  color: var(--text-normal);
+  cursor: pointer;
+  transition: transform 0.1s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.cc-example:hover {
+  border-color: var(--cc-clay);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 14px rgba(20, 20, 19, 0.08);
+}
+.cc-example:active { transform: translateY(0) scale(0.98); }
+@media (max-width: 360px) { .cc-empty-examples { grid-template-columns: 1fr; } }
+
+/* ---- knobs sub-container (flicker fix: model select stays put) ---- */
+.cc-knobs {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.cc-ctl-select,
+.cc-ctl-toggle,
+.cc-ctl-num {
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease, transform 0.08s ease;
+}
+.cc-ctl-toggle:hover { border-color: var(--cc-clay); }
+.cc-ctl-toggle:active { transform: scale(0.95); }
+.cc-ctl-toggle.is-active { box-shadow: 0 1px 6px rgba(217, 119, 87, 0.35); }
+
+/* ---- auto-grow composer ---- */
+.cc-input {
+  resize: none;
+  overflow-y: auto;
+  transition: height 0.08s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.cc-input:focus {
+  border-color: var(--cc-clay);
+  box-shadow: 0 0 0 2px rgba(217, 119, 87, 0.18);
+}
+
+/* ---- send button: alive while streaming ---- */
+.cc-send {
+  transition: transform 0.08s ease, background 0.15s ease, box-shadow 0.15s ease;
+}
+.cc-send:hover { box-shadow: 0 2px 10px rgba(217, 119, 87, 0.3); }
+.cc-send:active { transform: scale(0.96); }
+.cc-send.is-stop {
+  background: var(--cc-slate);
+  border-color: var(--cc-slate);
+  color: #fff;
+  animation: cc-pulse 1.4s ease-in-out infinite;
+}
+@keyframes cc-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(20, 20, 19, 0.3); }
+  50% { box-shadow: 0 0 0 4px rgba(20, 20, 19, 0); }
+}
+
+/* ---- streaming cursor: soft blink ---- */
+.cc-cursor { animation: cc-blink 1s step-start infinite; color: var(--cc-clay); }
+@keyframes cc-blink { 50% { opacity: 0; } }
+
+/* ---- per-code-block copy button ---- */
+pre.cc-has-copy { position: relative; }
+.cc-code-copy {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  font-size: 10px;
+  font-family: var(--cc-mono);
+  padding: 2px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-primary);
+  color: var(--text-muted);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+pre.cc-has-copy:hover .cc-code-copy { opacity: 1; }
+.cc-code-copy:hover { color: var(--cc-clay); border-color: var(--cc-clay); }
+
+/* ---- message actions: fade in, tidy spacing ---- */
+.cc-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.cc-action {
+  transition: color 0.15s ease, border-color 0.15s ease, transform 0.08s ease;
+}
+.cc-action:hover { border-color: var(--cc-clay); color: var(--cc-clay); }
+.cc-action:active { transform: scale(0.95); }
+
+/* ---- assistant bubble: gentle entrance ---- */
+.cc-msg.cc-assistant { animation: cc-rise 0.18s ease-out; }
+@keyframes cc-rise {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* ---- slash command palette ---- */
+.cc-composer { position: relative; }
+.cc-slash-menu {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: calc(100% - 6px);
+  z-index: 30;
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 12px;
+  box-shadow: 0 8px 28px rgba(20, 20, 19, 0.18);
+  overflow: hidden;
+  animation: cc-rise 0.12s ease-out;
+}
+.cc-slash-list { max-height: 280px; overflow-y: auto; padding: 4px; }
+.cc-slash-item {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 7px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.cc-slash-item.is-selected { background: var(--cc-gray-150); }
+.cc-slash-name {
+  font-family: var(--cc-mono);
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--cc-clay);
+  white-space: nowrap;
+}
+.cc-slash-desc {
+  font-size: 12px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
