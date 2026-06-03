@@ -11,7 +11,9 @@
   --cc-gray-500: #87867f;
   --cc-gray-700: #3d3d3a;
   --cc-serif: ui-serif, Georgia, "Times New Roman", serif;
+  --cc-sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --cc-mono: ui-monospace, "SF Mono", Menlo, Monaco, monospace;
+  --cc-olive: #788c5d;
 
   display: flex;
   flex-direction: column;
@@ -65,16 +67,23 @@
 /* ---------- context chips ---------- */
 .cc-chips {
   display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  padding: 8px 12px;
+  flex-direction: column;
+  gap: 5px;
+  padding: 7px 12px;
   border-bottom: 1px solid var(--background-modifier-border);
+}
+.cc-chip-controls,
+.cc-context-status {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
 }
 .cc-chip {
   font-size: 11px;
   font-family: var(--cc-mono);
   letter-spacing: 0.02em;
-  padding: 3px 10px;
+  padding: 2px 8px;
   border-radius: 999px;
   border: 1px solid var(--background-modifier-border);
   background: var(--background-secondary);
@@ -86,6 +95,36 @@
   background: var(--cc-clay);
   border-color: var(--cc-clay);
   color: #fff;
+}
+.cc-status-pill {
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--cc-mono);
+  font-size: 10px;
+  line-height: 1.2;
+  padding: 2px 6px;
+  border-radius: 5px;
+  border: 1px solid var(--background-modifier-border);
+  background: transparent;
+  color: var(--text-muted);
+}
+.cc-status-button {
+  cursor: pointer;
+  box-shadow: none;
+}
+.cc-status-button:hover {
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+}
+.cc-status-pill.is-on {
+  color: var(--text-normal);
+  border-color: color-mix(in srgb, var(--cc-clay) 45%, var(--background-modifier-border));
+}
+.cc-status-pill.is-warn {
+  color: var(--text-warning);
 }
 
 /* ---------- messages ---------- */
@@ -101,6 +140,9 @@
   display: flex;
   flex-direction: column;
   gap: 4px;
+}
+.cc-assistant + .cc-assistant {
+  display: none;
 }
 .cc-role {
   font-family: var(--cc-mono);
@@ -121,6 +163,9 @@
 }
 .cc-assistant .cc-body {
   padding: 2px 0;
+}
+.cc-streaming-raw {
+  white-space: pre-wrap;
 }
 .cc-body > :first-child {
   margin-top: 0;
@@ -174,12 +219,16 @@
 .cc-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 6px;
+  gap: 4px;
+  margin-top: 4px;
 }
 .cc-action {
-  font-size: 11px;
-  padding: 3px 9px;
+  width: 24px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px;
   border-radius: 6px;
   border: 1px solid var(--background-modifier-border);
   background: transparent;
@@ -190,6 +239,10 @@
 .cc-action:hover {
   background: var(--background-modifier-hover);
   color: var(--text-normal);
+}
+.cc-action svg {
+  width: 13px;
+  height: 13px;
 }
 .cc-action.cc-accent {
   border-color: var(--cc-clay);
@@ -250,7 +303,7 @@
 .cc-gauge-fill {
   height: 100%;
   width: 0%;
-  background: var(--olive, #788c5d);
+  background: var(--cc-olive, #788c5d);
   transition: width 0.2s ease;
 }
 .cc-gauge-fill.is-warn {
@@ -426,9 +479,18 @@
   font-size: 11px;
   padding: 2px 6px;
   border-radius: 6px;
-  border: 1px solid var(--cc-gray-300, #d1cfc5);
-  background: #fff;
-  color: var(--cc-gray-700, #3d3d3a);
+  /* Theme-aware so it reads correctly in dark mode (was hardcoded white/grey,
+     which produced grey-on-grey on hover in dark themes). */
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-primary);
+  color: var(--text-normal);
+}
+.cc-ctl-select:hover {
+  border-color: var(--cc-clay);
+}
+.cc-ctl-select option {
+  background: var(--background-primary);
+  color: var(--text-normal);
 }
 .cc-ctl-num {
   width: 72px;
@@ -437,9 +499,10 @@
   font-size: 11px;
   padding: 2px 10px;
   border-radius: 999px;
-  border: 1px solid var(--cc-gray-300, #d1cfc5);
-  background: #fff;
-  color: var(--cc-gray-700, #3d3d3a);
+  /* Theme-aware default (was hardcoded white/grey → washed out in dark mode). */
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-primary);
+  color: var(--text-normal);
   cursor: pointer;
 }
 .cc-ctl-toggle.is-active {
@@ -528,7 +591,9 @@
 }
 
 /* ---- context chips: label + clearer states + hover ---- */
-.cc-chips { align-items: center; }
+.cc-chips { align-items: stretch; }
+.cc-chip-controls,
+.cc-context-status { width: 100%; }
 .cc-chips-label {
   font-size: 10px;
   font-family: var(--cc-mono);
@@ -669,7 +734,7 @@ pre.cc-has-copy:hover .cc-code-copy { opacity: 1; }
 .cc-code-copy:hover { color: var(--cc-clay); border-color: var(--cc-clay); }
 
 /* ---- message actions: fade in, tidy spacing ---- */
-.cc-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.cc-actions { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
 .cc-action {
   transition: color 0.15s ease, border-color 0.15s ease, transform 0.08s ease;
 }
@@ -698,12 +763,12 @@ pre.cc-has-copy:hover .cc-code-copy { opacity: 1; }
   overflow: hidden;
   animation: cc-rise 0.12s ease-out;
 }
-.cc-slash-list { max-height: 280px; overflow-y: auto; padding: 4px; }
+.cc-slash-list { max-height: min(420px, 55vh); overflow-y: auto; padding: 4px; }
 .cc-slash-item {
   display: flex;
   align-items: baseline;
-  gap: 10px;
-  padding: 7px 10px;
+  gap: 8px;
+  padding: 5px 8px;
   border-radius: 8px;
   cursor: pointer;
 }
@@ -721,4 +786,82 @@ pre.cc-has-copy:hover .cc-code-copy { opacity: 1; }
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* ----- session memory ----- */
+.cc-ingest-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.cc-memory-view .cc-memory-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 0;
+}
+.cc-memory-view .cc-memory-open {
+  background: none;
+  border: none;
+  color: var(--text-normal);
+  text-align: left;
+  cursor: pointer;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ----- responsive (container queries: panel width, not viewport) ----- */
+/* These views can be docked in a narrow sidebar or a wide main pane and the
+   user drags the divider freely, so we query the panel's own inline size. */
+.cc-chat-root,
+.cc-memory-view {
+  container-type: inline-size;
+}
+
+/* Narrow panel: let the header/actions/chips/controls wrap instead of clipping. */
+@container (max-width: 380px) {
+  .cc-header {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .cc-header-actions {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+  .cc-send-row {
+    flex-wrap: wrap;
+  }
+}
+
+/* Very narrow: drop secondary text to keep controls tappable. */
+@container (max-width: 300px) {
+  .cc-eyebrow {
+    display: none;
+  }
+  .cc-ingest-toggle span {
+    display: none; /* keep the checkbox, drop the "ingest" label */
+  }
+  .cc-chips {
+    padding-left: 8px;
+    padding-right: 8px;
+  }
+  .cc-memory-view .cc-memory-row {
+    gap: 4px;
+  }
+}
+
+/* Wide panel (docked in the main editor area): cap line length for readability. */
+@container (min-width: 720px) {
+  .cc-messages,
+  .cc-composer {
+    max-width: 860px;
+    margin-left: auto;
+    margin-right: auto;
+  }
 }
