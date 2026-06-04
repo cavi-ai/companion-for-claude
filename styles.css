@@ -48,6 +48,7 @@
 }
 .cc-header-actions {
   display: flex;
+  align-items: center;
   gap: 4px;
 }
 .cc-icon-btn {
@@ -181,6 +182,37 @@
   50% {
     opacity: 0;
   }
+}
+.cc-thinking-status {
+  font-family: var(--cc-mono);
+  font-size: 12px;
+  font-style: italic;
+  letter-spacing: 0.02em;
+  color: var(--cc-gray-500);
+  margin-right: 6px;
+  animation: cc-pulse 1.6s ease-in-out infinite;
+}
+@keyframes cc-pulse {
+  0%,
+  100% {
+    opacity: 0.5;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+.cc-truncated-note {
+  margin-top: 8px;
+  padding: 7px 10px;
+  border-left: 3px solid var(--cc-clay);
+  border-radius: 4px;
+  background: var(--background-modifier-hover);
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+}
+.cc-truncated-note .cc-truncated-title {
+  font-weight: 600;
+  color: var(--text-normal);
 }
 .cc-context-note {
   font-family: var(--cc-mono);
@@ -793,9 +825,18 @@ pre.cc-has-copy:hover .cc-code-copy { opacity: 1; }
   display: inline-flex;
   align-items: center;
   gap: 4px;
+  padding: 5px 7px;
+  border-radius: 6px;
   font-size: var(--font-ui-smaller);
+  line-height: 1;
   color: var(--text-muted);
   cursor: pointer;
+}
+.cc-ingest-toggle:hover {
+  background: var(--background-modifier-hover);
+}
+.cc-ingest-toggle input {
+  margin: 0;
 }
 .cc-memory-view .cc-memory-row {
   display: flex;
@@ -816,52 +857,41 @@ pre.cc-has-copy:hover .cc-code-copy { opacity: 1; }
   white-space: nowrap;
 }
 
-/* ----- responsive (container queries: panel width, not viewport) ----- */
-/* These views can be docked in a narrow sidebar or a wide main pane and the
-   user drags the divider freely, so we query the panel's own inline size. */
-.cc-chat-root,
-.cc-memory-view {
-  container-type: inline-size;
+/* ----- settings accordions ----- */
+.cc-accordion {
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  margin: 10px 0;
+  padding: 0 12px;
+}
+.cc-accordion-summary {
+  cursor: pointer;
+  font-weight: 600;
+  padding: 10px 0;
+  list-style-position: inside;
+}
+.cc-accordion-summary:hover {
+  color: var(--text-accent);
+}
+.cc-accordion[open] > .cc-accordion-summary {
+  border-bottom: 1px solid var(--background-modifier-border);
+  margin-bottom: 6px;
+}
+.cc-accordion-body {
+  padding-bottom: 8px;
 }
 
-/* Narrow panel: let the header/actions/chips/controls wrap instead of clipping. */
-@container (max-width: 380px) {
-  .cc-header {
-    flex-wrap: wrap;
-    gap: 6px;
-  }
-  .cc-header-actions {
-    flex-wrap: wrap;
-    justify-content: flex-end;
-  }
-  .cc-send-row {
-    flex-wrap: wrap;
-  }
+/* ----- responsive (unconditional wrap) ----- */
+/* These views dock in a narrow sidebar or a wide pane. We previously used
+   `container-type: inline-size` container queries, but that rasterizes text on a
+   fractional layer and blurs it (a known Chromium quirk). Plain flex-wrap on the
+   rows that can overflow gives the same narrow-panel behavior without the blur. */
+.cc-header {
+  flex-wrap: wrap;
 }
-
-/* Very narrow: drop secondary text to keep controls tappable. */
-@container (max-width: 300px) {
-  .cc-eyebrow {
-    display: none;
-  }
-  .cc-ingest-toggle span {
-    display: none; /* keep the checkbox, drop the "ingest" label */
-  }
-  .cc-chips {
-    padding-left: 8px;
-    padding-right: 8px;
-  }
-  .cc-memory-view .cc-memory-row {
-    gap: 4px;
-  }
+.cc-header-actions {
+  flex-wrap: wrap;
 }
-
-/* Wide panel (docked in the main editor area): cap line length for readability. */
-@container (min-width: 720px) {
-  .cc-messages,
-  .cc-composer {
-    max-width: 860px;
-    margin-left: auto;
-    margin-right: auto;
-  }
+.cc-send-row {
+  flex-wrap: wrap;
 }
