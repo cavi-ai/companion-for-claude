@@ -25,7 +25,7 @@
 /* ---------- header ---------- */
 .cc-header {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   padding: 10px 12px;
   border-bottom: 1px solid var(--background-modifier-border);
@@ -63,6 +63,11 @@
 .cc-icon-btn:hover {
   background: var(--background-modifier-hover);
   color: var(--text-normal);
+}
+/* Active state for icon toggles (e.g. the "ingest on save" button). */
+.cc-icon-btn.is-active {
+  background: color-mix(in srgb, var(--cc-clay) 18%, transparent);
+  color: var(--cc-clay);
 }
 
 /* ---------- context chips ---------- */
@@ -106,8 +111,10 @@
   font-family: var(--cc-mono);
   font-size: 10px;
   line-height: 1.2;
-  padding: 2px 6px;
-  border-radius: 5px;
+  padding: 2px 8px;
+  /* Match the context chips' pill shape so the two stacked rows share one
+     visual language (was 5px rounded-rect). */
+  border-radius: 999px;
   border: 1px solid var(--background-modifier-border);
   background: transparent;
   color: var(--text-muted);
@@ -115,10 +122,30 @@
 .cc-status-button {
   cursor: pointer;
   box-shadow: none;
+  /* It's a <button> among <span> pills — strip Obsidian's button defaults
+     (min-height / padding / font) so it matches the sibling pills exactly. */
+  -webkit-appearance: none;
+  appearance: none;
+  height: auto;
+  min-height: 0;
+  line-height: 1.2;
+  padding: 2px 8px;
+  font-size: 10px;
+  font-family: var(--cc-mono);
 }
 .cc-status-button:hover {
   background: var(--background-modifier-hover);
   color: var(--text-normal);
+}
+/* A caret marks the MCP pill as a button that opens a menu (the sibling pills
+   are static status). textContent is set via setText(), so ::after survives. */
+.cc-status-button::after {
+  content: "⌄";
+  margin-left: 4px;
+  opacity: 0.6;
+  font-size: 11px;
+  line-height: 1;
+  vertical-align: top;
 }
 .cc-status-pill.is-on {
   color: var(--text-normal);
@@ -354,7 +381,14 @@
 }
 .cc-send-row {
   display: flex;
-  justify-content: flex-end;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+/* Usage gauge + totals sit on the left of the footer; Send hugs the right. */
+.cc-send-row .cc-usage {
+  flex: 1 1 auto;
+  min-width: 0;
 }
 .cc-send {
   padding: 6px 18px;
@@ -497,8 +531,17 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
-  padding: 4px 0 8px;
+  /* Model switcher pinned left, knobs pushed right (in the bottom composer). */
+  justify-content: space-between;
+  gap: 8px 12px;
+  padding: 0;
+}
+/* The model switcher is the focal "slick" control at the bottom-left. */
+.cc-ctl-model .cc-ctl-select {
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 8px;
+  font-weight: 500;
 }
 .cc-ctl {
   font-size: 11px;
@@ -588,7 +631,10 @@
 .cc-backend-pill {
   font-size: 10px;
   font-family: var(--cc-mono, ui-monospace, monospace);
-  margin-left: 8px;
+  /* Lives in the title's flex COLUMN under the model name, so it must hug the
+     left edge (no indent) and size to its content rather than stretch. */
+  align-self: flex-start;
+  margin-top: 3px;
   padding: 1px 7px;
   border-radius: 999px;
   border: 1px solid var(--cc-gray-300, #d1cfc5);
@@ -632,7 +678,9 @@
   letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--cc-gray-500);
-  margin-right: 2px;
+  /* Own line above both chip rows (toggles + status) so they align flush-left. */
+  align-self: flex-start;
+  margin-bottom: 1px;
 }
 .cc-chip {
   transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease, transform 0.08s ease;
