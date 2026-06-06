@@ -905,6 +905,49 @@ pre.cc-has-copy:hover .cc-code-copy { opacity: 1; }
   white-space: nowrap;
 }
 
+/* ----- related notes panel ----- */
+.cc-related-view {
+  padding: 8px 12px;
+}
+.cc-related-view .cc-related-for {
+  font-family: var(--cc-serif);
+  font-size: 15px;
+  font-weight: 600;
+  margin: 4px 0 10px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cc-related-view .cc-related-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 0;
+  border-top: 1px solid var(--background-modifier-border);
+}
+.cc-related-view .cc-related-open {
+  background: none;
+  border: none;
+  color: var(--text-normal);
+  text-align: left;
+  cursor: pointer;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 0;
+}
+.cc-related-view .cc-related-open:hover {
+  color: var(--cc-clay);
+}
+.cc-related-view .cc-related-score {
+  font-family: var(--cc-mono);
+  font-size: 10px;
+  color: var(--cc-gray-500);
+  flex: 0 0 auto;
+}
+
 /* ----- settings accordions ----- */
 .cc-accordion {
   border: 1px solid var(--background-modifier-border);
