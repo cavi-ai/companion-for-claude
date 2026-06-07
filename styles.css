@@ -478,6 +478,7 @@
   display: flex;
   align-items: center;
   gap: 8px;
+  margin-right: auto; /* push the action buttons together on the right */
   font-family: var(--cc-mono);
   font-size: 11px;
   letter-spacing: 0.04em;
@@ -487,9 +488,13 @@
   display: inline-flex;
   color: var(--cc-clay);
 }
-.cc-artifact-open {
+.cc-artifact-bar .cc-artifact-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 6px;
   font-size: 11px;
-  padding: 2px 10px;
+  padding: 2px 9px;
   border-radius: 6px;
   border: 1px solid var(--cc-gray-300);
   background: #fff;
@@ -497,15 +502,34 @@
   cursor: pointer;
   box-shadow: none;
 }
-.cc-artifact-open:hover {
+.cc-artifact-bar .cc-artifact-btn:hover {
   border-color: var(--cc-clay);
   color: var(--cc-clay);
+}
+.cc-artifact-bar .cc-artifact-btn svg {
+  width: 14px;
+  height: 14px;
 }
 .cc-artifact-frame {
   width: 100%;
   border: none;
   display: block;
   background: var(--cc-ivory);
+}
+/* Fullscreen artifact modal (the in-app "open" path). */
+.cc-artifact-modal {
+  width: 92vw;
+  max-width: 1200px;
+  height: 88vh;
+}
+.cc-artifact-modal .modal-content {
+  padding: 0;
+  height: calc(100% - 48px);
+}
+.cc-artifact-frame-full {
+  width: 100%;
+  height: 100%;
+  min-height: 60vh;
 }
 
 /* ---- conversation history picker ---- */
@@ -536,12 +560,35 @@
   gap: 8px 12px;
   padding: 0;
 }
-/* The model switcher is the focal "slick" control at the bottom-left. */
+/* The model switcher is the focal "slick" control at the bottom-left, with a
+   chevron so it clearly reads as a dropdown. */
+.cc-ctl-model {
+  position: relative;
+  display: inline-flex;
+}
 .cc-ctl-model .cc-ctl-select {
   font-size: 12px;
-  padding: 4px 10px;
+  padding: 4px 26px 4px 10px;
   border-radius: 8px;
   font-weight: 500;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.cc-ctl-model::after {
+  content: "";
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  width: 8px;
+  height: 8px;
+  margin-top: -2px;
+  border-right: 1.5px solid var(--text-muted);
+  border-bottom: 1.5px solid var(--text-muted);
+  transform: translateY(-50%) rotate(45deg);
+  pointer-events: none;
+}
+.cc-ctl-model:hover::after {
+  border-color: var(--cc-clay);
 }
 .cc-ctl {
   font-size: 11px;
@@ -751,6 +798,33 @@
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
+}
+/* Tune button → knobs popover, so the controls don't crowd the Send row. */
+.cc-tune {
+  position: relative;
+  display: inline-flex;
+}
+.cc-knobs-popover {
+  display: none;
+  position: absolute;
+  bottom: calc(100% + 8px);
+  right: 0;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+  min-width: 220px;
+  padding: 12px 14px;
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 10px;
+  box-shadow: 0 6px 24px rgba(20, 20, 19, 0.22);
+  z-index: 20;
+}
+.cc-knobs-popover.is-open {
+  display: flex;
+}
+.cc-knobs-popover .cc-ctl {
+  justify-content: space-between;
 }
 .cc-ctl-select,
 .cc-ctl-toggle,
