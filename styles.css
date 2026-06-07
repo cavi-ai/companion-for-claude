@@ -211,13 +211,43 @@
   }
 }
 .cc-thinking-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-right: 6px;
+}
+/* The single indicator: a clay smiley on the left that "breathes" — expanding
+   from a small dot to a full smiley and back at 80 bpm (0.75s). Fixed position,
+   so the changing word beside it never shifts it. */
+.cc-thinking-dot {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--cc-clay);
+  transform-origin: center;
+  animation: cc-smiley-breathe 0.75s ease-in-out infinite;
+}
+.cc-thinking-dot svg {
+  width: 17px;
+  height: 17px;
+}
+/* The cycling word — fades at 20 bpm (3.0s): 1/4 the smiley tempo, phase-aligned. */
+.cc-thinking-word {
   font-family: var(--cc-mono);
   font-size: 12px;
   font-style: italic;
   letter-spacing: 0.02em;
   color: var(--cc-gray-500);
-  margin-right: 6px;
-  animation: cc-pulse 1.6s ease-in-out infinite;
+  animation: cc-word-fade 3s ease-in-out infinite;
+}
+@keyframes cc-smiley-breathe {
+  0%, 100% { transform: scale(0.55); opacity: 0.55; }
+  50% { transform: scale(1); opacity: 1; }
+}
+@keyframes cc-word-fade {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
 }
 @keyframes cc-pulse {
   0%,
@@ -510,6 +540,57 @@
   width: 14px;
   height: 14px;
 }
+/* Split "Open" button: body + caret + dropdown menu. */
+.cc-artifact-open-split {
+  position: relative;
+  display: inline-flex;
+  margin-left: 6px;
+}
+.cc-artifact-open-split .cc-artifact-btn {
+  margin-left: 0;
+}
+.cc-artifact-open-split .cc-artifact-open {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+.cc-artifact-open-split .cc-artifact-caret {
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  border-left: none;
+  padding: 2px 5px;
+}
+.cc-artifact-menu {
+  display: none;
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 30;
+  min-width: 200px;
+  padding: 4px;
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  box-shadow: 0 6px 24px rgba(20, 20, 19, 0.22);
+}
+.cc-artifact-menu.is-open {
+  display: block;
+}
+.cc-artifact-menu-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  border-radius: 5px;
+  padding: 5px 9px;
+  font-size: 12px;
+  color: var(--text-normal);
+  cursor: pointer;
+}
+.cc-artifact-menu-item:hover {
+  background: var(--background-modifier-hover);
+  color: var(--cc-clay);
+}
 .cc-artifact-frame {
   width: 100%;
   border: none;
@@ -550,14 +631,26 @@
   font-size: 11px;
 }
 
-/* ---- chat controls row ---- */
-.cc-controls {
+/* ---- composer bar: model+tune (left) · usage+Send (right), under the input ---- */
+.cc-composer-bar {
   display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 12px;
+  flex-wrap: wrap;
+}
+.cc-send-group {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
+}
+/* Model switcher + tune button grouped together on the left. */
+.cc-controls {
+  display: inline-flex;
   flex-wrap: wrap;
   align-items: center;
-  /* Model switcher pinned left, knobs pushed right (in the bottom composer). */
-  justify-content: space-between;
-  gap: 8px 12px;
+  gap: 8px;
   padding: 0;
 }
 /* The model switcher is the focal "slick" control at the bottom-left, with a
@@ -927,6 +1020,54 @@ pre.cc-has-copy:hover .cc-code-copy { opacity: 1; }
   cursor: pointer;
 }
 .cc-slash-item.is-selected { background: var(--cc-gray-150); }
+/* "@" picker rows: an icon + label + path. */
+.cc-at-item { align-items: center; }
+.cc-at-icon {
+  display: inline-flex;
+  flex: 0 0 auto;
+  color: var(--cc-clay);
+}
+.cc-at-item .cc-slash-name { color: var(--text-normal); }
+
+/* Attached-context pills above the input ("@"-added sources). */
+.cc-attach-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+.cc-attach-pills.is-empty { display: none; }
+.cc-attach-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  padding: 2px 4px 2px 9px;
+  border-radius: 999px;
+  background: var(--cc-clay-soft, #f3e2da);
+  color: var(--cc-clay, #d97757);
+  border: 1px solid color-mix(in srgb, var(--cc-clay) 30%, transparent);
+}
+.cc-attach-x {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+  padding: 0;
+}
+.cc-attach-x:hover { background: color-mix(in srgb, var(--cc-clay) 22%, transparent); }
+
+/* MCP bridge state on its header icon. */
+.cc-mcp-btn.is-on { color: var(--cc-olive, #788c5d); }
+.cc-mcp-btn.is-warn { color: var(--text-warning); }
 .cc-slash-name {
   font-family: var(--cc-mono);
   font-size: 12.5px;
