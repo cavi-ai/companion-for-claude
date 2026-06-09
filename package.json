@@ -1,0 +1,50 @@
+{
+  "name": "claude-companion",
+  "version": "0.7.2",
+  "description": "Chat with Claude inside your Obsidian vault, generate beautiful interactive artifacts, and sync them back into your notes.",
+  "main": "main.js",
+  "type": "module",
+  "packageManager": "npm@10",
+  "engines": {
+    "node": ">=20"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/cavi-ai/claude-obsidian.git",
+    "directory": "obsidian-plugin"
+  },
+  "bugs": {
+    "url": "https://github.com/cavi-ai/claude-obsidian/issues"
+  },
+  "homepage": "https://github.com/cavi-ai/claude-obsidian/tree/main/obsidian-plugin#readme",
+  "scripts": {
+    "dev": "node esbuild.config.mjs",
+    "build": "tsc --noEmit --skipLibCheck && node esbuild.config.mjs production",
+    "typecheck": "tsc --noEmit --skipLibCheck",
+    "lint": "eslint src test",
+    "audit": "npm audit --audit-level=high",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "keywords": [
+    "obsidian",
+    "obsidian-plugin",
+    "claude",
+    "anthropic",
+    "ai"
+  ],
+  "license": "MIT",
+  "devDependencies": {
+    "@eslint/js": "^9.9.0",
+    "@types/node": "^20.12.0",
+    "builtin-modules": "^3.3.0",
+    "esbuild": "0.28.0",
+    "eslint": "^9.9.0",
+    "globals": "^15.9.0",
+    "obsidian": "^1.13.0",
+    "tslib": "^2.6.3",
+    "typescript": "^5.4.5",
+    "typescript-eslint": "^8.0.0",
+    "vitest": "^4.1.8"
+  }
+}

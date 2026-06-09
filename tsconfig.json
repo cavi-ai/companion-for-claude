@@ -1,0 +1,19 @@
+{
+  "compilerOptions": {
+    "baseUrl": ".",
+    "module": "ESNext",
+    "target": "ES2021",
+    "lib": ["DOM", "DOM.Iterable", "ES2021"],
+    "moduleResolution": "Bundler",
+    "allowJs": true,
+    "noImplicitAny": true,
+    "strictNullChecks": true,
+    "strict": true,
+    "isolatedModules": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "importHelpers": true,
+    "noEmit": true
+  },
+  "include": ["src/**/*.ts"]
+}

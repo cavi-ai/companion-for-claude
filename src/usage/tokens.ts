@@ -1,0 +1,101 @@
+// Token + context-window accounting for the chat usage display. Pure/testable.
+//
+// Real token counts come back from the API (usage events). Before a request,
+// we show an *estimate* so users see how full the context window is getting —
+// important when paying per token with an API key.
+
+import type { TokenUsage } from "../claude/sse";
+
+export interface ModelLimits {
+  /** Total context window (input + output) in tokens. */
+  contextWindow: number;
+  /** Max output tokens the model can produce. */
+  maxOutput: number;
+  /** USD per million input / output tokens (approximate, for an at-a-glance cost). */
+  inputCostPerM: number;
+  outputCostPerM: number;
+}
+
+// Approximate public values; a custom/unknown model falls back to DEFAULT_LIMITS.
+const LIMITS: Record<string, ModelLimits> = {
+  "claude-opus-4-8": { contextWindow: 200_000, maxOutput: 32_000, inputCostPerM: 15, outputCostPerM: 75 },
+  "claude-sonnet-4-6": { contextWindow: 200_000, maxOutput: 64_000, inputCostPerM: 3, outputCostPerM: 15 },
+  "claude-haiku-4-5-20251001": { contextWindow: 200_000, maxOutput: 32_000, inputCostPerM: 1, outputCostPerM: 5 },
+};
+
+export const DEFAULT_LIMITS: ModelLimits = { contextWindow: 200_000, maxOutput: 8_000, inputCostPerM: 3, outputCostPerM: 15 };
+
+export function limitsFor(modelId: string): ModelLimits {
+  if (LIMITS[modelId]) return LIMITS[modelId];
+  // Match by family prefix so dated snapshots resolve (e.g. ...-20250930).
+  for (const [id, lim] of Object.entries(LIMITS)) {
+    const family = id.replace(/-\d{8}$/, "");
+    if (modelId.startsWith(family)) return lim;
+  }
+  return DEFAULT_LIMITS;
+}
+
+/**
+ * Rough token estimate from character count (~3.7 chars/token for English
+ * prose + markdown). Deliberately conservative — used only for the pre-send
+ * gauge, never for billing.
+ */
+export function estimateTokens(text: string): number {
+  if (!text) return 0;
+  return Math.ceil(text.length / 3.7);
+}
+
+export interface ContextGauge {
+  used: number;
+  window: number;
+  /** 0..1 fraction of the window consumed. */
+  fraction: number;
+  /** Tokens left for input given the reserved output budget. */
+  remaining: number;
+}
+
+/** Build the pre-send context gauge from estimated input + reserved output. */
+export function contextGauge(estimatedInput: number, modelId: string, reservedOutput: number): ContextGauge {
+  const { contextWindow } = limitsFor(modelId);
+  const used = estimatedInput + reservedOutput;
+  const fraction = Math.min(1, used / contextWindow);
+  return { used, window: contextWindow, fraction, remaining: Math.max(0, contextWindow - used) };
+}
+
+export interface SessionUsage {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  requests: number;
+}
+
+export const EMPTY_SESSION: SessionUsage = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, requests: 0 };
+
+/** Fold an API usage record into the running session total. */
+export function addUsage(session: SessionUsage, u: TokenUsage): SessionUsage {
+  return {
+    inputTokens: session.inputTokens + (u.input_tokens ?? 0),
+    outputTokens: session.outputTokens + (u.output_tokens ?? 0),
+    cacheReadTokens: session.cacheReadTokens + (u.cache_read_input_tokens ?? 0),
+    requests: session.requests + 1,
+  };
+}
+
+/** Approximate session cost in USD for the given model. */
+export function sessionCost(session: SessionUsage, modelId: string): number {
+  const { inputCostPerM, outputCostPerM } = limitsFor(modelId);
+  return (session.inputTokens / 1_000_000) * inputCostPerM + (session.outputTokens / 1_000_000) * outputCostPerM;
+}
+
+/** Compact human formatting: 1234 → "1.2k", 1_200_000 → "1.2M". */
+export function formatTokens(n: number): string {
+  if (n < 1000) return String(n);
+  if (n < 1_000_000) return `${(n / 1000).toFixed(n < 10_000 ? 1 : 0)}k`;
+  return `${(n / 1_000_000).toFixed(1)}M`;
+}
+
+export function formatCost(usd: number): string {
+  if (usd === 0) return "$0.00";
+  if (usd < 0.01) return "<$0.01";
+  return `$${usd.toFixed(2)}`;
+}
