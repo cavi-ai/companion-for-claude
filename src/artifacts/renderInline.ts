@@ -99,7 +99,7 @@ export function renderArtifactInline(
   const iframe = wrap.createEl("iframe", { cls: "cc-artifact-frame" });
   sandboxFrame(iframe, html);
   iframe.setAttribute("loading", "lazy");
-  iframe.style.height = `${Math.max(120, height)}px`;
+  iframe.setCssStyles({ height: `${Math.max(120, height)}px` });
 
   // Flag faux-interactive artifacts (handlers wired to undefined JS) — a model
   // regression guard, so a tab bar that does nothing doesn't ship silently.

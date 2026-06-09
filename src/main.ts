@@ -1047,7 +1047,7 @@ class ConfirmModal extends Modal {
   onOpen(): void {
     this.titleEl.setText(this.opts.title);
     const p = this.contentEl.createEl("p", { cls: "setting-item-description" });
-    p.style.whiteSpace = "pre-wrap";
+    p.setCssStyles({ whiteSpace: "pre-wrap" });
     p.setText(this.opts.body);
     const row = this.contentEl.createDiv({ cls: "modal-button-container" });
     row.createEl("button", { text: "Cancel" }).addEventListener("click", () => this.close());
@@ -1089,7 +1089,7 @@ class CloudDispatchModal extends Modal {
 
     const ta = contentEl.createEl("textarea");
     ta.rows = 5;
-    ta.style.width = "100%";
+    ta.setCssStyles({ width: "100%" });
     ta.placeholder = "e.g. Summarize this week's meeting notes into a decisions log and open a PR.";
     ta.addEventListener("input", () => (this.value = ta.value));
     window.setTimeout(() => ta.focus(), 0);

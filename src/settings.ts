@@ -48,7 +48,7 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
         .setDesc("Bring your own key from console.anthropic.com. Stored locally in this vault's plugin data.")
         .addText((text) => {
           text.inputEl.type = "password";
-          text.inputEl.style.width = "320px";
+          text.inputEl.setCssStyles({ width: "320px" });
           text
             .setPlaceholder("sk-ant-api…")
             .setValue(s.apiKey)
@@ -69,7 +69,7 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
         .setDesc("Stored locally in this vault's plugin data. Sent as a bearer token.")
         .addText((text) => {
           text.inputEl.type = "password";
-          text.inputEl.style.width = "320px";
+          text.inputEl.setCssStyles({ width: "320px" });
           text
             .setPlaceholder("sk-ant-oat…")
             .setValue(s.oauthToken)
@@ -94,7 +94,7 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
       .setName("API base URL")
       .setDesc("Optional. Point at a gateway/proxy instead of api.anthropic.com. Leave blank for the default.")
       .addText((text) => {
-        text.inputEl.style.width = "320px";
+        text.inputEl.setCssStyles({ width: "320px" });
         text
           .setPlaceholder("https://api.anthropic.com")
           .setValue(s.baseUrl)
@@ -166,7 +166,7 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
       .setDesc("Prepended to every conversation. The artifact design system is always appended automatically.")
       .addTextArea((ta) => {
         ta.inputEl.rows = 5;
-        ta.inputEl.style.width = "100%";
+        ta.inputEl.setCssStyles({ width: "100%" });
         ta.setValue(this.plugin.settings.systemPrompt).onChange(async (v) => {
           this.plugin.settings.systemPrompt = v;
           await this.plugin.saveSettings();
@@ -533,7 +533,7 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
       .setName("Routine fire URL")
       .setDesc("The routine's “fire” endpoint from the Claude Code web UI (…/v1/claude_code/routines/<id>/fire).")
       .addText((text) => {
-        text.inputEl.style.width = "360px";
+        text.inputEl.setCssStyles({ width: "360px" });
         text
           .setPlaceholder("https://api.anthropic.com/v1/claude_code/routines/…/fire")
           .setValue(s.cloudRoutineFireUrl)
@@ -548,7 +548,7 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
       .setDesc("Per-routine bearer token (sk-ant-oat…). It only fires this one routine — no account access. Stored locally in this vault's plugin data.")
       .addText((text) => {
         text.inputEl.type = "password";
-        text.inputEl.style.width = "320px";
+        text.inputEl.setCssStyles({ width: "320px" });
         text
           .setPlaceholder("sk-ant-oat…")
           .setValue(s.cloudRoutineToken)
@@ -562,7 +562,7 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
       .setName("API beta header")
       .setDesc("anthropic-beta header gating the experimental Routines API. Update if Anthropic ships a newer dated version.")
       .addText((text) => {
-        text.inputEl.style.width = "320px";
+        text.inputEl.setCssStyles({ width: "320px" });
         text.setValue(s.cloudRoutineBetaHeader).onChange(async (v) => {
           s.cloudRoutineBetaHeader = v.trim();
           await this.plugin.saveSettings();
@@ -570,7 +570,7 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
       });
 
     const warn = containerEl.createEl("p", { cls: "setting-item-description" });
-    warn.style.color = "var(--text-warning)";
+    warn.setCssStyles({ color: "var(--text-warning)" });
     warn.setText(
       "⚠️ Unlike the local bridge, this sends your prompt + attached note context to Anthropic's cloud and runs against your vault's Git repo. " +
         "The token sits in this vault's data.json — if the vault itself syncs, the token syncs too. Use a private repo.",
@@ -596,7 +596,7 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
       .setName("Vault repo")
       .setDesc("owner/name of the GitHub repo backing your vault.")
       .addText((text) => {
-        text.inputEl.style.width = "280px";
+        text.inputEl.setCssStyles({ width: "280px" });
         text
           .setPlaceholder("owner/name")
           .setValue(s.cloudReplyRepo)
@@ -631,7 +631,7 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
       .setDesc("Fine-grained token with Contents:read on the repo. Stored locally in this vault's plugin data.")
       .addText((text) => {
         text.inputEl.type = "password";
-        text.inputEl.style.width = "320px";
+        text.inputEl.setCssStyles({ width: "320px" });
         text
           .setPlaceholder("github_pat_… / ghp_…")
           .setValue(s.cloudReplyToken)
@@ -701,7 +701,7 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
         .setDesc(`Required by clients as a bearer token. Keep it secret. Tip: set $${MCP_TOKEN_ENV} to source it from the environment instead of this vault's data.`)
         .addText((text) => {
           text.inputEl.type = "password"; // bearer token — don't render in plaintext
-          text.inputEl.style.width = "260px";
+          text.inputEl.setCssStyles({ width: "260px" });
           text.setValue(s.mcpToken).onChange(async (v) => {
             s.mcpToken = v.trim();
             await this.plugin.saveSettings();

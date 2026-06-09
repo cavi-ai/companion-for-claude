@@ -257,7 +257,7 @@ export class ChatView extends ItemView {
     const estIn = estimateTokens(this.plugin.composeSystemPrompt()) + estimateTokens(convo) + estimateTokens(draft) + estimateTokens("x".repeat(ctxAllowance));
 
     const g = contextGauge(estIn, model, reserved);
-    this.gaugeFillEl.style.width = `${Math.round(g.fraction * 100)}%`;
+    this.gaugeFillEl.setCssStyles({ width: `${Math.round(g.fraction * 100)}%` });
     this.gaugeFillEl.toggleClass("is-warn", g.fraction >= 0.75 && g.fraction < 0.92);
     this.gaugeFillEl.toggleClass("is-danger", g.fraction >= 0.92);
 
@@ -652,9 +652,9 @@ export class ChatView extends ItemView {
   private autosizeInput(): void {
     const el = this.inputEl;
     if (!el) return;
-    el.style.height = "auto";
+    el.setCssStyles({ height: "auto" });
     const max = 200; // px ceiling (~8 rows) before it scrolls internally
-    el.style.height = `${Math.min(el.scrollHeight, max)}px`;
+    el.setCssStyles({ height: `${Math.min(el.scrollHeight, max)}px` });
   }
 
   /** Open/refresh/close the slash palette based on the current input. */
