@@ -63,6 +63,7 @@ export class SemanticIndexer {
 
     for (let i = 0; i < files.length; i++) {
       const f = files[i];
+      if (!f) continue;
       try {
         const text = await this.deps.read(f.path);
         const hash = contentHash(stripFrontmatter(text));
@@ -129,8 +130,9 @@ export class SemanticIndexer {
     if (stored.length || store.hasNote(path)) return stored;
 
     const chunks = chunkNote(await this.deps.read(path));
-    if (chunks.length === 0) return [];
-    const [v] = await this.deps.embed([chunks[0].text]);
+    const first = chunks[0];
+    if (!first) return [];
+    const [v] = await this.deps.embed([first.text]);
     if (!v || v.length === 0) return [];
     return store
       .search(v, k + 1)

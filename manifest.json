@@ -1,10 +1,10 @@
 {
   "id": "claude-companion",
   "name": "Companion for Claude",
-  "version": "0.7.2",
+  "version": "0.8.0",
   "minAppVersion": "1.5.0",
   "description": "Chat with Claude inside your vault, generate gallery-grade interactive planning artifacts, and sync everything Claude produces back into your notes.",
   "author": "Sasan Sotoodehfar",
-  "authorUrl": "https://github.com/cavi-ai/claude-obsidian",
-  "isDesktopOnly": true
+  "authorUrl": "https://github.com/cavi-ai",
+  "isDesktopOnly": false
 }

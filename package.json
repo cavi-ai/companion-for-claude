@@ -1,10 +1,10 @@
 {
   "name": "claude-companion",
-  "version": "0.7.2",
+  "version": "0.8.0",
   "description": "Chat with Claude inside your Obsidian vault, generate beautiful interactive artifacts, and sync them back into your notes.",
   "main": "main.js",
   "type": "module",
-  "packageManager": "npm@10",
+  "packageManager": "pnpm@10.32.1",
   "engines": {
     "node": ">=20"
   },
@@ -22,9 +22,14 @@
     "build": "tsc --noEmit --skipLibCheck && node esbuild.config.mjs production",
     "typecheck": "tsc --noEmit --skipLibCheck",
     "lint": "eslint src test",
-    "audit": "npm audit --audit-level=high",
+    "audit": "pnpm audit --audit-level high",
     "test": "vitest run",
     "test:watch": "vitest"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
   },
   "keywords": [
     "obsidian",
@@ -37,7 +42,6 @@
   "devDependencies": {
     "@eslint/js": "^9.9.0",
     "@types/node": "^20.12.0",
-    "builtin-modules": "^3.3.0",
     "esbuild": "0.28.0",
     "eslint": "^9.9.0",
     "globals": "^15.9.0",

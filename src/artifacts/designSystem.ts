@@ -12,7 +12,7 @@ Use this exact design system (the Claude/Anthropic artifact look):
   --gray-500: #87867F; --gray-700: #3D3D3A; --white: #FFFFFF;
   --serif: ui-serif, Georgia, 'Times New Roman', serif;
   --sans: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
-  --mono: ui-monospace, 'SF Mono', Menlo, Monaco, monospace;
+  --mono: 'SF Mono', Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
 }
 
 Rules:

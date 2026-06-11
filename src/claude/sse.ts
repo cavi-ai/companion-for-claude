@@ -69,17 +69,28 @@ export function parseSseChunk(buffer: string): SseParseResult {
     const u = evt.message?.usage ?? evt.usage;
     if (u) usage = mergeUsage(usage, u);
   }
-  return { text, thinking, remainder: buffer, error, usage, stopReason };
+  return {
+    text,
+    thinking,
+    remainder: buffer,
+    ...(error !== undefined ? { error } : {}),
+    ...(usage !== undefined ? { usage } : {}),
+    ...(stopReason !== undefined ? { stopReason } : {}),
+  };
 }
 
 /** Merge two partial usage records, preferring later non-undefined values. */
 export function mergeUsage(a: TokenUsage | undefined, b: TokenUsage): TokenUsage {
-  return {
-    input_tokens: b.input_tokens ?? a?.input_tokens,
-    output_tokens: b.output_tokens ?? a?.output_tokens,
-    cache_read_input_tokens: b.cache_read_input_tokens ?? a?.cache_read_input_tokens,
-    cache_creation_input_tokens: b.cache_creation_input_tokens ?? a?.cache_creation_input_tokens,
-  };
+  const merged: TokenUsage = {};
+  const input = b.input_tokens ?? a?.input_tokens;
+  const output = b.output_tokens ?? a?.output_tokens;
+  const cacheRead = b.cache_read_input_tokens ?? a?.cache_read_input_tokens;
+  const cacheCreation = b.cache_creation_input_tokens ?? a?.cache_creation_input_tokens;
+  if (input !== undefined) merged.input_tokens = input;
+  if (output !== undefined) merged.output_tokens = output;
+  if (cacheRead !== undefined) merged.cache_read_input_tokens = cacheRead;
+  if (cacheCreation !== undefined) merged.cache_creation_input_tokens = cacheCreation;
+  return merged;
 }
 
 /** Turn an Anthropic error response body + status into a readable message. */

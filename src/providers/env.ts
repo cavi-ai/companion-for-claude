@@ -14,11 +14,11 @@ export function readAnthropicEnv(): AnthropicEnv {
   try {
     const env = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env;
     if (!env) return {};
-    return {
-      ANTHROPIC_API_KEY: env.ANTHROPIC_API_KEY,
-      ANTHROPIC_AUTH_TOKEN: env.ANTHROPIC_AUTH_TOKEN,
-      ANTHROPIC_BASE_URL: env.ANTHROPIC_BASE_URL,
-    };
+    const out: AnthropicEnv = {};
+    if (env.ANTHROPIC_API_KEY !== undefined) out.ANTHROPIC_API_KEY = env.ANTHROPIC_API_KEY;
+    if (env.ANTHROPIC_AUTH_TOKEN !== undefined) out.ANTHROPIC_AUTH_TOKEN = env.ANTHROPIC_AUTH_TOKEN;
+    if (env.ANTHROPIC_BASE_URL !== undefined) out.ANTHROPIC_BASE_URL = env.ANTHROPIC_BASE_URL;
+    return out;
   } catch {
     return {};
   }

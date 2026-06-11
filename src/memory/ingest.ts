@@ -52,7 +52,7 @@ async function persistDigest(deps: PersistDeps, digest: SessionDigest, fallbackI
     ...digest,
     sessionId,
     prose: digest.prose.map((p) => ({ ...p, text: scrub(p.text) })),
-    toolActions: digest.toolActions.map((a) => ({ ...a, target: a.target ? scrub(a.target) : undefined })),
+    toolActions: digest.toolActions.map((a) => (a.target ? { ...a, target: scrub(a.target) } : { tool: a.tool })),
     filesTouched: digest.filesTouched.map(scrub),
   };
   const vaultNoteBasenames = new Set(deps.app.vault.getMarkdownFiles().map((f) => f.basename));

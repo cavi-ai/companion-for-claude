@@ -13,7 +13,7 @@ except the call to Anthropic.
 
 ![Companion for Claude — chat with your vault, artifacts rendering inline](assets/chat-panel.png)
 
-**500+ installs in the first weekend · Desktop · MIT · Bring your own Anthropic key · Local-first**
+**Desktop & mobile · MIT · Bring your own Anthropic key · Local-first**
 
 ---
 

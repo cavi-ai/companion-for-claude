@@ -15,7 +15,7 @@ const HTML_DOC_RE = /```html[^\n]*\n(\s*<!DOCTYPE[\s\S]*?)```/i;
 export function extractArtifact(markdown: string): ExtractedArtifact | null {
   const m = CLAUDE_HTML_RE.exec(markdown) ?? HTML_DOC_RE.exec(markdown);
   if (!m) return null;
-  const html = m[1].trim();
+  const html = (m[1] ?? "").trim();
   if (html.length === 0) return null;
   return { html, title: titleFromHtml(html) };
 }
@@ -53,10 +53,13 @@ export function validateArtifactInteractivity(html: string): InteractivityReport
   const called = new Set<string>();
   const handlerRe = /\bon\w+\s*=\s*["']\s*([A-Za-z_$][\w$]*)\s*\(/g;
   let m: RegExpExecArray | null;
-  while ((m = handlerRe.exec(html)) !== null) called.add(m[1]);
+  while ((m = handlerRe.exec(html)) !== null) {
+    const fn = m[1];
+    if (fn) called.add(fn);
+  }
   if (called.size === 0) return { ok: true, issues: [] };
 
-  const scripts = [...html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/gi)].map((s) => s[1]).join("\n");
+  const scripts = [...html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script(?:\s+[^>]*)?>/gi)].map((s) => s[1] ?? "").join("\n");
   const issues: string[] = [];
   for (const fn of called) {
     const def = new RegExp(
@@ -69,9 +72,9 @@ export function validateArtifactInteractivity(html: string): InteractivityReport
 
 export function titleFromHtml(html: string): string {
   const t = /<title>([^<]+)<\/title>/i.exec(html);
-  if (t) return t[1].trim();
+  if (t?.[1]) return t[1].trim();
   const h = /<h1[^>]*>([\s\S]*?)<\/h1>/i.exec(html);
-  if (h) return stripTags(h[1]).trim();
+  if (h?.[1]) return stripTags(h[1]).trim();
   return "Claude artifact";
 }
 

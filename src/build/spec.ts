@@ -18,7 +18,8 @@ export function extractTasks(planText: string): BuildTask[] {
   const checkbox = /^\s*[-*]\s*\[( |x|X)\]\s+(.*\S)/;
   for (const line of planText.split("\n")) {
     const m = checkbox.exec(line);
-    if (m) tasks.push({ title: m[2].trim(), done: m[1].toLowerCase() === "x" });
+    const title = m?.[2]?.trim();
+    if (title) tasks.push({ title, done: m?.[1]?.toLowerCase() === "x" });
   }
   if (tasks.length > 0) return tasks;
 
@@ -28,7 +29,8 @@ export function extractTasks(planText: string): BuildTask[] {
   const item = /^\s*(?:\d+[.)]|[-*•])\s+(.*\S)/;
   for (const line of text.split("\n")) {
     const m = item.exec(line);
-    if (m && m[1].length > 3) tasks.push({ title: m[1].trim().slice(0, 140), done: false });
+    const title = m?.[1]?.trim();
+    if (title && title.length > 3) tasks.push({ title: title.slice(0, 140), done: false });
   }
   return tasks.slice(0, 40);
 }

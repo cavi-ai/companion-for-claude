@@ -12,7 +12,7 @@
   --cc-gray-700: #3d3d3a;
   --cc-serif: ui-serif, Georgia, "Times New Roman", serif;
   --cc-sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  --cc-mono: ui-monospace, "SF Mono", Menlo, Monaco, monospace;
+  --cc-mono: "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
   --cc-olive: #788c5d;
 
   display: flex;
@@ -627,7 +627,7 @@
 }
 .cc-conv-meta {
   color: var(--cc-gray-500, #87867F);
-  font-family: var(--cc-mono, ui-monospace, monospace);
+  font-family: var(--cc-mono, "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace);
   font-size: 11px;
 }
 
@@ -727,11 +727,11 @@
 }
 .cc-ctl-label {
   color: var(--cc-gray-500, #87867f);
-  font-family: var(--cc-mono, ui-monospace, monospace);
+  font-family: var(--cc-mono, "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace);
 }
 .cc-ctl-val {
   min-width: 28px;
-  font-family: var(--cc-mono, ui-monospace, monospace);
+  font-family: var(--cc-mono, "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace);
   color: var(--cc-gray-700, #3d3d3a);
 }
 .cc-ctl-range {
@@ -751,7 +751,7 @@
 }
 .cc-thinking-summary {
   font-size: 11px;
-  font-family: var(--cc-mono, ui-monospace, monospace);
+  font-family: var(--cc-mono, "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace);
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--cc-gray-500, #87867f);
@@ -770,7 +770,7 @@
 /* ---- backend pill + fallback note ---- */
 .cc-backend-pill {
   font-size: 10px;
-  font-family: var(--cc-mono, ui-monospace, monospace);
+  font-family: var(--cc-mono, "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace);
   /* Lives in the title's flex COLUMN under the model name, so it must hug the
      left edge (no indent) and size to its content rather than stretch. */
   align-self: flex-start;
@@ -1065,9 +1065,20 @@ pre.cc-has-copy:hover .cc-code-copy { opacity: 1; }
 }
 .cc-attach-x:hover { background: color-mix(in srgb, var(--cc-clay) 22%, transparent); }
 
-/* MCP bridge state on its header icon. */
-.cc-mcp-btn.is-on { color: var(--cc-olive, #788c5d); }
+/* MCP bridge state on its header icon — clay when engaged, to match every other
+   "active/engaged" affordance (the ingest toggle, active context, etc.). */
+.cc-mcp-btn.is-on { color: var(--cc-clay); }
 .cc-mcp-btn.is-warn { color: var(--text-warning); }
+/* Divider between one-shot actions (left) and stateful toggle/status icons
+   (right) in the header, so engage/disengage controls read apart from actions. */
+.cc-actions-sep {
+  flex: 0 0 auto;
+  align-self: center;
+  width: 1px;
+  height: 18px;
+  margin: 0 4px;
+  background: var(--background-modifier-border);
+}
 .cc-slash-name {
   font-family: var(--cc-mono);
   font-size: 12.5px;

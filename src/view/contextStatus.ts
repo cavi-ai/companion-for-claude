@@ -50,10 +50,11 @@ function contentIndexAfterCompactedPrefix(content: string, prefix: string): numb
   if (!prefix) return 0;
   let compacted = "";
   for (let i = 0; i < content.length; i++) {
-    if (/\s/.test(content[i])) {
+    const ch = content[i] ?? "";
+    if (/\s/.test(ch)) {
       if (compacted && !compacted.endsWith(" ")) compacted += " ";
     } else {
-      compacted += content[i];
+      compacted += ch;
     }
     if (compacted.trimEnd().length >= prefix.length) return i + 1;
   }

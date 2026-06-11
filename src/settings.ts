@@ -20,7 +20,7 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
     super(app, plugin);
   }
 
-  display(): void {
+  override display(): void {
     const { containerEl } = this;
     containerEl.empty();
 
@@ -361,7 +361,8 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
             new Notice("No Ollama models detected. Is `ollama serve` running, and have you pulled a model?");
           } else {
             if (!models.includes(this.plugin.settings.ollamaModel)) {
-              this.plugin.settings.ollamaModel = models[0];
+              const first = models[0];
+              if (first) this.plugin.settings.ollamaModel = first;
               await this.plugin.saveSettings();
             }
             new Notice(`Detected ${models.length} model(s).`);

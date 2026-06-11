@@ -64,7 +64,7 @@ export function chunkNote(md: string, opts: ChunkOptions = {}): Chunk[] {
     const m = /^(#{1,6})\s+(.*)$/.exec(line);
     if (m) {
       flush();
-      curHeading = m[2].trim();
+      curHeading = m[2]?.trim() ?? "";
     }
     buf.push(line);
   }

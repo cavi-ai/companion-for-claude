@@ -27,10 +27,10 @@ export function digestConversation(messages: ChatMessage[], meta: ConversationMe
     else assistantTurns += 1;
   }
   return {
-    sessionId: meta.sessionId,
-    model: meta.model,
-    startedAt: meta.startedAt,
-    endedAt: meta.endedAt,
+    ...(meta.sessionId !== undefined ? { sessionId: meta.sessionId } : {}),
+    ...(meta.model !== undefined ? { model: meta.model } : {}),
+    ...(meta.startedAt !== undefined ? { startedAt: meta.startedAt } : {}),
+    ...(meta.endedAt !== undefined ? { endedAt: meta.endedAt } : {}),
     userTurns,
     assistantTurns,
     prose,

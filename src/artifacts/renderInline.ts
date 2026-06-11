@@ -120,14 +120,14 @@ export class ArtifactModal extends Modal {
     super(app);
   }
 
-  onOpen(): void {
+  override onOpen(): void {
     this.modalEl.addClass("cc-artifact-modal");
     this.titleEl.setText(this.artifactTitle || "Artifact");
     const iframe = this.contentEl.createEl("iframe", { cls: "cc-artifact-frame cc-artifact-frame-full" });
     sandboxFrame(iframe, this.html);
   }
 
-  onClose(): void {
+  override onClose(): void {
     this.contentEl.empty();
   }
 }

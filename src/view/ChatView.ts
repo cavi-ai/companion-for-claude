@@ -1,4 +1,4 @@
-import { ItemView, MarkdownRenderer, MarkdownView, Menu, Notice, WorkspaceLeaf, setIcon } from "obsidian";
+import { ItemView, MarkdownRenderer, MarkdownView, Menu, Notice, Platform, WorkspaceLeaf, setIcon } from "obsidian";
 import type ClaudeCompanionPlugin from "../main";
 import type { ChatMessage } from "../types";
 import { compactMessages, toApiMessages, type Conversation } from "../conversations/store";
@@ -7,6 +7,7 @@ import { modelLabel, CLAUDE_MODELS, resolveModelId } from "../claude/models";
 import { capabilitiesFor, effortLevels } from "../claude/capabilities";
 import { type ChatControls, defaultChatControls, shapeRequest } from "../claude/chatControls";
 import { shouldFallbackToLocal, fallbackReason } from "../providers/fallback";
+import type { CompletionRequest } from "../providers/types";
 import { SlashMenu } from "./SlashMenu";
 import { type SlashCommand, SLASH_COMMANDS, parseSlashQuery } from "./slashCommands";
 import { hasIncompleteHtmlArtifactFence, shouldRenderMarkdownDuringStream } from "./streamRender";
@@ -20,6 +21,13 @@ import { addUsage, contextGauge, EMPTY_SESSION, estimateTokens, formatCost, form
 import { mergeUsage, type TokenUsage } from "../claude/sse";
 
 export const CHAT_VIEW_TYPE = "claude-companion-chat";
+
+interface ObsidianAppWithSettings {
+  setting?: {
+    open?: () => void;
+    openTabById?: (id: string) => void;
+  };
+}
 
 export class ChatView extends ItemView {
   private messages: ChatMessage[] = [];
@@ -66,17 +74,17 @@ export class ChatView extends ItemView {
     super(leaf);
   }
 
-  getViewType(): string {
+  override getViewType(): string {
     return CHAT_VIEW_TYPE;
   }
-  getDisplayText(): string {
+  override getDisplayText(): string {
     return "Companion for Claude";
   }
-  getIcon(): string {
+  override getIcon(): string {
     return "sparkles";
   }
 
-  async onOpen(): Promise<void> {
+  override async onOpen(): Promise<void> {
     const root = this.contentEl;
     root.empty();
     root.addClass("cc-chat-root"); // establishes the container-query context (see styles.css)
@@ -94,13 +102,19 @@ export class ChatView extends ItemView {
     this.modelLabelEl = title.createSpan({ cls: "cc-model" });
     this.backendPillEl = title.createSpan({ cls: "cc-backend-pill", attr: { "aria-label": "Chat backend / connectivity" } });
     const actions = header.createDiv({ cls: "cc-header-actions" });
+    // One-shot actions (left group). These DO something on click.
     this.iconButton(actions, "plus", "New chat", () => this.clearChat());
     this.iconButton(actions, "history", "Resume a past conversation", () => this.openHistory());
-    this.iconButton(actions, "layout-grid", "Run a vault workflow (manifests, rollup, MOC…)", () => void this.plugin.openWorkflowPicker());
+    this.iconButton(actions, "wand-2", "Run a vault workflow (manifests, rollup, MOC…)", () => void this.plugin.openWorkflowPicker());
     this.iconButton(actions, "save", "Save chat to vault", () => this.saveChat());
-    if (this.plugin.settings.memoryEnabled) {
-      this.iconButton(actions, "brain", "Capture a Claude Code session", () => void this.plugin.openSessionPicker());
+    if (this.plugin.settings.memoryEnabled && !Platform.isMobile) {
+      // "import" reads as a one-shot pull-in, not a toggle — capture brings a
+      // Claude Code session's transcript into the vault.
+      this.iconButton(actions, "import", "Capture a Claude Code session into memory", () => void this.plugin.openSessionPicker());
     }
+    // Divider: everything to the right is a stateful toggle/status (clay = on),
+    // so the engage/disengage controls read apart from the actions above.
+    actions.createDiv({ cls: "cc-actions-sep" });
     this.renderIngestToggle(actions);
     // MCP bridge status + menu now lives in the header (the old chip/status row
     // is gone — context is attached with "@" in the composer instead).
@@ -282,7 +296,7 @@ export class ChatView extends ItemView {
     return c.activeNote || c.selection || c.linkedNotes || c.searchVault || this.attachedPaths.length > 0;
   }
 
-  async onClose(): Promise<void> {
+  override async onClose(): Promise<void> {
     this.abort?.abort();
     this.clearThinkingStatus();
     if (this.contextStatusInterval !== null) {
@@ -320,7 +334,7 @@ export class ChatView extends ItemView {
    * persisted "ingest on save" setting. Active = clay highlight.
    */
   private renderIngestToggle(parent: HTMLElement): void {
-    if (!this.plugin.settings.memoryEnabled) return;
+    if (!this.plugin.settings.memoryEnabled || Platform.isMobile) return;
     const btn = parent.createEl("button", {
       cls: "cc-icon-btn cc-icon-toggle",
       attr: { "aria-label": "Also file this conversation into session memory when saving" },
@@ -627,10 +641,9 @@ export class ChatView extends ItemView {
   }
 
   private openSettings(): void {
-    // @ts-expect-error – setting is available on the app at runtime
-    this.app.setting?.open?.();
-    // @ts-expect-error – open the plugin's tab if possible
-    this.app.setting?.openTabById?.("claude-companion");
+    const setting = (this.app as ObsidianAppWithSettings).setting;
+    setting?.open?.();
+    setting?.openTabById?.("claude-companion");
   }
 
   // ---------- send / stream ----------
@@ -743,7 +756,7 @@ export class ChatView extends ItemView {
       return;
     }
 
-    this.messages.push({ role: "user", content: userText, display });
+    this.messages.push({ role: "user", content: userText, ...(display !== undefined ? { display } : {}) });
     this.renderMessage("user", display ?? userText);
 
     // Build context-augmented copy of the message list for the API.
@@ -758,7 +771,7 @@ export class ChatView extends ItemView {
     const apiMessages: ChatMessage[] = toApiMessages(this.messages);
     if (ctx.text) {
       const last = apiMessages[apiMessages.length - 1];
-      last.content = `${ctx.text}\n\n---\n\n${last.content}`;
+      if (last) last.content = `${ctx.text}\n\n---\n\n${last.content}`;
       this.annotateContext(ctx.sources);
     }
 
@@ -847,18 +860,19 @@ export class ChatView extends ItemView {
 
     return new Promise((resolve) => {
       let settled = false;
+      const request: CompletionRequest = {
+        system: this.plugin.composeSystemPrompt(),
+        messages: apiMessages,
+        model,
+        maxTokens: shape.maxTokens,
+      };
+      if (onClaude && shape.temperature !== undefined) request.temperature = shape.temperature;
+      if (onClaude && shape.thinking !== undefined) request.thinking = shape.thinking;
+      if (onClaude && shape.thinkingDisplay !== undefined) request.thinkingDisplay = shape.thinkingDisplay;
+      if (onClaude && shape.outputConfig !== undefined) request.outputConfig = shape.outputConfig;
+      if (this.abort?.signal) request.signal = this.abort.signal;
       void provider.stream(
-        {
-          system: this.plugin.composeSystemPrompt(),
-          messages: apiMessages,
-          model,
-          maxTokens: shape.maxTokens,
-          temperature: onClaude ? shape.temperature : undefined,
-          thinking: onClaude ? shape.thinking : undefined,
-          thinkingDisplay: onClaude ? shape.thinkingDisplay : undefined,
-          outputConfig: onClaude ? shape.outputConfig : undefined,
-          signal: this.abort?.signal,
-        },
+        request,
         {
           onThinking: (delta) => {
             if (!thinkingBody) thinkingBody = this.createThinkingPanel(bubble);
@@ -878,7 +892,8 @@ export class ChatView extends ItemView {
           onError: (err) => {
             if (settled) return;
             settled = true;
-            resolve({ message: err.message, status: (err as { status?: number }).status });
+            const status = (err as { status?: number }).status;
+            resolve(status !== undefined ? { message: err.message, status } : { message: err.message });
           },
           onUsage: (usage) => {
             this._turnUsage = mergeUsage(this._turnUsage ?? undefined, usage);
@@ -1178,7 +1193,8 @@ export class ChatView extends ItemView {
       this.actionBtn(bar, "Build", "hammer", () => void this.buildFromReply(full));
     }
     // Regenerate the last reply (only on the most recent assistant message).
-    const isLast = this.messages.length > 0 && this.messages[this.messages.length - 1].role === "assistant";
+    const tail = this.messages[this.messages.length - 1];
+    const isLast = tail?.role === "assistant";
     if (isLast && this.lastUserText) {
       this.actionBtn(bar, "Regenerate", "refresh-cw", () => void this.regenerate());
     }
@@ -1189,7 +1205,10 @@ export class ChatView extends ItemView {
     const artifact = extractArtifact(full);
     const { tags, summary, title } = await this.maybeIndex(full);
     const planTitle = title ?? artifact?.title ?? this.fallbackTitle();
-    const file = await savePlanNote(this.app, this.plugin.settings.planFolder, planTitle, full, { extraTags: tags, summary });
+    const file = await savePlanNote(this.app, this.plugin.settings.planFolder, planTitle, full, {
+      extraTags: tags,
+      ...(summary !== undefined ? { summary } : {}),
+    });
     await this.plugin.handoffToBuild(file);
   }
 
@@ -1234,7 +1253,11 @@ export class ChatView extends ItemView {
     try {
       const { summarizeAndTag, existingVaultTags } = await import("../indexing/autoTagger");
       const res = await summarizeAndTag(this.app, this.plugin.router(), content, existingVaultTags(this.app));
-      return { tags: res.tags, summary: res.summary || undefined, title: res.title || undefined };
+      return {
+        tags: res.tags,
+        ...(res.summary ? { summary: res.summary } : {}),
+        ...(res.title ? { title: res.title } : {}),
+      };
     } catch {
       return { tags: [] };
     }
@@ -1269,7 +1292,10 @@ export class ChatView extends ItemView {
     if (extractTasks(full).length > 0) {
       const { tags, summary, title } = await this.maybeIndex(full);
       const planTitle = title ?? artifact?.title ?? this.fallbackTitle();
-      const file = await savePlanNote(this.app, this.plugin.settings.planFolder, planTitle, full, { extraTags: tags, summary });
+      const file = await savePlanNote(this.app, this.plugin.settings.planFolder, planTitle, full, {
+        extraTags: tags,
+        ...(summary !== undefined ? { summary } : {}),
+      });
       await this.app.workspace.getLeaf(true).openFile(file);
       return;
     }
@@ -1280,7 +1306,7 @@ export class ChatView extends ItemView {
         height: this.plugin.settings.artifactHeight,
         baseTags: this.plugin.settings.artifactBaseTags,
         extraTags: tags,
-        summary,
+        ...(summary !== undefined ? { summary } : {}),
       });
       await this.app.workspace.getLeaf(true).openFile(file);
       return;
@@ -1290,7 +1316,7 @@ export class ChatView extends ItemView {
     await saveChatNote(this.app, this.plugin.settings.chatFolder, title ?? heuristic, full, {
       baseTags: this.plugin.settings.chatBaseTags,
       extraTags: tags,
-      summary,
+      ...(summary !== undefined ? { summary } : {}),
     });
   }
 
@@ -1320,7 +1346,11 @@ export class ChatView extends ItemView {
     new Notice("Indexing & saving…");
     const { tags, summary, title } = await this.maybeIndex(md);
     const finalTitle = title ?? this.fallbackTitle();
-    await saveChatNote(this.app, this.plugin.settings.chatFolder, finalTitle, md, { baseTags: this.plugin.settings.chatBaseTags, extraTags: tags, summary });
+    await saveChatNote(this.app, this.plugin.settings.chatFolder, finalTitle, md, {
+      baseTags: this.plugin.settings.chatBaseTags,
+      extraTags: tags,
+      ...(summary !== undefined ? { summary } : {}),
+    });
     if (this.plugin.settings.memoryEnabled && this.plugin.settings.memoryIngestOnSave) {
       await this.plugin.captureConversation(this.messages); // also file this chat into memory
     }

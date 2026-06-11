@@ -22,13 +22,14 @@ export function replaceSection(markdown: string, heading: string, newBody: strin
   let level = 0;
   let inFence = false;
   for (let i = 0; i < lines.length; i++) {
-    if (isFence(lines[i])) {
+    const line = lines[i] ?? "";
+    if (isFence(line)) {
       inFence = !inFence;
       continue;
     }
     if (inFence) continue;
-    const m = /^(#{1,6})\s+(.*?)(?:\s+#+)?\s*$/.exec(lines[i]);
-    if (m && m[2].trim().toLowerCase() === target) {
+    const m = /^(#{1,6})\s+(.*?)(?:\s+#+)?\s*$/.exec(line);
+    if (m?.[1] && m[2]?.trim().toLowerCase() === target) {
       start = i;
       level = m[1].length;
       break;
@@ -38,18 +39,19 @@ export function replaceSection(markdown: string, heading: string, newBody: strin
   let end = lines.length;
   inFence = false;
   for (let i = start + 1; i < lines.length; i++) {
-    if (isFence(lines[i])) {
+    const line = lines[i] ?? "";
+    if (isFence(line)) {
       inFence = !inFence;
       continue;
     }
     if (inFence) continue;
-    const m = /^(#+)\s+/.exec(lines[i]);
-    if (m && m[1].length <= level) {
+    const m = /^(#+)\s+/.exec(line);
+    if (m?.[1] && m[1].length <= level) {
       end = i;
       break;
     }
   }
   const body = newBody.replace(/\s+$/, "");
-  const replacement = [lines[start], "", body, ""];
+  const replacement = [lines[start] ?? "", "", body, ""];
   return [...lines.slice(0, start), ...replacement, ...lines.slice(end)].join("\n");
 }

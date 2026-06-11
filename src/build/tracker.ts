@@ -25,7 +25,7 @@ export function trackerArtifact(title: string, tasks: BuildTask[]): string {
   :root{--ivory:#FAF9F5;--slate:#141413;--clay:#D97757;--olive:#788C5D;
     --gray-150:#F0EEE6;--gray-300:#D1CFC5;--gray-500:#87867F;--gray-700:#3D3D3A;
     --serif:ui-serif,Georgia,'Times New Roman',serif;--sans:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;
-    --mono:ui-monospace,'SF Mono',Menlo,Monaco,monospace;}
+    --mono:'SF Mono',Menlo,Monaco,Consolas,'Liberation Mono','Courier New',monospace;}
   *{margin:0;padding:0;box-sizing:border-box}
   body{font-family:var(--sans);background:var(--ivory);color:var(--gray-700);padding:32px;line-height:1.5}
   .page{max-width:760px;margin:0 auto}

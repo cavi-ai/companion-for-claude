@@ -9,17 +9,17 @@ export class MemoryView extends ItemView {
     super(leaf);
   }
 
-  getViewType(): string {
+  override getViewType(): string {
     return MEMORY_VIEW_TYPE;
   }
-  getDisplayText(): string {
+  override getDisplayText(): string {
     return "Claude session memory";
   }
-  getIcon(): string {
+  override getIcon(): string {
     return "brain";
   }
 
-  async onOpen(): Promise<void> {
+  override async onOpen(): Promise<void> {
     // Obsidian parses a new note's frontmatter on a debounce *after* the write,
     // so an immediate refresh can miss the just-captured note. Re-render when the
     // metadata cache resolves, and when notes are deleted/renamed. registerEvent

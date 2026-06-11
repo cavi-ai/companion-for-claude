@@ -70,7 +70,7 @@ export function activeAtQuery(text: string, cursor: number): { query: string; st
   const at = upto.lastIndexOf("@");
   if (at === -1) return null;
   // Must be at start or preceded by whitespace.
-  if (at > 0 && !/\s/.test(text[at - 1])) return null;
+  if (at > 0 && !/\s/.test(text.charAt(at - 1))) return null;
   const query = upto.slice(at + 1);
   if (query.includes("\n")) return null;
   return { query, start: at };

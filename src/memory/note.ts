@@ -114,7 +114,9 @@ export async function writeDigestNote(
 ): Promise<TFile> {
   await ensureFolder(app, folder);
   const dir = normalizePath(folder);
-  const marker = new RegExp(`^(?:session_id|claude-session):\\s*${escapeRe(sessionId)}\\s*$`, "m");
+  // Tolerate an optionally-quoted value so a reformatted/quoted frontmatter
+  // (session_id: "abc") still matches and updates in place instead of duplicating.
+  const marker = new RegExp(`^(?:session_id|claude-session):\\s*["']?${escapeRe(sessionId)}["']?\\s*$`, "m");
 
   for (const f of app.vault.getMarkdownFiles()) {
     if (!f.path.startsWith(`${dir}/`)) continue;

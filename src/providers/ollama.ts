@@ -39,12 +39,13 @@ export class OllamaProvider implements Provider {
 
   async stream(req: CompletionRequest, handlers: StreamHandlers): Promise<void> {
     try {
-      const res = await fetch(`${this.base()}/api/chat`, {
+      const init: RequestInit = {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: this.body(req),
-        signal: req.signal,
-      });
+      };
+      if (req.signal) init.signal = req.signal;
+      const res = await fetch(`${this.base()}/api/chat`, init);
       if (!res.ok || !res.body) {
         throw new ProviderError(`Ollama error ${res.status}. Is \`ollama serve\` running at ${this.base()}?`, res.status);
       }

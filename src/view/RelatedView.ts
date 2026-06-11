@@ -17,17 +17,17 @@ export class RelatedView extends ItemView {
     super(leaf);
   }
 
-  getViewType(): string {
+  override getViewType(): string {
     return RELATED_VIEW_TYPE;
   }
-  getDisplayText(): string {
+  override getDisplayText(): string {
     return "Related notes";
   }
-  getIcon(): string {
+  override getIcon(): string {
     return "git-fork";
   }
 
-  async onOpen(): Promise<void> {
+  override async onOpen(): Promise<void> {
     this.registerEvent(this.app.workspace.on("active-leaf-change", () => void this.maybeRender()));
     this.registerEvent(this.app.workspace.on("file-open", () => void this.maybeRender()));
     await this.render();

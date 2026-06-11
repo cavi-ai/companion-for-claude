@@ -42,7 +42,7 @@ export function parseSlashQuery(input: string): string | null {
   // Active only when the whole input is a single "/word" with no space yet —
   // i.e. the user is composing a command, not writing prose that contains "/".
   const m = /^\/([a-z0-9-]*)$/i.exec(input);
-  return m ? m[1].toLowerCase() : null;
+  return m?.[1] !== undefined ? m[1].toLowerCase() : null;
 }
 
 /** Filter + rank the catalog for a query (empty query → all, in catalog order). */

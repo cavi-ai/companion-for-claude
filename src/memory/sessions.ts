@@ -1,11 +1,8 @@
-// Filesystem-backed discovery of Claude Code CLI sessions for a vault. The FS is
-// reached through an injected SessionReader so the discovery logic is unit-tested
-// against fixtures; the real reader (node fs) is desktop-only. Pure helpers
-// (encodeProjectDir, metaFromTranscript) carry no IO.
+// Discovery logic for Claude Code CLI sessions. PURE / Node-free: the FS is
+// reached through an injected SessionReader, so this module is safe to import on
+// any platform (mobile included). The real node-fs reader + the ~/.claude path
+// live in the desktop-only ./nodeReader module (lazy-imported behind isMobile).
 
-import { readdir, readFile, stat } from "node:fs/promises";
-import { homedir } from "node:os";
-import { join } from "node:path";
 import { digestTranscript } from "./transcript";
 
 /**
@@ -52,11 +49,11 @@ export function metaFromTranscript(file: SessionFile, jsonl: string): SessionMet
   const preview = (firstUser.split("\n")[0] || file.id).slice(0, PREVIEW_MAX);
   return {
     ...file,
-    sessionId: d.sessionId,
-    model: d.model,
-    gitBranch: d.gitBranch,
-    cwd: d.cwd,
-    startedAt: d.startedAt,
+    ...(d.sessionId !== undefined ? { sessionId: d.sessionId } : {}),
+    ...(d.model !== undefined ? { model: d.model } : {}),
+    ...(d.gitBranch !== undefined ? { gitBranch: d.gitBranch } : {}),
+    ...(d.cwd !== undefined ? { cwd: d.cwd } : {}),
+    ...(d.startedAt !== undefined ? { startedAt: d.startedAt } : {}),
     userTurns: d.userTurns,
     preview,
   };
@@ -80,35 +77,3 @@ export async function listSessionsForVault(
     .filter((m) => !m.cwd || m.cwd === vaultPath)
     .sort((a, b) => b.mtimeMs - a.mtimeMs);
 }
-
-/** Absolute ~/.claude/projects root for the current user. */
-export function defaultProjectsRoot(): string {
-  return join(homedir(), ".claude", "projects");
-}
-
-/** Real reader over the local filesystem. Desktop-only (Electron/node). */
-export const nodeSessionReader: SessionReader = {
-  async listFiles(projectDir: string): Promise<SessionFile[]> {
-    let names: string[];
-    try {
-      names = await readdir(projectDir);
-    } catch {
-      return []; // dir absent → no sessions for this vault
-    }
-    const out: SessionFile[] = [];
-    for (const name of names) {
-      if (!name.endsWith(".jsonl")) continue;
-      const path = join(projectDir, name);
-      try {
-        const s = await stat(path);
-        out.push({ id: name.replace(/\.jsonl$/, ""), path, mtimeMs: s.mtimeMs });
-      } catch {
-        // unreadable entry — skip
-      }
-    }
-    return out;
-  },
-  read(path: string): Promise<string> {
-    return readFile(path, "utf8");
-  },
-};

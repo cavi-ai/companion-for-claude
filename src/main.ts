@@ -5,7 +5,7 @@ import { RelatedView, RELATED_VIEW_TYPE } from "./view/RelatedView";
 import { SessionPicker } from "./view/SessionPicker";
 import { WorkflowPicker } from "./view/WorkflowPicker";
 import { WORKFLOWS, type Workflow } from "./workflows/catalog";
-import { listSessionsForVault, nodeSessionReader, defaultProjectsRoot, type SessionMeta } from "./memory/sessions";
+import { listSessionsForVault, type SessionMeta } from "./memory/sessions";
 import { ingestSession, ingestConversation } from "./memory/ingest";
 import { ClaudeCompanionSettingTab } from "./settings";
 import { ProviderRouter } from "./providers/router";
@@ -52,7 +52,7 @@ interface PersistedData {
 }
 
 export default class ClaudeCompanionPlugin extends Plugin {
-  settings: PluginSettings = DEFAULT_SETTINGS;
+  override settings: PluginSettings = DEFAULT_SETTINGS;
   private convState: ConversationState = emptyState();
   private convSeq = 0;
   private _router: ProviderRouter | null = null;
@@ -70,11 +70,11 @@ export default class ClaudeCompanionPlugin extends Plugin {
   private reindexTimer: number | null = null;
   private reindexQueue = new Set<string>();
 
-  async onload(): Promise<void> {
+  override async onload(): Promise<void> {
     await this.loadSettings();
 
     this.registerView(CHAT_VIEW_TYPE, (leaf: WorkspaceLeaf) => new ChatView(leaf, this));
-    this.registerView(MEMORY_VIEW_TYPE, (leaf: WorkspaceLeaf) => new MemoryView(leaf, this));
+    if (!Platform.isMobile) this.registerView(MEMORY_VIEW_TYPE, (leaf: WorkspaceLeaf) => new MemoryView(leaf, this));
     this.registerView(RELATED_VIEW_TYPE, (leaf: WorkspaceLeaf) => new RelatedView(leaf, this));
 
     // Inline interactive artifacts: ```claude-html ... ```
@@ -85,10 +85,10 @@ export default class ClaudeCompanionPlugin extends Plugin {
       if (info) {
         const fence = info.text.split("\n")[info.lineStart] ?? "";
         const m = /height=(\d+)/.exec(fence);
-        if (m) height = parseInt(m[1], 10);
+        if (m?.[1]) height = parseInt(m[1], 10);
       }
       const t = /<title>([^<]+)<\/title>/i.exec(source);
-      if (t) title = t[1].trim();
+      if (t?.[1]) title = t[1].trim();
       renderArtifactInline(el, source, height, title, {
         open: (h, ti) => this.openArtifact(h, ti),
         openWith: (h, ti, target) => this.openArtifactWith(h, ti, target),
@@ -157,6 +157,12 @@ export default class ClaudeCompanionPlugin extends Plugin {
     });
 
     this.addCommand({
+      id: "semantic-index-status",
+      name: "Semantic index status",
+      callback: () => void this.showSemanticIndexStatus(),
+    });
+
+    this.addCommand({
       id: "browse-conversations",
       name: "Resume a past conversation",
       callback: () => void this.browseConversations(),
@@ -213,17 +219,21 @@ export default class ClaudeCompanionPlugin extends Plugin {
       callback: () => void this.openWorkflowPicker(),
     });
 
-    this.addCommand({
-      id: "capture-session-memory",
-      name: "Capture session memory…",
-      callback: () => void this.openSessionPicker(),
-    });
+    // Session memory reads Claude Code's CLI transcripts off the local
+    // filesystem — desktop-only. Skip its commands on mobile.
+    if (!Platform.isMobile) {
+      this.addCommand({
+        id: "capture-session-memory",
+        name: "Capture session memory…",
+        callback: () => void this.openSessionPicker(),
+      });
 
-    this.addCommand({
-      id: "open-memory-view",
-      name: "Open session memory",
-      callback: () => void this.activateMemoryView(),
-    });
+      this.addCommand({
+        id: "open-memory-view",
+        name: "Open session memory",
+        callback: () => void this.activateMemoryView(),
+      });
+    }
 
     this.addSettingTab(new ClaudeCompanionSettingTab(this.app, this));
 
@@ -283,7 +293,7 @@ export default class ClaudeCompanionPlugin extends Plugin {
     new Notice("Marked as a plan — a Build icon is now in the note's header.");
   }
 
-  onunload(): void {
+  override onunload(): void {
     void this.mcpServer?.stop();
     this.mcpServer = null;
     if (this.reindexTimer !== null) window.clearTimeout(this.reindexTimer);
@@ -623,6 +633,26 @@ export default class ClaudeCompanionPlugin extends Plugin {
     }
   }
 
+  /** Report the semantic index state in a Notice (on/off · counts · model · reach). */
+  async showSemanticIndexStatus(): Promise<void> {
+    if (!this.settings.semanticEnabled) {
+      new Notice("Semantic search is off — turn it on in Companion settings to index your vault.", 7000);
+      return;
+    }
+    const ix = this.indexer();
+    if (!ix) {
+      new Notice("Semantic index is unavailable.", 6000);
+      return;
+    }
+    try {
+      const [{ notes, chunks }, localOk] = await Promise.all([ix.stats(), this.router().localAvailable()]);
+      const reach = localOk ? "Ollama reachable" : "Ollama unreachable — searches fall back to keyword";
+      new Notice(`Semantic index · ${notes} notes, ${chunks} chunks · “${this.settings.embeddingModel}” · ${reach}`, 9000);
+    } catch (e) {
+      new Notice(`Semantic index status unavailable: ${e instanceof Error ? e.message : String(e)}`, 8000);
+    }
+  }
+
   /** Queue a single note for incremental re-embed (debounced ~1.5s). */
   private queueReindex(path: string): void {
     if (!this.settings.semanticEnabled) return;
@@ -676,17 +706,22 @@ export default class ClaudeCompanionPlugin extends Plugin {
     return adapter instanceof FileSystemAdapter ? adapter.getBasePath() : null;
   }
 
-  /** List this vault's Claude Code sessions (newest first). */
+  /** List this vault's Claude Code sessions (newest first). Desktop-only. */
   async listVaultSessions(): Promise<SessionMeta[]> {
     const base = this.vaultBasePath();
-    if (!base) return [];
+    if (!base || Platform.isMobile) return [];
+    // node fs reader lives in the desktop-only module — load it lazily.
+    const { nodeSessionReader, defaultProjectsRoot } = await import("./memory/nodeReader");
     return listSessionsForVault(nodeSessionReader, base, defaultProjectsRoot());
   }
 
   private ingestDeps() {
     return {
       app: this.app,
-      read: (path: string) => nodeSessionReader.read(path),
+      read: async (path: string) => {
+        const { nodeSessionReader } = await import("./memory/nodeReader");
+        return nodeSessionReader.read(path);
+      },
       folder: this.settings.memoryFolder,
       baseTags: this.settings.memoryBaseTags,
     };
@@ -747,7 +782,9 @@ export default class ClaudeCompanionPlugin extends Plugin {
       new Notice("No Claude Code session found for this vault to ingest.");
       return;
     }
-    await this.captureSession(sessions[0]);
+    const latest = sessions[0];
+    if (!latest) return;
+    await this.captureSession(latest);
   }
 
   /**
@@ -758,15 +795,15 @@ export default class ClaudeCompanionPlugin extends Plugin {
     if (!this.settings.memoryEnabled || messages.length === 0) return;
     const conv = this.getActiveConversation();
     try {
+      const meta = {
+        ...(conv?.id !== undefined ? { sessionId: conv.id } : {}),
+        model: this.settings.model,
+        ...(conv ? { startedAt: new Date(conv.createdAt).toISOString(), endedAt: new Date(conv.updatedAt).toISOString() } : {}),
+      };
       const res = await ingestConversation(
         { app: this.app, folder: this.settings.memoryFolder, baseTags: this.settings.memoryBaseTags },
         messages,
-        {
-          sessionId: conv?.id,
-          model: this.settings.model,
-          startedAt: conv ? new Date(conv.createdAt).toISOString() : undefined,
-          endedAt: conv ? new Date(conv.updatedAt).toISOString() : undefined,
-        },
+        meta,
       );
       new Notice(`Conversation captured to memory · ${res.redactions} secret${res.redactions === 1 ? "" : "s"} redacted`);
       await this.refreshMemoryView();
@@ -1044,7 +1081,7 @@ class ConfirmModal extends Modal {
     super(app);
   }
 
-  onOpen(): void {
+  override onOpen(): void {
     this.titleEl.setText(this.opts.title);
     const p = this.contentEl.createEl("p", { cls: "setting-item-description" });
     p.setCssStyles({ whiteSpace: "pre-wrap" });
@@ -1059,7 +1096,7 @@ class ConfirmModal extends Modal {
     });
   }
 
-  onClose(): void {
+  override onClose(): void {
     if (!this.decided) this.opts.onResolve(false);
   }
 }
@@ -1076,7 +1113,7 @@ class CloudDispatchModal extends Modal {
     super(app);
   }
 
-  onOpen(): void {
+  override onOpen(): void {
     const { contentEl } = this;
     contentEl.createEl("h3", { text: "Send to cloud Claude session" });
     contentEl.createEl("p", {
@@ -1108,7 +1145,7 @@ class CloudDispatchModal extends Modal {
     controls.createEl("button", { text: "Cancel" }).addEventListener("click", () => this.close());
   }
 
-  onClose(): void {
+  override onClose(): void {
     this.contentEl.empty();
   }
 }

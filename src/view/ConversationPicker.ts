@@ -20,16 +20,16 @@ export class ConversationPicker extends FuzzySuggestModal<Conversation> {
     ]);
   }
 
-  getItems(): Conversation[] {
+  override getItems(): Conversation[] {
     return this.conversations;
   }
 
-  getItemText(item: Conversation): string {
+  override getItemText(item: Conversation): string {
     // Include the relative time so it participates in fuzzy matching.
     return `${item.title} ${relativeTime(item.updatedAt)}`;
   }
 
-  renderSuggestion(match: FuzzyMatch<Conversation>, el: HTMLElement): void {
+  override renderSuggestion(match: FuzzyMatch<Conversation>, el: HTMLElement): void {
     const c = match.item;
     el.addClass("cc-conv-suggestion");
     el.createDiv({ cls: "cc-conv-title", text: c.title });
@@ -40,7 +40,7 @@ export class ConversationPicker extends FuzzySuggestModal<Conversation> {
     });
   }
 
-  onChooseItem(item: Conversation): void {
+  override onChooseItem(item: Conversation): void {
     this.onChoose(item);
   }
 }

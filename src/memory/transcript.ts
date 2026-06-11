@@ -66,8 +66,8 @@ function proseText(content: unknown): string {
   if (!Array.isArray(content)) return "";
   return content
     .map(asRecord)
-    .filter((b): b is Record<string, unknown> => !!b && b.type === "text" && typeof b.text === "string")
-    .map((b) => b.text as string)
+    .filter((b): b is Record<string, string> => b?.type === "text" && typeof b.text === "string")
+    .map((b) => b.text)
     .join("\n");
 }
 
@@ -114,9 +114,12 @@ export function digestTranscript(jsonl: string): SessionDigest {
       if (!d.startedAt) d.startedAt = ts;
       d.endedAt = ts;
     }
-    if (!d.sessionId) d.sessionId = str(rec.sessionId);
-    if (!d.gitBranch) d.gitBranch = str(rec.gitBranch);
-    if (!d.cwd) d.cwd = str(rec.cwd);
+    const sessionId = str(rec.sessionId);
+    const gitBranch = str(rec.gitBranch);
+    const cwd = str(rec.cwd);
+    if (!d.sessionId && sessionId) d.sessionId = sessionId;
+    if (!d.gitBranch && gitBranch) d.gitBranch = gitBranch;
+    if (!d.cwd && cwd) d.cwd = cwd;
 
     const type = rec.type;
     if (type !== "user" && type !== "assistant") continue;
@@ -124,7 +127,8 @@ export function digestTranscript(jsonl: string): SessionDigest {
     if (!msg) continue;
 
     if (type === "assistant") {
-      if (!d.model) d.model = str(msg.model);
+      const model = str(msg.model);
+      if (!d.model && model) d.model = model;
       const usage = asRecord(msg.usage);
       if (usage) {
         d.inputTokens += num(usage.input_tokens);
@@ -146,9 +150,10 @@ export function digestTranscript(jsonl: string): SessionDigest {
         const name = str(b.name);
         if (!name) continue;
         const input = asRecord(b.input) ?? {};
-        d.toolActions.push({ tool: name, target: toolTarget(name, input) });
+        const target = toolTarget(name, input);
+        d.toolActions.push(target ? { tool: name, target } : { tool: name });
         if (FILE_TOOLS.has(name)) {
-          const fp = str(input.file_path) ?? str(input.path) ?? str(input.notebook_path);
+          const fp = str(input["file_path"]) ?? str(input.path) ?? str(input["notebook_path"]);
           if (fp) files.add(fp);
         }
       }

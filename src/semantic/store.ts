@@ -79,7 +79,8 @@ export class SemanticStore {
 
   upsertNote(path: string, hash: string, mtime: number, chunks: ChunkRecord[]): void {
     this.data.notes[path] = { hash, mtime, chunks };
-    if (chunks.length && chunks[0].vector.length) this.data.dim = chunks[0].vector.length;
+    const first = chunks[0];
+    if (first?.vector.length) this.data.dim = first.vector.length;
   }
 
   removeNote(path: string): void {
@@ -146,12 +147,14 @@ export class SemanticStore {
   noteVector(path: string): number[] | null {
     const e = this.data.notes[path];
     if (!e || e.chunks.length === 0) return null;
-    const dim = e.chunks[0].vector.length;
+    const first = e.chunks[0];
+    if (!first) return null;
+    const dim = first.vector.length;
     const sum = new Array<number>(dim).fill(0);
     for (const c of e.chunks) {
-      for (let i = 0; i < dim; i++) sum[i] += c.vector[i] ?? 0;
+      for (let i = 0; i < dim; i++) sum[i] = (sum[i] ?? 0) + (c.vector[i] ?? 0);
     }
-    for (let i = 0; i < dim; i++) sum[i] /= e.chunks.length;
+    for (let i = 0; i < dim; i++) sum[i] = (sum[i] ?? 0) / e.chunks.length;
     return sum;
   }
 

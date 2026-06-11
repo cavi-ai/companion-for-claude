@@ -17,23 +17,23 @@ export class WorkflowPicker extends FuzzySuggestModal<Workflow> {
     ]);
   }
 
-  getItems(): Workflow[] {
+  override getItems(): Workflow[] {
     return this.workflows;
   }
 
-  getItemText(item: Workflow): string {
+  override getItemText(item: Workflow): string {
     // Include group + description so all of it participates in fuzzy matching.
     return `${item.name} ${item.group} ${item.description}`;
   }
 
-  renderSuggestion(match: FuzzyMatch<Workflow>, el: HTMLElement): void {
+  override renderSuggestion(match: FuzzyMatch<Workflow>, el: HTMLElement): void {
     const w = match.item;
     el.addClass("cc-conv-suggestion");
     el.createDiv({ cls: "cc-conv-title", text: w.name });
     el.createDiv({ cls: "cc-conv-meta", text: `${w.group} · ${w.description}` });
   }
 
-  onChooseItem(item: Workflow): void {
+  override onChooseItem(item: Workflow): void {
     this.onChoose(item);
   }
 }

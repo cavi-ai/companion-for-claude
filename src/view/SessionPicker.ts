@@ -19,15 +19,15 @@ export class SessionPicker extends FuzzySuggestModal<SessionMeta> {
     ]);
   }
 
-  getItems(): SessionMeta[] {
+  override getItems(): SessionMeta[] {
     return this.sessions;
   }
 
-  getItemText(item: SessionMeta): string {
+  override getItemText(item: SessionMeta): string {
     return `${item.preview} ${item.gitBranch ?? ""}`;
   }
 
-  renderSuggestion(match: FuzzyMatch<SessionMeta>, el: HTMLElement): void {
+  override renderSuggestion(match: FuzzyMatch<SessionMeta>, el: HTMLElement): void {
     const s = match.item;
     el.addClass("cc-conv-suggestion");
     el.createDiv({ cls: "cc-conv-title", text: s.preview });
@@ -36,7 +36,7 @@ export class SessionPicker extends FuzzySuggestModal<SessionMeta> {
     el.createDiv({ cls: "cc-conv-meta", text: meta || s.id });
   }
 
-  onChooseItem(item: SessionMeta): void {
+  override onChooseItem(item: SessionMeta): void {
     this.onChoose(item);
   }
 }

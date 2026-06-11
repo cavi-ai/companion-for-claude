@@ -46,7 +46,7 @@ const API = "https://api.github.com";
 /** Split "owner/name" into its parts, or null when malformed. */
 export function parseRepo(repo: string): RepoRef | null {
   const m = /^([^/\s]+)\/([^/\s]+)$/.exec(repo.trim());
-  return m ? { owner: m[1], name: m[2] } : null;
+  return m?.[1] && m[2] ? { owner: m[1], name: m[2] } : null;
 }
 
 /** Validate replies config; returns a human-readable error, or null when OK. */
@@ -81,7 +81,8 @@ function encodePath(path: string): string {
 export function buildContentsRequest(cfg: RepliesConfig, path: string): HttpRequestSpec {
   const err = configError(cfg);
   if (err) throw new Error(err);
-  const ref = parseRepo(cfg.repo)!;
+  const ref = parseRepo(cfg.repo);
+  if (!ref) throw new Error("Repo must be in owner/name form (e.g. cavi-ai/my-vault).");
   const url = `${API}/repos/${ref.owner}/${ref.name}/contents/${encodePath(path)}?ref=${encodeURIComponent(cfg.branch.trim())}`;
   return { url, method: "GET", headers: authHeaders(cfg.token) };
 }

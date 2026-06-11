@@ -58,12 +58,13 @@ export class AnthropicProvider implements Provider {
       return;
     }
     try {
-      const res = await fetch(messagesUrl(auth), {
+      const init: RequestInit = {
         method: "POST",
         headers: this.headers(auth),
         body: this.body(req, true, auth),
-        signal: req.signal,
-      });
+      };
+      if (req.signal) init.signal = req.signal;
+      const res = await fetch(messagesUrl(auth), init);
       if (!res.ok || !res.body) {
         const text = await res.text().catch(() => "");
         throw new ProviderError(extractApiError(text, res.status), res.status);

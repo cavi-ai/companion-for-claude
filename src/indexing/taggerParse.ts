@@ -9,9 +9,9 @@ export function parseTaggerOutput(raw: string): { tags: string[]; summary: strin
     const t = /^\s*title\s*:\s*(.+)$/i.exec(line);
     const m = /^\s*tags\s*:\s*(.+)$/i.exec(line);
     const s = /^\s*summary\s*:\s*(.+)$/i.exec(line);
-    if (t) title = t[1].trim().replace(/^["']|["']$/g, "").replace(/[.?!]+$/, "").trim();
-    else if (m) tags = parseTagSuggestions(m[1]);
-    else if (s) summary = s[1].trim();
+    if (t?.[1]) title = t[1].trim().replace(/^["']|["']$/g, "").replace(/[.?!]+$/, "").trim();
+    else if (m?.[1]) tags = parseTagSuggestions(m[1]);
+    else if (s?.[1]) summary = s[1].trim();
   }
   // Fallback: if the model ignored the format, treat the whole thing as tags.
   if (tags.length === 0) tags = parseTagSuggestions(raw);

@@ -28,6 +28,14 @@ describe("validateArtifactInteractivity", () => {
     expect(r.issues.join(" ")).toContain("stop");
     expect(r.issues.join(" ")).not.toContain("go(");
   });
+
+  it("matches script end tags with whitespace and bogus attributes (CodeQL bad-tag-filter)", () => {
+    // Browsers close the element on `</script >` and even `</script\t\n bar>`, so
+    // the regex must too — else the script body is missed and a correctly-defined
+    // handler is falsely flagged as undefined.
+    expect(validateArtifactInteractivity(`<button onclick="go()">x</button><script>function go(){}</script >`).ok).toBe(true);
+    expect(validateArtifactInteractivity(`<button onclick="go()">x</button><script>function go(){}</script\t\n bar>`).ok).toBe(true);
+  });
 });
 
 describe("extractArtifact", () => {

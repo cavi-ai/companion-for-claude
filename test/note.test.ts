@@ -71,4 +71,17 @@ describe("writeDigestNote", () => {
     expect(all.length).toBe(1);
     expect(await app.vault.cachedRead(out)).toContain("session_id: s7"); // upgraded to the new key
   });
+
+  it("matches a quoted session_id in place (no duplicate)", async () => {
+    const app = new App();
+    // A note whose frontmatter value got quoted (e.g. reformatted by another tool).
+    await app.vault.createFolder("Claude/Sessions");
+    const quoted = await app.vault.create("Claude/Sessions/q.md", '---\nsession_id: "s9"\n---\n\nold body');
+    const v = renderDigestNote({ ...digest, sessionId: "s9" }, { baseTags: ["claude"] });
+    const out = await writeDigestNote(app, "Claude/Sessions", "s9", v, "2026-06-03-q");
+
+    expect(out.path).toBe(quoted.path); // updated in place despite the quotes
+    const all = app.vault.getMarkdownFiles().filter((f) => f.path.startsWith("Claude/Sessions/"));
+    expect(all.length).toBe(1);
+  });
 });
