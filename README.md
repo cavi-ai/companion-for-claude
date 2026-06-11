@@ -1,32 +1,39 @@
 # Companion for Claude
 
-> Bring Claude *into* your Obsidian vault. Chat with your notes as context,
-> generate gallery-grade interactive artifacts, and capture your Claude Code
-> sessions back into Markdown — so your vault stays the single source of truth.
+### Claude, inside your Obsidian vault.
 
-**Desktop only · Bring your own Anthropic credential · Nothing leaves your machine except calls to the Anthropic API.**
+Chat with your notes as context, render **gallery-grade interactive artifacts**
+right inside your notes, and capture your Claude Code sessions back into Markdown.
+Your vault stays the single source of truth — and nothing leaves your machine
+except the call to Anthropic.
 
-<!--
-  Screenshots live in ./assets (see assets/CAPTURE.md for the shot list).
-  Drop the PNGs in and these light up; until then GitHub shows a placeholder.
--->
-![Companion for Claude — the side-panel chat with vault context](assets/chat-panel.png)
+[**▶ Install from the Obsidian community store**](obsidian://show-plugin?id=claude-companion)
+ · [Latest release](https://github.com/cavi-ai/companion-for-claude/releases/latest)
+ · [Claude Code plugin](https://github.com/cavi-ai/claude-obsidian)
+
+![Companion for Claude — chat with your vault, artifacts rendering inline](assets/chat-panel.png)
+
+**500+ installs in the first weekend · Desktop · MIT · Bring your own Anthropic key · Local-first**
 
 ---
 
 ## What it does
 
-- **Chat in a side panel** — streaming, Markdown-rendered replies with per-message
-  **Copy / Insert / Save as note / Regenerate**, and hover-to-copy on every code block.
-- **Vault-aware context** — toggle chips to attach your **active note**, the
-  **current selection**, **linked & backlinked notes**, or a keyword **vault search**
-  (lightweight RAG, no embeddings) to any message.
-- **Beautiful interactive artifacts** — Claude emits a `claude-html` block; Companion
-  renders it **inline** in a sandboxed iframe, opens it in your browser, or **saves it
-  as a note** that stays interactive and portable.
-- **Session memory _(new in 0.6.0)_** — capture your **Claude Code** CLI sessions for
-  this vault into clean, **secret-sanitized** digest notes: the conversation, the tools
-  Claude ran, files touched, and provenance (model, branch, tokens, timespan).
+**🗂 Chat that knows your vault** — streaming, Markdown-rendered replies grounded in
+your **active note**, **selection**, **linked & backlinked notes**, or a keyword
+**vault search** (lightweight RAG, no embeddings). Copy, insert, save as note, or
+regenerate any answer.
+
+**✨ Interactive artifacts, inline** — Claude emits a `claude-html` block and Companion
+renders it **live** in a sandboxed iframe — dashboards, diagrams, roadmaps — that you
+can open in the browser or **save as a portable note** that stays interactive.
+
+**🔁 Capture your Claude Code work** — pull your **Claude Code** CLI sessions into clean,
+**secret-sanitized** digest notes (conversation, tools run, files touched, provenance),
+so the work and the knowledge live in the same vault.
+
+<details><summary><b>Everything else</b> — model controls, slash commands, offline fallback, usage display, MCP bridge</summary>
+
 - **In-chat model & reasoning controls** — switch model per message
   (**Opus / Sonnet / Haiku**), toggle **extended thinking** with an **effort** dial,
   stream the reasoning in a collapsible panel, set per-message temperature / max tokens.
@@ -42,6 +49,7 @@
   (estimated cost on API-key auth, a subscription marker on OAuth) — no billing surprises.
 - **Vault as an MCP bridge** — expose your vault to **Claude Code** and **Claude Desktop**
   so all three work against the same notes.
+</details>
 
 ## See it in action
 
@@ -55,14 +63,16 @@ The same design system, a different shape — a workflow's working map:
 
 ## Install
 
-**From the Obsidian community store** (once published):
-*Settings → Community plugins → Browse → search "Companion for Claude" → Install → Enable.*
+**From the Obsidian community store:** *Settings → Community plugins → Browse →
+search "Companion for Claude" → Install → Enable.* Or [open it directly](obsidian://show-plugin?id=claude-companion).
 
-**Manual install:**
+<details><summary>Manual install</summary>
+
 1. Download `main.js`, `manifest.json`, and `styles.css` from the
    [latest release](https://github.com/cavi-ai/companion-for-claude/releases/latest).
 2. Drop them into `<your-vault>/.obsidian/plugins/claude-companion/`.
 3. Enable **Companion for Claude** in *Settings → Community plugins*.
+</details>
 
 Then open *Settings → Companion for Claude* and add your Anthropic credential (below).
 
