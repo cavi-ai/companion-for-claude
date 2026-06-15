@@ -106,7 +106,7 @@ export class ChatView extends ItemView {
     this.iconButton(actions, "plus", "New chat", () => this.clearChat());
     this.iconButton(actions, "history", "Resume a past conversation", () => this.openHistory());
     this.iconButton(actions, "wand-2", "Run a vault workflow (manifests, rollup, MOC…)", () => void this.plugin.openWorkflowPicker());
-    this.iconButton(actions, "save", "Save chat to vault", () => this.saveChat());
+    this.iconButton(actions, "save", "Save chat to vault", () => void this.saveChat());
     if (this.plugin.settings.memoryEnabled && !Platform.isMobile) {
       // "import" reads as a one-shot pull-in, not a toggle — capture brings a
       // Claude Code session's transcript into the vault.
@@ -137,8 +137,8 @@ export class ChatView extends ItemView {
 
     // Palettes anchored above the input (built before the textarea so they sit
     // above it in flow; CSS positions them absolutely).
-    this.slashMenu = new SlashMenu(composer, SLASH_COMMANDS, (cmd) => this.runSlashCommand(cmd));
-    this.atMenu = new AtMenu(composer, () => this.atItems(), (item) => this.onAtChoose(item));
+    this.slashMenu = new SlashMenu(composer, SLASH_COMMANDS, (cmd) => void this.runSlashCommand(cmd));
+    this.atMenu = new AtMenu(composer, () => this.atItems(), (item) => void this.onAtChoose(item));
 
     this.inputEl = composer.createEl("textarea", {
       cls: "cc-input",
@@ -161,7 +161,7 @@ export class ChatView extends ItemView {
       }
       if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();
-        this.onSend();
+        void this.onSend();
       }
     });
     this.inputEl.addEventListener("input", () => {
@@ -185,7 +185,7 @@ export class ChatView extends ItemView {
     this.gaugeFillEl = gauge.createDiv({ cls: "cc-gauge-fill" });
     this.usageEl = usageRow.createDiv({ cls: "cc-usage-text" });
     this.sendBtn = sendGroup.createEl("button", { cls: "cc-send", text: "Send" });
-    this.sendBtn.addEventListener("click", () => this.onSend());
+    this.sendBtn.addEventListener("click", () => void this.onSend());
 
     this.refreshModelLabel();
     void this.refreshBackendPill();
@@ -346,10 +346,10 @@ export class ChatView extends ItemView {
       btn.setAttr("aria-pressed", String(on));
     };
     sync();
-    btn.addEventListener("click", async () => {
+    btn.addEventListener("click", () => {
       this.plugin.settings.memoryIngestOnSave = !this.plugin.settings.memoryIngestOnSave;
       sync();
-      await this.plugin.saveSettings();
+      void this.plugin.saveSettings();
     });
   }
 
@@ -412,9 +412,9 @@ export class ChatView extends ItemView {
       const el = this.pillsEl.createDiv({ cls: "cc-attach-pill" });
       el.createSpan({ cls: "cc-attach-label", text: label });
       const x = el.createEl("button", { cls: "cc-attach-x", attr: { "aria-label": `Remove ${label}` }, text: "×" });
-      x.addEventListener("click", async () => {
+      x.addEventListener("click", () => {
         onRemove();
-        await this.plugin.saveSettings();
+        void this.plugin.saveSettings();
         this.renderAttachPills();
         this.updateUsageBar();
       });
@@ -472,7 +472,7 @@ export class ChatView extends ItemView {
       tuneBtn.setAttr("aria-expanded", String(open));
     });
     // Close the popover on an outside click (auto-cleaned with the view).
-    this.registerDomEvent(document, "click", (e) => {
+    this.registerDomEvent(activeDocument, "click", (e) => {
       if (this.knobsEl?.hasClass("is-open") && !tuneWrap.contains(e.target as Node)) {
         this.knobsEl.removeClass("is-open");
         tuneBtn.setAttr("aria-expanded", "false");
@@ -793,11 +793,11 @@ export class ChatView extends ItemView {
         this.annotateFallback(bubble, fallbackReason(err1));
         const err2 = await this.streamTurn("local", apiMessages, bubble, body);
         if (err2) {
-          this.renderError(body, err2.message ?? String(err2));
+          this.renderError(body, err2.message ?? "Request failed");
           this.finishAssistant(null, bubble);
         }
       } else {
-        this.renderError(body, err1.message ?? String(err1));
+        this.renderError(body, err1.message ?? "Request failed");
         this.finishAssistant(null, bubble);
       }
     }
@@ -1148,7 +1148,7 @@ export class ChatView extends ItemView {
   private async renderMarkdownInto(el: HTMLElement, markdown: string): Promise<void> {
     const version = this.bumpRenderVersion(el);
     el.removeClass("cc-streaming-raw");
-    const rendered = document.createElement("div");
+    const rendered = activeDocument.createElement("div");
     await MarkdownRenderer.render(this.app, markdown, rendered, this.app.workspace.getActiveFile()?.path ?? "", this);
     if (this.renderVersions.get(el) !== version) return;
     el.replaceChildren(...Array.from(rendered.childNodes));
@@ -1224,7 +1224,7 @@ export class ChatView extends ItemView {
         const code = pre.querySelector("code")?.textContent ?? pre.textContent ?? "";
         void navigator.clipboard.writeText(code);
         btn.setText("Copied!");
-        setTimeout(() => btn.setText("Copy"), 1200);
+        window.setTimeout(() => btn.setText("Copy"), 1200);
       });
     });
   }
@@ -1273,7 +1273,8 @@ export class ChatView extends ItemView {
       .split("\n")
       .map((l) => l.replace(/^#+\s*/, "").replace(/[*_`]/g, "").trim())
       .find((l) => l.length > 0) ?? "";
-    const sentence = line.split(/(?<=[.?!])\s/)[0] || line;
+    // Match the first sentence with a lookahead (lookbehind is unsupported on iOS < 16.4).
+    const sentence = line.match(/^.*?[.?!](?=\s)/)?.[0] || line;
     return (sentence || "Claude chat").slice(0, 60);
   }
 

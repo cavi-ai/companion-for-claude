@@ -64,6 +64,7 @@ export class AnthropicProvider implements Provider {
         body: this.body(req, true, auth),
       };
       if (req.signal) init.signal = req.signal;
+      // eslint-disable-next-line no-restricted-globals -- streaming SSE response requires fetch; Obsidian requestUrl has no streaming support
       const res = await fetch(messagesUrl(auth), init);
       if (!res.ok || !res.body) {
         const text = await res.text().catch(() => "");

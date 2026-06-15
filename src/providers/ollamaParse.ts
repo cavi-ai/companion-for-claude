@@ -15,7 +15,7 @@ export function parseOllamaLine(line: string): OllamaLineResult {
   if (trimmed.length === 0) return { text: "", done: false };
   let obj: { message?: { content?: string }; done?: boolean; error?: string };
   try {
-    obj = JSON.parse(trimmed);
+    obj = JSON.parse(trimmed) as { message?: { content?: string }; done?: boolean; error?: string };
   } catch {
     return { text: "", done: false }; // ignore partials / keep-alives
   }

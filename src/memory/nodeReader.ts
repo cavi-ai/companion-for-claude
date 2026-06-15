@@ -6,9 +6,11 @@
 // where these builtins don't exist. The pure discovery logic lives in
 // sessions.ts (no Node), which is safe to import anywhere.
 
+/* eslint-disable import/no-nodejs-modules -- desktop-only module, lazy-loaded behind Platform.isMobile (see header) */
 import { readdir, readFile, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
+/* eslint-enable import/no-nodejs-modules */
 import type { SessionFile, SessionReader } from "./sessions";
 
 /** Absolute ~/.claude/projects root for the current user. */

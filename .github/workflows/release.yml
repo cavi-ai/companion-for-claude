@@ -1,0 +1,65 @@
+name: Release
+
+# Builds the plugin from source in CI, attaches a GitHub build-provenance
+# attestation to the release assets (so users can cryptographically verify they
+# were built from this repository), and publishes the GitHub Release.
+#
+# Triggered by pushing a semver tag (e.g. 0.8.1) that must match manifest.json.
+
+on:
+  push:
+    tags:
+      - "[0-9]+.[0-9]+.[0-9]+"
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.32.1
+
+      - name: Use Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22.x"
+          cache: pnpm
+
+      - name: Install + build
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm run build
+          test -f main.js
+
+      - name: Verify tag matches manifest version
+        run: |
+          MANIFEST="$(node -p "require('./manifest.json').version")"
+          if [ "${GITHUB_REF_NAME}" != "$MANIFEST" ]; then
+            echo "::error::Tag ${GITHUB_REF_NAME} does not match manifest version $MANIFEST"
+            exit 1
+          fi
+          echo "Releasing $MANIFEST"
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            main.js
+            manifest.json
+            styles.css
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" main.js manifest.json styles.css \
+            --title "${GITHUB_REF_NAME}" \
+            --notes "Companion for Claude ${GITHUB_REF_NAME}. Full notes: https://github.com/cavi-ai/claude-obsidian/blob/main/CHANGELOG.md"

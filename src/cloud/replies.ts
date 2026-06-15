@@ -7,6 +7,9 @@
 // writes reply notes to a folder on a branch, and opens a PR; this fetches
 // those notes so they land in the vault even on a phone.
 
+/** Coerce an unknown JSON field to a string (GitHub API fields are strings). */
+const asStr = (v: unknown): string => (typeof v === "string" ? v : "");
+
 export interface RepliesConfig {
   /** "owner/name" of the vault's GitHub repo. */
   repo: string;
@@ -95,12 +98,12 @@ export function parseDirListing(status: number, bodyText: string): RepoFile[] {
     return json
       .map((e) => e as Record<string, unknown>)
       .filter((e) => e.type === "file")
-      .map((e) => ({ name: String(e.name ?? ""), path: String(e.path ?? ""), sha: String(e.sha ?? "") }));
+      .map((e) => ({ name: asStr(e.name), path: asStr(e.path), sha: asStr(e.sha) }));
   }
   // A single file path returns an object, not an array.
   if (json && typeof json === "object" && (json as Record<string, unknown>).type === "file") {
     const f = json as Record<string, unknown>;
-    return [{ name: String(f.name ?? ""), path: String(f.path ?? ""), sha: String(f.sha ?? "") }];
+    return [{ name: asStr(f.name), path: asStr(f.path), sha: asStr(f.sha) }];
   }
   throw new Error("Unexpected Contents API response (not a directory or file).");
 }
@@ -113,7 +116,7 @@ export function parseFileResponse(status: number, bodyText: string): FetchedFile
   const content = typeof json.content === "string" ? json.content : "";
   const encoding = typeof json.encoding === "string" ? json.encoding : "";
   const text = encoding === "base64" ? decodeBase64Utf8(content) : content;
-  return { path: String(json.path ?? ""), sha: String(json.sha ?? ""), text };
+  return { path: asStr(json.path), sha: asStr(json.sha), text };
 }
 
 export function isMarkdown(name: string): boolean {

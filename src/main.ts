@@ -306,14 +306,14 @@ export default class ClaudeCompanionPlugin extends Plugin {
     // Migrate the legacy shape (data.json *was* the settings object) to the
     // namespaced { settings, conversations } shape.
     const isNamespaced = !!raw && typeof raw === "object" && ("settings" in raw || "conversations" in raw);
-    const settingsData = (isNamespaced ? (raw as PersistedData).settings : raw) as Partial<PluginSettings> | null;
+    const settingsData = (isNamespaced ? (raw).settings : raw) as Partial<PluginSettings> | null;
     this.settings = {
       ...DEFAULT_SETTINGS,
       ...settingsData,
       context: { ...DEFAULT_SETTINGS.context, ...(settingsData?.context ?? {}) },
     };
     this.convState = isNamespaced
-      ? fromPersisted({ conversations: (raw as PersistedData).conversations, activeId: (raw as PersistedData).activeConversationId })
+      ? fromPersisted({ conversations: (raw).conversations, activeId: (raw).activeConversationId })
       : emptyState();
   }
 
@@ -424,6 +424,7 @@ export default class ClaudeCompanionPlugin extends Plugin {
 
   /** The bearer token the server validates against: env var wins over stored. */
   private resolvedMcpToken(): string {
+    // eslint-disable-next-line obsidianmd/no-global-this -- Electron/Node global (crypto/process/require), not window-scoped; globalThis works in the node test env and is mobile-safe via optional chaining
     const env = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env ?? {};
     return resolveMcpToken(env, this.settings.mcpToken).token;
   }
@@ -467,7 +468,7 @@ export default class ClaudeCompanionPlugin extends Plugin {
     const server = new McpHttpServer(
       { port: s.mcpPort, token: this.resolvedMcpToken(), serverInfo: { name: "obsidian-vault", version: "0.2.0" } },
       this.vaultTools,
-      (level, message) => (level === "error" ? console.error("[Claude Companion MCP]", message) : console.log("[Claude Companion MCP]", message)),
+      (level, message) => { if (level === "error") console.error("[Claude Companion MCP]", message); },
     );
     try {
       await server.start();
@@ -566,7 +567,7 @@ export default class ClaudeCompanionPlugin extends Plugin {
       embed: (input: string[]) => this.router().ollama.embed(model, input),
       load: async () => {
         try {
-          if (await adapter.exists(path)) return JSON.parse(await adapter.read(path));
+          if (await adapter.exists(path)) return JSON.parse(await adapter.read(path)) as IndexData;
         } catch {
           /* corrupt/missing → rebuild from empty */
         }
@@ -692,7 +693,7 @@ export default class ClaudeCompanionPlugin extends Plugin {
       if (leaf) await leaf.setViewState({ type: CHAT_VIEW_TYPE, active: true });
     }
     if (leaf) {
-      workspace.revealLeaf(leaf);
+      await workspace.revealLeaf(leaf);
       return leaf.view instanceof ChatView ? leaf.view : null;
     }
     return null;
@@ -831,7 +832,7 @@ export default class ClaudeCompanionPlugin extends Plugin {
       leaf = workspace.getRightLeaf(false);
       if (leaf) await leaf.setViewState({ type: MEMORY_VIEW_TYPE, active: true });
     }
-    if (leaf) workspace.revealLeaf(leaf);
+    if (leaf) await workspace.revealLeaf(leaf);
   }
 
   private async refreshMemoryView(): Promise<void> {
@@ -850,7 +851,7 @@ export default class ClaudeCompanionPlugin extends Plugin {
       leaf = workspace.getRightLeaf(false);
       if (leaf) await leaf.setViewState({ type: RELATED_VIEW_TYPE, active: true });
     }
-    if (leaf) workspace.revealLeaf(leaf);
+    if (leaf) await workspace.revealLeaf(leaf);
   }
 
   // ---------- command helpers ----------

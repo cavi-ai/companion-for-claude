@@ -805,7 +805,7 @@
 
 /* Respect reduced-motion: disable all the springy bits. */
 @media (prefers-reduced-motion: reduce) {
-  .cc-root * { transition: none !important; animation: none !important; }
+  .cc-root.cc-root * { transition: none; animation: none; }
 }
 
 /* ---- context chips: label + clearer states + hover ---- */

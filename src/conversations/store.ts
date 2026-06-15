@@ -155,6 +155,6 @@ function isConversation(v: unknown): v is Conversation {
     typeof c.createdAt === "number" &&
     typeof c.updatedAt === "number" &&
     Array.isArray(c.messages) &&
-    c.messages.every((m) => m && typeof (m as ChatMessage).role === "string" && typeof (m as ChatMessage).content === "string")
+    c.messages.every((m) => m && typeof (m).role === "string" && typeof (m).content === "string")
   );
 }

@@ -55,7 +55,7 @@ export class SemanticStore {
       version: INDEX_VERSION,
       model,
       dim: d.dim ?? 0,
-      notes: d.notes as Record<string, NoteEntry>,
+      notes: d.notes,
     });
   }
 

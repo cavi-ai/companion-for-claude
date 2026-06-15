@@ -1,3 +1,4 @@
+// eslint-disable-next-line import/no-nodejs-modules -- desktop-only MCP server; loaded only via a guarded dynamic import on desktop (see main.ts), never on mobile
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from "http";
 import { handleRpc, validateRequest, err, RPC, type JsonRpcResponse, type ServerInfo } from "./protocol";
 import type { VaultTools } from "./vaultTools";
@@ -80,7 +81,7 @@ export class McpHttpServer {
   }
 
   private authorized(req: IncomingMessage): boolean {
-    const header = req.headers["authorization"];
+    const header = req.headers["authorization"] as string | string[] | undefined;
     const bearer = Array.isArray(header) ? header[0] : header;
     return bearer === `Bearer ${this.config.token.trim()}`;
   }
@@ -191,14 +192,14 @@ function readBody(req: IncomingMessage): Promise<string> {
     let data = "";
     let size = 0;
     const MAX = 5 * 1024 * 1024; // 5 MB guard
-    req.on("data", (chunk) => {
+    req.on("data", (chunk: Buffer) => {
       size += chunk.length;
       if (size > MAX) {
         reject(new Error("Body too large"));
         req.destroy();
         return;
       }
-      data += chunk;
+      data += chunk.toString("utf8");
     });
     req.on("end", () => resolve(data));
     req.on("error", reject);

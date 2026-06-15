@@ -12,6 +12,7 @@ export interface AnthropicEnv {
 /** Snapshot the relevant env vars, guarding against a missing `process`. */
 export function readAnthropicEnv(): AnthropicEnv {
   try {
+    // eslint-disable-next-line obsidianmd/no-global-this -- Electron/Node global (crypto/process/require), not window-scoped; globalThis works in the node test env and is mobile-safe via optional chaining
     const env = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env;
     if (!env) return {};
     const out: AnthropicEnv = {};

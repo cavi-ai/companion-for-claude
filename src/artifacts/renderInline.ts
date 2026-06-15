@@ -87,12 +87,12 @@ export function renderArtifactInline(
       closeMenu = (ev: MouseEvent) => {
         if (!split.contains(ev.target as Node)) {
           menu.removeClass("is-open");
-          if (closeMenu) document.removeEventListener("mousedown", closeMenu);
+          if (closeMenu) activeDocument.removeEventListener("mousedown", closeMenu);
           closeMenu = null;
         }
       };
       // Defer so this same click doesn't immediately close it.
-      window.setTimeout(() => closeMenu && document.addEventListener("mousedown", closeMenu), 0);
+      window.setTimeout(() => closeMenu && activeDocument.addEventListener("mousedown", closeMenu), 0);
     }
   });
 
@@ -149,6 +149,7 @@ const BROWSER_APP: Record<string, string> = {
  */
 export async function openArtifactExternally(html: string, title: string, target: ArtifactOpenTarget = "default"): Promise<void> {
   try {
+    // eslint-disable-next-line obsidianmd/no-global-this -- Electron/Node global (crypto/process/require), not window-scoped; globalThis works in the node test env and is mobile-safe via optional chaining
     const req = (globalThis as { require?: (m: string) => unknown }).require;
     if (!req) throw new Error("native modules unavailable");
     const os = req("os") as { tmpdir(): string; platform(): string };

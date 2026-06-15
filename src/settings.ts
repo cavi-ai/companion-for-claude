@@ -21,8 +21,21 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
   }
 
   override display(): void {
+    this.renderSettings();
+  }
+
+  private renderSettings(): void {
     const { containerEl } = this;
     containerEl.empty();
+
+    // In-app disclosure of what the plugin accesses — mirrors the community-store
+    // "Behavior" notes so users see it after install, not just on the store page.
+    new Setting(containerEl)
+      .setName("What this plugin accesses")
+      .setDesc(
+        "Your messages and vault context go only to Anthropic (and your local Ollama, if enabled) — nothing else leaves your machine. On desktop, optional features touch files outside the vault: session capture reads Claude Code transcripts from your Claude projects folder, and “open artifact in browser” writes a temporary HTML file. Semantic search reads every note in your vault to build a local index. Copy buttons use the system clipboard. All filesystem access is disabled on mobile.",
+      )
+      .setHeading();
 
     new Setting(containerEl).setName("Connection").setHeading();
 
@@ -38,7 +51,7 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
         dd.setValue(s.authMode).onChange(async (v) => {
           s.authMode = v as typeof s.authMode;
           await this.plugin.saveSettings();
-          this.display(); // re-render to show the matching field
+          this.renderSettings(); // re-render to show the matching field
         });
       });
 
@@ -367,7 +380,7 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
             }
             new Notice(`Detected ${models.length} model(s).`);
           }
-          this.display(); // re-render so the dropdown appears/updates
+          this.renderSettings(); // re-render so the dropdown appears/updates
         }),
     );
 
@@ -393,7 +406,7 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
         t.setValue(this.plugin.settings.semanticEnabled).onChange(async (v) => {
           this.plugin.settings.semanticEnabled = v;
           await this.plugin.saveSettings();
-          this.display();
+          this.renderSettings();
         }),
       );
 
@@ -524,7 +537,7 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
         t.setValue(s.cloudDispatchEnabled).onChange(async (v) => {
           s.cloudDispatchEnabled = v;
           await this.plugin.saveSettings();
-          this.display();
+          this.renderSettings();
         }),
       );
 
@@ -663,6 +676,7 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
       text: "Expose this vault as a local MCP server so Claude Code and Claude Desktop can search, read, and (optionally) write your notes — unifying all three on one knowledge base. Bound to 127.0.0.1 and protected by a token.",
     });
 
+    // eslint-disable-next-line obsidianmd/no-global-this -- Electron/Node global (crypto/process/require), not window-scoped; globalThis works in the node test env and is mobile-safe via optional chaining
     const mcpEnv = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env ?? {};
     const resolvedMcp = resolveMcpToken(mcpEnv, s.mcpToken);
 
@@ -675,7 +689,7 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
           // Only mint a stored token when neither the env var nor a stored token exists.
           if (v && !resolvedMcp.token) s.mcpToken = generateToken();
           await this.plugin.saveSettings();
-          this.display(); // refresh status + snippets
+          this.renderSettings(); // refresh status + snippets
         }),
       );
 
@@ -712,7 +726,7 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
           btn.setButtonText("Regenerate").onClick(async () => {
             s.mcpToken = generateToken();
             await this.plugin.saveSettings();
-            this.display();
+            this.renderSettings();
           }),
         );
     }
@@ -759,7 +773,7 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
           .addToggle((t) =>
             t.setValue(this.revealMcpToken).onChange((v) => {
               this.revealMcpToken = v;
-              this.display();
+              this.renderSettings();
             }),
           );
       }
@@ -790,7 +804,7 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
     copy.addEventListener("click", () => {
       void navigator.clipboard.writeText(copyText);
       copy.setText("Copied");
-      setTimeout(() => copy.setText("Copy"), 1200);
+      window.setTimeout(() => copy.setText("Copy"), 1200);
     });
     wrap.createEl("pre", { cls: "cc-snippet-pre" }).createEl("code", { text: code });
   }
