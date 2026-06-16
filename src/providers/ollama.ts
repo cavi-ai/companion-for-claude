@@ -45,8 +45,7 @@ export class OllamaProvider implements Provider {
         body: this.body(req),
       };
       if (req.signal) init.signal = req.signal;
-      // eslint-disable-next-line no-restricted-globals -- streaming SSE response requires fetch; Obsidian requestUrl has no streaming support
-      const res = await fetch(`${this.base()}/api/chat`, init);
+      const res = await window.fetch(`${this.base()}/api/chat`, init);
       if (!res.ok || !res.body) {
         throw new ProviderError(`Ollama error ${res.status}. Is \`ollama serve\` running at ${this.base()}?`, res.status);
       }

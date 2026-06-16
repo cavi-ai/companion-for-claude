@@ -149,8 +149,7 @@ const BROWSER_APP: Record<string, string> = {
  */
 export async function openArtifactExternally(html: string, title: string, target: ArtifactOpenTarget = "default"): Promise<void> {
   try {
-    // eslint-disable-next-line obsidianmd/no-global-this -- Electron/Node global (crypto/process/require), not window-scoped; globalThis works in the node test env and is mobile-safe via optional chaining
-    const req = (globalThis as { require?: (m: string) => unknown }).require;
+    const req = (window as { require?: (m: string) => unknown }).require;
     if (!req) throw new Error("native modules unavailable");
     const os = req("os") as { tmpdir(): string; platform(): string };
     const path = req("path") as { join(...p: string[]): string };

@@ -676,8 +676,7 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
       text: "Expose this vault as a local MCP server so Claude Code and Claude Desktop can search, read, and (optionally) write your notes — unifying all three on one knowledge base. Bound to 127.0.0.1 and protected by a token.",
     });
 
-    // eslint-disable-next-line obsidianmd/no-global-this -- Electron/Node global (crypto/process/require), not window-scoped; globalThis works in the node test env and is mobile-safe via optional chaining
-    const mcpEnv = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env ?? {};
+    const mcpEnv = (window as { process?: { env?: Record<string, string | undefined> } }).process?.env ?? {};
     const resolvedMcp = resolveMcpToken(mcpEnv, s.mcpToken);
 
     new Setting(containerEl)

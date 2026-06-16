@@ -3,8 +3,7 @@
 /** Generate a URL-safe random token. Uses Web Crypto when available. */
 export function generateToken(bytes = 24): string {
   const arr = new Uint8Array(bytes);
-  // eslint-disable-next-line obsidianmd/no-global-this -- Electron/Node global (crypto/process/require), not window-scoped; globalThis works in the node test env and is mobile-safe via optional chaining
-  const c = (globalThis as { crypto?: Crypto }).crypto;
+  const c = (window as { crypto?: Crypto }).crypto;
   if (c?.getRandomValues) {
     c.getRandomValues(arr);
   } else {

@@ -1,7 +1,14 @@
-// eslint-disable-next-line import/no-nodejs-modules -- desktop-only MCP server; loaded only via a guarded dynamic import on desktop (see main.ts), never on mobile
-import { createServer, type Server, type IncomingMessage, type ServerResponse } from "http";
 import { handleRpc, validateRequest, err, RPC, type JsonRpcResponse, type ServerInfo } from "./protocol";
 import type { VaultTools } from "./vaultTools";
+
+// The MCP server is desktop-only and reached via a guarded dynamic import (see
+// main.ts). Its `http` types are inline `import("http")` references (erased at
+// build) and `createServer` is loaded at runtime via Electron's `window.require`,
+// so the bundle never statically imports a Node builtin — keeping the plugin
+// loadable on mobile.
+type Server = import("http").Server;
+type IncomingMessage = import("http").IncomingMessage;
+type ServerResponse = import("http").ServerResponse;
 
 export interface McpServerConfig {
   port: number;
@@ -52,7 +59,8 @@ export class McpHttpServer {
       throw new Error("MCP server requires a non-empty bearer token.");
     }
     await new Promise<void>((resolve, reject) => {
-      const server = createServer((req, res) => void this.onRequest(req, res));
+      const http = (window as { require: (m: string) => typeof import("http") }).require("http");
+      const server = http.createServer((req, res) => void this.onRequest(req, res));
       server.on("error", (e) => {
         this.server = null;
         reject(e);

@@ -424,8 +424,7 @@ export default class ClaudeCompanionPlugin extends Plugin {
 
   /** The bearer token the server validates against: env var wins over stored. */
   private resolvedMcpToken(): string {
-    // eslint-disable-next-line obsidianmd/no-global-this -- Electron/Node global (crypto/process/require), not window-scoped; globalThis works in the node test env and is mobile-safe via optional chaining
-    const env = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env ?? {};
+    const env = (window as { process?: { env?: Record<string, string | undefined> } }).process?.env ?? {};
     return resolveMcpToken(env, this.settings.mcpToken).token;
   }
 
