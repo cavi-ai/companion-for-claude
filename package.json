@@ -1,6 +1,6 @@
 {
   "name": "claude-companion",
-  "version": "0.8.2",
+  "version": "0.8.3",
   "description": "Chat with Claude inside your Obsidian vault, generate beautiful interactive artifacts, and sync them back into your notes.",
   "main": "main.js",
   "type": "module",

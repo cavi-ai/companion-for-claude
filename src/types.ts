@@ -126,6 +126,18 @@ export interface PluginSettings {
   memoryIngestOnSave: boolean;
   /** Tags every session digest note gets. */
   memoryBaseTags: string[];
+
+  // ----- source capture (typed clip enrichment) -----
+  /** Master switch: watch the inbox and enrich new clips/files into typed notes. */
+  sourceCaptureEnabled: boolean;
+  /** Auto-enrich files as they appear in the inbox folder (vs. manual command only). */
+  sourceEnrichOnCreate: boolean;
+  /** Folder the Web Clipper writes to and Companion watches. */
+  sourceInboxFolder: string;
+  /** Tags every enriched source note gets. */
+  sourceBaseTags: string[];
+  /** Per-type schema overrides, keyed by source type. */
+  sourceSchemaOverrides: Record<string, { version?: number; fields?: unknown[] }>;
 }
 
 export const DEFAULT_SETTINGS: PluginSettings = {
@@ -187,6 +199,12 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   memoryFolder: "Claude/Sessions",
   memoryIngestOnSave: false,
   memoryBaseTags: ["claude", "session"],
+
+  sourceCaptureEnabled: false,
+  sourceEnrichOnCreate: true,
+  sourceInboxFolder: "Clippings",
+  sourceBaseTags: ["source"],
+  sourceSchemaOverrides: {},
 };
 
 /** Streaming callbacks for a single Claude request. */

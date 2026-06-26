@@ -213,13 +213,37 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
       );
 
     this.accordion(containerEl, "Storage", (c) => this.renderStorageSection(c));
-    this.accordion(containerEl, "Local models (Ollama)", (c) => this.renderLocalModelsSection(c));
+    // On mobile, Cloud session is the primary way to cowork — promote it above
+    // the local/desktop-bound sections.
+    this.accordion(containerEl, "Cloud session (mobile-friendly)", (c) => this.renderCloudSection(c));
     this.accordion(containerEl, "Semantic search (local embeddings)", (c) => this.renderSemanticSection(c));
     this.accordion(containerEl, "Indexing & tags", (c) => this.renderIndexingSection(c));
-    this.accordion(containerEl, "Cloud session (mobile-friendly)", (c) => this.renderCloudSection(c));
     this.accordion(containerEl, "Cloud replies (pull from repo)", (c) => this.renderRepliesSection(c));
-    this.accordion(containerEl, "Unified bridge (MCP server)", (c) => this.renderMcpSection(c));
-    this.accordion(containerEl, "Session memory", (c) => this.renderMemorySection(c));
+    // Source capture is vault-API based (no Node/fs) → works on mobile, so it
+    // stays in the shared group rather than the desktop-only block below.
+    this.accordion(containerEl, "Source capture (typed clips)", (c) => this.renderSourceCaptureSection(c));
+    if (!Platform.isMobile) {
+      this.accordion(containerEl, "Local models (Ollama)", (c) => this.renderLocalModelsSection(c));
+      this.accordion(containerEl, "Unified bridge (MCP server)", (c) => this.renderMcpSection(c));
+      this.accordion(containerEl, "Session memory", (c) => this.renderMemorySection(c));
+    } else {
+      // Desktop-only features are hidden on a phone (they need a desktop runtime);
+      // one collapsed note explains where they went so nothing feels missing.
+      const note = containerEl.createEl("details", { cls: "cc-accordion" });
+      note.createEl("summary", { cls: "cc-accordion-summary", text: "🖥 Desktop-only features" });
+      const body = note.createDiv({ cls: "cc-accordion-body" });
+      body.createEl("p", {
+        text: "These need a desktop runtime and are available when you open this vault on a computer:",
+      });
+      const ul = body.createEl("ul");
+      for (const t of [
+        "Local models (Ollama) — runs a localhost model server",
+        "Unified bridge (MCP server) — exposes your vault to Claude Code",
+        "Session memory — captures Claude Code transcripts from disk",
+      ]) {
+        ul.createEl("li", { text: t });
+      }
+    }
   }
 
   private renderStorageSection(containerEl: HTMLElement): void {
@@ -516,6 +540,53 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
       .addToggle((t) =>
         t.setValue(s.memoryIngestOnSave).onChange(async (v) => {
           s.memoryIngestOnSave = v;
+          await this.plugin.saveSettings();
+        }),
+      );
+  }
+
+  private renderSourceCaptureSection(containerEl: HTMLElement): void {
+    containerEl.createEl("p", {
+      cls: "setting-item-description",
+      text: "Point the Obsidian Web Clipper (and dropped CSVs) at an inbox folder; Companion types each new file into a schema-validated source note. Extraction uses your utility model (local if enabled).",
+    });
+
+    new Setting(containerEl)
+      .setName("Enable source capture")
+      .setDesc("Master switch for watching the inbox and the 'Enrich note as source' command.")
+      .addToggle((t) =>
+        t.setValue(this.plugin.settings.sourceCaptureEnabled).onChange(async (v) => {
+          this.plugin.settings.sourceCaptureEnabled = v;
+          await this.plugin.saveSettings();
+        }),
+      );
+
+    new Setting(containerEl)
+      .setName("Auto-enrich on create")
+      .setDesc("Type files automatically as they appear in the inbox (otherwise use the command).")
+      .addToggle((t) =>
+        t.setValue(this.plugin.settings.sourceEnrichOnCreate).onChange(async (v) => {
+          this.plugin.settings.sourceEnrichOnCreate = v;
+          await this.plugin.saveSettings();
+        }),
+      );
+
+    new Setting(containerEl)
+      .setName("Inbox folder")
+      .setDesc("Folder the Web Clipper writes to and Companion watches.")
+      .addText((text) =>
+        text.setValue(this.plugin.settings.sourceInboxFolder).onChange(async (v) => {
+          this.plugin.settings.sourceInboxFolder = v.trim() || "Clippings";
+          await this.plugin.saveSettings();
+        }),
+      );
+
+    new Setting(containerEl)
+      .setName("Base tags")
+      .setDesc("Comma-separated tags added to every enriched source note.")
+      .addText((text) =>
+        text.setValue(this.plugin.settings.sourceBaseTags.join(", ")).onChange(async (v) => {
+          this.plugin.settings.sourceBaseTags = v.split(",").map((s) => s.trim()).filter(Boolean);
           await this.plugin.saveSettings();
         }),
       );

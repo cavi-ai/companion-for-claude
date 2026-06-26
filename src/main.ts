@@ -36,6 +36,9 @@ import {
 } from "./conversations/store";
 import type { ChatMessage } from "./types";
 import { normalizePath, TFile } from "obsidian";
+import { enrichCapture, type EnrichDeps } from "./sources/enrich";
+import { shouldEnrich } from "./sources/watcher";
+import { parseClipUrl } from "./sources/detect";
 
 /** Output-token ceiling for artifact-producing flows (plans, artifacts, workflows),
  *  which routinely run past the chat default. A ceiling, not a target — you only
@@ -69,6 +72,8 @@ export default class ClaudeCompanionPlugin extends Plugin {
   /** Debounce timer for incremental re-index on note changes. */
   private reindexTimer: number | null = null;
   private reindexQueue = new Set<string>();
+  private enrichTimers = new Map<string, number>();
+  private enrichRecentlyWritten = new Set<string>();
 
   override async onload(): Promise<void> {
     await this.loadSettings();
@@ -235,6 +240,17 @@ export default class ClaudeCompanionPlugin extends Plugin {
       });
     }
 
+    this.addCommand({
+      id: "enrich-note-as-source",
+      name: "Enrich note as source (typed frontmatter)",
+      checkCallback: (checking) => {
+        const file = this.app.workspace.getActiveViewOfType(MarkdownView)?.file;
+        if (checking) return this.settings.sourceCaptureEnabled && file instanceof TFile;
+        if (file instanceof TFile) void this.runEnrich(file);
+        return true;
+      },
+    });
+
     this.addSettingTab(new ClaudeCompanionSettingTab(this.app, this));
 
     // Start the MCP bridge if enabled (deferred so it doesn't block load).
@@ -248,6 +264,9 @@ export default class ClaudeCompanionPlugin extends Plugin {
       // a full build only happens via the explicit "Rebuild" command.
       this.registerEvent(this.app.vault.on("modify", (f) => { if (f instanceof TFile && f.extension === "md") this.queueReindex(f.path); }));
       this.registerEvent(this.app.vault.on("create", (f) => { if (f instanceof TFile && f.extension === "md") this.queueReindex(f.path); }));
+      this.registerEvent(this.app.vault.on("create", (f) => {
+        if (f instanceof TFile && (f.extension === "md" || f.extension === "csv") && this.settings.sourceCaptureEnabled && this.settings.sourceEnrichOnCreate) this.queueEnrich(f);
+      }));
       this.registerEvent(this.app.vault.on("delete", (f) => { if (f instanceof TFile && f.extension === "md") void this.indexer()?.removeNote(f.path); }));
       this.registerEvent(this.app.vault.on("rename", (f, oldPath) => { if (f instanceof TFile && f.extension === "md") void this.indexer()?.renameNote(oldPath, f.path); }));
     });
@@ -256,6 +275,55 @@ export default class ClaudeCompanionPlugin extends Plugin {
     this.registerEvent(this.app.workspace.on("file-open", () => this.syncPlanBuildActions()));
     this.registerEvent(this.app.workspace.on("active-leaf-change", () => this.syncPlanBuildActions()));
     this.registerEvent(this.app.metadataCache.on("changed", () => this.syncPlanBuildActions()));
+  }
+
+  private enrichDeps(): EnrichDeps {
+    const { provider, model } = this.router().resolve("utility");
+    return {
+      app: this.app,
+      complete: (system, user) =>
+        provider.complete({ system, model, maxTokens: 1024, temperature: 0, messages: [{ role: "user", content: user }] }),
+      overrides: this.settings.sourceSchemaOverrides,
+      baseTags: this.settings.sourceBaseTags,
+      enrichedBy: provider.id === "ollama" ? "local" : "claude",
+      now: () => new Date().toISOString(),
+    };
+  }
+
+  private queueEnrich(file: TFile): void {
+    const path = file.path;
+    const prev = this.enrichTimers.get(path);
+    if (prev) window.clearTimeout(prev);
+    this.enrichTimers.set(
+      path,
+      window.setTimeout(() => {
+        this.enrichTimers.delete(path);
+        void this.enrichFile(file);
+      }, 1500),
+    );
+  }
+
+  private async enrichFile(file: TFile): Promise<void> {
+    const content = file.extension === "md" ? await this.app.vault.cachedRead(file) : "";
+    if (!shouldEnrich({ path: file.path, ext: file.extension, content, inboxFolder: this.settings.sourceInboxFolder, recentlyWritten: this.enrichRecentlyWritten })) return;
+    await this.runEnrich(file);
+  }
+
+  private async runEnrich(file: TFile): Promise<void> {
+    try {
+      const raw = await this.app.vault.cachedRead(file);
+      const capture =
+        file.extension === "md"
+          ? { kind: "markdown" as const, path: file.path, basename: file.basename, content: raw, url: parseClipUrl(raw) }
+          : { kind: "datafile" as const, path: file.path, basename: file.basename, ext: file.extension, content: raw };
+      const res = await enrichCapture(this.enrichDeps(), capture);
+      this.enrichRecentlyWritten.add(res.file.path);
+      window.setTimeout(() => this.enrichRecentlyWritten.delete(res.file.path), 5000);
+      new Notice(`Typed source note (${res.type}): ${res.file.basename}`);
+    } catch (e) {
+      console.warn("[companion] source enrichment failed", e);
+      new Notice(`Couldn't enrich ${file.basename} — see console.`);
+    }
   }
 
   /** Tracks the Build header-action element we added to each plan-note view. */

@@ -1212,3 +1212,80 @@ pre.cc-has-copy:hover .cc-code-copy { opacity: 1; }
 .cc-send-row {
   flex-wrap: wrap;
 }
+
+/* ============================================================
+   Mobile (phone) — touch-first layout. Keyed on Obsidian's
+   native body class `.is-mobile`; no container queries (they
+   rasterize text — see the responsive note above).
+   ============================================================ */
+.is-mobile .cc-root { height: 100%; }
+
+/* Header: drop the eyebrow, slim the bar, hide the desktop icon row
+   (the mobile build replaces it with a single ⋯ menu — see ChatView). */
+.is-mobile .cc-eyebrow { display: none; }
+.is-mobile .cc-header {
+  flex-wrap: nowrap;
+  align-items: center;
+  padding: 8px 12px;
+  gap: 8px;
+}
+.is-mobile .cc-title { flex-direction: row; align-items: center; gap: 8px; min-width: 0; }
+.is-mobile .cc-model {
+  font-size: 16px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Model name reads as a tappable control on mobile. */
+.is-mobile .cc-model.cc-model-tappable { cursor: pointer; }
+.is-mobile .cc-model.cc-model-tappable::after {
+  content: "⌄";
+  margin-left: 4px;
+  opacity: 0.6;
+}
+/* The backend pill ("auto · local ready") is desktop-centric and misleading on
+   a phone (no local server) — hide it; the model name carries the header. */
+.is-mobile .cc-backend-pill { display: none; }
+
+/* Messages: full-bleed, roomier. */
+.is-mobile .cc-messages { padding: 12px 14px; gap: 18px; }
+.is-mobile .cc-body { font-size: 16px; }
+/* Example cards stack in one column — the existing 360px media query keys on the
+   viewport (wide in emulation / a docked panel), so it never fires; .is-mobile does. */
+.is-mobile .cc-empty-examples { grid-template-columns: 1fr; }
+
+/* Per-message actions: touch-sized (they're already persistent). */
+.is-mobile .cc-action { width: 36px; height: 32px; }
+.is-mobile .cc-action svg { width: 17px; height: 17px; }
+
+/* Composer: bottom-anchored, thumb-reachable, safe-area aware. */
+.is-mobile .cc-composer {
+  padding: 8px 12px calc(8px + env(safe-area-inset-bottom));
+  gap: 8px;
+}
+.is-mobile .cc-input { min-height: 44px; font-size: 16px; } /* 16px avoids iOS zoom-on-focus */
+.is-mobile .cc-send { padding: 10px 22px; font-size: 15px; }
+/* The inline desktop controls bar (model <select> + tune) is hidden on mobile;
+   model + knobs move into the header menu (built in ChatView). */
+.is-mobile .cc-controls { display: none; }
+.is-mobile .cc-composer-bar { gap: 8px; }
+.is-mobile .cc-send-group { width: 100%; }
+.is-mobile .cc-send { flex: 0 0 auto; }
+.is-mobile .cc-usage { flex: 1 1 auto; min-width: 0; }
+
+/* The "+" context button (built in ChatView) sits left of the input. */
+.is-mobile .cc-add-context {
+  flex: 0 0 auto;
+  width: 38px; height: 38px;
+  border-radius: 50%;
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-secondary);
+  color: var(--text-normal);
+  display: inline-flex; align-items: center; justify-content: center;
+  cursor: pointer;
+}
+/* SVG flex children collapse to width:0 without an explicit size — pin it. */
+.is-mobile .cc-add-context svg { width: 20px; height: 20px; flex: 0 0 auto; }
+.is-mobile .cc-composer-input-row {
+  display: flex; align-items: flex-end; gap: 8px;
+}

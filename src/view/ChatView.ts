@@ -102,26 +102,37 @@ export class ChatView extends ItemView {
     this.modelLabelEl = title.createSpan({ cls: "cc-model" });
     this.backendPillEl = title.createSpan({ cls: "cc-backend-pill", attr: { "aria-label": "Chat backend / connectivity" } });
     const actions = header.createDiv({ cls: "cc-header-actions" });
-    // One-shot actions (left group). These DO something on click.
-    this.iconButton(actions, "plus", "New chat", () => this.clearChat());
-    this.iconButton(actions, "history", "Resume a past conversation", () => this.openHistory());
-    this.iconButton(actions, "wand-2", "Run a vault workflow (manifests, rollup, MOC…)", () => void this.plugin.openWorkflowPicker());
-    this.iconButton(actions, "save", "Save chat to vault", () => void this.saveChat());
-    if (this.plugin.settings.memoryEnabled && !Platform.isMobile) {
-      // "import" reads as a one-shot pull-in, not a toggle — capture brings a
-      // Claude Code session's transcript into the vault.
-      this.iconButton(actions, "import", "Capture a Claude Code session into memory", () => void this.plugin.openSessionPicker());
+    if (Platform.isMobile) {
+      // Mobile: the model name is the model picker, and one ⋯ menu carries the
+      // actions the desktop icon row holds. Desktop-only chrome (MCP, capture,
+      // ingest toggle) is omitted entirely — those features don't run on a phone.
+      this.modelLabelEl.addClass("cc-model-tappable");
+      this.modelLabelEl.addEventListener("click", (e) => this.openModelMenu(e));
+      const more = actions.createEl("button", { cls: "cc-icon-btn", attr: { "aria-label": "More actions" } });
+      setIcon(more, "more-vertical");
+      more.addEventListener("click", (e) => this.openOverflowMenu(e));
+    } else {
+      // One-shot actions (left group). These DO something on click.
+      this.iconButton(actions, "plus", "New chat", () => this.clearChat());
+      this.iconButton(actions, "history", "Resume a past conversation", () => this.openHistory());
+      this.iconButton(actions, "wand-2", "Run a vault workflow (manifests, rollup, MOC…)", () => void this.plugin.openWorkflowPicker());
+      this.iconButton(actions, "save", "Save chat to vault", () => void this.saveChat());
+      if (this.plugin.settings.memoryEnabled) {
+        // "import" reads as a one-shot pull-in, not a toggle — capture brings a
+        // Claude Code session's transcript into the vault.
+        this.iconButton(actions, "import", "Capture a Claude Code session into memory", () => void this.plugin.openSessionPicker());
+      }
+      // Divider: everything to the right is a stateful toggle/status (clay = on),
+      // so the engage/disengage controls read apart from the actions above.
+      actions.createDiv({ cls: "cc-actions-sep" });
+      this.renderIngestToggle(actions);
+      // MCP bridge status + menu now lives in the header (the old chip/status row
+      // is gone — context is attached with "@" in the composer instead).
+      this.mcpStatusEl = actions.createEl("button", { cls: "cc-icon-btn cc-mcp-btn", attr: { "aria-label": "MCP bridge controls" } });
+      setIcon(this.mcpStatusEl, "plug-zap");
+      this.mcpStatusEl.addEventListener("click", (evt) => this.openMcpMenu(evt));
+      this.iconButton(actions, "settings", "Open settings", () => this.openSettings());
     }
-    // Divider: everything to the right is a stateful toggle/status (clay = on),
-    // so the engage/disengage controls read apart from the actions above.
-    actions.createDiv({ cls: "cc-actions-sep" });
-    this.renderIngestToggle(actions);
-    // MCP bridge status + menu now lives in the header (the old chip/status row
-    // is gone — context is attached with "@" in the composer instead).
-    this.mcpStatusEl = actions.createEl("button", { cls: "cc-icon-btn cc-mcp-btn", attr: { "aria-label": "MCP bridge controls" } });
-    setIcon(this.mcpStatusEl, "plug-zap");
-    this.mcpStatusEl.addEventListener("click", (evt) => this.openMcpMenu(evt));
-    this.iconButton(actions, "settings", "Open settings", () => this.openSettings());
 
     // ---- messages ----
     // Chat controls now live at the bottom (in the composer), so the top stays
@@ -140,7 +151,24 @@ export class ChatView extends ItemView {
     this.slashMenu = new SlashMenu(composer, SLASH_COMMANDS, (cmd) => void this.runSlashCommand(cmd));
     this.atMenu = new AtMenu(composer, () => this.atItems(), (item) => void this.onAtChoose(item));
 
-    this.inputEl = composer.createEl("textarea", {
+    // On mobile the input shares a row with a thumb-friendly "+" that opens the
+    // "@" context picker (the desktop affordance is typing "@"). On desktop the
+    // textarea is a direct child of the composer as before.
+    const inputRow = Platform.isMobile ? composer.createDiv({ cls: "cc-composer-input-row" }) : composer;
+    if (Platform.isMobile) {
+      const add = inputRow.createEl("button", { cls: "cc-add-context", attr: { "aria-label": "Add context" } });
+      setIcon(add, "plus");
+      add.addEventListener("click", () => {
+        this.inputEl.focus();
+        const v = this.inputEl.value;
+        const needsSpace = v.length > 0 && !v.endsWith(" ");
+        this.inputEl.value = `${v}${needsSpace ? " " : ""}@`;
+        const end = this.inputEl.value.length;
+        this.inputEl.setSelectionRange(end, end);
+        this.inputEl.dispatchEvent(new Event("input"));
+      });
+    }
+    this.inputEl = inputRow.createEl("textarea", {
       cls: "cc-input",
       attr: { placeholder: "Ask Claude…  ( / for commands · @ to add context · Enter to send )", rows: "3" },
     });
@@ -1134,6 +1162,34 @@ export class ChatView extends ItemView {
         .setIcon("settings")
         .onClick(() => this.openSettings());
     });
+    menu.showAtMouseEvent(evt);
+  }
+
+  /** Mobile: the single ⋯ menu that replaces the desktop header icon row. */
+  private openOverflowMenu(evt: MouseEvent): void {
+    const menu = new Menu();
+    menu.addItem((i) => i.setTitle("New chat").setIcon("plus").onClick(() => this.clearChat()));
+    menu.addItem((i) => i.setTitle("History").setIcon("history").onClick(() => this.openHistory()));
+    menu.addItem((i) => i.setTitle("Save chat to vault").setIcon("save").onClick(() => void this.saveChat()));
+    menu.addSeparator();
+    menu.addItem((i) => i.setTitle("Send to cloud session").setIcon("cloud").onClick(() => void this.plugin.dispatchCloudSession()));
+    menu.addItem((i) => i.setTitle("Pull cloud replies").setIcon("cloud-download").onClick(() => void this.plugin.pullCloudReplies()));
+    menu.addSeparator();
+    menu.addItem((i) => i.setTitle("Settings").setIcon("settings").onClick(() => this.openSettings()));
+    menu.showAtMouseEvent(evt);
+  }
+
+  /** Mobile: model picker opened by tapping the model name in the header. */
+  private openModelMenu(evt: MouseEvent): void {
+    const menu = new Menu();
+    for (const m of CLAUDE_MODELS) {
+      menu.addItem((i) =>
+        i
+          .setTitle(m.label)
+          .setChecked(m.id === this.controls.model)
+          .onClick(() => void this.onModelSelect(m.id)),
+      );
+    }
     menu.showAtMouseEvent(evt);
   }
 

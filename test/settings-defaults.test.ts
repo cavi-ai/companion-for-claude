@@ -1,6 +1,16 @@
 import { describe, it, expect } from "vitest";
 import { DEFAULT_SETTINGS } from "../src/types";
 
+describe("source-capture defaults", () => {
+  it("ships dormant (opt-in) with a default inbox", () => {
+    expect(DEFAULT_SETTINGS.sourceCaptureEnabled).toBe(false);
+    expect(DEFAULT_SETTINGS.sourceEnrichOnCreate).toBe(true);
+    expect(DEFAULT_SETTINGS.sourceInboxFolder).toBe("Clippings");
+    expect(DEFAULT_SETTINGS.sourceBaseTags).toEqual(["source"]);
+    expect(DEFAULT_SETTINGS.sourceSchemaOverrides).toEqual({});
+  });
+});
+
 describe("memory settings defaults", () => {
   it("ships sane defaults", () => {
     expect(DEFAULT_SETTINGS.memoryEnabled).toBe(true);
