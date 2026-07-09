@@ -16,8 +16,8 @@ vault stays the single source of truth.
 > **Bring your own credential.** Companion for Claude talks to the Anthropic
 > Messages API with *your* credential — nothing is sent anywhere else. On desktop,
 > direct network access is required for Claude and the local MCP bridge; on mobile,
-> chat and artifacts work with desktop-only features (MCP bridge, session import,
-> semantic index build) gated off. Three auth modes:
+> chat, artifacts, and semantic search all work, with only the MCP bridge and
+> session import gated off (desktop/Electron only). Three auth modes:
 >
 > - **API key** (default, recommended) — a standard `sk-ant-api…` key from
 >   console.anthropic.com. This is the mode used for community-store builds.
@@ -42,8 +42,10 @@ vault stays the single source of truth.
 - **Vault-aware context** — `@`-mention notes, folders, or the whole vault;
   toggle context pills for your **active note**, the **current selection**,
   **linked & backlinked notes**, or a **vault search**. Keyword search by
-  default; optional **semantic search** (local Ollama embeddings) fuses with
-  keywords when enabled.
+  default; optional **semantic search** fuses with keywords when enabled, using
+  a built-in on-device model (default; one-time ~45MB model + ~23MB ONNX
+  runtime download from huggingface.co / cdn.jsdelivr.net, cached and fully
+  offline afterwards) or a local Ollama server.
 - **PDFs & images in chat** — @-mention any PDF or image in your vault, or
   **paste a screenshot** straight into the composer; Claude reads it natively
   (vision + document understanding). Attachments are per-message pills you can
@@ -139,6 +141,11 @@ attribution.
 - **Typed source capture** — watch a clippings
   inbox (default `Clippings/`) and enrich new clips with typed frontmatter
   (article, video, dataset) from per-type schemas.
+- **Vault ontology** — schema notes in an
+  `Ontology/` folder define **note types and typed wikilink relations**; run
+  **Seed ontology** to create the defaults, and notes Claude creates conform to
+  your schemas (advisory, never blocking). Enable under *Vault ontology* in
+  settings.
 
 ## Install
 
@@ -177,6 +184,9 @@ The server binds to **127.0.0.1 only** (never the network), requires a
 | `get_backlinks` | `base_create` |
 | `get_outgoing_links` | `canvas_create` |
 | `frontmatter_query` | |
+
+With *Vault ontology* enabled, `note_create` also accepts `type` / `properties`
+for schema-conformant typed notes.
 
 **Claude Code:**
 
