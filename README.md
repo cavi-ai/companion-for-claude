@@ -1,20 +1,23 @@
 # Companion for Claude (Obsidian plugin)
 
-Bring Claude *into* your vault. Chat with your notes as context, generate
-gallery-grade interactive artifacts, and sync everything Claude produces back
-into Markdown — so your vault stays the single source of truth.
+Chat with Claude inside your [Obsidian](https://obsidian.md) vault — notes as
+context, interactive `claude-html` artifacts, agent mode with reviewable
+writes, and a local MCP bridge so Claude Code works on the same notes. Your
+vault stays the single source of truth.
 
-The artifact design system takes its aesthetic cues from Thariq Shihipar's
-[“unreasonable effectiveness of HTML”](https://github.com/ThariqS/html-effectiveness)
-gallery (vendored as a pinned submodule at the monorepo root) — an original
-reformulation, not a copy — so the plans, reports, and dashboards Claude
-generates look gallery-grade. See the
-[`NOTICE`](https://github.com/cavi-ai/claude-obsidian/blob/main/NOTICE) for full
-attribution.
+[![CI](https://github.com/cavi-ai/claude-obsidian/actions/workflows/obsidian-plugin-ci.yml/badge.svg)](https://github.com/cavi-ai/claude-obsidian/actions/workflows/obsidian-plugin-ci.yml)
+[![Obsidian downloads](https://img.shields.io/badge/dynamic/json?logo=obsidian&color=%23483699&label=downloads&query=%24%5B%22claude-companion%22%5D.downloads&url=https%3A%2F%2Fraw.githubusercontent.com%2Fobsidianmd%2Fobsidian-releases%2Fmaster%2Fcommunity-plugin-stats.json)](https://obsidian.md/plugins?id=claude-companion)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
+![The Companion for Claude side-panel chat, with vault context attached to the conversation](assets/chat-panel.png)
+
+<!-- screenshots wanted: session-to-note.png, chat-controls.png — see assets/CAPTURE.md in the mirror repo -->
 
 > **Bring your own credential.** Companion for Claude talks to the Anthropic
-> Messages API with *your* credential — nothing is sent anywhere else. Desktop
-> only (it needs direct network access). Three auth modes:
+> Messages API with *your* credential — nothing is sent anywhere else. On desktop,
+> direct network access is required for Claude and the local MCP bridge; on mobile,
+> chat and artifacts work with desktop-only features (MCP bridge, session import,
+> semantic index build) gated off. Three auth modes:
 >
 > - **API key** (default, recommended) — a standard `sk-ant-api…` key from
 >   console.anthropic.com. This is the mode used for community-store builds.
@@ -31,9 +34,77 @@ attribution.
 
 ## Features
 
+### Chat & context
+
 - **Chat in a side panel** — streaming responses, Markdown-rendered, with
   per-message **Copy / Insert / Save as note / Regenerate** actions and
   hover-to-copy on every code block.
+- **Vault-aware context** — `@`-mention notes, folders, or the whole vault;
+  toggle context pills for your **active note**, the **current selection**,
+  **linked & backlinked notes**, or a **vault search**. Keyword search by
+  default; optional **semantic search** (local Ollama embeddings) fuses with
+  keywords when enabled.
+- **PDFs & images in chat** — @-mention any PDF or image in your vault, or
+  **paste a screenshot** straight into the composer; Claude reads it natively
+  (vision + document understanding). Attachments are per-message pills you can
+  remove before sending.
+- **In-chat model & reasoning controls** — switch model per message
+  (**Opus / Sonnet / Haiku**), toggle **extended thinking** with an **effort**
+  dial, stream the model's **reasoning** in a collapsible panel, and set
+  per-message **temperature / max tokens**. Controls are model-aware — anything
+  a model would reject is hidden, not broken.
+- **Slash commands** — type `/` in the composer for a fuzzy palette:
+  summarize, ask, improve, artifact, plan, canvas, workflows, capture, build,
+  and more.
+- **Conversation history** — chats persist across restarts; resume any past
+  conversation from a fuzzy picker.
+- **Prompt caching** — repeated context (system prompt, tools, conversation
+  history) is cached server-side automatically, cutting input cost by up to
+  ~10× on long conversations. The cost estimate in the usage bar accounts for
+  cache reads and writes.
+- **Live usage display** — a context-window gauge plus running **session token
+  totals** (and an estimated cost on API-key auth, or a subscription marker on
+  OAuth), so there are no billing surprises.
+- **Save & test connection** — one click confirms settings are saved and the
+  credential works, with readable, actionable errors.
+- **Commands** — *Open chat panel*, *New chat*, *Resume a past conversation*,
+  *Generate implementation plan from current note*, *Turn selection / note into
+  an artifact*, *Ask Claude about my vault*, *Hand off current note to Claude
+  Code (build)*.
+
+### Artifacts & generation
+
+The artifact design system takes its aesthetic cues from Thariq Shihipar's
+[“unreasonable effectiveness of HTML”](https://github.com/ThariqS/html-effectiveness)
+gallery (vendored as a pinned submodule at the monorepo root) — an original
+reformulation, not a copy — so the plans, reports, and dashboards Claude
+generates look gallery-grade. See the
+[`NOTICE`](https://github.com/cavi-ai/claude-obsidian/blob/main/NOTICE) for full
+attribution.
+
+- **Interactive artifacts** — Claude emits a `claude-html` block;
+  Companion renders it inline in a sandboxed iframe, **opens it in your browser**,
+  or **saves it as a note** that stays interactive and portable.
+- **Canvas mind maps** — `/canvas` (or just ask): Claude searches your vault
+  and builds a native **Obsidian Canvas** — file nodes wired to your real
+  notes, labeled edges, auto-layout. A write like any other: gated and
+  confirmed before the .canvas file is created. Also available to Claude Code
+  over the MCP bridge.
+- **Bases from your frontmatter** — ask for "a reading tracker" or "a project
+  dashboard" and Claude builds a native **Obsidian Base** (.base database
+  view), discovering your real frontmatter properties first. Write-gated and
+  confirmed, in chat and over the MCP bridge.
+- **Indexing & tags** — saved artifacts and chats get YAML frontmatter
+  (`title`, `tags`, `summary`, `type`) so they index in the tag pane, search,
+  and Dataview, with optional local-model **auto-tagging**.
+- **Spec → build handoff** — turn a plan note into a **build spec** + a live
+  **tracker** (a `claude-html` progress board) and hand it to **Claude Code**.
+
+![A claude-html artifact rendered inline in a note](assets/artifact-inline.png)
+*A `claude-html` artifact rendered inline — interactive, sandboxed, and saved as a plain Markdown note.*
+
+### Agent & automation
+
 - **Agent mode (vault tools in chat)** — Claude can **search your vault, read
   notes, and follow links on its own** while answering, showing each step as an
   expandable tool chip. Read-only by default; an optional setting also lets it
@@ -48,102 +119,43 @@ attribution.
   mentions** (note titles and aliases sitting in your prose as plain text) with
   one-click linking, or **Review & link all** as a single diff. No embeddings
   needed; works alongside the semantic related-notes list.
-- **Canvas mind maps** — `/canvas` (or just ask): Claude searches your vault
-  and builds a native **Obsidian Canvas** — file nodes wired to your real
-  notes, labeled edges, auto-layout. A write like any other: gated and
-  confirmed before the .canvas file is created. Also available to Claude Code
-  over the MCP bridge.
-- **Bases from your frontmatter** — ask for "a reading tracker" or "a project
-  dashboard" and Claude builds a native **Obsidian Base** (.base database
-  view), discovering your real frontmatter properties first. Write-gated and
-  confirmed, in chat and over the MCP bridge.
-- **PDFs & images in chat** — @-mention any PDF or image in your vault, or
-  **paste a screenshot** straight into the composer; Claude reads it natively
-  (vision + document understanding). Attachments are per-message pills you can
-  remove before sending.
 - **Consolidated memory** — merge captured session digests into one evolving
   **"What Claude Knows"** note (manual command or auto after each capture).
   It's a normal note — agent mode reads it back with its own tools, so Claude
   remembers your projects, decisions, and preferences across chats.
-- **Prompt caching** — repeated context (system prompt, tools, conversation
-  history) is cached server-side automatically, cutting input cost by up to
-  ~10× on long conversations. The cost estimate in the usage bar accounts for
-  cache reads and writes.
-- **Vault-aware context** — toggle chips to attach your **active note**, the
-  **current selection**, **linked & backlinked notes**, or a keyword
-  **vault search** (lightweight RAG, no embeddings) to any message.
-- **In-chat model & reasoning controls** — switch model per message
-  (**Opus / Sonnet / Haiku**), toggle **extended thinking** with an **effort**
-  dial, stream the model's **reasoning** in a collapsible panel, and set
-  per-message **temperature / max tokens**. Controls are model-aware — anything
-  a model would reject is hidden, not broken.
-- **Slash commands** — type `/` in the composer for a fuzzy palette:
-  `/summarize`, `/ask`, `/improve`, `/artifact`, `/plan`, `/table`, `/explain`,
-  `/build`, `/new`, `/history`, `/save`.
-- **Flexible auth** — your Anthropic **API key** (default), a long-term
-  **OAuth subscription token**, or **import from the environment** — with an
-  optional base-URL override for gateways.
-- **Beautiful interactive artifacts** — Claude emits a `claude-html` block;
-  Companion renders it inline in a sandboxed iframe, **opens it in your browser**,
-  or **saves it as a note** that stays interactive and portable.
-- **Conversation history** — chats persist across restarts; resume any past
-  conversation from a fuzzy picker.
 - **Never lose functionality (offline)** — an **Auto** backend transparently
   falls back to a local **Ollama** model when Claude is offline or out of usage,
   with a live connectivity indicator; or run **Local only** for full offline use.
   Cheap utility work (summaries, auto-tagging) can route to Ollama too.
-- **Live usage display** — a context-window gauge plus running **session token
-  totals** (and an estimated cost on API-key auth, or a subscription marker on
-  OAuth), so there are no billing surprises.
-- **Spec → build handoff** — turn a plan note into a **build spec** + a live
-  **tracker** (a `claude-html` progress board) and hand it to **Claude Code**.
-- **Indexing & tags** — saved artifacts and chats get YAML frontmatter
-  (`title`, `tags`, `summary`, `type`) so they index in the tag pane, search,
-  and Dataview, with optional local-model **auto-tagging**.
-- **Save & test connection** — one click confirms settings are saved and the
-  credential works, with readable, actionable errors.
-- **Commands** — *Open chat panel*, *New chat*, *Resume a past conversation*,
-  *Generate implementation plan from current note*, *Turn selection / note into
-  an artifact*, *Ask Claude about my vault*, *Hand off current note to Claude
-  Code (build)*.
+- **Unified bridge** — expose the vault as a local MCP server so Claude Code
+  and Claude Desktop operate on the same notes ([details below](#unified-bridge-mcp-server)).
 
-## Install (manual / for now)
+| ![A prioritized roadmap artifact generated from the vault](assets/manifest-roadmap.png) | ![A generated working map of the vault](assets/working-map.png) |
+|---|---|
+| *A prioritized roadmap artifact, produced by an advisor persona surveying the vault over the bridge.* | *A generated working map — a canvas-style overview built from real notes.* |
+
+### Experimental (off by default)
+
+- **Typed source capture** — watch a clippings
+  inbox (default `Clippings/`) and enrich new clips with typed frontmatter
+  (article, video, dataset) from per-type schemas.
+
+## Install
+
+**From the community store (recommended):** *Settings → Community plugins →
+Browse* → search **Companion for Claude** → Install → Enable, or use
+[this direct link](https://obsidian.md/plugins?id=claude-companion). Then open
+*Settings → Companion for Claude* and paste your Anthropic API key.
+
+**From source (development):**
 
 1. `cd obsidian-plugin && pnpm install && pnpm run build`
 2. Copy `main.js`, `manifest.json`, and `styles.css` into
    `<your-vault>/.obsidian/plugins/claude-companion/`.
 3. Enable **Companion for Claude** in *Settings → Community plugins*.
-4. Open *Settings → Companion for Claude* and paste your Anthropic API key.
 
 For active development use `pnpm run dev` (esbuild watch) and symlink the plugin
 folder into a test vault.
-
-## Development & testing
-
-The Obsidian-free logic (SSE parsing, artifact extraction, search scoring) is
-factored into pure modules so it can be unit-tested without a running app.
-
-```bash
-pnpm run typecheck   # tsc --noEmit
-pnpm run lint        # eslint
-pnpm test            # vitest (unit tests in test/)
-pnpm run build       # typecheck + production bundle
-```
-
-CI runs all four on every push/PR (Node 20 & 22) in the
-[monorepo](https://github.com/cavi-ai/claude-obsidian).
-
-### Manual test checklist (needs a real vault + API key)
-
-- [ ] Settings: API key saves; model dropdown + custom id both take effect.
-- [ ] Chat streams; **Stop** aborts mid-stream; **New chat** clears history.
-- [ ] Context chips: active note / selection / links / vault-search each attach
-      (the `+ context:` line under your message reflects what was sent).
-- [ ] "Generate implementation plan from current note" yields a `claude-html`
-      artifact that renders inline.
-- [ ] **Save artifact** writes a note that re-renders in Reading view; **Open ↗**
-      opens it in a new window.
-- [ ] Invalid key surfaces a friendly error instead of failing silently.
 
 ## Unified bridge (MCP server)
 
@@ -151,12 +163,20 @@ Companion can expose your vault as a local **MCP server**, so **Claude Code** an
 **Claude Desktop** work against the *same* knowledge base you chat with here —
 the compliant way to unify all three without subscription OAuth.
 
-Enable it in *Settings → Companion for Claude → Unified bridge (MCP server)*. It:
+Enable it in *Settings → Companion for Claude → Unified bridge (MCP server)*.
+The server binds to **127.0.0.1 only** (never the network), requires a
+**bearer token**, and shows ready-to-paste connection snippets for both clients.
 
-- binds to **127.0.0.1 only** (never the network) and requires a **bearer token**;
-- exposes read tools always (`vault_search`, `note_read`, `list_recent`,
-  `vault_tags`) and, when *Allow writes* is on, `note_create` / `note_append`;
-- shows ready-to-paste connection snippets for both clients.
+| Read tools (always exposed) | Write tools (require *Allow writes*) |
+|---|---|
+| `vault_search` | `note_create` |
+| `note_read` | `note_append` |
+| `list_recent` | `note_update` |
+| `vault_tags` | `update_frontmatter` |
+| `list_titles` | `note_move` |
+| `get_backlinks` | `base_create` |
+| `get_outgoing_links` | `canvas_create` |
+| `frontmatter_query` | |
 
 **Claude Code:**
 
@@ -194,7 +214,7 @@ Saving an artifact writes a Markdown note containing that same block, so the
 artifact lives in your vault, renders in Reading view, and travels with your
 notes.
 
-## The `claude-html` block
+### The `claude-html` block
 
 You can author these by hand too:
 
@@ -208,46 +228,34 @@ You can author these by hand too:
 ```
 ````
 
-## Releasing to the community store
+## Development & testing
 
-This plugin lives in the [`cavi-ai/claude-obsidian`](https://github.com/cavi-ai/claude-obsidian)
-monorepo under `obsidian-plugin/`. Submitting to Obsidian's community catalog
-means following the checklist below.
+The Obsidian-free logic (SSE parsing, artifact extraction, search scoring) is
+factored into pure modules so it can be unit-tested without a running app.
 
-**Packaging**
-- [ ] The plugin source is `obsidian-plugin/` within the monorepo; the store
-      entry points at that path.
-- [ ] `LICENSE` present (MIT).
-- [ ] `.gitignore` excludes `node_modules/`; **for a release `main.js` is
-      committed/attached** (the store serves the built file, not the source).
+```bash
+pnpm run typecheck   # tsc --noEmit
+pnpm run lint        # eslint
+pnpm test            # vitest (unit tests in test/)
+pnpm run build       # typecheck + production bundle
+```
 
-**Manifest & versioning** (keep these three in lockstep)
-- [ ] `manifest.json` `version` (currently `0.4.0`) matches the git tag.
-- [ ] `versions.json` maps that version → `minAppVersion` (`1.5.0`).
-- [ ] `package.json` `version` matches.
+CI runs all four on every push/PR (Node 20 & 22) in the
+[monorepo](https://github.com/cavi-ai/claude-obsidian). A manual smoke-test
+checklist lives in [`CONTRIBUTING.md`](https://github.com/cavi-ai/claude-obsidian/blob/main/CONTRIBUTING.md).
 
-**GitHub release**
-- [ ] Tag the release with the **exact** version number, no `v` prefix
-      (`0.4.0`, not `v0.4.0`).
-- [ ] Attach `main.js`, `manifest.json`, and `styles.css` as individual binary
-      assets (not just the source zip).
+## Releases
 
-**Catalog PR** (to `obsidianmd/obsidian-releases`)
-- [ ] Add an entry to `community-plugins.json` with `id`, `name`, `author`,
-      `description`, and the new repo path.
-- [ ] First-time submissions go through Obsidian's automated + manual review.
+| | |
+|---|---|
+| Store listing | [Companion for Claude](https://obsidian.md/plugins?id=claude-companion) (`claude-companion`) |
+| Source of truth | [`cavi-ai/claude-obsidian`](https://github.com/cavi-ai/claude-obsidian) monorepo, `obsidian-plugin/` |
+| Release repo | [`cavi-ai/companion-for-claude`](https://github.com/cavi-ai/companion-for-claude) — built `main.js`, `manifest.json`, `styles.css` attached per release |
+| Versioning | `manifest.json` = `versions.json` = `package.json` = git tag (exact version, no `v` prefix) |
 
-**Naming / trademark**
-- [ ] Review the plugin **name**. Obsidian's policy asks you to avoid trademarks
-      you don't own; "Claude" is Anthropic's. A store-safe name such as
-      *"Companion for Claude"* keeps the `claude-companion` id while making the
-      third-party relationship clear. (Not yet changed — decide before tagging.)
-
-**Pre-submit sanity**
-- [ ] `pnpm run build` produces a fresh `main.js`.
-- [ ] `pnpm test` green; `pnpm run typecheck`, `pnpm run lint`, and
-      `pnpm run audit` clean.
-- [ ] Screenshots/GIF in the README (store listings render it).
+Releases are cut by the monorepo's release workflow, which runs the full gate
+(typecheck, lint, tests, build, audit), mirrors the plugin to the release repo,
+and publishes the tagged GitHub release the store serves.
 
 ## License
 
