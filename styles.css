@@ -1256,7 +1256,9 @@ pre.cc-has-copy:hover .cc-code-copy { opacity: 1; }
 
 /* Per-message actions: touch-sized (they're already persistent). */
 .is-mobile .cc-action { width: 36px; height: 32px; }
-.is-mobile .cc-action svg { width: 17px; height: 17px; }
+/* flex:0 0 auto — without it the icon collapses to 0 width inside the flex
+   button on mobile, leaving an empty box (same fix as .cc-add-context svg). */
+.is-mobile .cc-action svg { width: 17px; height: 17px; flex: 0 0 auto; }
 
 /* Composer: bottom-anchored, thumb-reachable, safe-area aware. */
 .is-mobile .cc-composer {
@@ -1386,6 +1388,46 @@ pre.cc-has-copy:hover .cc-code-copy { opacity: 1; }
   justify-content: flex-end;
   margin-top: 12px;
   flex-wrap: wrap;
+}
+
+/* ===== /frontmatter: suggested-frontmatter preview modal ===== */
+.cc-fm-modal .cc-fm-note {
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  margin-bottom: 10px;
+}
+.cc-fm-modal .cc-fm-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.cc-fm-modal .cc-fm-row {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+}
+.cc-fm-modal .cc-fm-key {
+  flex: 0 0 72px;
+  font-family: var(--font-monospace);
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+  text-align: right;
+}
+.cc-fm-modal .cc-fm-val {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--text-normal);
+}
+.cc-fm-modal .cc-fm-via {
+  margin-top: 12px;
+  color: var(--text-faint);
+  font-size: var(--font-ui-smaller);
+}
+.cc-fm-modal .cc-fm-buttons {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 16px;
 }
 
 /* ===== Apply-to-note: diff review modal (spec 2026-07-05) ===== */
