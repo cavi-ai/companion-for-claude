@@ -1298,20 +1298,78 @@ pre.cc-has-copy:hover .cc-code-copy { opacity: 1; }
    button on mobile, leaving an empty box (same fix as .cc-add-context svg). */
 .is-mobile .cc-action svg { width: 17px; height: 17px; flex: 0 0 auto; }
 
-/* Composer: bottom-anchored, thumb-reachable, safe-area aware. */
+/* Composer: single thumb row ([+] · input · ↑) + thin usage gauge on top.
+   Safe-area padding kept; 16px input font avoids iOS zoom-on-focus. */
 .is-mobile .cc-composer {
-  padding: 8px 12px calc(8px + env(safe-area-inset-bottom));
-  gap: 8px;
+  position: relative;
+  padding: 6px 10px calc(6px + env(safe-area-inset-bottom));
+  gap: 6px;
 }
-.is-mobile .cc-input { min-height: 44px; font-size: 16px; } /* 16px avoids iOS zoom-on-focus */
-.is-mobile .cc-send { padding: 10px 22px; font-size: 15px; }
+.is-mobile .cc-composer-input-row .cc-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  width: auto;
+  min-height: 38px;
+  font-size: 16px;
+  resize: none;
+  border-radius: 19px;
+  padding: 8px 14px;
+  line-height: 1.35;
+}
+/* Circular send matches .cc-add-context; lives in the input row (ChatView). */
+.is-mobile .cc-send.cc-send-icon {
+  flex: 0 0 auto;
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  border-radius: 50%;
+  font-size: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.is-mobile .cc-send.cc-send-icon svg {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+}
 /* The inline desktop controls bar (model <select> + tune) is hidden on mobile;
    model + knobs move into the header menu (built in ChatView). */
 .is-mobile .cc-controls { display: none; }
-.is-mobile .cc-composer-bar { gap: 8px; }
-.is-mobile .cc-send-group { width: 100%; }
-.is-mobile .cc-send { flex: 0 0 auto; }
-.is-mobile .cc-usage { flex: 1 1 auto; min-width: 0; }
+/* Usage is a 2px strip along the top of the composer — not a second band. */
+.is-mobile .cc-composer-bar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  margin: 0;
+  padding: 0;
+  gap: 0;
+  pointer-events: none;
+}
+.is-mobile .cc-send-group {
+  width: 100%;
+  margin: 0;
+  gap: 0;
+}
+.is-mobile .cc-usage {
+  flex: 1 1 auto;
+  min-width: 0;
+  width: 100%;
+  gap: 0;
+}
+.is-mobile .cc-usage-text { display: none; }
+.is-mobile .cc-gauge {
+  flex: 1 1 auto;
+  width: 100%;
+  height: 2px;
+  border-radius: 0;
+  background: transparent;
+}
+.is-mobile .cc-gauge-fill {
+  border-radius: 0;
+}
 
 /* The "+" context button (built in ChatView) sits left of the input. */
 .is-mobile .cc-add-context {
@@ -1327,7 +1385,7 @@ pre.cc-has-copy:hover .cc-code-copy { opacity: 1; }
 /* SVG flex children collapse to width:0 without an explicit size — pin it. */
 .is-mobile .cc-add-context svg { width: 20px; height: 20px; flex: 0 0 auto; }
 .is-mobile .cc-composer-input-row {
-  display: flex; align-items: flex-end; gap: 8px;
+  display: flex; align-items: flex-end; gap: 6px;
 }
 
 /* ===== Agent mode: tool chips (spec 2026-07-05) ===== */
