@@ -1292,35 +1292,67 @@ pre.cc-has-copy:hover .cc-code-copy { opacity: 1; }
    viewport (wide in emulation / a docked panel), so it never fires; .is-mobile does. */
 .is-mobile .cc-empty-examples { grid-template-columns: 1fr; }
 
-/* Per-message actions: touch-sized (they're already persistent). */
-.is-mobile .cc-action { width: 36px; height: 32px; }
+/* Per-message actions: touch-sized icon chips with a faint surface so they read
+   as tappable (they're icon-only and persistent). */
+.is-mobile .cc-actions { gap: 8px; margin-top: 8px; }
+.is-mobile .cc-action { width: 40px; height: 36px; background: var(--background-secondary); }
 /* flex:0 0 auto — without it the icon collapses to 0 width inside the flex
    button on mobile, leaving an empty box (same fix as .cc-add-context svg). */
-.is-mobile .cc-action svg { width: 17px; height: 17px; flex: 0 0 auto; }
+.is-mobile .cc-action svg { width: 18px; height: 18px; flex: 0 0 auto; }
 
-/* Composer: single thumb row ([+] · input · ↑) + thin usage gauge on top.
-   Safe-area padding kept; 16px input font avoids iOS zoom-on-focus. */
+/* Long code lines scroll within their block instead of pushing the layout wide. */
+.is-mobile .cc-body pre { max-width: 100%; overflow-x: auto; }
+
+/* Composer: one bordered box holding a tall textarea with [+] and [↑] pinned to
+   its bottom corners, and any attachment chips as a subtle row across the top.
+   16px input font avoids iOS zoom-on-focus. Tight outer padding so the box owns
+   the space instead of leaving a dead band at the bottom. */
 .is-mobile .cc-composer {
   position: relative;
-  padding: 6px 10px calc(6px + env(safe-area-inset-bottom));
-  gap: 6px;
+  /* No env(safe-area-inset-bottom) here — Obsidian's mobile .view-content already
+     reserves the home-indicator inset, so adding it again left a dead band under
+     the composer. Sit flush against that inset instead. */
+  padding: 6px 8px 6px;
+  gap: 0;
+}
+.is-mobile .cc-composer-input-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 8px 8px 8px 10px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 22px;
+  background: var(--background-modifier-form-field);
+}
+  border-color: var(--cc-clay);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--cc-clay) 16%, transparent);
 }
 .is-mobile .cc-composer-input-row .cc-input {
   flex: 1 1 auto;
   min-width: 0;
   width: auto;
-  min-height: 38px;
+  /* Large typing area — this is the thing you interact with most. */
+  min-height: 92px;
+  max-height: 40vh;
   font-size: 16px;
   resize: none;
-  border-radius: 19px;
-  padding: 8px 14px;
-  line-height: 1.35;
+  border: none;
+  background: transparent;
+  border-radius: 0;
+  padding: 2px 2px 4px;
+  line-height: 1.4;
+  align-self: stretch;
+  overflow-y: auto;
+  scrollbar-width: none;
 }
+.is-mobile .cc-composer-input-row .cc-input:focus { border: none; box-shadow: none; }
+.is-mobile .cc-composer-input-row .cc-input::-webkit-scrollbar { display: none; }
 /* Circular send matches .cc-add-context; lives in the input row (ChatView). */
 .is-mobile .cc-send.cc-send-icon {
   flex: 0 0 auto;
-  width: 38px;
-  height: 38px;
+  width: 34px;
+  height: 34px;
   padding: 0;
   border-radius: 50%;
   font-size: 0;
@@ -1371,22 +1403,38 @@ pre.cc-has-copy:hover .cc-code-copy { opacity: 1; }
   border-radius: 0;
 }
 
-/* The "+" context button (built in ChatView) sits left of the input. */
+/* The "+" context button sits at the bottom-left, inside the input box. */
 .is-mobile .cc-add-context {
   flex: 0 0 auto;
-  width: 38px; height: 38px;
+  width: 34px; height: 34px;
   border-radius: 50%;
   border: 1px solid var(--background-modifier-border);
-  background: var(--background-secondary);
-  color: var(--text-normal);
+  background: transparent;
+  color: var(--text-muted);
   display: inline-flex; align-items: center; justify-content: center;
   cursor: pointer;
 }
+.is-mobile .cc-add-context:active { background: var(--background-modifier-hover); }
 /* SVG flex children collapse to width:0 without an explicit size — pin it. */
-.is-mobile .cc-add-context svg { width: 20px; height: 20px; flex: 0 0 auto; }
-.is-mobile .cc-composer-input-row {
-  display: flex; align-items: flex-end; gap: 6px;
+.is-mobile .cc-add-context svg { width: 19px; height: 19px; flex: 0 0 auto; }
+
+/* Attachment chips: full-width subtle row across the top of the input box
+   (ChatView moves .cc-attach-pills in here on mobile). Muted, not loud clay,
+   so they frame the input instead of crowding it. */
+.is-mobile .cc-attach-pills {
+  order: -1;
+  flex-basis: 100%;
+  width: 100%;
+  margin: 0 0 2px;
+  gap: 6px;
 }
+.is-mobile .cc-attach-pill {
+  background: var(--background-secondary);
+  color: var(--text-muted);
+  border-color: var(--background-modifier-border);
+  font-size: 11px;
+}
+.is-mobile .cc-attach-pill .cc-attach-label { color: var(--text-normal); }
 
 /* ===== Agent mode: tool chips (spec 2026-07-05) ===== */
 

@@ -1,7 +1,7 @@
 {
   "id": "claude-companion",
   "name": "Companion for Claude",
-  "version": "0.11.1",
+  "version": "0.11.2",
   "minAppVersion": "1.7.2",
   "description": "Chat with Claude inside your vault, generate gallery-grade interactive planning artifacts, and sync everything Claude produces back into your notes.",
   "author": "Sasan Sotoodehfar",
