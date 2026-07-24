@@ -180,7 +180,9 @@
   color: var(--cc-gray-500);
 }
 .cc-body {
-  font-size: var(--font-text-size, 15px);
+  /* Independent of Obsidian's editor font (--font-text-size), which is often
+     set large; driven by the chatFontSize setting via --cc-chat-font. */
+  font-size: var(--cc-chat-font, 14px);
   line-height: 1.55;
 }
 .cc-user .cc-body {
@@ -214,8 +216,29 @@
 .cc-assistant .cc-body {
   padding: 2px 0;
 }
-.cc-streaming-raw {
-  white-space: pre-wrap;
+/* Placeholder shown in the chat while a `claude-html` artifact is still
+   streaming — a compact "building" chip (pulsing accent dot, reusing the
+   agent tool-chip animation) in place of the raw HTML source. Swapped for the
+   sandboxed iframe on the final render. */
+.cc-artifact-building {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0;
+  padding: 6px 12px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  background: var(--background-secondary);
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+}
+.cc-artifact-building::before {
+  content: "";
+  display: inline-block;
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--cc-clay);
+  animation: cc-chip-pulse 1.2s ease-in-out infinite;
 }
 .cc-body > :first-child {
   margin-top: 0;
@@ -746,6 +769,18 @@
   background: var(--cc-clay, #d97757);
   border-color: var(--cc-clay, #d97757);
   color: #fff;
+}
+/* "Act on vault" writes toggle — hides itself on sessions that can't act. */
+.cc-writes-toggle.is-hidden {
+  display: none;
+}
+.cc-writes-toggle-icon {
+  display: inline-flex;
+  align-items: center;
+}
+.cc-writes-toggle-icon svg {
+  width: 13px;
+  height: 13px;
 }
 .cc-ctl-label {
   color: var(--cc-gray-500, #87867f);
@@ -1309,7 +1344,7 @@ pre.cc-has-copy:hover .cc-code-copy { opacity: 1; }
 
 /* Messages: full-bleed, roomier. */
 .is-mobile .cc-messages { padding: 12px 14px; gap: 18px; }
-.is-mobile .cc-body { font-size: 16px; }
+.is-mobile .cc-body { font-size: var(--cc-chat-font, 16px); }
 /* Example cards stack in one column — the existing 360px media query keys on the
    viewport (wide in emulation / a docked panel), so it never fires; .is-mobile does. */
 .is-mobile .cc-empty-examples { grid-template-columns: 1fr; }
@@ -1494,7 +1529,7 @@ pre.cc-has-copy:hover .cc-code-copy { opacity: 1; }
   width: 8px; height: 8px;
   margin-right: 6px;
   border-radius: 50%;
-  background: var(--interactive-accent);
+  background: var(--cc-clay);
   animation: cc-chip-pulse 1.2s ease-in-out infinite;
 }
 
