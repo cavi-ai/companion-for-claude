@@ -1382,6 +1382,7 @@ pre.cc-has-copy:hover .cc-code-copy { opacity: 1; }
   border-radius: 22px;
   background: var(--background-modifier-form-field);
 }
+.is-mobile .cc-composer-input-row:focus-within {
   border-color: var(--cc-clay);
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--cc-clay) 16%, transparent);
 }
@@ -1454,10 +1455,25 @@ pre.cc-has-copy:hover .cc-code-copy { opacity: 1; }
   width: 100%;
   height: 2px;
   border-radius: 0;
-  background: transparent;
+  /* Faint full-width track: at low usage the fill alone read as a stray dash. */
+  background: color-mix(in srgb, var(--background-modifier-border) 55%, transparent);
 }
 .is-mobile .cc-gauge-fill {
   border-radius: 0;
+}
+
+/* Artifacts: the desktop fixed pixel height (default 640px) eats the whole
+   phone screen — cap it to a share of the viewport instead. */
+.is-mobile .cc-artifact-frame { height: 52vh !important; }
+.is-mobile .cc-artifact-bar {
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 10px;
+}
+.is-mobile .cc-artifact-bar .cc-artifact-btn {
+  min-height: 32px;
+  padding: 4px 12px;
+  font-size: 12px;
 }
 
 /* The "+" context button sits at the bottom-left, inside the input box. */
