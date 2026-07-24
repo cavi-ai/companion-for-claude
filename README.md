@@ -39,6 +39,12 @@ vault stays the single source of truth.
 - **Chat in a side panel** — streaming responses, Markdown-rendered, with
   per-message **Copy / Insert / Save as note / Regenerate** actions and
   hover-to-copy on every code block.
+- **First-run in seconds** — a keyless vault shows an in-chat **Connect to
+  Claude** card; paste your key and start, without opening settings. Your typed
+  message is never discarded while unconfigured.
+- **Errors don't lose work** — if a turn fails mid-stream, the partial reply is
+  kept and a **Retry** appears; a truncated reply offers **retry with a higher
+  limit**; attachments survive failed sends and Regenerate.
 - **Continue the active workspace** — empty Chat surfaces one relevant card for
   the active note or research project. Research Desk and Workbench can hand the
   canonical project back to Companion without sending a request automatically;
@@ -61,9 +67,10 @@ vault stays the single source of truth.
   a model would reject is hidden, not broken.
 - **Slash commands** — type `/` in the composer for a fuzzy palette:
   summarize, ask, improve, artifact, plan, canvas, workflows, capture, build,
-  research, and more.
+  research, and more. A run shows as a compact **command chip**, not a wall of
+  prompt text.
 - **Conversation history** — chats persist across restarts; resume any past
-  conversation from a fuzzy picker.
+  conversation from a fuzzy picker, or **delete** one there (two-tap confirm).
 - **Prompt caching** — repeated context (system prompt, tools, conversation
   history) is cached server-side automatically, cutting input cost by up to
   ~10× on long conversations. The cost estimate in the usage bar accounts for

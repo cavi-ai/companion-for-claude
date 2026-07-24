@@ -189,6 +189,28 @@
   border-radius: 10px;
   padding: 8px 12px;
 }
+/* A slash-command / workflow invocation: a compact clay chip instead of a
+   plain bubble of raw prompt text. */
+.cc-msg.cc-command { gap: 0; }
+.cc-command-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  align-self: flex-start;
+  max-width: 100%;
+  padding: 4px 12px 4px 10px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--cc-clay) 15%, transparent);
+  border: 1px solid color-mix(in srgb, var(--cc-clay) 38%, transparent);
+  color: var(--cc-clay);
+  font-family: var(--cc-mono);
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+.cc-command-chip-icon { display: inline-flex; flex: 0 0 auto; }
+.cc-command-chip-icon svg { width: 13px; height: 13px; }
+.cc-command-chip-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cc-assistant .cc-body {
   padding: 2px 0;
 }
@@ -2017,3 +2039,112 @@ pre.cc-has-copy:hover .cc-code-copy { opacity: 1; }
   .cc-discovery-setup input { flex-basis: auto; width: 100%; }
   .cc-discovery-actions button { flex: 1 1 auto; }
 }
+
+/* ---- first-run setup card (no credential yet) ---- */
+.cc-setup-card {
+  margin: 12px auto;
+  max-width: 420px;
+  padding: 16px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 10px;
+  background: var(--background-secondary);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  text-align: left;
+}
+.cc-setup-title { font-weight: 600; font-size: 15px; }
+.cc-setup-sub { color: var(--text-muted); font-size: 13px; }
+.cc-setup-link { font-size: 13px; }
+.cc-setup-row { display: flex; gap: 8px; margin-top: 4px; }
+.cc-setup-input {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-primary);
+}
+.cc-setup-settings {
+  align-self: flex-start;
+  background: none;
+  border: none;
+  box-shadow: none;
+  padding: 2px 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  cursor: pointer;
+  text-decoration: underline;
+}
+.cc-setup-attn { animation: cc-setup-pulse 0.9s ease; }
+@keyframes cc-setup-pulse {
+  0%, 100% { box-shadow: none; }
+  40% { box-shadow: 0 0 0 2px var(--interactive-accent); }
+}
+
+/* ---- stream-error Retry / higher-limit retry button ---- */
+.cc-error-retry {
+  align-self: flex-start;
+  margin-top: 6px;
+  padding: 3px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-primary);
+  cursor: pointer;
+  font-size: 12px;
+}
+.cc-error-retry:hover { background: var(--background-modifier-hover); }
+
+/* Tune knobs rendered inside the mobile modal: static flow, not the desktop
+   popover's absolute positioning. */
+.cc-knobs-modal {
+  position: static;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 8px 0;
+}
+
+/* ---- history picker rows + delete ---- */
+.cc-conv-suggestion { display: flex; align-items: center; gap: 8px; }
+.cc-conv-main { flex: 1; min-width: 0; }
+.cc-conv-delete {
+  flex: 0 0 auto;
+  background: none;
+  border: none;
+  box-shadow: none;
+  padding: 4px;
+  cursor: pointer;
+  color: var(--text-faint);
+  border-radius: 4px;
+}
+.cc-conv-delete:hover { color: var(--text-error); background: var(--background-modifier-hover); }
+.cc-conv-delete.is-armed { color: var(--text-error); background: var(--background-modifier-error-hover); }
+.cc-conv-delete svg { width: 15px; height: 15px; }
+
+/* ---- agent session write-grant pill (visible + revocable) ---- */
+.cc-write-grant-pill {
+  display: none;
+  background: var(--background-modifier-error-hover);
+  color: var(--text-error);
+  border: none;
+  box-shadow: none;
+  border-radius: 10px;
+  font-size: 10px;
+  padding: 1px 8px;
+  cursor: pointer;
+  width: fit-content;
+}
+.cc-write-grant-pill.is-on { display: inline-block; }
+
+/* ---- settings: connect callout + invalid numeric input ---- */
+.cc-connect-callout {
+  border: 1px solid var(--interactive-accent);
+  border-radius: 8px;
+  padding: 10px 14px;
+  margin-bottom: 14px;
+  background: var(--background-secondary);
+}
+.cc-connect-title { font-weight: 600; margin-bottom: 2px; }
+.cc-connect-callout p { margin: 0; color: var(--text-muted); font-size: 13px; }
+.cc-input-invalid { border-color: var(--text-error) !important; }
