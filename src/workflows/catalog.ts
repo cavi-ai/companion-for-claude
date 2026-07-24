@@ -115,4 +115,12 @@ export const WORKFLOWS: Workflow[] = [
     vaultSearch: true,
     prompt: `Synthesize what my vault says about the topic of my active note (or the topic I describe): the consensus, the open questions, and the strongest supporting notes (as [[wikilinks]]). Stay strictly grounded in my notes — explicitly flag anything you are unsure about or that isn't supported.`,
   },
+  {
+    id: "frontmatter-audit",
+    name: "Frontmatter audit",
+    description: "Audit frontmatter consistency across the vault and propose a schema",
+    group: "Knowledge & synthesis",
+    vaultSearch: true,
+    prompt: `Audit the YAML frontmatter across my notes and produce a report ${ARTIFACT}: which fields exist and how consistently they're used (e.g. type, tags, status, created), notes missing key fields, off-schema or inconsistent values, and a proposed target schema (fields + allowed values) with a low-effort normalization plan. Ground it in what you can see of my vault and cite example notes; don't propose deleting fields you can't see the purpose of.`,
+  },
 ];

@@ -8,6 +8,7 @@ const ICON: Record<AtKind, string> = {
   vault: "search",
   "note-path": "file",
   "folder-path": "folder",
+  "media-path": "image",
 };
 
 /**

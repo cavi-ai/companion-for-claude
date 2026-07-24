@@ -2,7 +2,7 @@
 // list, filtering it, and detecting the active @-token at the cursor. The view
 // (AtMenu) and ChatView wire these to the editor + context-gathering.
 
-export type AtKind = "note" | "selection" | "linked" | "vault" | "note-path" | "folder-path";
+export type AtKind = "note" | "selection" | "linked" | "vault" | "note-path" | "folder-path" | "media-path";
 
 export interface AtItem {
   /** Stable id (kind, or kind:path). */
@@ -24,8 +24,8 @@ export const AT_SPECIALS: ReadonlyArray<AtItem> = [
   { id: "vault", kind: "vault", label: "Entire vault", sublabel: "semantic + keyword search" },
 ];
 
-/** Build the full candidate list: specials, then notes, then folders. */
-export function buildAtItems(notePaths: string[], folderPaths: string[]): AtItem[] {
+/** Build the full candidate list: specials, then notes, folders, and media (PDFs/images). */
+export function buildAtItems(notePaths: string[], folderPaths: string[], mediaPaths: string[] = []): AtItem[] {
   const notes: AtItem[] = notePaths.map((p) => ({
     id: `note-path:${p}`,
     kind: "note-path",
@@ -40,7 +40,14 @@ export function buildAtItems(notePaths: string[], folderPaths: string[]): AtItem
     sublabel: p,
     path: p,
   }));
-  return [...AT_SPECIALS, ...notes, ...folders];
+  const media: AtItem[] = mediaPaths.map((p) => ({
+    id: `media-path:${p}`,
+    kind: "media-path",
+    label: basename(p),
+    sublabel: p,
+    path: p,
+  }));
+  return [...AT_SPECIALS, ...notes, ...folders, ...media];
 }
 
 /**

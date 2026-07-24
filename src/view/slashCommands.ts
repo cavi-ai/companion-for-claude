@@ -2,6 +2,8 @@
 // menu UI and the actual command handlers; this owns the catalog and the
 // query→matches logic so it can be unit-tested.
 
+import type { Workflow } from "../workflows/catalog";
+
 export interface SlashCommand {
   /** The token after "/", e.g. "summarize". Lowercase, no spaces. */
   name: string;
@@ -66,6 +68,53 @@ export function filterCommands(commands: SlashCommand[], query: string): SlashCo
   return scored.map((s) => s.cmd);
 }
 
+/** Action-id prefix for a slash command that runs a vault workflow. */
+export const WORKFLOW_ACTION_PREFIX = "workflow:";
+
+export interface NativeSlashActionHandlers {
+  openResearchDesk(): Promise<void>;
+}
+
+export async function dispatchNativeSlashAction(
+  action: string | undefined,
+  handlers: NativeSlashActionHandlers,
+): Promise<boolean> {
+  if (action !== "open-research-desk" && action !== "open-research-workbench") return false;
+  await handlers.openResearchDesk();
+  return true;
+}
+
+export interface NativeSlashCommandContext {
+  command: SlashCommand;
+  backend: "claude" | "auto" | "local";
+  clearComposer: () => void;
+  activateResearchDesk: () => Promise<void>;
+  requestCompletion: (prompt: string, display?: string) => Promise<void>;
+}
+
+/** Orchestrate native slash actions that bypass every chat completion backend. */
+export async function runNativeSlashCommand(context: NativeSlashCommandContext): Promise<boolean> {
+  const { command, clearComposer, activateResearchDesk } = context;
+  if (command.action !== "open-research-desk" && command.action !== "open-research-workbench") return false;
+  clearComposer();
+  await activateResearchDesk();
+  return true;
+}
+
+/**
+ * Derive slash commands from the workflow catalog, so every workflow is also
+ * reachable by typing "/" (the browsable picker stays available via /workflows).
+ * They dispatch through the `workflow:<id>` action, handled in ChatView.
+ */
+export function workflowSlashCommands(workflows: Workflow[]): SlashCommand[] {
+  return workflows.map((wf) => ({
+    name: wf.id,
+    description: wf.description,
+    kind: "action",
+    action: `${WORKFLOW_ACTION_PREFIX}${wf.id}`,
+  }));
+}
+
 /** Move a selection index within [0, len) with wrap-around. */
 export function moveSelection(current: number, delta: number, len: number): number {
   if (len <= 0) return 0;
@@ -123,11 +172,27 @@ export const SLASH_COMMANDS: SlashCommand[] = [
     awaitsInput: true,
   },
   {
+    name: "research",
+    aliases: ["paper", "evidence", "workbench", "literature"],
+    description: "Open Research Desk and continue the active evidence-backed project",
+    kind: "action",
+    action: "open-research-desk",
+  },
+  {
     name: "diagram",
     aliases: ["map", "flow"],
     description: "Create a clear visual diagram artifact",
     kind: "prompt",
     prompt: "Create a single self-contained ```claude-html artifact with a clear visual diagram for: ",
+    awaitsInput: true,
+  },
+  {
+    name: "canvas",
+    aliases: ["mindmap", "board"],
+    description: "Build an Obsidian Canvas mind map (agent mode)",
+    kind: "prompt",
+    prompt:
+      "Using the canvas_create tool, build an Obsidian Canvas mind map. Search the vault for the relevant notes first and prefer file nodes pointing at them; connect nodes with labeled edges. Topic: ",
     awaitsInput: true,
   },
   {
@@ -138,9 +203,16 @@ export const SLASH_COMMANDS: SlashCommand[] = [
     prompt: "Suggest useful internal Obsidian links for my active note. Group them by why they are relevant and include concise link text.",
   },
   {
-    name: "daily",
-    aliases: ["today", "journal"],
-    description: "Draft or improve today's daily note",
+    name: "frontmatter",
+    aliases: ["fm", "meta", "tags", "properties"],
+    description: "Propose and apply frontmatter (type, tags, summary) for the active note",
+    kind: "action",
+    action: "frontmatter",
+  },
+  {
+    name: "dailynote",
+    aliases: ["today", "journal", "daily"],
+    description: "Draft or improve today's daily note (distinct from the /daily-rollup activity review)",
     kind: "prompt",
     prompt: "Draft today's daily note from my current context. Include priorities, open loops, decisions, and next actions.",
   },

@@ -3,16 +3,35 @@ import { validateArtifactInteractivity } from "./parse";
 import type { ArtifactOpenTarget } from "../types";
 
 /** Sandbox CSP shared by the inline iframe and the fullscreen modal: scripts run
- *  but can't reach the vault, cookies, forms, or the network. */
+ *  but can't reach the vault, cookies, forms, or the network. `connect-src 'none'`
+ *  + data/blob-only assets is the load-bearing guarantee (blocks fetch/XHR/beacon
+ *  exfiltration); `'unsafe-eval'` is kept so charting/templating artifacts that
+ *  use eval/new Function still render. */
 const ARTIFACT_CSP =
-  "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; " +
+  "default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval'; style-src 'unsafe-inline'; " +
   "img-src data: blob:; font-src data:; media-src data: blob:; connect-src 'none'; " +
   "form-action 'none'; base-uri 'none';";
 
+/**
+ * Inject the CSP as a `<meta http-equiv>` at the top of `<head>` so it's actually
+ * enforced. The `csp` iframe attribute is the abandoned "Embedded Enforcement"
+ * proposal and is NOT honored by Electron/Obsidian, so the meta tag — not the
+ * attribute — is what restricts the artifact.
+ */
+function withCsp(html: string): string {
+  const meta = `<meta http-equiv="Content-Security-Policy" content="${ARTIFACT_CSP}">`;
+  if (/<head[^>]*>/i.test(html)) return html.replace(/<head[^>]*>/i, (m) => `${m}${meta}`);
+  if (/<html[^>]*>/i.test(html)) return html.replace(/<html[^>]*>/i, (m) => `${m}<head>${meta}</head>`);
+  return `${meta}${html}`;
+}
+
 function sandboxFrame(iframe: HTMLIFrameElement, html: string): void {
   iframe.setAttribute("sandbox", "allow-scripts");
-  iframe.setAttribute("csp", ARTIFACT_CSP);
-  iframe.srcdoc = html;
+  // Delegate clipboard *write* so artifact "Copy" buttons work on user click.
+  // This is a one-way push to the OS clipboard, not same-origin/network access,
+  // so it doesn't widen the sandbox's reach into the vault, cookies, or forms.
+  iframe.setAttribute("allow", "clipboard-write");
+  iframe.srcdoc = withCsp(html);
 }
 
 export interface ArtifactActions {
@@ -71,29 +90,40 @@ export function renderArtifactInline(
   const caret = split.createEl("button", { cls: "cc-artifact-btn cc-artifact-caret", attr: { "aria-label": "Choose where to open" } });
   setIcon(caret, "chevron-down");
   const menu = split.createDiv({ cls: "cc-artifact-menu" });
+  // The outside-click listener must be torn down on EVERY close path (menu-item
+  // click, toggle-close, outside click), or it leaks on `activeDocument` and
+  // retains the artifact DOM/HTML closure.
+  let closeMenu: ((e: MouseEvent) => void) | null = null;
+  const detachClose = () => {
+    if (closeMenu) {
+      activeDocument.removeEventListener("mousedown", closeMenu);
+      closeMenu = null;
+    }
+  };
+  const closeMenuNow = () => {
+    menu.removeClass("is-open");
+    detachClose();
+  };
   for (const [menuLabel, target] of OPEN_MENU) {
     const item = menu.createEl("button", { cls: "cc-artifact-menu-item", text: menuLabel });
     item.addEventListener("click", () => {
-      menu.removeClass("is-open");
+      closeMenuNow();
       openWith(html, title, target);
     });
   }
-  let closeMenu: ((e: MouseEvent) => void) | null = null;
   caret.addEventListener("click", (e) => {
     e.stopPropagation();
     const opening = !menu.hasClass("is-open");
     menu.toggleClass("is-open", opening);
-    if (opening && !closeMenu) {
-      closeMenu = (ev: MouseEvent) => {
-        if (!split.contains(ev.target as Node)) {
-          menu.removeClass("is-open");
-          if (closeMenu) activeDocument.removeEventListener("mousedown", closeMenu);
-          closeMenu = null;
-        }
-      };
-      // Defer so this same click doesn't immediately close it.
-      window.setTimeout(() => closeMenu && activeDocument.addEventListener("mousedown", closeMenu), 0);
+    if (!opening) {
+      detachClose();
+      return;
     }
+    closeMenu = (ev: MouseEvent) => {
+      if (!split.contains(ev.target as Node)) closeMenuNow();
+    };
+    // Defer so this same click doesn't immediately close it.
+    window.setTimeout(() => closeMenu && activeDocument.addEventListener("mousedown", closeMenu), 0);
   });
 
   const iframe = wrap.createEl("iframe", { cls: "cc-artifact-frame" });
@@ -153,18 +183,29 @@ export async function openArtifactExternally(html: string, title: string, target
     if (!req) throw new Error("native modules unavailable");
     const os = req("os") as { tmpdir(): string; platform(): string };
     const path = req("path") as { join(...p: string[]): string };
-    const fs = req("fs") as { promises: { writeFile(p: string, d: string, enc: string): Promise<void> } };
+    const fs = req("fs") as {
+      promises: {
+        writeFile(p: string, d: string, enc: string): Promise<void>;
+        readdir(p: string): Promise<string[]>;
+        stat(p: string): Promise<{ mtimeMs: number }>;
+        unlink(p: string): Promise<void>;
+      };
+    };
     const electron = req("electron") as { shell: { openPath(p: string): Promise<string> } };
 
+    const dir = os.tmpdir();
+    await sweepStaleArtifacts(fs, path, dir);
     const safe = (title || "artifact").replace(/[^a-z0-9-_]+/gi, "-").slice(0, 60) || "artifact";
-    const file = path.join(os.tmpdir(), `companion-${safe}-${Date.now()}.html`);
+    const file = path.join(dir, `companion-${safe}-${Date.now()}.html`);
     await fs.promises.writeFile(file, html, "utf8");
 
     const appName = target !== "default" && target !== "obsidian" ? BROWSER_APP[target] : undefined;
     if (appName && os.platform() === "darwin") {
-      const cp = req("child_process") as { exec(cmd: string, cb: (err: unknown) => void): void };
+      // execFile (arg array, no shell) — avoids interpolating a shell string over
+      // a path derived from the user-controlled $TMPDIR.
+      const cp = req("child_process") as { execFile(cmd: string, args: string[], cb: (err: unknown) => void): void };
       await new Promise<void>((resolve) => {
-        cp.exec(`open -a ${JSON.stringify(appName)} ${JSON.stringify(file)}`, (err) => {
+        cp.execFile("open", ["-a", appName, file], (err) => {
           if (err) void electron.shell.openPath(file); // browser not installed → default
           resolve();
         });
@@ -180,5 +221,42 @@ export async function openArtifactExternally(html: string, title: string, target
     } catch {
       new Notice(`Couldn't open the artifact externally: ${e instanceof Error ? e.message : String(e)}`);
     }
+  }
+}
+
+/** fs surface used by the temp-file sweep. */
+interface SweepFs {
+  promises: {
+    readdir(p: string): Promise<string[]>;
+    stat(p: string): Promise<{ mtimeMs: number }>;
+    unlink(p: string): Promise<void>;
+  };
+}
+
+/**
+ * Best-effort removal of temp artifact files left by previous external opens.
+ * Only files older than a minute are deleted, so we never race a file a browser
+ * is still loading (the fresh file is written after this returns). All errors
+ * are swallowed — cleanup must never block opening the artifact.
+ */
+async function sweepStaleArtifacts(fs: SweepFs, path: { join(...p: string[]): string }, dir: string): Promise<void> {
+  try {
+    const names = await fs.promises.readdir(dir);
+    const now = Date.now();
+    await Promise.all(
+      names
+        .filter((n) => /^companion-.*\.html$/.test(n))
+        .map(async (n) => {
+          const p = path.join(dir, n);
+          try {
+            const st = await fs.promises.stat(p);
+            if (now - st.mtimeMs > 60_000) await fs.promises.unlink(p);
+          } catch {
+            /* file vanished or unreadable — ignore */
+          }
+        }),
+    );
+  } catch {
+    /* readdir failed — ignore, cleanup is best-effort */
   }
 }

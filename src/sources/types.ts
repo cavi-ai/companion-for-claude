@@ -8,6 +8,16 @@ export type FieldType = "string" | "number" | "date" | "duration" | "string[]";
 
 export type FieldValue = string | number | string[];
 
+export interface ScholarlySourceFields {
+  doi?: string;
+  arxiv_id?: string;
+  zotero_key?: string;
+  authors?: string[];
+  published?: string;
+  publication?: string;
+  asset?: string;
+}
+
 export interface SchemaField {
   key: string;
   type: FieldType;
@@ -30,7 +40,7 @@ export type RawCapture =
 
 export interface SourceRecord {
   type: SourceType;
-  fields: Record<string, FieldValue>;
+  fields: Record<string, FieldValue> & Partial<ScholarlySourceFields>;
   provenance: {
     url?: string | undefined;
     capturedAt: string;

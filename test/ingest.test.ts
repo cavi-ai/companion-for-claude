@@ -56,7 +56,7 @@ describe("ingestSession", () => {
     const all = app.vault.getMarkdownFiles().filter((f) => f.path.startsWith("Claude/Sessions/"));
     expect(all.length).toBe(1); // not duplicated
     expect(r1.sessionId).toBe("fileabc");
-    expect(await app.vault.cachedRead(r1.file)).toContain("session_id: fileabc");
+    expect(await app.vault.cachedRead(r1.file)).toContain('session_id: "fileabc"');
   });
 });
 

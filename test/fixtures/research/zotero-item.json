@@ -1,0 +1,13 @@
+{
+  "key": "RELIABILITY2026",
+  "title": "Review Reliability Across Domains",
+  "itemType": "journalArticle",
+  "DOI": "10.5555/review-reliability.2026",
+  "url": "https://example.test/review-reliability",
+  "date": "2026",
+  "publicationTitle": "Journal of Reproducible Reviews",
+  "creators": [
+    { "creatorType": "author", "firstName": "Ada", "lastName": "Reviewer" },
+    { "creatorType": "author", "firstName": "Lin", "lastName": "Verifier" }
+  ]
+}

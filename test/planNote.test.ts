@@ -21,7 +21,7 @@ describe("savePlanNote", () => {
     const md = await app.vault.cachedRead(file);
 
     expect(file.path.startsWith("Claude/Plans/")).toBe(true);
-    expect(md).toContain("type: plan"); // canonical → gets the Build icon
+    expect(md).toContain('type: "plan"'); // canonical → gets the Build icon
     expect(md).toContain("```claude-html"); // artifact preserved (renders inline)
 
     // The note is build-ready: extractTasks finds the checklist (not the HTML).

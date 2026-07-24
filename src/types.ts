@@ -13,6 +13,21 @@ export interface ChatMessage {
    * receives the full `content`.
    */
   display?: string;
+  /**
+   * Display-only record of the tool calls behind an assistant turn (agent mode).
+   * Used to re-render tool chips on conversation replay; never sent to the model.
+   */
+  toolTrace?: ToolTraceEntry[];
+}
+
+/** One tool call as shown in the chat UI (not the wire format). */
+export interface ToolTraceEntry {
+  name: string;
+  /** Compact one-line rendering of the arguments (e.g. the search query). */
+  argsSummary: string;
+  /** Truncated result text for the expandable chip. */
+  resultPreview: string;
+  ok: boolean;
 }
 
 export interface ContextToggles {
@@ -58,6 +73,8 @@ export interface PluginSettings {
   maxContextNotes: number;
   /** Default render height (px) for inline `claude-html` artifacts. */
   artifactHeight: number;
+  /** Chat message font size (px). Independent of Obsidian's editor font. */
+  chatFontSize: number;
   /** Max chat conversations to retain in history (oldest pruned). 0 = unlimited. */
   maxConversations: number;
 
@@ -70,12 +87,29 @@ export interface PluginSettings {
   localUtilityEnabled: boolean;
   /** Chat backend: always Claude, always local, or auto (Claude with local fallback). */
   chatBackend: "claude" | "local" | "auto";
+  /** Provider policy for explicit Research Intelligence narrative analysis. */
+  intelligenceNarrator: "current" | "claude" | "local" | "disabled";
+
+  // ----- scholarly discovery -----
+  /** Enable explicit, user-triggered scholarly discovery network requests. */
+  discoveryEnabled: boolean;
+  /** Optional contact address sent to OpenAlex. */
+  openAlexContactEmail: string;
+  /** Provider policy for explicit discovery reranking. */
+  discoveryReranker: "current" | "claude" | "local" | "disabled";
+  discoveryMaxResults: number;
+  discoveryExpansionLimit: number;
+  discoveryCacheHours: number;
 
   // ----- semantic search (local embeddings) -----
   /** Build a local vector index so the vault is searchable by meaning. */
   semanticEnabled: boolean;
   /** Ollama embedding model (e.g. nomic-embed-text). Local + private. */
   embeddingModel: string;
+  /** Which engine computes embeddings: the bundled in-webview model or Ollama. */
+  embeddingEngine: "builtin" | "ollama";
+  /** Set once the built-in embedding-model download prompt has been shown. */
+  semanticModelPrompted: boolean;
 
   // ----- indexing -----
   /** Auto-add tags + summary frontmatter when saving artifacts/chats. */
@@ -84,6 +118,14 @@ export interface PluginSettings {
   artifactBaseTags: string[];
   /** Tags every saved chat gets. */
   chatBaseTags: string[];
+
+  // ----- agent mode (vault tools in chat) -----
+  /** Offer read-only vault tools to Claude in chat, so it can search/read on its own. */
+  agentModeEnabled: boolean;
+  /** Also offer write tools (create/append/update/move). Each write asks for confirmation. */
+  agentAllowWrites: boolean;
+  /** Max stream→tools→stream iterations per turn. */
+  agentMaxIterations: number;
 
   // ----- MCP bridge (vault-as-MCP-server) -----
   /** Run a local MCP server exposing vault tools to Claude Code / Desktop. */
@@ -126,18 +168,30 @@ export interface PluginSettings {
   memoryIngestOnSave: boolean;
   /** Tags every session digest note gets. */
   memoryBaseTags: string[];
+  /** After each capture, merge recent digests into the "What Claude Knows" note. */
+  memoryAutoConsolidate: boolean;
 
   // ----- source capture (typed clip enrichment) -----
   /** Master switch: watch the inbox and enrich new clips/files into typed notes. */
   sourceCaptureEnabled: boolean;
   /** Auto-enrich files as they appear in the inbox folder (vs. manual command only). */
   sourceEnrichOnCreate: boolean;
+  /** One-time consent for auto-enriching inbox files with the utility model ("ask" until the user chooses). */
+  sourceCaptureConsent: "ask" | "allow" | "deny";
   /** Folder the Web Clipper writes to and Companion watches. */
   sourceInboxFolder: string;
   /** Tags every enriched source note gets. */
   sourceBaseTags: string[];
   /** Per-type schema overrides, keyed by source type. */
   sourceSchemaOverrides: Record<string, { version?: number; fields?: unknown[] }>;
+
+  // ----- vault ontology (typed notes & relations) -----
+  /** Master switch: seed/validate typed frontmatter and relations. */
+  ontologyEnabled: boolean;
+  /** Folder holding the schema notes (one note per type). */
+  ontologyFolder: string;
+  /** Set once the ontology seed prompt has been shown (don't nag again). */
+  ontologySeedPrompted: boolean;
 }
 
 export const DEFAULT_SETTINGS: PluginSettings = {
@@ -145,13 +199,14 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   authMode: "apiKey",
   oauthToken: "",
   baseUrl: "",
-  model: "claude-sonnet-4-6",
+  model: "claude-sonnet-5",
   customModel: "",
   maxTokens: 20000,
   systemPrompt:
     "You are Claude, working inside the user's Obsidian vault. Be concise and precise. " +
-    "When the user asks for a plan, report, diagram, or anything visual, prefer producing a single " +
-    "self-contained HTML artifact in a ```claude-html code block using the provided design system.",
+    "Answer ordinary questions and short requests in normal Markdown. Only when the user asks for a " +
+    "deliverable that benefits from visual structure (a plan, audit, report, dashboard, comparison, or diagram) " +
+    "produce a single self-contained ```claude-html artifact using the provided design system and the template that fits the request.",
   artifactOpenTarget: "obsidian",
   artifactFolder: "Claude/Artifacts",
   chatFolder: "Claude/Chats",
@@ -165,19 +220,39 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   contextCharBudget: 24000,
   maxContextNotes: 6,
   artifactHeight: 640,
+  chatFontSize: 14,
   maxConversations: 200,
 
   ollamaHost: "http://localhost:11434",
   ollamaModel: "llama3.1",
   localUtilityEnabled: false,
   chatBackend: "claude",
+  intelligenceNarrator: "current",
 
-  semanticEnabled: false,
+  discoveryEnabled: true,
+  openAlexContactEmail: "",
+  discoveryReranker: "current",
+  discoveryMaxResults: 20,
+  discoveryExpansionLimit: 20,
+  discoveryCacheHours: 24,
+
+  semanticEnabled: true,
   embeddingModel: "nomic-embed-text",
+  embeddingEngine: "builtin",
+  /** Set once the built-in embedding-model download prompt has been shown. */
+  semanticModelPrompted: false,
 
   autoTagOnSave: true,
   artifactBaseTags: ["claude", "artifact"],
   chatBaseTags: ["claude", "chat"],
+
+  agentModeEnabled: true,
+  // On by default so chat can actually act on the vault (create/edit notes,
+  // canvases, bases) — not just narrate it. Every write still asks for
+  // confirmation before it touches the vault, so this is safe; the in-chat
+  // "Act on vault" toggle flips it per session.
+  agentAllowWrites: true,
+  agentMaxIterations: 10,
 
   mcpEnabled: false,
   mcpPort: 22360,
@@ -199,13 +274,34 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   memoryFolder: "Claude/Sessions",
   memoryIngestOnSave: false,
   memoryBaseTags: ["claude", "session"],
+  memoryAutoConsolidate: false,
 
-  sourceCaptureEnabled: false,
+  sourceCaptureEnabled: true,
   sourceEnrichOnCreate: true,
+  sourceCaptureConsent: "ask",
   sourceInboxFolder: "Clippings",
   sourceBaseTags: ["source"],
   sourceSchemaOverrides: {},
+
+  ontologyEnabled: true,
+  ontologyFolder: "Ontology",
+  ontologySeedPrompted: false,
 };
+
+export type DiscoveryNumericSettings = Pick<PluginSettings,
+  "discoveryMaxResults" | "discoveryExpansionLimit" | "discoveryCacheHours">;
+
+const boundedInteger = (value: number | undefined, fallback: number, min: number, max: number): number =>
+  Number.isFinite(value) ? Math.min(max, Math.max(min, Math.floor(value!))) : fallback;
+
+/** Normalize persisted/user-entered discovery limits at every settings boundary. */
+export function normalizeDiscoverySettings(settings: Partial<DiscoveryNumericSettings>): DiscoveryNumericSettings {
+  return {
+    discoveryMaxResults: boundedInteger(settings.discoveryMaxResults, DEFAULT_SETTINGS.discoveryMaxResults, 5, 100),
+    discoveryExpansionLimit: boundedInteger(settings.discoveryExpansionLimit, DEFAULT_SETTINGS.discoveryExpansionLimit, 5, 50),
+    discoveryCacheHours: boundedInteger(settings.discoveryCacheHours, DEFAULT_SETTINGS.discoveryCacheHours, 1, 168),
+  };
+}
 
 /** Streaming callbacks for a single Claude request. */
 export interface StreamHandlers {
@@ -216,6 +312,10 @@ export interface StreamHandlers {
   onUsage?: (usage: import("./claude/sse").TokenUsage) => void;
   /** Incremental extended-thinking text (Anthropic, when thinking is on). */
   onThinking?: (delta: string) => void;
+  /** A completed `tool_use` block streamed by the model (agent mode, Anthropic only). */
+  onToolUse?: (block: import("./providers/types").ToolUseBlock) => void;
   /** Called when generation stopped at the output-token limit (response truncated). */
   onTruncated?: () => void;
+  /** Final stop reason when the stream ends (e.g. "end_turn", "tool_use"). */
+  onStopReason?: (reason: string) => void;
 }

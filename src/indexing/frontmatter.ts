@@ -28,12 +28,9 @@ export function normalizeTags(raw: string[]): string[] {
   return out;
 }
 
-/** Quote a YAML scalar only when needed. */
+/** Quote every string so YAML implicit typing can never change its type. */
 function yamlScalar(v: string): string {
-  if (v === "" || /[:#[\]{}&*!|>'"%@`,]/.test(v) || /^\s|\s$/.test(v) || /^(true|false|null|yes|no)$/i.test(v)) {
-    return JSON.stringify(v);
-  }
-  return v;
+  return JSON.stringify(v);
 }
 
 export interface FrontmatterData {

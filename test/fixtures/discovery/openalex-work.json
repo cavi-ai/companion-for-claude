@@ -1,0 +1,8 @@
+{
+  "id": "https://openalex.org/W123",
+  "display_name": "Seed work",
+  "authorships": [],
+  "publication_year": 2022,
+  "referenced_works": ["https://openalex.org/W100"],
+  "cited_by_count": 2
+}

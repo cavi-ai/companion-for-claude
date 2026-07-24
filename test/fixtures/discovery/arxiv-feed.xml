@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:arxiv="http://arxiv.org/schemas/atom">
+  <entry>
+    <id>http://arxiv.org/abs/2401.01234v2</id>
+    <updated>2024-02-04T00:00:00Z</updated>
+    <published>2024-01-03T00:00:00Z</published>
+    <title>  A scholarly
+      preprint  </title>
+    <summary>  Useful findings
+      with context. </summary>
+    <author><name>Ada Researcher</name></author>
+    <author><name>Bob Scholar</name></author>
+    <link href="https://arxiv.org/abs/2401.01234v2" rel="alternate" type="text/html" />
+    <link href="https://arxiv.org/pdf/2401.01234v2" rel="related" type="application/pdf" title="pdf" />
+    <arxiv:doi>10.1/x</arxiv:doi>
+    <raw_secret>must-not-leak</raw_secret>
+  </entry>
+</feed>

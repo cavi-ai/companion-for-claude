@@ -9,11 +9,15 @@ describe("resolveModelId", () => {
     expect(resolveModelId("claude-sonnet-4-6", "   ")).toBe("claude-sonnet-4-6");
     expect(resolveModelId("claude-opus-4-8", "")).toBe("claude-opus-4-8");
   });
+  it("never returns an empty id — falls back to a default when both are blank", () => {
+    expect(resolveModelId("", "")).toBe(CLAUDE_MODELS[0]!.id);
+    expect(resolveModelId("  ", "  ")).toBe(CLAUDE_MODELS[0]!.id);
+  });
 });
 
 describe("modelLabel", () => {
   it("returns the friendly label for known ids", () => {
-    expect(modelLabel("claude-sonnet-4-6")).toBe("Claude Sonnet 4.6");
+    expect(modelLabel("claude-sonnet-5")).toBe("Claude Sonnet 5");
   });
   it("echoes unknown ids verbatim", () => {
     expect(modelLabel("claude-future-9")).toBe("claude-future-9");

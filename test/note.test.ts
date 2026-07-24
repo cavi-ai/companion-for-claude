@@ -26,10 +26,10 @@ describe("renderDigestNote", () => {
   it("emits frontmatter with provenance and the session id", () => {
     const md = renderDigestNote(digest, { baseTags: ["claude", "session"] });
     expect(md.startsWith("---\n")).toBe(true);
-    expect(md).toContain("session_id: s1");
-    expect(md).toContain("model: claude-opus-4-8");
+    expect(md).toContain('session_id: "s1"');
+    expect(md).toContain('model: "claude-opus-4-8"');
     expect(md).toContain("input_tokens: 100");
-    expect(md).toContain("source: claude-companion");
+    expect(md).toContain('source: "claude-companion"');
     expect(md).toContain("Fix the parser");
     expect(md).toContain("Edit");
   });
@@ -69,7 +69,7 @@ describe("writeDigestNote", () => {
     expect(out.path).toBe(legacy.path); // modified in place, not duplicated
     const all = app.vault.getMarkdownFiles().filter((f) => f.path.startsWith("Claude/Sessions/"));
     expect(all.length).toBe(1);
-    expect(await app.vault.cachedRead(out)).toContain("session_id: s7"); // upgraded to the new key
+    expect(await app.vault.cachedRead(out)).toContain('session_id: "s7"'); // upgraded to the new key
   });
 
   it("matches a quoted session_id in place (no duplicate)", async () => {

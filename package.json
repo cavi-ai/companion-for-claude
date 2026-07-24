@@ -1,6 +1,6 @@
 {
   "name": "claude-companion",
-  "version": "0.8.3",
+  "version": "0.12.2",
   "description": "Chat with Claude inside your Obsidian vault, generate beautiful interactive artifacts, and sync them back into your notes.",
   "main": "main.js",
   "type": "module",
@@ -22,14 +22,19 @@
     "build": "tsc --noEmit --skipLibCheck && node esbuild.config.mjs production",
     "typecheck": "tsc --noEmit --skipLibCheck",
     "lint": "eslint src",
-    "audit": "pnpm audit --audit-level high",
+    "audit": "pnpm dlx pnpm@11.7.0 --pm-on-fail=ignore audit --prod --audit-level high",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "test:e2e:research": "pnpm run build && playwright test --config=e2e/playwright.config.ts"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
       "esbuild"
-    ]
+    ],
+    "overrides": {
+      "sharp": "^0.35.3",
+      "adm-zip": "^0.6.0"
+    }
   },
   "keywords": [
     "obsidian",
@@ -41,15 +46,22 @@
   "license": "MIT",
   "devDependencies": {
     "@eslint/js": "^9.9.0",
+    "@playwright/test": "^1.61.1",
     "@types/node": "^20.12.0",
     "esbuild": "0.28.1",
     "eslint": "^9.9.0",
     "eslint-plugin-obsidianmd": "^0.3.0",
     "globals": "^15.9.0",
+    "linkedom": "^0.18.13",
     "obsidian": "^1.13.0",
     "tslib": "^2.6.3",
     "typescript": "^5.4.5",
     "typescript-eslint": "^8.0.0",
-    "vitest": "^4.1.8"
+    "vitest": "^4.1.8",
+    "yaml": "^2.9.0"
+  },
+  "dependencies": {
+    "@huggingface/transformers": "^4.2.0",
+    "defuddle": "^0.19.1"
   }
 }

@@ -91,6 +91,15 @@ describe("resolveAuth — environment mode", () => {
     expect(r?.scheme).toBe("bearer");
     expect(r?.isOAuth).toBe(true);
   });
+  it("sends a non-oat ANTHROPIC_AUTH_TOKEN (gateway token) as bearer, not x-api-key", () => {
+    // The auth-token slot is Bearer by convention; putting it on x-api-key 401s.
+    const r = resolveAuth(base({ mode: "environment", env: { ANTHROPIC_AUTH_TOKEN: "gw-secret-123" } }));
+    expect(r?.scheme).toBe("bearer");
+    expect(r?.isOAuth).toBe(false);
+    const h = authHeaders(r!);
+    expect(h["authorization"]).toBe("Bearer gw-secret-123");
+    expect(h["x-api-key"]).toBeUndefined();
+  });
   it("uses ANTHROPIC_BASE_URL when no explicit override", () => {
     const r = resolveAuth(base({ mode: "environment", env: { ANTHROPIC_API_KEY: "sk-ant-api03-k", ANTHROPIC_BASE_URL: "https://proxy.local/" } }));
     expect(r?.baseUrl).toBe("https://proxy.local");
@@ -114,6 +123,11 @@ describe("authHeaders", () => {
     expect(h["authorization"]).toBe("Bearer sk-ant-oat01-xyz");
     expect(h["anthropic-beta"]).toBe(OAUTH_BETA);
     expect(h["x-api-key"]).toBeUndefined();
+  });
+  it("sends a plain (non-oauth) bearer WITHOUT the oauth beta header", () => {
+    const h = authHeaders({ credential: "gw-secret-123", scheme: "bearer", baseUrl: ANTHROPIC_DEFAULT_BASE_URL, isOAuth: false });
+    expect(h["authorization"]).toBe("Bearer gw-secret-123");
+    expect(h["anthropic-beta"]).toBeUndefined();
   });
 });
 

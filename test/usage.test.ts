@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { estimateTokens, limitsFor, DEFAULT_LIMITS, contextGauge, addUsage, EMPTY_SESSION, sessionCost, formatTokens, formatCost } from "../src/usage/tokens";
+import { estimateTokens, limitsFor, DEFAULT_LIMITS, contextGauge, addUsage, EMPTY_SESSION, sessionCost, formatTokens, formatCost, type SessionUsage } from "../src/usage/tokens";
 import { mergeUsage, parseSseChunk } from "../src/claude/sse";
 
 describe("estimateTokens", () => {
@@ -13,7 +13,7 @@ describe("estimateTokens", () => {
 
 describe("limitsFor", () => {
   it("matches exact known model ids", () => {
-    expect(limitsFor("claude-sonnet-4-6").contextWindow).toBe(200_000);
+    expect(limitsFor("claude-sonnet-4-6").contextWindow).toBe(1_000_000);
   });
   it("matches dated snapshots by family prefix", () => {
     expect(limitsFor("claude-sonnet-4-6-20250930").outputCostPerM).toBe(15);
@@ -27,12 +27,12 @@ describe("contextGauge", () => {
   it("computes fraction and remaining against the window", () => {
     const g = contextGauge(50_000, "claude-sonnet-4-6", 10_000);
     expect(g.used).toBe(60_000);
-    expect(g.window).toBe(200_000);
-    expect(g.fraction).toBeCloseTo(0.3, 5);
-    expect(g.remaining).toBe(140_000);
+    expect(g.window).toBe(1_000_000);
+    expect(g.fraction).toBeCloseTo(0.06, 5);
+    expect(g.remaining).toBe(940_000);
   });
   it("clamps fraction to 1 when over budget", () => {
-    expect(contextGauge(500_000, "claude-sonnet-4-6", 0).fraction).toBe(1);
+    expect(contextGauge(2_000_000, "claude-sonnet-4-6", 0).fraction).toBe(1);
   });
 });
 
@@ -41,10 +41,10 @@ describe("addUsage / sessionCost", () => {
     let s = { ...EMPTY_SESSION };
     s = addUsage(s, { input_tokens: 100, output_tokens: 50 });
     s = addUsage(s, { input_tokens: 200, output_tokens: 80, cache_read_input_tokens: 30 });
-    expect(s).toEqual({ inputTokens: 300, outputTokens: 130, cacheReadTokens: 30, requests: 2 });
+    expect(s).toEqual({ inputTokens: 300, outputTokens: 130, cacheReadTokens: 30, cacheWriteTokens: 0, requests: 2 });
   });
   it("prices a session by model rates", () => {
-    const s = { inputTokens: 1_000_000, outputTokens: 1_000_000, cacheReadTokens: 0, requests: 1 };
+    const s = { inputTokens: 1_000_000, outputTokens: 1_000_000, cacheReadTokens: 0, cacheWriteTokens: 0, requests: 1 };
     // sonnet: $3 in + $15 out = $18
     expect(sessionCost(s, "claude-sonnet-4-6")).toBeCloseTo(18, 5);
   });
@@ -79,5 +79,40 @@ describe("SSE usage extraction", () => {
     const r = parseSseChunk(start + delta);
     expect(r.usage?.input_tokens).toBe(1200);
     expect(r.usage?.output_tokens).toBe(340);
+  });
+});
+
+describe("cache-aware session cost (spec 2026-07-05 §9)", () => {
+  const session = (over: Partial<SessionUsage>): SessionUsage => ({ ...EMPTY_SESSION, ...over });
+
+  it("prices plain input/output at base rates (sonnet: $3/$15 per M)", () => {
+    const c = sessionCost(session({ inputTokens: 1_000_000, outputTokens: 1_000_000 }), "claude-sonnet-4-6");
+    expect(c).toBeCloseTo(3 + 15, 6);
+  });
+
+  it("prices cache writes at 1.25x and reads at 0.1x the input rate", () => {
+    const c = sessionCost(session({ cacheWriteTokens: 1_000_000, cacheReadTokens: 1_000_000 }), "claude-sonnet-4-6");
+    expect(c).toBeCloseTo(3 * 1.25 + 3 * 0.1, 6);
+  });
+
+  it("sums all four buckets", () => {
+    const c = sessionCost(
+      session({ inputTokens: 500_000, outputTokens: 200_000, cacheWriteTokens: 100_000, cacheReadTokens: 2_000_000 }),
+      "claude-opus-4-8",
+    );
+    // opus 4.8: $5 in / $25 out per M
+    expect(c).toBeCloseTo(0.5 * 5 + 0.2 * 25 + 0.1 * 5 * 1.25 + 2 * 5 * 0.1, 6);
+  });
+
+  it("accumulates cache_creation_input_tokens via addUsage", () => {
+    const s = addUsage(EMPTY_SESSION, { input_tokens: 10, output_tokens: 5, cache_creation_input_tokens: 1000, cache_read_input_tokens: 2000 });
+    expect(s.cacheWriteTokens).toBe(1000);
+    expect(s.cacheReadTokens).toBe(2000);
+  });
+
+  it("tolerates persisted sessions without the cacheWriteTokens field", () => {
+    const legacy = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, requests: 0 } as SessionUsage;
+    expect(sessionCost(legacy, "claude-sonnet-4-6")).toBe(0);
+    expect(addUsage(legacy, { cache_creation_input_tokens: 5 }).cacheWriteTokens).toBe(5);
   });
 });

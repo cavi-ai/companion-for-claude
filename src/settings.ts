@@ -1,4 +1,4 @@
-import { App, Notice, Platform, PluginSettingTab, Setting } from "obsidian";
+import { App, Notice, Platform, PluginSettingTab, Setting, type ButtonComponent, type SettingDefinitionItem } from "obsidian";
 import type ClaudeCompanionPlugin from "./main";
 import { CLAUDE_MODELS } from "./claude/models";
 import type { ProviderStatus } from "./providers/types";
@@ -6,6 +6,9 @@ import { readAnthropicEnv, hasAnthropicEnvCredential } from "./providers/env";
 import { generateToken, bridgeUrl, claudeCodeCommand, claudeDesktopConfig, maskToken, resolveMcpToken, mcpTokenEnvRef, MCP_TOKEN_ENV } from "./mcp/clientConfig";
 import { configError } from "./cloud/routines";
 import { configError as repliesConfigError } from "./cloud/replies";
+import { BUILTIN_EMBEDDING_MODEL } from "./semantic/transformers/model";
+import { normalizeDiscoverySettings, type PluginSettings } from "./types";
+import { settingDefinitions } from "./settingsDefinitions";
 
 export class ClaudeCompanionSettingTab extends PluginSettingTab {
   /** Cached list of Ollama models from the last Detect, for the dropdown. */
@@ -24,22 +27,32 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
     this.renderSettings();
   }
 
+  /**
+   * Obsidian 1.13+ settings search. Search-metadata only (no controls), so
+   * search hits point into this tab without duplicating its imperative UI.
+   */
+  override getSettingDefinitions(): SettingDefinitionItem[] {
+    return settingDefinitions();
+  }
+
   private renderSettings(): void {
     const { containerEl } = this;
     containerEl.empty();
 
-    // In-app disclosure of what the plugin accesses — mirrors the community-store
-    // "Behavior" notes so users see it after install, not just on the store page.
-    new Setting(containerEl)
-      .setName("What this plugin accesses")
-      .setDesc(
-        "Your messages and vault context go only to Anthropic (and your local Ollama, if enabled) — nothing else leaves your machine. On desktop, optional features touch files outside the vault: session capture reads Claude Code transcripts from your Claude projects folder, and “open artifact in browser” writes a temporary HTML file. Semantic search reads every note in your vault to build a local index. Copy buttons use the system clipboard. All filesystem access is disabled on mobile.",
-      )
-      .setHeading();
+    const s = this.plugin.settings;
+
+    // The one mandatory step, called out while it's missing. Everything else
+    // in this tab is optional.
+    if (!this.plugin.router().anthropic.hasCredentials()) {
+      const callout = containerEl.createDiv({ cls: "cc-connect-callout" });
+      callout.createDiv({ cls: "cc-connect-title", text: "Step 1 — connect to Claude" });
+      const p = callout.createEl("p");
+      p.appendText("Add an Anthropic API key below to start chatting. Create one at ");
+      p.createEl("a", { text: "console.anthropic.com", href: "https://console.anthropic.com/settings/keys" });
+      p.appendText(" — it’s stored locally in this vault’s plugin data.");
+    }
 
     new Setting(containerEl).setName("Connection").setHeading();
-
-    const s = this.plugin.settings;
 
     new Setting(containerEl)
       .setName("Authentication")
@@ -58,7 +71,13 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
     if (s.authMode === "apiKey") {
       new Setting(containerEl)
         .setName("Anthropic API key")
-        .setDesc("Bring your own key from console.anthropic.com. Stored locally in this vault's plugin data.")
+        .setDesc((() => {
+          const frag = activeDocument.createDocumentFragment();
+          frag.appendText("Bring your own key from ");
+          frag.createEl("a", { text: "console.anthropic.com", href: "https://console.anthropic.com/settings/keys" });
+          frag.appendText(". Stored locally in this vault’s plugin data.");
+          return frag;
+        })())
         .addText((text) => {
           text.inputEl.type = "password";
           text.inputEl.setCssStyles({ width: "320px" });
@@ -161,14 +180,32 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
+      .setName("Chat backend")
+      .setDesc("Where chat runs. Auto keeps using Claude but transparently falls back to your local model when Claude is offline or out of usage — so you never lose chat on a plane or when tokens run out.")
+      .addDropdown((dd) => {
+        dd.addOption("claude", "Claude only");
+        dd.addOption("auto", "Auto (Claude, fall back to local)");
+        dd.addOption("local", "Local only (offline)");
+        dd.setValue(this.plugin.settings.chatBackend).onChange(async (v) => {
+          this.plugin.settings.chatBackend = v as "claude" | "local" | "auto";
+          await this.plugin.saveSettings();
+          this.plugin.refreshViews();
+        });
+      });
+
+    new Setting(containerEl)
       .setName("Max response tokens")
+      .setDesc("Upper bound on a single reply (cap 64000). Higher values leave less context-window room.")
       .addText((text) =>
         text.setValue(String(this.plugin.settings.maxTokens)).onChange(async (v) => {
           const n = parseInt(v, 10);
-          if (Number.isFinite(n) && n > 0) {
-            this.plugin.settings.maxTokens = Math.min(n, 64000);
-            await this.plugin.saveSettings();
-          }
+          const valid = Number.isFinite(n) && n > 0;
+          text.inputEl.toggleClass("cc-input-invalid", !valid);
+          if (!valid) return;
+          const clamped = Math.min(n, 64000);
+          if (clamped !== n) text.setValue(String(clamped));
+          this.plugin.settings.maxTokens = clamped;
+          await this.plugin.saveSettings();
         }),
       );
 
@@ -192,10 +229,11 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
       .addText((text) =>
         text.setValue(String(this.plugin.settings.contextCharBudget)).onChange(async (v) => {
           const n = parseInt(v, 10);
-          if (Number.isFinite(n) && n > 0) {
-            this.plugin.settings.contextCharBudget = n;
-            await this.plugin.saveSettings();
-          }
+          const valid = Number.isFinite(n) && n > 0;
+          text.inputEl.toggleClass("cc-input-invalid", !valid);
+          if (!valid) return;
+          this.plugin.settings.contextCharBudget = n;
+          await this.plugin.saveSettings();
         }),
       );
 
@@ -205,26 +243,37 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
       .addText((text) =>
         text.setValue(String(this.plugin.settings.maxContextNotes)).onChange(async (v) => {
           const n = parseInt(v, 10);
-          if (Number.isFinite(n) && n >= 0) {
-            this.plugin.settings.maxContextNotes = n;
-            await this.plugin.saveSettings();
-          }
+          const valid = Number.isFinite(n) && n >= 0;
+          text.inputEl.toggleClass("cc-input-invalid", !valid);
+          if (!valid) return;
+          this.plugin.settings.maxContextNotes = n;
+          await this.plugin.saveSettings();
         }),
       );
 
+    this.accordion(containerEl, "What this plugin accesses (privacy)", (c) => {
+      c.createEl("p", {
+        cls: "setting-item-description",
+        text: "Your messages and vault context go only to Anthropic (and your local Ollama, if enabled) — nothing else leaves your machine. The built-in semantic-search engine downloads its model once from huggingface.co and cdn.jsdelivr.net when you click Download; afterwards it runs fully offline. On desktop, optional features touch files outside the vault: session capture reads Claude Code transcripts from your Claude projects folder, and “open artifact in browser” writes a temporary HTML file. Semantic search reads every note in your vault to build a local index. Copy buttons use the system clipboard. All filesystem access is disabled on mobile.",
+      });
+    });
+
     this.accordion(containerEl, "Storage", (c) => this.renderStorageSection(c));
+    this.accordion(containerEl, "Agent (act on your vault)", (c) => this.renderAgentSection(c));
     // On mobile, Cloud session is the primary way to cowork — promote it above
     // the local/desktop-bound sections.
-    this.accordion(containerEl, "Cloud session (mobile-friendly)", (c) => this.renderCloudSection(c));
+    this.accordion(containerEl, "Agent in the cloud (mobile-friendly)", (c) => this.renderCloudSection(c));
     this.accordion(containerEl, "Semantic search (local embeddings)", (c) => this.renderSemanticSection(c));
     this.accordion(containerEl, "Indexing & tags", (c) => this.renderIndexingSection(c));
     this.accordion(containerEl, "Cloud replies (pull from repo)", (c) => this.renderRepliesSection(c));
     // Source capture is vault-API based (no Node/fs) → works on mobile, so it
     // stays in the shared group rather than the desktop-only block below.
     this.accordion(containerEl, "Source capture (typed clips)", (c) => this.renderSourceCaptureSection(c));
+    this.accordion(containerEl, "Vault ontology (typed notes & relations)", (c) => this.renderOntologySection(c));
+    this.accordion(containerEl, "Scholarly discovery", (c) => this.renderDiscoverySection(c));
     if (!Platform.isMobile) {
       this.accordion(containerEl, "Local models (Ollama)", (c) => this.renderLocalModelsSection(c));
-      this.accordion(containerEl, "Unified bridge (MCP server)", (c) => this.renderMcpSection(c));
+      this.accordion(containerEl, "Agent bridge — MCP server (desktop)", (c) => this.renderMcpSection(c));
       this.accordion(containerEl, "Session memory", (c) => this.renderMemorySection(c));
     } else {
       // Desktop-only features are hidden on a phone (they need a desktop runtime);
@@ -238,8 +287,8 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
       const ul = body.createEl("ul");
       for (const t of [
         "Local models (Ollama) — runs a localhost model server",
-        "Unified bridge (MCP server) — exposes your vault to Claude Code",
-        "Session memory — captures Claude Code transcripts from disk",
+        "Agent bridge — MCP server (desktop) — exposes your vault to Claude Code",
+        "Session capture — reads Claude Code transcripts from disk (browsing captured memory works here)",
       ]) {
         ul.createEl("li", { text: t });
       }
@@ -327,20 +376,6 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
     });
 
     new Setting(containerEl)
-      .setName("Chat backend")
-      .setDesc("Where chat runs. Auto keeps using Claude but transparently falls back to your local model when Claude is offline or out of usage — so you never lose chat on a plane or when tokens run out.")
-      .addDropdown((dd) => {
-        dd.addOption("claude", "Claude only");
-        dd.addOption("auto", "Auto (Claude, fall back to local)");
-        dd.addOption("local", "Local only (offline)");
-        dd.setValue(this.plugin.settings.chatBackend).onChange(async (v) => {
-          this.plugin.settings.chatBackend = v as "claude" | "local" | "auto";
-          await this.plugin.saveSettings();
-          this.plugin.refreshViews();
-        });
-      });
-
-    new Setting(containerEl)
       .setName("Use local model for utility tasks")
       .setDesc("Summaries, auto-tagging, and ingestion go to Ollama instead of Claude.")
       .addToggle((t) =>
@@ -422,31 +457,187 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
 
   }
 
+  private renderDiscoverySection(containerEl: HTMLElement): void {
+    new Setting(containerEl)
+      .setName("Research intelligence narrator")
+      .setDesc("Choose the provider used only when you click Analyze in a Research Intelligence view. Deterministic findings stay local and always remain available.")
+      .addDropdown((dd) => {
+        dd.addOption("current", "Current chat backend");
+        dd.addOption("claude", "Claude only");
+        dd.addOption("local", "Local only");
+        dd.addOption("disabled", "Disabled");
+        dd.setValue(this.plugin.settings.intelligenceNarrator).onChange(async (value) => {
+          this.plugin.settings.intelligenceNarrator = value as PluginSettings["intelligenceNarrator"];
+          await this.plugin.saveSettings();
+          this.plugin.refreshViews();
+        });
+      });
+
+    containerEl.createEl("p", {
+      cls: "setting-item-description",
+      text: "Network requests happen only when you explicitly run a discovery action. Results are derived suggestions, and imported sources remain unreviewed until you review them.",
+    });
+
+    new Setting(containerEl)
+      .setName("Enable scholarly discovery")
+      .setDesc("Show explicit search, citation expansion, and reranking actions in research projects.")
+      .addToggle((toggle) => toggle.setValue(this.plugin.settings.discoveryEnabled).onChange(async (value) => {
+        this.plugin.settings.discoveryEnabled = value;
+        await this.plugin.saveSettings();
+      }));
+
+    new Setting(containerEl)
+      .setName("OpenAlex contact email")
+      .setDesc("Optional. Included as a trimmed mailto parameter in OpenAlex requests.")
+      .addText((text) => text.setValue(this.plugin.settings.openAlexContactEmail).onChange(async (value) => {
+        this.plugin.settings.openAlexContactEmail = value.trim();
+        await this.plugin.saveSettings();
+      }));
+
+    new Setting(containerEl)
+      .setName("Discovery reranker")
+      .setDesc("Provider used only when you explicitly rerank derived discovery results.")
+      .addDropdown((dropdown) => {
+        dropdown.addOption("current", "Current chat backend");
+        dropdown.addOption("claude", "Claude only");
+        dropdown.addOption("local", "Local only");
+        dropdown.addOption("disabled", "Disabled");
+        dropdown.setValue(this.plugin.settings.discoveryReranker).onChange(async (value) => {
+          this.plugin.settings.discoveryReranker = value as PluginSettings["discoveryReranker"];
+          await this.plugin.saveSettings();
+        });
+      });
+
+    const numberSetting = (name: string, description: string, key: "discoveryMaxResults" | "discoveryExpansionLimit" | "discoveryCacheHours") => {
+      new Setting(containerEl).setName(name).setDesc(description).addText((text) =>
+        text.setValue(String(this.plugin.settings[key])).onChange(async (value) => {
+          const parsed = Number(value);
+          Object.assign(this.plugin.settings, normalizeDiscoverySettings({ ...this.plugin.settings, [key]: parsed }));
+          await this.plugin.saveSettings();
+        }));
+    };
+    numberSetting("Maximum search results", "Per request, from 5 to 100.", "discoveryMaxResults");
+    numberSetting("Citation expansion limit", "Per expansion request, from 5 to 50.", "discoveryExpansionLimit");
+    numberSetting("Derived cache lifetime", "Hours to retain derived discovery results, from 1 to 168.", "discoveryCacheHours");
+
+    new Setting(containerEl)
+      .setName("Clear discovery cache")
+      .setDesc("Deletes derived discovery state only. It does not write to or delete vault notes.")
+      .addButton((button) => button.setButtonText("Clear cache").onClick(() => {
+        this.plugin.clearDiscoveryCache();
+        new Notice("Discovery cache cleared.");
+      }));
+  }
+
   private renderSemanticSection(containerEl: HTMLElement): void {
     new Setting(containerEl)
       .setName("Enable semantic search")
-      .setDesc("Build a local vector index (via Ollama) so the vault is searchable by meaning, not just keywords. Private and offline. Powers the “Search vault” context and Ask-your-vault.")
+      .setDesc("Build a local vector index so the vault is searchable by meaning, not just keywords. Private and on-device. Powers the “Search vault” context and Ask-your-vault.")
       .addToggle((t) =>
         t.setValue(this.plugin.settings.semanticEnabled).onChange(async (v) => {
           this.plugin.settings.semanticEnabled = v;
           await this.plugin.saveSettings();
-          this.renderSettings();
+          // Re-render only this section — a full renderSettings() would collapse
+          // the accordion and throw the user back to the top of the tab.
+          containerEl.empty();
+          this.renderSemanticSection(containerEl);
         }),
       );
 
     if (this.plugin.settings.semanticEnabled) {
       new Setting(containerEl)
-        .setName("Embedding model")
-        .setDesc("An Ollama embedding model. Pull one first, e.g. `ollama pull nomic-embed-text`.")
-        .addText((text) =>
-          text
-            .setPlaceholder("nomic-embed-text")
-            .setValue(this.plugin.settings.embeddingModel)
-            .onChange(async (v) => {
+        .setName("Embedding engine")
+        .setDesc("Built-in runs a small model inside Obsidian on every platform (one-time ~45 MB download). Ollama uses your local Ollama server (desktop).")
+        .addDropdown((dd) => {
+          dd.addOption("builtin", "Built-in (recommended)");
+          dd.addOption("ollama", "Ollama");
+          dd.setValue(this.plugin.settings.embeddingEngine).onChange(async (v) => {
+            this.plugin.settings.embeddingEngine = v as "builtin" | "ollama";
+            await this.plugin.saveSettings();
+            this.plugin.invalidateIndexer();
+            containerEl.empty();
+            this.renderSemanticSection(containerEl);
+          });
+        });
+
+      if (this.plugin.settings.embeddingEngine === "builtin") {
+        const model = BUILTIN_EMBEDDING_MODEL;
+        const status = containerEl.createDiv({ cls: "cc-conn-status setting-item-description" });
+        const backend = this.plugin.builtinEmbedder().backend();
+        status.setText(backend ? `Model ready · ${backend === "webgpu" ? "WebGPU" : "WASM"}` : "Model not downloaded yet.");
+
+        let mainBtn: ButtonComponent | null = null;
+        let clearBtn: ButtonComponent | null = null;
+        new Setting(containerEl)
+          .setName("Embedding model")
+          .setDesc(`${model.hfRepo} (~${model.approxDownloadMB} MB from huggingface.co + ~23 MB ONNX runtime from cdn.jsdelivr.net, one-time; cached and fully on-device afterwards).`)
+          .addButton((btn) => {
+            // Non-CTA: delete the downloaded model from the local cache. Hidden
+            // until we know there is something to clear (loaded or cached).
+            clearBtn = btn;
+            btn.setButtonText("Clear").onClick(async () => {
+              btn.setDisabled(true);
+              await this.plugin.clearBuiltinModel();
+              containerEl.empty(); // status returns to "Model not downloaded yet."
+              this.renderSemanticSection(containerEl);
+            });
+            if (!backend) btn.buttonEl.hide();
+          })
+          .addButton((btn) => {
+            mainBtn = btn;
+            btn
+              .setButtonText(backend ? "Re-check" : `Download (~${model.approxDownloadMB} MB)`)
+              .setCta()
+              .onClick(async () => {
+                btn.setDisabled(true);
+                try {
+                  await this.plugin.builtinEmbedder().download((p) => status.setText(`Downloading… ${p.percent}% (${p.file})`));
+                  const b = this.plugin.builtinEmbedder().backend();
+                  status.setText(`Model ready · ${b === "webgpu" ? "WebGPU" : "WASM"}`);
+                  clearBtn?.buttonEl.show();
+                } catch (e) {
+                  status.setText(`Download failed: ${e instanceof Error ? e.message : String(e)} — check your connection and retry.`);
+                } finally {
+                  btn.setDisabled(false);
+                }
+              });
+          });
+        if (!backend) {
+          // Distinguish "downloaded earlier, not loaded this session" (offline
+          // load) from "never downloaded" (network download needing consent).
+          void this.plugin.builtinModelCached().then((cached) => {
+            if (!cached) return;
+            status.setText("Model cached — loads on first use.");
+            mainBtn?.setButtonText("Load");
+            clearBtn?.buttonEl.show();
+          });
+        }
+      }
+
+      if (this.plugin.settings.embeddingEngine === "ollama") {
+        new Setting(containerEl)
+          .setName("Embedding model")
+          .setDesc("An Ollama embedding model. Pull one first, e.g. `ollama pull nomic-embed-text`.")
+          .addDropdown((dd) => {
+            const cur = this.plugin.settings.embeddingModel || "nomic-embed-text";
+            // Always show the current selection; the running server's models are
+            // added asynchronously below.
+            dd.addOption(cur, cur);
+            dd.setValue(cur).onChange(async (v) => {
               this.plugin.settings.embeddingModel = v.trim() || "nomic-embed-text";
               await this.plugin.saveSettings();
-            }),
-        );
+            });
+            void this.plugin
+              .router()
+              .ollama.listModels()
+              .then((models) => {
+                for (const m of models) if (m !== cur) dd.addOption(m, m);
+              })
+              .catch(() => {
+                /* Ollama not reachable — leave just the current value. */
+              });
+          });
+      }
 
       const idxStatus = containerEl.createDiv({ cls: "cc-conn-status setting-item-description" });
       void this.plugin
@@ -543,6 +734,16 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
           await this.plugin.saveSettings();
         }),
       );
+
+    new Setting(containerEl)
+      .setName("Auto-consolidate memory")
+      .setDesc("After each capture, merge recent digests into the “What Claude Knows” note (uses the utility model — local when enabled).")
+      .addToggle((t) =>
+        t.setValue(s.memoryAutoConsolidate).onChange(async (v) => {
+          s.memoryAutoConsolidate = v;
+          await this.plugin.saveSettings();
+        }),
+      );
   }
 
   private renderSourceCaptureSection(containerEl: HTMLElement): void {
@@ -567,6 +768,8 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
       .addToggle((t) =>
         t.setValue(this.plugin.settings.sourceEnrichOnCreate).onChange(async (v) => {
           this.plugin.settings.sourceEnrichOnCreate = v;
+          // Re-enabling here is explicit consent to send inbox files to the utility model.
+          if (v) this.plugin.settings.sourceCaptureConsent = "allow";
           await this.plugin.saveSettings();
         }),
       );
@@ -592,14 +795,89 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
       );
   }
 
+  private renderOntologySection(containerEl: HTMLElement): void {
+    new Setting(containerEl)
+      .setName("Enable ontology")
+      .setDesc("Claude writes typed frontmatter and wikilink relations that conform to schema notes in your vault. Run “Seed ontology” to create the default schemas.")
+      .addToggle((t) =>
+        t.setValue(this.plugin.settings.ontologyEnabled).onChange(async (v) => {
+          this.plugin.settings.ontologyEnabled = v;
+          await this.plugin.saveSettings();
+          if (v) void this.plugin.loadOntologyOnStart();
+        }),
+      );
+
+    new Setting(containerEl)
+      .setName("Ontology folder")
+      .setDesc("Where the schema notes live (one note per type). Edit those notes to change the schema.")
+      .addText((text) =>
+        text.setValue(this.plugin.settings.ontologyFolder).onChange(async (v) => {
+          this.plugin.settings.ontologyFolder = v.trim() || "Ontology";
+          await this.plugin.saveSettings();
+          void this.plugin.ontology()?.load();
+        }),
+      );
+  }
+
+  private renderAgentSection(containerEl: HTMLElement): void {
+    containerEl.createEl("p", {
+      cls: "setting-item-description",
+      text:
+        "One agent, three surfaces. In chat (here): Claude searches, reads, and — with writes on — edits your vault, asking before every write. " +
+        "On desktop, the Agent bridge (MCP server, below) gives Claude Code the same vault tools. " +
+        "On mobile, a Cloud session (next section) works your vault's Git repo and writes replies back. Same vault, same guardrails, wherever you are.",
+    });
+
+    new Setting(containerEl)
+      .setName("Let Claude use vault tools")
+      .setDesc("Claude can search and read your notes on its own while answering (read-only). Turn off for plain chat with pre-attached context.")
+      .addToggle((t) =>
+        t.setValue(this.plugin.settings.agentModeEnabled).onChange(async (v) => {
+          this.plugin.settings.agentModeEnabled = v;
+          await this.plugin.saveSettings();
+        }),
+      );
+
+    new Setting(containerEl)
+      .setName("Allow write tools")
+      .setDesc("Also let Claude create, edit, and move notes from chat. Every write asks for your confirmation first.")
+      .addToggle((t) =>
+        t.setValue(this.plugin.settings.agentAllowWrites).onChange(async (v) => {
+          this.plugin.settings.agentAllowWrites = v;
+          await this.plugin.saveSettings();
+        }),
+      );
+
+    new Setting(containerEl)
+      .setName("Max tool iterations per turn")
+      .setDesc("How many search/read/write rounds Claude may take before it must answer.")
+      .addSlider((s) =>
+        s
+          .setLimits(1, 20, 1)
+          .setValue(this.plugin.settings.agentMaxIterations)
+          .onChange(async (v) => {
+            this.plugin.settings.agentMaxIterations = v;
+            await this.plugin.saveSettings();
+          }),
+      );
+  }
+
   private renderCloudSection(containerEl: HTMLElement): void {
     const s = this.plugin.settings;
     containerEl.createEl("p", {
       cls: "setting-item-description",
       text:
         "Dispatch a Claude Code session in the cloud to work your vault's Git repo and report back — so you can cowork with Claude from a phone, where the local bridge can't run. " +
-        "Create a routine in the Claude Code web UI, then paste its “fire” URL and token below.",
+        "The Routines API is experimental; if Anthropic ships a newer beta revision, update the header below.",
     });
+    const checklist = containerEl.createEl("ol", { cls: "setting-item-description" });
+    for (const step of [
+      "In the Claude Code web UI, create a routine pointed at your vault's Git repo.",
+      "Paste the routine's “fire” URL and per-routine token below.",
+      "Set up “Cloud replies” (further down) so the session's answers land back in your vault.",
+    ]) {
+      checklist.createEl("li", { text: step });
+    }
 
     new Setting(containerEl)
       .setName("Enable cloud dispatch")

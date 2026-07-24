@@ -1,0 +1,13 @@
+{
+  "status": "ok",
+  "message": {
+    "DOI": "10.1/X",
+    "title": ["Risk intervention enriched"],
+    "author": [{ "given": "Ada", "family": "Researcher" }, { "name": "Research Group" }],
+    "published-print": { "date-parts": [[2024, 2, 3]] },
+    "container-title": ["Journal of Risk"],
+    "abstract": "<jats:p>Evidence &amp; context.</jats:p>",
+    "URL": "https://doi.org/10.1/X",
+    "raw_secret": "must-not-leak"
+  }
+}

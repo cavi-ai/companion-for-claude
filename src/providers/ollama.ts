@@ -1,6 +1,6 @@
 import { requestUrl } from "obsidian";
-import type { ChatMessage, StreamHandlers } from "../types";
-import { type CompletionRequest, type Provider, type ProviderStatus, ProviderError, isAbort } from "./types";
+import type { StreamHandlers } from "../types";
+import { type ApiMessage, type CompletionRequest, type Provider, type ProviderStatus, ProviderError, isAbort, textContent } from "./types";
 import { parseOllamaLine } from "./ollamaParse";
 
 /**
@@ -29,10 +29,12 @@ export class OllamaProvider implements Provider {
     return JSON.stringify({
       model: req.model || this.defaultModel,
       stream: true,
+      ...(req.responseFormat === "json" ? { format: req.responseSchema ?? "json" } : {}),
       options: { temperature: req.temperature ?? 0.7, num_predict: req.maxTokens },
       messages: [
         ...(req.system ? [{ role: "system", content: req.system }] : []),
-        ...req.messages.map((m: ChatMessage) => ({ role: m.role, content: m.content })),
+        // Ollama has no tool-use wire format — flatten any block content to text.
+        ...req.messages.map((m: ApiMessage) => ({ role: m.role, content: textContent(m.content) })),
       ],
     });
   }

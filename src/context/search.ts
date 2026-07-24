@@ -48,6 +48,7 @@ export function scoreContent(terms: string[], lowerPath: string, lowerTags: stri
   const lower = content.toLowerCase();
   let firstIdx = -1;
   for (const t of terms) {
+    if (t.length === 0) continue; // guard: indexOf("") never advances → infinite loop
     let idx = lower.indexOf(t);
     while (idx !== -1) {
       score += 1;

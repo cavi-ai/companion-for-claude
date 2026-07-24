@@ -44,22 +44,58 @@ export interface InteractivityReport {
 }
 
 /**
- * Check that an artifact's interactive controls actually work: every inline
- * handler (e.g. `onclick="switchTab('x')"`) must reference a function that's
- * defined in a `<script>`. Catches the "faux-interactive tabs" failure where the
+ * JS keywords and built-in globals that can legitimately appear as `name(` in an
+ * inline handler without a user-defined function. Skipping these avoids false
+ * "undefined function" reports for `onclick="if(x)…"`, `onclick="alert('hi')"`,
+ * etc.
+ */
+const INLINE_HANDLER_BUILTINS = new Set([
+  // control-flow / operator keywords that read as `kw(`
+  "if", "for", "while", "switch", "catch", "return", "do", "with", "typeof", "void",
+  "delete", "new", "in", "instanceof", "throw", "case", "await", "yield", "else",
+  // common built-in globals used directly in handlers
+  "alert", "confirm", "prompt", "print", "open", "close", "focus", "blur",
+  "scrollTo", "scrollBy", "setTimeout", "setInterval", "clearTimeout", "clearInterval",
+  "requestAnimationFrame", "parseInt", "parseFloat", "isNaN", "eval",
+]);
+
+/**
+ * Check that an artifact's interactive controls actually work: every function an
+ * inline handler (e.g. `onclick="switchTab('x')"`) calls must be defined in a
+ * top-level `<script>`. Catches the "faux-interactive tabs" failure where the
  * model emits handlers but never the JS to drive them.
+ *
+ * Notes on precision:
+ *  - the FULL handler body is scanned, so a second call in `a(); switchTab()` is
+ *    still checked, not just the first token;
+ *  - member calls (`App.switchTab(...)`) are skipped — the root object can't be
+ *    validated by a text scan;
+ *  - JS keywords and built-in globals are skipped (see the set above);
+ *  - `<script type="module">` bodies are excluded from the "defined" corpus:
+ *    module top-level declarations aren't global, so an inline handler that
+ *    references them throws `ReferenceError` at runtime.
  */
 export function validateArtifactInteractivity(html: string): InteractivityReport {
   const called = new Set<string>();
-  const handlerRe = /\bon\w+\s*=\s*["']\s*([A-Za-z_$][\w$]*)\s*\(/g;
+  // Pull each handler attribute's value, then find every `name(` call inside it.
+  const handlerRe = /\bon\w+\s*=\s*(?:"([^"]*)"|'([^']*)')/g;
+  const callRe = /(?<![.\w$])([A-Za-z_$][\w$]*)\s*\(/g;
   let m: RegExpExecArray | null;
   while ((m = handlerRe.exec(html)) !== null) {
-    const fn = m[1];
-    if (fn) called.add(fn);
+    const body = m[1] ?? m[2] ?? "";
+    let c: RegExpExecArray | null;
+    while ((c = callRe.exec(body)) !== null) {
+      const fn = c[1];
+      if (fn && !INLINE_HANDLER_BUILTINS.has(fn)) called.add(fn);
+    }
   }
   if (called.size === 0) return { ok: true, issues: [] };
 
-  const scripts = [...html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script(?:\s+[^>]*)?>/gi)].map((s) => s[1] ?? "").join("\n");
+  // Collect only NON-module <script> bodies — module scope isn't global.
+  const scripts = [...html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script(?:\s+[^>]*)?>/gi)]
+    .filter((s) => !/type\s*=\s*["']?module/i.test(s[1] ?? ""))
+    .map((s) => s[2] ?? "")
+    .join("\n");
   const issues: string[] = [];
   for (const fn of called) {
     const def = new RegExp(

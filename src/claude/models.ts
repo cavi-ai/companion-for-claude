@@ -10,14 +10,19 @@ export const CLAUDE_MODELS: ClaudeModel[] = [
     hint: "Most capable — deep reasoning, best artifacts",
   },
   {
-    id: "claude-sonnet-4-6",
-    label: "Claude Sonnet 4.6",
+    id: "claude-sonnet-5",
+    label: "Claude Sonnet 5",
     hint: "Balanced default — fast and strong",
   },
   {
     id: "claude-haiku-4-5-20251001",
     label: "Claude Haiku 4.5",
     hint: "Fastest / cheapest — quick edits and Q&A",
+  },
+  {
+    id: "claude-fable-5",
+    label: "Claude Fable 5",
+    hint: "Claude 5 family",
   },
 ];
 
@@ -26,7 +31,10 @@ export const PING_MODEL = "claude-haiku-4-5-20251001";
 
 export function resolveModelId(model: string, customModel: string): string {
   const custom = customModel.trim();
-  return custom.length > 0 ? custom : model;
+  if (custom.length > 0) return custom;
+  const selected = model.trim();
+  // Never send an empty model id (the API 400s). Fall back to a known-good default.
+  return selected.length > 0 ? selected : CLAUDE_MODELS[0]!.id;
 }
 
 export function modelLabel(id: string): string {

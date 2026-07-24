@@ -29,6 +29,24 @@ describe("validateArtifactInteractivity", () => {
     expect(r.issues.join(" ")).not.toContain("go(");
   });
 
+  it("does not flag JS keywords or built-in globals used in inline handlers", () => {
+    expect(validateArtifactInteractivity(`<button onclick="alert('hi')">x</button>`).ok).toBe(true);
+    expect(validateArtifactInteractivity(`<button onclick="if(x)doThing()">x</button><script>function doThing(){}</script>`).ok).toBe(true);
+    expect(validateArtifactInteractivity(`<button onclick="print()">x</button>`).ok).toBe(true);
+  });
+  it("checks every call in a multi-statement handler, not just the first", () => {
+    const r = validateArtifactInteractivity(`<button onclick="event.preventDefault(); switchTab('x')">x</button>`);
+    expect(r.ok).toBe(false);
+    expect(r.issues.join(" ")).toContain("switchTab");
+  });
+  it("skips member (dotted) calls it cannot validate", () => {
+    expect(validateArtifactInteractivity(`<button onclick="App.switchTab('x')">x</button>`).ok).toBe(true);
+  });
+  it("flags a handler whose function is only defined at module scope (not global)", () => {
+    const html = `<button onclick="switchTab('a')">x</button><script type="module">function switchTab(id){}</script>`;
+    expect(validateArtifactInteractivity(html).ok).toBe(false);
+  });
+
   it("matches script end tags with whitespace and bogus attributes (CodeQL bad-tag-filter)", () => {
     // Browsers close the element on `</script >` and even `</script\t\n bar>`, so
     // the regex must too — else the script body is missed and a correctly-defined

@@ -120,6 +120,8 @@ describe("MCP bridge — handshake & discovery", () => {
     const json = (await res.json()) as { result: { tools: Array<{ name: string }> } };
     const names = json.result.tools.map((t) => t.name);
     expect(names).toEqual(expect.arrayContaining(["vault_search", "note_read", "list_recent", "vault_tags", "note_create", "note_append"]));
+    expect(names).not.toContain("research_evidence_create");
+    expect(names).not.toContain("research_outline_create");
   });
 
   it("tracks handled requests for the status UI", async () => {
@@ -173,6 +175,39 @@ describe("MCP bridge — vault tools over the wire", () => {
     expect(json).toHaveLength(2);
     expect(json.map((r) => r.id).sort()).toEqual([10, 11]);
   });
+
+  it("executes both hidden research compatibility aliases without advertising them", async () => {
+    const project = JSON.parse((await call("research_project_create", {
+      title: "Compatibility",
+      question: "Do legacy clients keep working?",
+      folder: "Research/Compatibility",
+    })).text ?? "{}").path as string;
+    const source = JSON.parse((await call("research_source_import", {
+      project,
+      title: "Legacy source",
+      source_kind: "web",
+      url: "https://example.test/legacy",
+      captured_text: "A stable result.",
+    })).text ?? "{}").path as string;
+
+    const evidence = await call("research_evidence_create", {
+      project,
+      source,
+      title: "Legacy evidence",
+      excerpt: "A stable result.",
+    });
+    expect(evidence.isError).toBe(false);
+    expect(JSON.parse(evidence.text ?? "{}").path).toContain("Research/Compatibility/Evidence/");
+
+    const outline = await call("research_outline_create", { project, claims: [] });
+    expect(outline.isError).toBe(false);
+    expect(JSON.parse(outline.text ?? "{}").path).toBe("Research/Compatibility/Documents/Outline.md");
+  });
+
+  it("still rejects an unrelated unadvertised tool as method-not-found", async () => {
+    const result = await call("research_unadvertised_unknown", {});
+    expect(result.error?.code).toBe(RPC.METHOD_NOT_FOUND);
+  });
 });
 
 describe("MCP bridge — write gating", () => {
@@ -193,6 +228,29 @@ describe("MCP bridge — write gating", () => {
       const json = (await callRes.json()) as { error?: { code: number } };
       // Unknown to the (read-only) registry → method-not-found.
       expect(json.error?.code).toBe(RPC.METHOD_NOT_FOUND);
+    } finally {
+      await s2.stop();
+    }
+  });
+
+  it("routes hidden research aliases through the disabled-write gate", async () => {
+    const app2 = new App();
+    const ro = new VaultTools(app2 as never, { allowWrites: false, defaultFolder: "Claude" });
+    const s2 = new McpHttpServer({ port: 0, token: TOKEN, serverInfo: { name: "obsidian-vault", version: "0.4.0" } }, ro);
+    await s2.start();
+    try {
+      const url = `http://127.0.0.1:${s2.address()?.port}/mcp`;
+      for (const name of ["research_evidence_create", "research_outline_create"]) {
+        const response = await fetch(url, {
+          method: "POST",
+          headers: { authorization: `Bearer ${TOKEN}`, "content-type": "application/json" },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 3, method: "tools/call", params: { name, arguments: {} } }),
+        });
+        const json = (await response.json()) as { result?: { content?: Array<{ text: string }>; isError?: boolean }; error?: { code: number } };
+        expect(json.error).toBeUndefined();
+        expect(json.result?.isError).toBe(true);
+        expect(json.result?.content?.[0]?.text).toMatch(/write tools.*disabled/i);
+      }
     } finally {
       await s2.stop();
     }

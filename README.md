@@ -56,7 +56,10 @@ vault stays the single source of truth.
   a built-in on-device model (one-time ~45MB model + ~23MB ONNX
   runtime download from huggingface.co / cdn.jsdelivr.net, offered on first
   run, cached and fully offline afterwards) or a local Ollama server. Search
-  stays keyword-only until the model is downloaded.
+  stays keyword-only until the model is downloaded. The ONNX runtime is
+  `ort-wasm-simd-threaded.asyncify.wasm`, shipped by the `@huggingface/transformers`
+  dependency; it executes the embedding model on-device and makes no network
+  requests of its own.
 - **PDFs & images in chat** — @-mention any PDF or image in your vault, or
   **paste a screenshot** straight into the composer; Claude reads it natively
   (vision + document understanding). Attachments are per-message pills you can

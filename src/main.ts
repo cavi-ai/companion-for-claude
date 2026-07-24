@@ -1,7 +1,21 @@
-import { App, FileSystemAdapter, MarkdownView, Modal, Notice, Platform, Plugin, requestUrl, WorkspaceLeaf } from "obsidian";
+import { App, FileSystemAdapter, MarkdownView, Modal, Notice, parseYaml, Platform, Plugin, requestUrl, WorkspaceLeaf } from "obsidian";
 import { ChatView, CHAT_VIEW_TYPE } from "./view/ChatView";
 import { MemoryView, MEMORY_VIEW_TYPE } from "./view/MemoryView";
 import { RelatedView, RELATED_VIEW_TYPE } from "./view/RelatedView";
+import { ResearchWorkbenchView, RESEARCH_WORKBENCH_VIEW_TYPE, type ResearchWorkbenchTab } from "./view/ResearchWorkbenchView";
+import { ResearchDeskView, RESEARCH_DESK_VIEW_TYPE } from "./view/ResearchDeskView";
+import { normalizeDeskPreferenceMap, type ResearchDeskPreferenceMap } from "./research/deskPreferences";
+import { ResearchRepository } from "./research/repository";
+import { IntelligenceCoordinator } from "./research/intelligenceCoordinator";
+import { DiscoveryCoordinator } from "./discovery/coordinator";
+import { DraftCoordinator } from "./research/draftCoordinator";
+import { RevisionCoordinator } from "./research/revisionCoordinator";
+import { OpenAlexAdapter } from "./discovery/adapters/openAlex";
+import { CrossrefAdapter } from "./discovery/adapters/crossref";
+import { ArxivAdapter } from "./discovery/adapters/arxiv";
+import { createObsidianDiscoveryHttp } from "./discovery/adapters/obsidianHttp";
+import { resolveModelId } from "./claude/models";
+import { inferResearchProjectPath, isResearchProjectChange, projectPathForActivation } from "./research/workbenchRouting";
 import { SessionPicker } from "./view/SessionPicker";
 import { WorkflowPicker } from "./view/WorkflowPicker";
 import { WORKFLOWS, type Workflow } from "./workflows/catalog";
@@ -9,8 +23,14 @@ import { listSessionsForVault, type SessionMeta } from "./memory/sessions";
 import { ingestSession, ingestConversation } from "./memory/ingest";
 import { ClaudeCompanionSettingTab } from "./settings";
 import { ProviderRouter } from "./providers/router";
-import { DEFAULT_SETTINGS, type PluginSettings, type ArtifactOpenTarget } from "./types";
+import { DEFAULT_SETTINGS, normalizeDiscoverySettings, type PluginSettings, type ArtifactOpenTarget } from "./types";
 import { DESIGN_SYSTEM_PROMPT, PLANNING_INSTRUCTION } from "./artifacts/designSystem";
+import { AGENT_INSTRUCTION } from "./agent/prompt";
+import { findUnlinkedMentions, type LinkCandidate } from "./links/unlinkedMentions";
+import { selectDigests, buildConsolidationPrompt, parseConsolidation, renderMemoryNote, MEMORY_NOTE_BASENAME, type DigestSource } from "./memory/consolidate";
+import { mentionEdits } from "./links/suggest";
+import { planEdits, applyPlan } from "./edit/diff";
+import { DiffModal } from "./view/DiffModal";
 import { renderArtifactInline, ArtifactModal, openArtifactExternally } from "./artifacts/renderInline";
 import type { McpHttpServer } from "./mcp/server";
 import { VaultTools } from "./mcp/vaultTools";
@@ -20,8 +40,16 @@ import { trackerArtifact } from "./build/tracker";
 import { type CloudDispatchConfig, buildFireRequest, parseFireResponse, composeDispatchText, configError } from "./cloud/routines";
 import { type RepliesConfig, buildContentsRequest, parseDirListing, parseFileResponse, isMarkdown, configError as repliesConfigError } from "./cloud/replies";
 import { buildFrontmatter, normalizeTags } from "./indexing/frontmatter";
+import { existingVaultTags } from "./indexing/autoTagger";
+import { frontmatterSuggestSystem, parseFrontmatterSuggestion } from "./indexing/frontmatterSuggest";
+import { FrontmatterModal } from "./view/FrontmatterModal";
 import { SemanticIndexer, type IndexFile } from "./semantic/indexer";
 import type { IndexData } from "./semantic/store";
+import { OllamaEmbedder, embedderId, migrateEmbeddingEngine, type Embedder } from "./semantic/embedder";
+import { BUILTIN_EMBEDDING_MODEL } from "./semantic/transformers/model";
+import { clearCachedModel, hasCachedModel } from "./semantic/transformers/cache";
+import { TransformersEmbedder, type WorkerLike } from "./semantic/transformers/embedder";
+import { createEmbedWorker } from "./semantic/transformers/workerSource";
 import {
   type Conversation,
   type ConversationState,
@@ -39,6 +67,13 @@ import { normalizePath, TFile } from "obsidian";
 import { enrichCapture, type EnrichDeps } from "./sources/enrich";
 import { shouldEnrich } from "./sources/watcher";
 import { parseClipUrl } from "./sources/detect";
+import { errorHint } from "./providers/errorHints";
+import { ChoiceModal } from "./view/ChoiceModal";
+import { OntologyRegistry } from "./ontology/registry";
+import { seedFiles } from "./ontology/seed";
+import { auditProject } from "./research/audit";
+import { buildResearchDeskViewModel } from "./research/deskViewModel";
+import { resolveCompanionWorkspace, type CompanionWorkspaceCard } from "./view/companionWorkspace";
 
 /** Output-token ceiling for artifact-producing flows (plans, artifacts, workflows),
  *  which routinely run past the chat default. A ceiling, not a target — you only
@@ -52,21 +87,35 @@ interface PersistedData {
   settings?: Partial<PluginSettings>;
   conversations?: Conversation[];
   activeConversationId?: string | null;
+  researchDeskPreferences?: ResearchDeskPreferenceMap;
 }
 
 export default class ClaudeCompanionPlugin extends Plugin {
   override settings: PluginSettings = DEFAULT_SETTINGS;
   private convState: ConversationState = emptyState();
   private convSeq = 0;
+  private researchDeskPreferences: ResearchDeskPreferenceMap = {};
   private _router: ProviderRouter | null = null;
+  private _intelligenceCoordinator: IntelligenceCoordinator | null = null;
+  private _discoveryCoordinator: DiscoveryCoordinator | null = null;
+  private _viewIntelligenceCoordinators?: Set<IntelligenceCoordinator>;
+  private _viewDiscoveryCoordinators?: Set<DiscoveryCoordinator>;
   private mcpServer: McpHttpServer | null = null;
   private vaultTools: VaultTools | null = null;
+  /** Chat-scoped vault tools (agent mode) — separate instance and write gate from the MCP bridge. */
+  private agentVaultTools: VaultTools | null = null;
   /** Serializes overlapping syncMcpServer() calls (settings fire it per keystroke). */
   private mcpSyncChain: Promise<void> = Promise.resolve();
   /** Signature of the currently-running MCP server, to skip needless restarts. */
   private mcpSignature: string | null = null;
   /** Lazily-built semantic index (local embeddings); null until first use. */
   private _indexer: SemanticIndexer | null = null;
+  /** Built-in engine's worker-backed embedder; created lazily, torn down on unload/engine switch. */
+  private _builtinEmbedder: TransformersEmbedder | null = null;
+  /** Memoized "built-in model is in the local cache" (only flips false→true; downloads are additive). */
+  private _builtinModelCached = false;
+  /** One Notice per session when incremental reindex is paused awaiting the model download. */
+  private reindexPausedNotified = false;
   /** Embedding model the live indexer was built for (rebuild on change). */
   private indexerModel: string | null = null;
   /** Debounce timer for incremental re-index on note changes. */
@@ -74,13 +123,48 @@ export default class ClaudeCompanionPlugin extends Plugin {
   private reindexQueue = new Set<string>();
   private enrichTimers = new Map<string, number>();
   private enrichRecentlyWritten = new Set<string>();
+  /** Lazily-built ontology registry; null while the feature is disabled. */
+  private _ontology: OntologyRegistry | null = null;
+  /** Debounce timer for ontology reloads on schema-note changes. */
+  private _ontologyReloadTimer: number | null = null;
+  /** Debounces research-only metadata changes without reacting to unrelated vault notes. */
+  private researchRefreshTimer: number | null = null;
+  private researchRefreshChanges: Array<{ path: string; oldPath?: string }> = [];
 
   override async onload(): Promise<void> {
     await this.loadSettings();
 
     this.registerView(CHAT_VIEW_TYPE, (leaf: WorkspaceLeaf) => new ChatView(leaf, this));
-    if (!Platform.isMobile) this.registerView(MEMORY_VIEW_TYPE, (leaf: WorkspaceLeaf) => new MemoryView(leaf, this));
+    this.registerView(MEMORY_VIEW_TYPE, (leaf: WorkspaceLeaf) => new MemoryView(leaf, this));
     this.registerView(RELATED_VIEW_TYPE, (leaf: WorkspaceLeaf) => new RelatedView(leaf, this));
+    this.registerView(RESEARCH_DESK_VIEW_TYPE, (leaf: WorkspaceLeaf) => new ResearchDeskView(leaf, this.researchRepository(), {
+      preferencesFor: (projectPath) => this.researchDeskPreferences[projectPath] ?? { dismissedActionIds: [] },
+      updatePreferences: async (projectPath, update) => { this.researchDeskPreferences[projectPath] = update(this.researchDeskPreferences[projectPath] ?? { dismissedActionIds: [] }); await this.persist(); },
+      openWorkbench: (projectPath, target, path) => this.activateResearchWorkbench(projectPath, target, path),
+      askCompanion: (projectPath) => this.askCompanionAboutProject(projectPath),
+      createProject: () => this.activateResearchWorkbench(undefined, "Overview"),
+    }));
+    this.registerView(RESEARCH_WORKBENCH_VIEW_TYPE, (leaf: WorkspaceLeaf) => new ResearchWorkbenchView(
+      leaf,
+      this.researchRepository(),
+      (() => {
+        const discoveryCoordinator = this.createDiscoveryCoordinator();
+        const coordinator = this.createIntelligenceCoordinator();
+        return {
+          coordinator,
+          narratorMode: () => this.settings.intelligenceNarrator,
+          retainIntelligenceCoordinator: () => this.retainIntelligenceCoordinator(coordinator),
+          releaseIntelligenceCoordinator: () => this.releaseIntelligenceCoordinator(coordinator),
+          discoveryCoordinator,
+          retainDiscoveryCoordinator: () => this.retainDiscoveryCoordinator(discoveryCoordinator),
+          releaseDiscoveryCoordinator: () => this.releaseDiscoveryCoordinator(discoveryCoordinator),
+          draftCoordinator: new DraftCoordinator({ selection: () => this.router().chatProvider(), maxTokens: () => this.settings.maxTokens }),
+          revisionCoordinator: new RevisionCoordinator({ selection: () => this.router().chatProvider(), maxTokens: () => this.settings.maxTokens }),
+          openDesk: (projectPath) => this.activateResearchDesk(projectPath),
+          askCompanion: (projectPath) => this.askCompanionAboutProject(projectPath),
+        };
+      })(),
+    ));
 
     // Inline interactive artifacts: ```claude-html ... ```
     this.registerMarkdownCodeBlockProcessor("claude-html", (source, el, ctx) => {
@@ -162,6 +246,18 @@ export default class ClaudeCompanionPlugin extends Plugin {
     });
 
     this.addCommand({
+      id: "open-research-desk",
+      name: "Open research desk",
+      callback: () => void this.activateResearchDesk(),
+    });
+
+    this.addCommand({
+      id: "open-research-workbench",
+      name: "Open advanced research workbench",
+      callback: () => void this.activateResearchWorkbench(),
+    });
+
+    this.addCommand({
       id: "semantic-index-status",
       name: "Semantic index status",
       callback: () => void this.showSemanticIndexStatus(),
@@ -219,26 +315,39 @@ export default class ClaudeCompanionPlugin extends Plugin {
     });
 
     this.addCommand({
+      id: "review-link-suggestions",
+      name: "Review link suggestions for current note",
+      callback: () => void this.reviewLinkSuggestions(),
+    });
+
+    this.addCommand({
       id: "open-workflows",
       name: "Run a vault workflow… (manifests, rollup, MOC, digest)",
       callback: () => void this.openWorkflowPicker(),
     });
 
-    // Session memory reads Claude Code's CLI transcripts off the local
-    // filesystem — desktop-only. Skip its commands on mobile.
+    // Capturing a session reads Claude Code's CLI transcripts off the local
+    // filesystem — desktop-only. Browsing and consolidating captured digests
+    // is pure vault API and works everywhere.
     if (!Platform.isMobile) {
       this.addCommand({
         id: "capture-session-memory",
         name: "Capture session memory…",
         callback: () => void this.openSessionPicker(),
       });
-
-      this.addCommand({
-        id: "open-memory-view",
-        name: "Open session memory",
-        callback: () => void this.activateMemoryView(),
-      });
     }
+
+    this.addCommand({
+      id: "open-memory-view",
+      name: "Open session memory",
+      callback: () => void this.activateMemoryView(),
+    });
+
+    this.addCommand({
+      id: "consolidate-memory",
+      name: "Consolidate session memory into knowledge note",
+      callback: () => void this.consolidateMemory(),
+    });
 
     this.addCommand({
       id: "enrich-note-as-source",
@@ -251,12 +360,24 @@ export default class ClaudeCompanionPlugin extends Plugin {
       },
     });
 
+    this.addCommand({
+      id: "seed-ontology",
+      name: "Seed ontology (default type schemas)",
+      checkCallback: (checking) => {
+        if (checking) return this.settings.ontologyEnabled;
+        void this.seedOntology();
+        return true;
+      },
+    });
+
     this.addSettingTab(new ClaudeCompanionSettingTab(this.app, this));
 
     // Start the MCP bridge if enabled (deferred so it doesn't block load).
     this.app.workspace.onLayoutReady(() => {
       void this.syncMcpServer();
       this.syncPlanBuildActions();
+      if (this.settings.ontologyEnabled) void this.loadOntologyOnStart();
+      if (this.settings.semanticEnabled) void this.promptSemanticModelIfNeeded();
 
       // Keep the semantic index fresh as notes change (debounced; no-op when
       // off). Registered AFTER layout-ready so Obsidian's initial vault scan
@@ -269,12 +390,26 @@ export default class ClaudeCompanionPlugin extends Plugin {
       }));
       this.registerEvent(this.app.vault.on("delete", (f) => { if (f instanceof TFile && f.extension === "md") void this.indexer()?.removeNote(f.path); }));
       this.registerEvent(this.app.vault.on("rename", (f, oldPath) => { if (f instanceof TFile && f.extension === "md") void this.indexer()?.renameNote(oldPath, f.path); }));
+      this.registerEvent(this.app.vault.on("create", (f) => { if (f.path.endsWith(".md")) this.scheduleResearchRefresh(f.path); }));
+      this.registerEvent(this.app.vault.on("delete", (f) => { if (f.path.endsWith(".md")) this.scheduleResearchRefresh(f.path); }));
+      this.registerEvent(this.app.vault.on("rename", (f, oldPath) => { if (f.path.endsWith(".md") || oldPath.endsWith(".md")) this.scheduleResearchRefresh(f.path, oldPath); }));
+
+      // Reload the ontology when schema notes under the ontology folder change
+      // (debounced; no-op while the feature is off).
+      const inOntology = (path: string): boolean => path.startsWith(`${normalizePath(this.settings.ontologyFolder)}/`);
+      this.registerEvent(this.app.vault.on("modify", (f) => { if (f instanceof TFile && f.extension === "md" && this.settings.ontologyEnabled && inOntology(f.path)) this.scheduleOntologyReload(); }));
+      this.registerEvent(this.app.vault.on("create", (f) => { if (f instanceof TFile && f.extension === "md" && this.settings.ontologyEnabled && inOntology(f.path)) this.scheduleOntologyReload(); }));
+      this.registerEvent(this.app.vault.on("delete", (f) => { if (f instanceof TFile && f.extension === "md" && this.settings.ontologyEnabled && inOntology(f.path)) this.scheduleOntologyReload(); }));
+      this.registerEvent(this.app.vault.on("rename", (f, oldPath) => { if (f instanceof TFile && f.extension === "md" && this.settings.ontologyEnabled && (inOntology(f.path) || inOntology(oldPath))) this.scheduleOntologyReload(); }));
     });
 
     // Show a "Build" action in the header of any `type: plan` note.
     this.registerEvent(this.app.workspace.on("file-open", () => this.syncPlanBuildActions()));
     this.registerEvent(this.app.workspace.on("active-leaf-change", () => this.syncPlanBuildActions()));
     this.registerEvent(this.app.metadataCache.on("changed", () => this.syncPlanBuildActions()));
+    this.registerEvent(this.app.metadataCache.on("changed", (file) => {
+      this.scheduleResearchRefresh(file.path);
+    }));
   }
 
   private enrichDeps(): EnrichDeps {
@@ -306,7 +441,37 @@ export default class ClaudeCompanionPlugin extends Plugin {
   private async enrichFile(file: TFile): Promise<void> {
     const content = file.extension === "md" ? await this.app.vault.cachedRead(file) : "";
     if (!shouldEnrich({ path: file.path, ext: file.extension, content, inboxFolder: this.settings.sourceInboxFolder, recentlyWritten: this.enrichRecentlyWritten })) return;
+    if (this.settings.sourceCaptureConsent !== "allow" && !(await this.askSourceCaptureConsent())) return;
     await this.runEnrich(file);
+  }
+
+  /**
+   * One-time consent before the first automatic enrichment: auto-enrich sends
+   * each new inbox file to the utility model, so we ask before doing it
+   * unprompted. Declining turns off auto-enrich (the manual command stays).
+   */
+  private async askSourceCaptureConsent(): Promise<boolean> {
+    return new Promise((resolve) => {
+      new ChoiceModal<"allow" | "deny">(this.app, {
+        title: "Enrich clips automatically?",
+        message:
+          `Source capture can type each new file in ${this.settings.sourceInboxFolder}/ into a schema-validated source note. ` +
+          "This sends the file's content to your utility model (Claude, unless you enable the local model in settings).",
+        buttons: [
+          { label: "Enrich automatically", value: "allow", cta: true },
+          { label: "Manual only", value: "deny" },
+        ],
+        fallback: "deny",
+        onChoice: (c) => {
+          void (async () => {
+            this.settings.sourceCaptureConsent = c;
+            if (c === "deny") this.settings.sourceEnrichOnCreate = false;
+            await this.saveSettings();
+            resolve(c === "allow");
+          })();
+        },
+      }).open();
+    });
   }
 
   private async runEnrich(file: TFile): Promise<void> {
@@ -322,7 +487,9 @@ export default class ClaudeCompanionPlugin extends Plugin {
       new Notice(`Typed source note (${res.type}): ${res.file.basename}`);
     } catch (e) {
       console.warn("[companion] source enrichment failed", e);
-      new Notice(`Couldn't enrich ${file.basename} — see console.`);
+      const { provider } = this.router().resolve("utility");
+      const hint = errorHint(e instanceof Error ? e.message : String(e), provider.id === "ollama" ? "ollama" : "anthropic");
+      new Notice(`Couldn't enrich ${file.basename}${hint ? ` — ${hint}` : " — see console."}`);
     }
   }
 
@@ -362,9 +529,22 @@ export default class ClaudeCompanionPlugin extends Plugin {
   }
 
   override onunload(): void {
+    this._intelligenceCoordinator?.cancel();
+    this._intelligenceCoordinator = null;
+    this._discoveryCoordinator?.cancel();
+    this._discoveryCoordinator?.clearCache();
+    this._discoveryCoordinator = null;
+    for (const coordinator of this._viewIntelligenceCoordinators ?? []) coordinator.cancel();
+    this._viewIntelligenceCoordinators?.clear();
+    for (const coordinator of this._viewDiscoveryCoordinators ?? []) { coordinator.cancel(); coordinator.clearCache(); }
+    this._viewDiscoveryCoordinators?.clear();
     void this.mcpServer?.stop();
     this.mcpServer = null;
+    this._builtinEmbedder?.terminate();
+    this._builtinEmbedder = null;
     if (this.reindexTimer !== null) window.clearTimeout(this.reindexTimer);
+    if (this._ontologyReloadTimer !== null) window.clearTimeout(this._ontologyReloadTimer);
+    if (this.researchRefreshTimer !== null) window.clearTimeout(this.researchRefreshTimer);
   }
 
   // ---------- settings ----------
@@ -373,16 +553,23 @@ export default class ClaudeCompanionPlugin extends Plugin {
     const raw = (await this.loadData()) as PersistedData | Partial<PluginSettings> | null;
     // Migrate the legacy shape (data.json *was* the settings object) to the
     // namespaced { settings, conversations } shape.
-    const isNamespaced = !!raw && typeof raw === "object" && ("settings" in raw || "conversations" in raw);
+    const isNamespaced = !!raw && typeof raw === "object" && ("settings" in raw || "conversations" in raw || "researchDeskPreferences" in raw);
     const settingsData = (isNamespaced ? (raw).settings : raw) as Partial<PluginSettings> | null;
+    // Pre-engine semantic users are working Ollama users — keep them there
+    // instead of letting the builtin default repoint their index. Persisted on
+    // the next save, like the shape migration above.
+    const migratedEngine = migrateEmbeddingEngine(settingsData);
     this.settings = {
       ...DEFAULT_SETTINGS,
       ...settingsData,
+      ...normalizeDiscoverySettings(settingsData ?? {}),
+      ...(migratedEngine ? { embeddingEngine: migratedEngine } : {}),
       context: { ...DEFAULT_SETTINGS.context, ...(settingsData?.context ?? {}) },
     };
     this.convState = isNamespaced
       ? fromPersisted({ conversations: (raw).conversations, activeId: (raw).activeConversationId })
       : emptyState();
+    this.researchDeskPreferences = normalizeDeskPreferenceMap(isNamespaced ? (raw).researchDeskPreferences : undefined);
   }
 
   /** Write settings + conversation history back to data.json. */
@@ -391,6 +578,7 @@ export default class ClaudeCompanionPlugin extends Plugin {
       settings: this.settings,
       conversations: this.convState.conversations,
       activeConversationId: this.convState.activeId,
+      researchDeskPreferences: this.researchDeskPreferences,
     };
     await this.saveData(data);
   }
@@ -399,9 +587,15 @@ export default class ClaudeCompanionPlugin extends Plugin {
     await this.persist();
     // Rebuild providers if any credentials/hosts changed.
     this._router = null;
-    // Rebuild the indexer if the embedding model / enabled state changed.
-    if (this.indexerModel !== this.settings.embeddingModel || (!this.settings.semanticEnabled && this._indexer)) {
+    // Rebuild the indexer if the embedding engine/model or enabled state changed.
+    const activeEmbedder = embedderId(this.settings.embeddingEngine, this.settings.embeddingModel);
+    if (this.indexerModel !== activeEmbedder || (!this.settings.semanticEnabled && this._indexer)) {
       this.invalidateIndexer();
+    }
+    // Engine no longer builtin → don't leave its worker idling.
+    if (this.settings.embeddingEngine !== "builtin" && this._builtinEmbedder) {
+      this._builtinEmbedder.terminate();
+      this._builtinEmbedder = null;
     }
     this.refreshViews();
     await this.syncMcpServer();
@@ -524,6 +718,7 @@ export default class ClaudeCompanionPlugin extends Plugin {
       allowWrites: s.mcpAllowWrites,
       defaultFolder: s.mcpWriteFolder,
       semantic: (q: string, k: number) => this.semanticSearch(q, k),
+      ontology: () => this.ontology(),
     };
     if (!this.vaultTools) {
       this.vaultTools = new VaultTools(this.app, toolOpts);
@@ -578,6 +773,10 @@ export default class ClaudeCompanionPlugin extends Plugin {
         void v.refreshContextStatus();
       }
     }
+    for (const leaf of this.app.workspace.getLeavesOfType(RESEARCH_WORKBENCH_VIEW_TYPE)) {
+      const v = leaf.view;
+      if (v instanceof ResearchWorkbenchView) void v.render();
+    }
   }
 
   // ---------- providers ----------
@@ -587,8 +786,288 @@ export default class ClaudeCompanionPlugin extends Plugin {
     return this._router;
   }
 
-  composeSystemPrompt(): string {
-    return `${this.settings.systemPrompt}\n\n${DESIGN_SYSTEM_PROMPT}`;
+  intelligenceCoordinator(): IntelligenceCoordinator {
+    if (!this._intelligenceCoordinator) {
+      this._intelligenceCoordinator = this.buildIntelligenceCoordinator();
+    }
+    return this._intelligenceCoordinator;
+  }
+
+  createIntelligenceCoordinator(): IntelligenceCoordinator {
+    const coordinator = this.buildIntelligenceCoordinator();
+    (this._viewIntelligenceCoordinators ??= new Set()).add(coordinator);
+    return coordinator;
+  }
+
+  releaseIntelligenceCoordinator(coordinator: IntelligenceCoordinator): void {
+    if (!this._viewIntelligenceCoordinators?.delete(coordinator)) return;
+    coordinator.cancel();
+  }
+
+  retainIntelligenceCoordinator(coordinator: IntelligenceCoordinator): void {
+    (this._viewIntelligenceCoordinators ??= new Set()).add(coordinator);
+  }
+
+  private buildIntelligenceCoordinator(): IntelligenceCoordinator {
+      return new IntelligenceCoordinator({
+        mode: () => this.settings.intelligenceNarrator,
+        chatBackend: () => this.settings.chatBackend,
+        anthropic: () => ({
+          provider: this.router().anthropic,
+          model: resolveModelId(this.settings.model, this.settings.customModel),
+        }),
+        local: () => ({ provider: this.router().ollama, model: this.settings.ollamaModel }),
+        localAvailable: () => this.router().localAvailable(),
+        maxTokens: () => this.settings.maxTokens,
+      });
+  }
+
+  /** One lazy coordinator shared by every discovery surface. */
+  discoveryCoordinator(): DiscoveryCoordinator {
+    if (!this._discoveryCoordinator) {
+      this._discoveryCoordinator = this.buildDiscoveryCoordinator();
+    }
+    return this._discoveryCoordinator;
+  }
+
+  createDiscoveryCoordinator(): DiscoveryCoordinator {
+    const coordinator = this.buildDiscoveryCoordinator();
+    (this._viewDiscoveryCoordinators ??= new Set()).add(coordinator);
+    return coordinator;
+  }
+
+  releaseDiscoveryCoordinator(coordinator: DiscoveryCoordinator): void {
+    if (!this._viewDiscoveryCoordinators?.delete(coordinator)) return;
+    coordinator.cancel();
+    coordinator.clearCache();
+  }
+
+  retainDiscoveryCoordinator(coordinator: DiscoveryCoordinator): void {
+    (this._viewDiscoveryCoordinators ??= new Set()).add(coordinator);
+  }
+
+  private buildDiscoveryCoordinator(): DiscoveryCoordinator {
+      const http = createObsidianDiscoveryHttp();
+      const openAlex = {
+        search: (query: Parameters<OpenAlexAdapter["search"]>[0], cursor?: string, signal?: AbortSignal) =>
+          new OpenAlexAdapter(http, {
+            maxResults: normalizeDiscoverySettings(this.settings).discoveryMaxResults,
+            ...(this.settings.openAlexContactEmail.trim() ? { contact: this.settings.openAlexContactEmail.trim() } : {}),
+          }).search(query, cursor, signal),
+        expand: (input: Parameters<OpenAlexAdapter["expand"]>[0], signal?: AbortSignal) =>
+          new OpenAlexAdapter(http, {
+            maxResults: normalizeDiscoverySettings(this.settings).discoveryExpansionLimit,
+            ...(this.settings.openAlexContactEmail.trim() ? { contact: this.settings.openAlexContactEmail.trim() } : {}),
+          }).expand(input, signal),
+      };
+      return new DiscoveryCoordinator({
+        openAlex,
+        crossref: new CrossrefAdapter(http),
+        arxiv: new ArxivAdapter(http),
+        repository: this.researchRepository(),
+        enabled: () => this.settings.discoveryEnabled,
+        cacheHours: () => normalizeDiscoverySettings(this.settings).discoveryCacheHours,
+        rerankerMode: () => this.settings.discoveryReranker,
+        chatBackend: () => this.settings.chatBackend,
+        anthropic: () => ({ provider: this.router().anthropic, model: resolveModelId(this.settings.model, this.settings.customModel) }),
+        local: () => ({ provider: this.router().ollama, model: this.settings.ollamaModel }),
+        localAvailable: () => this.router().localAvailable(),
+      });
+  }
+
+  clearDiscoveryCache(): void {
+    this._discoveryCoordinator?.clearCache();
+    for (const coordinator of this._viewDiscoveryCoordinators ?? []) coordinator.clearCache();
+  }
+
+  /** The built-in engine's embedder (worker-backed); created lazily, torn down on unload. */
+  builtinEmbedder(): TransformersEmbedder {
+    // Runtime-compatible: WorkerLike is the DOM Worker surface the embedder uses;
+    // only the onmessage/onerror event-param types differ (narrower here).
+    if (!this._builtinEmbedder) this._builtinEmbedder = new TransformersEmbedder(() => createEmbedWorker() as unknown as WorkerLike);
+    return this._builtinEmbedder;
+  }
+
+  /** Whether the built-in model's weights are already in the local cache (a load needs no network). */
+  async builtinModelCached(): Promise<boolean> {
+    if (this._builtinModelCached) return true;
+    if (await hasCachedModel(typeof caches !== "undefined" ? caches : undefined)) this._builtinModelCached = true;
+    return this._builtinModelCached;
+  }
+
+  /**
+   * Delete the downloaded built-in model (+ ORT runtime) from the local cache
+   * and drop the loaded pipeline. Returns the number of cache entries deleted.
+   */
+  async clearBuiltinModel(): Promise<number> {
+    this._builtinEmbedder?.terminate();
+    this._builtinEmbedder = null;
+    const deleted = await clearCachedModel(typeof caches !== "undefined" ? caches : undefined);
+    this._builtinModelCached = false;
+    return deleted;
+  }
+
+  /**
+   * Consent gate for IMPLICIT embed paths (incremental reindex, query-time
+   * search): true when embedding cannot trigger a network download — Ollama
+   * engine, model already loaded, or weights already cached (loads offline).
+   * Explicit paths (rebuild command, settings Download button) have their own gates.
+   */
+  private async canEmbedWithoutDownload(): Promise<boolean> {
+    if (this.settings.embeddingEngine !== "builtin") return true;
+    return this.builtinEmbedder().backend() !== null || (await this.builtinModelCached());
+  }
+
+  /** Lazy ontology registry; null while the feature is disabled. IO is wired here; logic is pure. */
+  ontology(): OntologyRegistry | null {
+    if (!this.settings.ontologyEnabled) return null;
+    if (!this._ontology) {
+      this._ontology = new OntologyRegistry({
+        listSchemaNotes: async () => {
+          const folder = normalizePath(this.settings.ontologyFolder);
+          const out: Array<{ path: string; frontmatter?: Record<string, unknown> | undefined; body: string }> = [];
+          for (const f of this.app.vault.getMarkdownFiles()) {
+            if (f.path !== folder && !f.path.startsWith(`${folder}/`)) continue;
+            const fm = this.app.metadataCache.getFileCache(f)?.frontmatter as Record<string, unknown> | undefined;
+            out.push({ path: f.path, frontmatter: fm, body: await this.app.vault.cachedRead(f) });
+          }
+          return out;
+        },
+        parseYaml: (src) => parseYaml(src) as unknown,
+      });
+    }
+    return this._ontology;
+  }
+
+  /** Create the default ontology schema notes (never overwrites), then reload and report. */
+  private async seedOntology(): Promise<void> {
+    const folder = normalizePath(this.settings.ontologyFolder);
+    await this.ensureFolder(folder);
+    let created = 0;
+    for (const f of seedFiles()) {
+      const path = normalizePath(`${folder}/${f.fileName}`);
+      if (this.app.vault.getAbstractFileByPath(path)) continue; // never overwrite user edits
+      await this.app.vault.create(path, f.content);
+      created++;
+    }
+    const result = await this.ontology()?.load();
+    const errors = result?.errors ?? [];
+    new Notice(created > 0 ? `Seeded ${created} ontology type${created === 1 ? "" : "s"} → ${folder}/` : "Ontology already seeded — nothing to do.");
+    if (errors.length > 0) {
+      new Notice(`Ontology has ${errors.length} schema error${errors.length === 1 ? "" : "s"} — check the console.`);
+      console.warn("[Claude Companion] ontology schema errors:", errors);
+    }
+  }
+
+  /**
+   * Startup ontology load: surface schema errors instead of dropping them, and
+   * offer the one-time seed prompt when the registry is empty.
+   */
+  async loadOntologyOnStart(): Promise<void> {
+    const registry = this.ontology();
+    if (!registry) return;
+    const { errors } = await registry.load();
+    if (errors.length > 0) {
+      new Notice(`Ontology has ${errors.length} schema error${errors.length === 1 ? "" : "s"} — check the console.`);
+      console.warn("[Claude Companion] ontology schema errors:", errors);
+    }
+    if (registry.resolved().size > 0 || this.settings.ontologySeedPrompted) return;
+    this.settings.ontologySeedPrompted = true;
+    await this.saveSettings();
+    new ChoiceModal<"seed" | "skip">(this.app, {
+      title: "Set up the vault ontology",
+      message:
+        `The ontology lets Claude write typed notes (person, project, source…) that conform to schema notes in your vault. ` +
+        `Create the default schemas in ${this.settings.ontologyFolder}/ now? You can edit or delete them afterwards, or re-run “Seed ontology” any time.`,
+      buttons: [
+        { label: "Create default schemas", value: "seed", cta: true },
+        { label: "Not now", value: "skip" },
+      ],
+      fallback: "skip",
+      onChoice: (c) => {
+        if (c === "seed") void this.seedOntology();
+      },
+    }).open();
+  }
+
+  /** Queue an ontology reload after schema-note changes (debounced ~500ms). */
+  private scheduleOntologyReload(): void {
+    if (this._ontologyReloadTimer !== null) window.clearTimeout(this._ontologyReloadTimer);
+    this._ontologyReloadTimer = window.setTimeout(() => {
+      this._ontologyReloadTimer = null;
+      void this.ontology()?.load();
+    }, 500);
+  }
+
+  composeSystemPrompt(opts?: { agent?: boolean }): string {
+    let base = `${this.settings.systemPrompt}\n\n${DESIGN_SYSTEM_PROMPT}`;
+    const digest = this.ontology()?.digest();
+    if (digest) base = `${base}\n\n${digest}`;
+    return opts?.agent ? `${base}\n\n${AGENT_INSTRUCTION}` : base;
+  }
+
+  /** Every markdown note as a link-candidate (basename + frontmatter aliases). */
+  linkCandidates(): LinkCandidate[] {
+    return this.app.vault.getMarkdownFiles().map((f) => {
+      const fm = this.app.metadataCache.getFileCache(f)?.frontmatter as Record<string, unknown> | undefined;
+      const raw = fm?.aliases;
+      const aliases = Array.isArray(raw) ? raw.map(String) : typeof raw === "string" && raw.trim() ? [raw] : [];
+      return { path: f.path, basename: f.basename, aliases };
+    });
+  }
+
+  /** Paths the given note already links to (its outgoing resolved links). */
+  linkedTargets(file: TFile): Set<string> {
+    const resolved = (this.app.metadataCache as unknown as { resolvedLinks?: Record<string, Record<string, number>> }).resolvedLinks ?? {};
+    return new Set(Object.keys(resolved[file.path] ?? {}));
+  }
+
+  /**
+   * Bulk-link the unlinked mentions of a note through the diff review flow
+   * (spec 2026-07-05 link intelligence): every proposed [[link]] is a hunk the
+   * user can accept or reject before anything is written.
+   */
+  async reviewLinkSuggestions(target?: TFile): Promise<void> {
+    const file = target ?? this.app.workspace.getActiveFile();
+    if (!(file instanceof TFile) || file.extension !== "md") {
+      new Notice("Open a note first.");
+      return;
+    }
+    const content = await this.app.vault.cachedRead(file);
+    const mentions = findUnlinkedMentions(content, this.linkCandidates(), file.path);
+    if (mentions.length === 0) {
+      new Notice("No unlinked mentions found.");
+      return;
+    }
+    const edits = mentionEdits(content, mentions);
+    if (edits.length === 0) {
+      new Notice("Mentions found, but none could be linked unambiguously.");
+      return;
+    }
+    const plan = planEdits(content, edits);
+    const accepted = await new Promise<boolean[] | null>((resolve) => {
+      new DiffModal(this.app, { path: file.path, description: `Link ${plan.hunks.length} unlinked mention${plan.hunks.length === 1 ? "" : "s"}`, plan }, resolve).open();
+    });
+    if (!accepted) return;
+    try {
+      await this.app.vault.process(file, (current) => applyPlan(current, plan, accepted));
+      new Notice(`Linked ${accepted.filter(Boolean).length} mention${accepted.filter(Boolean).length === 1 ? "" : "s"} in ${file.basename}.`);
+    } catch (e) {
+      new Notice(e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  /** Vault tools for the in-chat agent loop, options refreshed from settings on every call. */
+  agentTools(): VaultTools {
+    const opts = {
+      allowWrites: this.settings.agentAllowWrites,
+      defaultFolder: this.settings.mcpWriteFolder,
+      semantic: (q: string, k: number) => this.semanticSearch(q, k),
+      ontology: () => this.ontology(),
+    };
+    if (!this.agentVaultTools) this.agentVaultTools = new VaultTools(this.app, opts);
+    else this.agentVaultTools.setOptions(opts);
+    return this.agentVaultTools;
   }
 
   /** Open an artifact per the user's setting: in-app fullscreen, or a browser. */
@@ -618,11 +1097,15 @@ export default class ClaudeCompanionPlugin extends Plugin {
    */
   indexer(): SemanticIndexer | null {
     if (!this.settings.semanticEnabled) return null;
-    const model = this.settings.embeddingModel;
+    const model = embedderId(this.settings.embeddingEngine, this.settings.embeddingModel);
     if (this._indexer && this.indexerModel === model) return this._indexer;
 
     const adapter = this.app.vault.adapter;
     const path = this.indexPath();
+    const embedder: Embedder =
+      this.settings.embeddingEngine === "builtin"
+        ? this.builtinEmbedder()
+        : new OllamaEmbedder(this.settings.embeddingModel, (m, input) => this.router().ollama.embed(m, input));
     this._indexer = new SemanticIndexer({
       embeddingModel: model,
       listMarkdown: (): IndexFile[] =>
@@ -631,7 +1114,14 @@ export default class ClaudeCompanionPlugin extends Plugin {
         const f = this.app.vault.getAbstractFileByPath(p);
         return f instanceof TFile ? this.app.vault.cachedRead(f) : "";
       },
-      embed: (input: string[]) => this.router().ollama.embed(model, input),
+      embed: async (input: string[]) => {
+        // Belt-and-braces consent gate: no indexer path (build, update, query,
+        // related-notes fallback) may implicitly fetch weights from the network.
+        if (!(await this.canEmbedWithoutDownload())) {
+          throw new Error("Built-in embedding model not downloaded — download it in Companion settings.");
+        }
+        return embedder.embed(input);
+      },
       load: async () => {
         try {
           if (await adapter.exists(path)) return JSON.parse(await adapter.read(path)) as IndexData;
@@ -648,6 +1138,56 @@ export default class ClaudeCompanionPlugin extends Plugin {
     return this._indexer;
   }
 
+  /**
+   * One-time offer to download the on-device embedding model. Semantic search
+   * ships on, but no path may fetch weights implicitly — so the first run asks.
+   * Skips when the model is already loaded/cached or the engine is Ollama.
+   */
+  async promptSemanticModelIfNeeded(): Promise<void> {
+    if (this.settings.embeddingEngine !== "builtin") return;
+    if (this.settings.semanticModelPrompted) return;
+    if (this.builtinEmbedder().backend() !== null) return;
+    if (await this.builtinModelCached()) return; // loads on first use, offline
+    this.settings.semanticModelPrompted = true;
+    await this.saveSettings();
+    const model = BUILTIN_EMBEDDING_MODEL;
+    new ChoiceModal<"download" | "skip">(this.app, {
+      title: "Set up semantic search",
+      message:
+        "Companion can index your vault on-device so vault search and related notes work by meaning, not just keywords. " +
+        `This needs a one-time download (~${model.approxDownloadMB} MB from huggingface.co + ~23 MB ONNX runtime from cdn.jsdelivr.net; cached and fully offline afterwards). ` +
+        "Until then, search stays keyword-only.",
+      buttons: [
+        { label: `Download (~${model.approxDownloadMB} MB)`, value: "download", cta: true },
+        { label: "Not now", value: "skip" },
+      ],
+      fallback: "skip",
+      onChoice: (c) => {
+        if (c === "download") void this.downloadBuiltinModelAndIndex();
+      },
+    }).open();
+  }
+
+  /** Download the built-in embedding model with progress, then build the index. */
+  private async downloadBuiltinModelAndIndex(): Promise<void> {
+    const progress = new Notice("Downloading embedding model…", 0);
+    try {
+      await this.builtinEmbedder().download((p) => progress.setMessage(`Downloading embedding model… ${p.percent}% (${p.file})`));
+      progress.hide();
+      await this.rebuildSemanticIndex();
+    } catch (e) {
+      progress.hide();
+      new Notice(`Embedding model download failed: ${e instanceof Error ? e.message : String(e)} — retry from Companion settings.`, 9000);
+    }
+  }
+
+  /** Human-readable label for the active embedding engine/model (Notices, status copy). */
+  private embeddingLabel(): string {
+    return this.settings.embeddingEngine === "builtin"
+      ? `built-in (${BUILTIN_EMBEDDING_MODEL.id.replace(/^builtin:/, "")})`
+      : this.settings.embeddingModel;
+  }
+
   /** Drop the cached indexer (after the embedding model / enabled state changes). */
   invalidateIndexer(): void {
     this._indexer = null;
@@ -658,6 +1198,7 @@ export default class ClaudeCompanionPlugin extends Plugin {
   async semanticSearch(query: string, k: number): Promise<{ path: string; text: string }[]> {
     const ix = this.indexer();
     if (!ix) return [];
+    if (!(await this.canEmbedWithoutDownload())) return []; // consent gate → keyword-only, same as other fallbacks
     try {
       const hits = await ix.search(query, k);
       return hits.map((h) => ({ path: h.path, text: h.text }));
@@ -680,13 +1221,20 @@ export default class ClaudeCompanionPlugin extends Plugin {
       new Notice("Turn on semantic search in Companion settings first.");
       return;
     }
-    if (!this.router().ollama.hasCredentials()) {
-      new Notice("Semantic search needs Ollama. Start it (`ollama serve`) or set the host in settings.");
+    if (this.settings.embeddingEngine === "ollama") {
+      if (!this.router().ollama.hasCredentials()) {
+        new Notice("Semantic search needs Ollama. Start it (`ollama serve`) or set the host in settings.");
+        return;
+      }
+    } else if (!(await this.canEmbedWithoutDownload())) {
+      // Consent gate: embedding with no downloaded model would fetch weights
+      // implicitly. Cached weights pass — they load offline.
+      new Notice("Download the built-in model in settings first.");
       return;
     }
     const ix = this.indexer();
     if (!ix) return;
-    const progress = new Notice(`Building semantic index with “${this.settings.embeddingModel}”…`, 0);
+    const progress = new Notice(`Building semantic index with “${this.embeddingLabel()}”…`, 0);
     try {
       const res = await ix.build({
         force: true,
@@ -713,9 +1261,18 @@ export default class ClaudeCompanionPlugin extends Plugin {
       return;
     }
     try {
-      const [{ notes, chunks }, localOk] = await Promise.all([ix.stats(), this.router().localAvailable()]);
-      const reach = localOk ? "Ollama reachable" : "Ollama unreachable — searches fall back to keyword";
-      new Notice(`Semantic index · ${notes} notes, ${chunks} chunks · “${this.settings.embeddingModel}” · ${reach}`, 9000);
+      let reach: string;
+      let stats: { notes: number; chunks: number };
+      if (this.settings.embeddingEngine === "builtin") {
+        stats = await ix.stats();
+        const backend = this.builtinEmbedder().backend();
+        reach = backend ? `model ready (${backend === "webgpu" ? "WebGPU" : "WASM"})` : "model not downloaded — download it in settings";
+      } else {
+        const [s, localOk] = await Promise.all([ix.stats(), this.router().localAvailable()]);
+        stats = s;
+        reach = localOk ? "Ollama reachable" : "Ollama unreachable — searches fall back to keyword";
+      }
+      new Notice(`Semantic index · ${stats.notes} notes, ${stats.chunks} chunks · “${this.embeddingLabel()}” · ${reach}`, 9000);
     } catch (e) {
       new Notice(`Semantic index status unavailable: ${e instanceof Error ? e.message : String(e)}`, 8000);
     }
@@ -734,6 +1291,16 @@ export default class ClaudeCompanionPlugin extends Plugin {
     const ix = this.indexer();
     if (!ix) {
       this.reindexQueue.clear();
+      return;
+    }
+    if (!(await this.canEmbedWithoutDownload())) {
+      // Consent gate: drop the queue (notes re-queue on their next change) and
+      // say so once per session instead of spamming a Notice per save.
+      this.reindexQueue.clear();
+      if (!this.reindexPausedNotified) {
+        this.reindexPausedNotified = true;
+        new Notice("Semantic reindex paused — download the built-in model in settings.");
+      }
       return;
     }
     const paths = Array.from(this.reindexQueue);
@@ -764,6 +1331,34 @@ export default class ClaudeCompanionPlugin extends Plugin {
       return leaf.view instanceof ChatView ? leaf.view : null;
     }
     return null;
+  }
+
+  async companionWorkspaceContext(): Promise<CompanionWorkspaceCard | null> {
+    const active = this.app.workspace.getActiveFile();
+    if (!(active instanceof TFile) || active.extension !== "md") return null;
+    const frontmatter = this.app.metadataCache.getFileCache(active)?.frontmatter as Record<string, unknown> | undefined;
+    const projectPath = inferResearchProjectPath(active.path, frontmatter);
+    if (projectPath) {
+      try {
+        const snapshot = await this.researchRepository().loadProject(projectPath);
+        const vm = buildResearchDeskViewModel(snapshot, auditProject(snapshot), this.researchDeskPreferences[projectPath] ?? { dismissedActionIds: [] });
+        return resolveCompanionWorkspace({
+          activeNote: { path: active.path, title: active.basename },
+          research: {
+            projectPath,
+            title: vm.title,
+            stage: vm.stage.current,
+            ...(vm.nextAction ? { nextAction: vm.nextAction.label, nextReason: vm.nextAction.reason } : {}),
+          },
+        });
+      } catch { /* Fall back to the active note instead of blocking Chat. */ }
+    }
+    return resolveCompanionWorkspace({ activeNote: { path: active.path, title: active.basename } });
+  }
+
+  async askCompanionAboutProject(projectPath: string): Promise<void> {
+    const view = await this.activateView();
+    view?.prepareWorkspaceQuestion({ kind: "research", title: "Continue this research project", contextPath: projectPath });
   }
 
   // ---------- session memory ----------
@@ -837,9 +1432,63 @@ export default class ClaudeCompanionPlugin extends Plugin {
       new Notice(`Captured session · ${res.redactions} secret${res.redactions === 1 ? "" : "s"} redacted`);
       await this.refreshMemoryView();
       await this.app.workspace.getLeaf(false).openFile(res.file);
+      if (this.settings.memoryAutoConsolidate) void this.consolidateMemory({ quiet: true });
     } catch (e) {
       console.error("[Claude Companion] session capture failed", e);
       new Notice("Session capture failed — see console.");
+    }
+  }
+
+  /**
+   * Merge recent session digests into the evolving "What Claude Knows" note
+   * (spec 2026-07-05 memory consolidation). Routes through the utility
+   * provider — local Ollama when enabled, else Claude. Idempotent: rewrites
+   * the same note each run from the newest digests + its previous content.
+   */
+  async consolidateMemory(opts?: { quiet?: boolean }): Promise<void> {
+    const s = this.settings;
+    if (!s.memoryEnabled) {
+      new Notice("Turn on session memory in Companion settings first.");
+      return;
+    }
+    const folder = normalizePath(s.memoryFolder);
+    const files = this.app.vault.getMarkdownFiles().filter((f) => f.path.startsWith(`${folder}/`));
+    const sources: DigestSource[] = [];
+    for (const f of files) {
+      sources.push({ path: f.path, mtime: f.stat.mtime, content: await this.app.vault.cachedRead(f) });
+    }
+    const digests = selectDigests(sources);
+    if (digests.length === 0) {
+      if (!opts?.quiet) new Notice("No session digests to consolidate yet — capture a session first.");
+      return;
+    }
+
+    const memoryPath = normalizePath(`${folder}/${MEMORY_NOTE_BASENAME}.md`);
+    const existingFile = this.app.vault.getAbstractFileByPath(memoryPath);
+    const existing = existingFile instanceof TFile ? await this.app.vault.cachedRead(existingFile) : null;
+
+    if (!opts?.quiet) new Notice(`Consolidating ${digests.length} session digest${digests.length === 1 ? "" : "s"}…`);
+    try {
+      const { provider, model } = this.router().resolve("utility");
+      const raw = await provider.complete({
+        system: "You maintain concise, factual memory notes. Output markdown only.",
+        model,
+        maxTokens: 4000,
+        temperature: 0.2,
+        messages: [{ role: "user", content: buildConsolidationPrompt(existing, digests.map((d) => d.content)) }],
+      });
+      const body = parseConsolidation(raw);
+      const note = renderMemoryNote(body, {
+        updated: new Date().toISOString().slice(0, 10),
+        digestCount: digests.length,
+        baseTags: [...s.memoryBaseTags, "memory"],
+      });
+      if (existingFile instanceof TFile) await this.app.vault.modify(existingFile, note);
+      else await this.app.vault.create(memoryPath, note);
+      new Notice(`Memory consolidated → ${MEMORY_NOTE_BASENAME} (via ${provider.label}).`);
+    } catch (e) {
+      console.error("[Claude Companion] memory consolidation failed", e);
+      if (!opts?.quiet) new Notice(`Memory consolidation failed: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
 
@@ -921,6 +1570,98 @@ export default class ClaudeCompanionPlugin extends Plugin {
     if (leaf) await workspace.revealLeaf(leaf);
   }
 
+  async activateResearchDesk(projectPath?: string): Promise<void> {
+    const active = this.app.workspace.getActiveFile();
+    const frontmatter = active ? this.app.metadataCache.getFileCache(active)?.frontmatter as Record<string, unknown> | undefined : undefined;
+    const inferred = active ? inferResearchProjectPath(active.path, frontmatter) : undefined;
+    const { workspace } = this.app;
+    let leaf: WorkspaceLeaf | null = workspace.getLeavesOfType(RESEARCH_DESK_VIEW_TYPE)[0] ?? null;
+    if (!leaf) { leaf = workspace.getRightLeaf(false); if (leaf) await leaf.setViewState({ type: RESEARCH_DESK_VIEW_TYPE, active: true }); }
+    if (leaf?.view instanceof ResearchDeskView) {
+      const selected = leaf.view.getProjectPath();
+      const next = projectPathForActivation(projectPath, inferred, selected);
+      if (next && next !== selected) await leaf.view.setProjectPath(next);
+    }
+    if (leaf) await workspace.revealLeaf(leaf);
+  }
+
+  async activateResearchWorkbench(projectPath?: string, tab: ResearchWorkbenchTab = "Overview", path?: string): Promise<void> {
+    const active = this.app.workspace.getActiveFile();
+    const frontmatter = active ? this.app.metadataCache.getFileCache(active)?.frontmatter as Record<string, unknown> | undefined : undefined;
+    const inferred = active ? inferResearchProjectPath(active.path, frontmatter) : undefined;
+    const { workspace } = this.app;
+    let leaf: WorkspaceLeaf | null = workspace.getLeavesOfType(RESEARCH_WORKBENCH_VIEW_TYPE)[0] ?? null;
+    if (!leaf) {
+      leaf = workspace.getRightLeaf(false);
+      if (leaf) await leaf.setViewState({ type: RESEARCH_WORKBENCH_VIEW_TYPE, active: true });
+    }
+    if (leaf?.view instanceof ResearchWorkbenchView) {
+      const selected = leaf.view.getProjectPath();
+      const next = projectPathForActivation(projectPath, inferred, selected);
+      if (next && next !== selected) await leaf.view.setProjectPath(next);
+      await leaf.view.focus(tab, path);
+    }
+    if (leaf) await workspace.revealLeaf(leaf);
+  }
+
+  private scheduleResearchRefresh(path: string, oldPath?: string): void {
+    this.researchRefreshChanges.push({ path, ...(oldPath ? { oldPath } : {}) });
+    if (this.researchRefreshTimer !== null) window.clearTimeout(this.researchRefreshTimer);
+    this.researchRefreshTimer = window.setTimeout(() => {
+      this.researchRefreshTimer = null;
+      const changes = this.researchRefreshChanges;
+      this.researchRefreshChanges = [];
+      for (const leaf of this.app.workspace.getLeavesOfType(RESEARCH_WORKBENCH_VIEW_TYPE)) {
+        const view = leaf.view;
+        if (view instanceof ResearchWorkbenchView && changes.some(({ path, oldPath }) => view.isRelevantChange(path, oldPath))) void view.render();
+      }
+      for (const leaf of this.app.workspace.getLeavesOfType(RESEARCH_DESK_VIEW_TYPE)) {
+        const view = leaf.view;
+        if (view instanceof ResearchDeskView && changes.some(({ path, oldPath }) => isResearchProjectChange(view.getProjectPath(), path, oldPath))) void view.render();
+      }
+    }, 250);
+  }
+
+  private researchRepository(): ResearchRepository {
+    const readNotes = async (files: TFile[]) => Promise.all(files.map(async (file) => {
+      const content = await this.app.vault.cachedRead(file);
+      const body = content.replace(/^---\n[\s\S]*?\n---\n?/, "");
+      const cached = this.app.metadataCache.getFileCache(file)?.frontmatter as Record<string, unknown> | undefined;
+      const match = /^---\n([\s\S]*?)\n---\n?/.exec(content);
+      const frontmatter = cached ?? (match ? parseYaml(match[1] ?? "") as Record<string, unknown> : undefined);
+      return { path: file.path, ...(frontmatter ? { frontmatter } : {}), body };
+    }));
+    return new ResearchRepository({
+      listMarkdown: async () => readNotes(this.app.vault.getMarkdownFiles()),
+      listProjectMarkdown: async (projectPath) => {
+        const folder = projectPath.slice(0, -"/Project.md".length);
+        const prefixes = ["Sources", "Evidence", "Claims", "Questions", "Documents"].map((name) => `${folder}/${name}/`);
+        return readNotes(this.app.vault.getMarkdownFiles().filter((file) => file.path === projectPath || prefixes.some((prefix) => file.path.startsWith(prefix))));
+      },
+      createWithParents: async (path, content) => {
+        const normalized = normalizePath(path);
+        if (this.app.vault.getAbstractFileByPath(normalized)) throw new Error(`File already exists: ${normalized}`);
+        await this.ensureFolder(normalized.slice(0, normalized.lastIndexOf("/")));
+        await this.app.vault.create(normalized, content);
+      },
+      updateFrontmatter: async (path, mutator) => {
+        const file = this.app.vault.getAbstractFileByPath(normalizePath(path));
+        if (!(file instanceof TFile)) throw new Error(`Research note not found: ${path}`);
+        await this.app.fileManager.processFrontMatter(file, mutator);
+      },
+      updateText: async (path, updater) => {
+        const file = this.app.vault.getAbstractFileByPath(normalizePath(path));
+        if (!(file instanceof TFile)) throw new Error(`Research note not found: ${path}`);
+        await this.app.vault.process(file, updater);
+      },
+      readBinary: async (path) => {
+        const file = this.app.vault.getAbstractFileByPath(normalizePath(path));
+        if (!(file instanceof TFile)) throw new Error(`Research source asset not found: ${path}`);
+        return new Uint8Array(await this.app.vault.readBinary(file));
+      },
+    });
+  }
+
   // ---------- command helpers ----------
 
   async generatePlanFromNote(): Promise<void> {
@@ -933,6 +1674,66 @@ export default class ClaudeCompanionPlugin extends Plugin {
       "Generate an implementation plan from this note",
       ARTIFACT_MAX_TOKENS,
     );
+  }
+
+  /**
+   * "/frontmatter": propose type / tags / summary for the ACTIVE note using the
+   * utility model (reusing the vault's existing tags), preview it, and apply it
+   * additively via processFrontMatter. Never clobbers fields the user already set
+   * — tags union, scalar fields only filled when absent.
+   */
+  async suggestFrontmatterForActiveNote(): Promise<void> {
+    const file = this.app.workspace.getActiveFile();
+    if (!(file instanceof TFile) || file.extension !== "md") {
+      new Notice("Open a note to suggest frontmatter for.");
+      return;
+    }
+    const content = await this.app.vault.cachedRead(file);
+    if (content.trim().length === 0) {
+      new Notice("This note is empty — nothing to describe.");
+      return;
+    }
+
+    const existingTags = existingVaultTags(this.app);
+    const typeOptions = this.settings.ontologyEnabled ? [...(this.ontology()?.resolved().keys() ?? [])] : [];
+    const { provider, model } = this.router().resolve("utility");
+    const notice = new Notice("Suggesting frontmatter…", 0);
+    try {
+      const existingLine = existingTags.length > 0 ? `Existing tags (prefer these when relevant): ${existingTags.join(", ")}\n\n` : "";
+      const body = content.length > 8000 ? content.slice(0, 8000) + "\n…[truncated]" : content;
+      const raw = await provider.complete({
+        system: frontmatterSuggestSystem(typeOptions),
+        model,
+        maxTokens: 200,
+        temperature: 0,
+        messages: [{ role: "user", content: `${existingLine}Document:\n\n${body}` }],
+      });
+      const suggestion = parseFrontmatterSuggestion(raw);
+
+      // Merge additively against what's already in the note's frontmatter.
+      const fm = (this.app.metadataCache.getFileCache(file)?.frontmatter ?? {}) as Record<string, unknown>;
+      const currentTags = Array.isArray(fm.tags) ? fm.tags.map(String) : typeof fm.tags === "string" ? [fm.tags] : [];
+      const proposal = {
+        ...(suggestion.type && !fm.type ? { type: suggestion.type } : {}),
+        tags: normalizeTags([...currentTags, ...suggestion.tags]),
+        ...(suggestion.summary && !fm.summary ? { summary: suggestion.summary } : {}),
+      };
+      notice.hide();
+
+      new FrontmatterModal(this.app, file.basename, proposal, provider.label, async (apply) => {
+        if (!apply) return;
+        await this.app.fileManager.processFrontMatter(file, (f) => {
+          const rec = f as Record<string, unknown>;
+          if (proposal.type && !rec.type) rec.type = proposal.type;
+          rec.tags = proposal.tags;
+          if (proposal.summary && !rec.summary) rec.summary = proposal.summary;
+        });
+        new Notice(`Frontmatter updated: ${file.basename}`);
+      }).open();
+    } catch (e) {
+      notice.hide();
+      new Notice(`Couldn't suggest frontmatter: ${e instanceof Error ? e.message : String(e)}`);
+    }
   }
 
   /**
@@ -995,7 +1796,7 @@ export default class ClaudeCompanionPlugin extends Plugin {
     await navigator.clipboard.writeText(command).catch(() => {});
     await this.app.workspace.getLeaf(true).openFile(trackerFile);
 
-    new Notice("Build spec + tracker created. Claude Code command copied — run it in a terminal (requires the official Obsidian CLI).", 8000);
+    new Notice("Build spec + tracker created. Claude Code command copied — run it in a terminal (drives the tracker over the MCP bridge).", 8000);
   }
 
   private async ensureFolder(folder: string): Promise<void> {
@@ -1073,7 +1874,9 @@ export default class ClaudeCompanionPlugin extends Plugin {
       }
     } catch (e) {
       pending.hide();
-      new Notice(`Cloud dispatch failed: ${e instanceof Error ? e.message : String(e)}`, 10000);
+      const msg = e instanceof Error ? e.message : String(e);
+      const hint = errorHint(msg, "anthropic");
+      new Notice(`Cloud dispatch failed: ${msg}${hint ? ` — ${hint}` : ""}`, 10000);
     }
   }
 

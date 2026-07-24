@@ -26,17 +26,40 @@ describe("parseOllamaLine", () => {
 });
 
 describe("errorHint", () => {
-  it("maps auth errors to a key hint", () => {
+  it("suggests checking the API key on 401", () => {
     expect(errorHint("Anthropic API 401: invalid API key.")).toMatch(/API key/i);
   });
-  it("maps model errors", () => {
+  it("suggests the model dropdown on not_found", () => {
     expect(errorHint("model: not_found")).toMatch(/model id/i);
   });
-  it("maps ollama/connection errors", () => {
-    expect(errorHint("Ollama error 0 at http://localhost:11434")).toMatch(/ollama serve/i);
-    expect(errorHint("fetch failed")).toMatch(/local model/i);
+  it("suggests ollama serve only for the ollama provider", () => {
+    expect(errorHint("Ollama error 0 at http://localhost:11434", "ollama")).toMatch(/ollama serve/i);
+    expect(errorHint("fetch failed", "ollama")).toMatch(/local model/i);
   });
-  it("returns null when there is no specific hint", () => {
+  it("treats network failures on the anthropic provider as offline, not ollama", () => {
+    expect(errorHint("fetch failed")).toMatch(/offline/i);
+    expect(errorHint("fetch failed", "anthropic")).toMatch(/offline/i);
+    expect(errorHint("fetch failed", "anthropic")).not.toMatch(/ollama/i);
+  });
+  it("recognizes 529 overloaded before the generic model check", () => {
+    expect(errorHint("Anthropic API 529: overloaded_error")).toMatch(/overloaded/i);
+    expect(errorHint("Anthropic API 529: overloaded_error")).not.toMatch(/model id/i);
+    expect(errorHint("model overloaded (529)")).toMatch(/overloaded/i);
+    expect(errorHint("model overloaded (529)")).not.toMatch(/model id/i);
+  });
+  it("mentions rate limits on 429", () => {
+    expect(errorHint("HTTP 429 rate_limit_error")).toMatch(/rate/i);
+    expect(errorHint("rate limit exceeded")).toMatch(/rate/i);
+    expect(errorHint("Too Many Requests")).toMatch(/rate/i);
+  });
+  it("does not misread 'rate' inside unrelated words as a rate limit", () => {
+    expect(errorHint("could not separate the response")).toBeNull();
+  });
+  it("recognizes the Chromium 'Failed to fetch' offline message", () => {
+    expect(errorHint("Failed to fetch")).toMatch(/offline/i);
+    expect(errorHint("Failed to fetch", "ollama")).toMatch(/local model/i);
+  });
+  it("returns null for unknown errors", () => {
     expect(errorHint("some unknown teapot error")).toBeNull();
   });
 });

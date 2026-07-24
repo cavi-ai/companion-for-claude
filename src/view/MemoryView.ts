@@ -1,4 +1,4 @@
-import { ItemView, WorkspaceLeaf, TFile, normalizePath, setIcon } from "obsidian";
+import { ItemView, WorkspaceLeaf, TFile, normalizePath, setIcon, Platform } from "obsidian";
 import type ClaudeCompanionPlugin from "../main";
 
 export const MEMORY_VIEW_TYPE = "claude-memory-view";
@@ -64,11 +64,14 @@ export class MemoryView extends ItemView {
       const open = row.createEl("button", { cls: "cc-memory-open", text: f.basename });
       open.addEventListener("click", () => void this.app.workspace.getLeaf(false).openFile(f));
 
-      const fm = this.app.metadataCache.getFileCache(f)?.frontmatter;
-      const sessionId = String(fm?.["session_id"] ?? fm?.["claude-session"] ?? "");
-      const reBtn = row.createEl("button", { cls: "cc-action", attr: { "aria-label": "Re-ingest", title: "Re-ingest" } });
-      setIcon(reBtn, "refresh-cw");
-      reBtn.addEventListener("click", () => void this.plugin.reingestSession(sessionId));
+      // Re-ingest re-reads the CLI transcript from disk — desktop-only.
+      if (!Platform.isMobile) {
+        const fm = this.app.metadataCache.getFileCache(f)?.frontmatter;
+        const sessionId = String(fm?.["session_id"] ?? fm?.["claude-session"] ?? "");
+        const reBtn = row.createEl("button", { cls: "cc-action", attr: { "aria-label": "Re-ingest", title: "Re-ingest" } });
+        setIcon(reBtn, "refresh-cw");
+        reBtn.addEventListener("click", () => void this.plugin.reingestSession(sessionId));
+      }
     }
   }
 }

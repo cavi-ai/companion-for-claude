@@ -10,14 +10,91 @@ export type ProviderId = "anthropic" | "ollama";
 /** A role describes *what* a request is for, so the router can pick a backend. */
 export type TaskRole = "chat" | "utility";
 
+// ----- content blocks (Anthropic tool-use wire format) -----
+
+export interface TextBlock {
+  type: "text";
+  text: string;
+}
+
+/** A tool invocation requested by the model (from a `tool_use` content block). */
+export interface ToolUseBlock {
+  type: "tool_use";
+  id: string;
+  name: string;
+  input: Record<string, unknown>;
+  /** Set when the streamed input JSON failed to parse — executor should return is_error. */
+  parseError?: string;
+}
+
+/** The outcome of one tool call, sent back in the next user message. */
+export interface ToolResultBlock {
+  type: "tool_result";
+  tool_use_id: string;
+  content: string;
+  is_error?: boolean;
+}
+
+/** Base64-embedded media source (images and PDFs). */
+export interface Base64Source {
+  type: "base64";
+  media_type: string;
+  data: string;
+}
+
+export interface ImageBlock {
+  type: "image";
+  source: Base64Source;
+}
+
+/** A PDF attached to a user turn. */
+export interface DocumentBlock {
+  type: "document";
+  source: Base64Source;
+}
+
+export type ContentBlock = TextBlock | ToolUseBlock | ToolResultBlock | ImageBlock | DocumentBlock;
+
+/**
+ * A message as sent to a provider. `content` is a plain string for ordinary
+ * turns, or content blocks during an agent (tool-use) exchange. `ChatMessage`
+ * is assignable, so existing call sites pass through unchanged.
+ */
+export interface ApiMessage {
+  role: ChatMessage["role"];
+  content: string | ContentBlock[];
+}
+
+/** Flatten a message's content to plain text (for backends without tool use). */
+export function textContent(content: string | ContentBlock[]): string {
+  if (typeof content === "string") return content;
+  return content
+    .filter((b): b is TextBlock => b.type === "text")
+    .map((b) => b.text)
+    .join("\n");
+}
+
+/** A tool definition in the Anthropic Messages API shape. */
+export interface AnthropicToolDef {
+  name: string;
+  description: string;
+  input_schema: Record<string, unknown>;
+}
+
 export interface CompletionRequest {
   system: string;
-  messages: ChatMessage[];
+  messages: ApiMessage[];
+  /** Tools offered to the model (Anthropic only; ignored by other providers). */
+  tools?: AnthropicToolDef[];
   model: string;
   maxTokens: number;
   signal?: AbortSignal;
   /** Lower = more deterministic. Used for utility tasks like tagging. */
   temperature?: number;
+  /** Request a structured JSON response when the provider supports it. */
+  responseFormat?: "json";
+  /** JSON Schema supplied to local providers that support constrained output. */
+  responseSchema?: Record<string, unknown>;
   /** Extended-thinking config for the request body (model-aware; built by chatControls). */
   thinking?: { type: "adaptive" } | { type: "enabled"; budget_tokens: number } | { type: "disabled" };
   /** Whether to request summarized reasoning text (adaptive models). */

@@ -121,12 +121,16 @@ export async function gatherContext(
     if (added > 0) {
       sources.push(`${added} ${semantic.length ? "semantic" : "search"} match${added > 1 ? "es" : ""}`);
       // Ask for click-through citations to the source notes (the 1.2 "ask your
-      // vault with citations" behavior).
-      blocks.push(
+      // vault with citations" behavior). Count it against the budget so context
+      // never exceeds contextCharBudget; drop it if there's no room left.
+      const citation =
         'When you draw on the "Search match" notes above, cite each inline as an ' +
-          "Obsidian wikilink — [[Note Name]], using the note's file name without the " +
-          "folder path or .md extension — so the reader can click through to the source.",
-      );
+        "Obsidian wikilink — [[Note Name]], using the note's file name without the " +
+        "folder path or .md extension — so the reader can click through to the source.";
+      if (budget >= citation.length) {
+        blocks.push(citation);
+        budget -= citation.length;
+      }
     }
   }
 

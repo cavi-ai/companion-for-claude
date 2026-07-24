@@ -2,7 +2,31 @@
 // gallery (html-effectiveness). Embedding it in the system prompt makes
 // Claude's generated artifacts visually consistent with the gallery.
 
-export const DESIGN_SYSTEM_PROMPT = `When you produce a visual artifact (plan, report, diagram, deck, dashboard, table), output ONE self-contained HTML document inside a single \`\`\`claude-html code block. No external assets, no network requests, no frameworks — inline <style> only, vanilla JS only if interaction is needed.
+export const DESIGN_SYSTEM_PROMPT = `## When to build an artifact vs answer in Markdown
+
+Default to a normal, well-structured **Markdown** reply. Only build a \`claude-html\` artifact when the user asks for a deliverable that genuinely benefits from visual structure — a plan, an audit, a report, a dashboard, a comparison, a diagram — something they'll keep and look at. For a question, an explanation, a quick answer, code, or a short list, just answer in Markdown. NEVER wrap a conversational answer in an artifact, and don't force everything into a "plan".
+
+## Pick the template that fits the request
+
+When you do build an artifact, choose the structure that matches the intent — an audit is not shaped like a plan:
+
+- **Plan** (implementation/roadmap): eyebrow + h1 + a goal box; a summary strip (Scope / Effort / Risk); numbered sections including a milestones timeline (done/pending dots) and risks. Then, AFTER the code block, a \`## Build tasks\` Markdown checklist (one \`- [ ]\` per ordered, actionable step).
+- **Audit / report**: lead with a verdict and a score. Metric tiles. **Include charts** — a severity bar chart and any relevant distributions (see Charts below). Then findings ranked by impact, each with a concrete fix.
+- **Comparison**: a clean table or side-by-side columns; highlight the winner per row in the accent color.
+- **Dashboard**: a grid of KPI tiles (big number + label + delta) plus 1–3 small charts.
+- **Diagram / map**: nodes and connections (inline SVG or positioned divs) for flows, architectures, or mind maps.
+- **Explainer / doc**: an editorial article — eyebrow, h1, readable prose, pull quotes, small figures.
+
+## Charts (no libraries — inline only)
+
+CSS bars (use for severity/counts/distributions):
+<div class="bar"><span class="bar-label">Critical</span><span class="bar-track"><span class="bar-fill" style="width:80%"></span></span><span class="bar-val">4</span></div>
+<style>.bar{display:grid;grid-template-columns:120px 1fr 40px;gap:10px;align-items:center;margin:6px 0}.bar-track{height:10px;background:var(--gray-150);border-radius:999px;overflow:hidden}.bar-fill{display:block;height:100%;background:var(--clay);border-radius:999px}.bar-val{font:600 12px var(--mono);color:var(--gray-500);text-align:right}</style>
+For line / area / scatter / donut charts, hand-draw an inline <svg> with <path>/<rect>/<circle>; always title it and label the axes, and use --clay for the key series.
+
+## Artifact rules
+
+Output ONE self-contained HTML document inside a single \`\`\`claude-html code block. No external assets, no network requests, no frameworks — inline <style> only, vanilla JS only if interaction is needed.
 
 Use this exact design system (the Claude/Anthropic artifact look):
 

@@ -28,4 +28,14 @@ describe("getSchema", () => {
     const s = getSchema("article", { article: { fields: [{ key: "paywalled", type: "string", required: false, source: "model", description: "x" }] } });
     expect(s.fields.some((f) => f.key === "paywalled")).toBe(true);
   });
+
+  it("offers optional scholarly metadata without changing existing required fields", () => {
+    const fields = Object.fromEntries(getSchema("article").fields.map((field) => [field.key, field]));
+    for (const key of ["doi", "arxiv_id", "zotero_key", "authors", "published", "publication", "asset"]) {
+      expect(fields[key], key).toBeDefined();
+      expect(fields[key].required, key).toBe(false);
+    }
+    expect(fields.authors.type).toBe("string[]");
+    expect(fields.asset.source).toBe("derived");
+  });
 });

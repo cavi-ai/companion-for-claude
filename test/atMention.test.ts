@@ -48,3 +48,17 @@ describe("activeAtQuery", () => {
     expect(activeAtQuery(t, t.length)).toBeNull();
   });
 });
+
+describe("media @-items", () => {
+  it("lists media files after notes and folders, keeping extensions", () => {
+    const items = buildAtItems(["A.md"], ["Docs"], ["Docs/paper.pdf", "img/shot.png"]);
+    const media = items.filter((i) => i.kind === "media-path");
+    expect(media.map((i) => i.label)).toEqual(["paper.pdf", "shot.png"]);
+    expect(media[0]!.path).toBe("Docs/paper.pdf");
+  });
+
+  it("filters media by query like everything else", () => {
+    const items = buildAtItems([], [], ["Docs/paper.pdf"]);
+    expect(filterAtItems(items, "paper").map((i) => i.id)).toEqual(["media-path:Docs/paper.pdf"]);
+  });
+});

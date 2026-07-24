@@ -81,7 +81,13 @@ export function validateRequest(value: unknown): { req?: JsonRpcRequest; error?:
  */
 export async function handleRpc(
   req: JsonRpcRequest,
-  ctx: { serverInfo: ServerInfo; tools: McpToolDef[]; call: (name: string, args: Record<string, unknown>) => Promise<string> },
+  ctx: {
+    serverInfo: ServerInfo;
+    tools: McpToolDef[];
+    /** Explicit compatibility calls accepted without exposing them through tools/list. */
+    hiddenTools?: ReadonlySet<string>;
+    call: (name: string, args: Record<string, unknown>) => Promise<string>;
+  },
 ): Promise<JsonRpcResponse | null> {
   switch (req.method) {
     case "initialize":
@@ -105,7 +111,7 @@ export async function handleRpc(
       if (typeof params.name !== "string") {
         return err(req.id, RPC.INVALID_PARAMS, "tools/call requires a string 'name'");
       }
-      if (!ctx.tools.some((t) => t.name === params.name)) {
+      if (!ctx.tools.some((t) => t.name === params.name) && !ctx.hiddenTools?.has(params.name)) {
         return err(req.id, RPC.METHOD_NOT_FOUND, `Unknown tool: ${params.name}`);
       }
       const args = (params.arguments && typeof params.arguments === "object" ? params.arguments : {}) as Record<string, unknown>;

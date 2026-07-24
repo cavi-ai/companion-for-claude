@@ -46,8 +46,8 @@ export function capabilitiesFor(modelId: string): ModelCapabilities {
   if (f === "claude-opus-4-6" || f === "claude-opus-4-5") {
     return { temperature: true, thinking: "adaptive", effort: true, effortMax: true };
   }
-  // Sonnet 4.6 — adaptive thinking + effort (no "max": Opus-tier only).
-  if (f === "claude-sonnet-4-6") {
+  // Sonnet 5 / 4.6 — adaptive thinking + effort (no "max": Opus-tier only).
+  if (f === "claude-sonnet-5" || f === "claude-sonnet-4-6") {
     return { temperature: true, thinking: "adaptive", effort: true, effortMax: false };
   }
   // Haiku 4.5 — adaptive thinking, no effort.

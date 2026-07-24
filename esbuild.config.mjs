@@ -15,6 +15,20 @@ Source available at https://github.com/cavi-ai/claude-obsidian
 const builtins = [...new Set(builtinModules.map((m) => m.replace(/^node:/, "")))];
 const nodeBuiltins = [...builtins, ...builtins.map((m) => `node:${m}`)];
 
+// Pass 1: bundle the embedding worker (transformers.js included) to a text
+// artifact that the main bundle inlines and instantiates via a Blob URL.
+// Note: built once per invocation — editing worker.ts requires restarting dev.
+await esbuild.build({
+  entryPoints: ["src/semantic/transformers/worker.ts"],
+  bundle: true,
+  format: "iife",
+  target: "es2021",
+  platform: "browser",
+  outfile: ".build/embed-worker.txt",
+  minify: prod,
+  logLevel: "info",
+});
+
 const context = await esbuild.context({
   banner: { js: banner },
   entryPoints: ["src/main.ts"],
@@ -37,6 +51,7 @@ const context = await esbuild.context({
   ],
   format: "cjs",
   target: "es2021",
+  loader: { ".txt": "text" },
   logLevel: "info",
   sourcemap: prod ? false : "inline",
   treeShaking: true,

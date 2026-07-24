@@ -1,5 +1,82 @@
 import { describe, it, expect } from "vitest";
-import { parseSlashQuery, filterCommands, moveSelection, REGISTERED_ACTION_COMMANDS, SLASH_COMMANDS } from "../src/view/slashCommands";
+import { dispatchNativeSlashAction, parseSlashQuery, filterCommands, moveSelection, REGISTERED_ACTION_COMMANDS, runNativeSlashCommand, SLASH_COMMANDS, workflowSlashCommands, WORKFLOW_ACTION_PREFIX } from "../src/view/slashCommands";
+import { WORKFLOWS } from "../src/workflows/catalog";
+
+describe("native research desk command", () => {
+  it("registers /research as a native desk action", () => {
+    expect(SLASH_COMMANDS.find(({ name }) => name === "research")).toMatchObject({
+      kind: "action",
+      action: "open-research-desk",
+    });
+    expect(filterCommands(SLASH_COMMANDS, "paper").map(({ name }) => name)).toContain("research");
+  });
+
+  it("dispatches the desk action without a prompt", async () => {
+    const opened: string[] = [];
+    const handled = await dispatchNativeSlashAction("open-research-desk", {
+      openResearchDesk: async () => { opened.push("opened"); },
+    });
+    expect(handled).toBe(true);
+    expect(opened).toEqual(["opened"]);
+  });
+
+  it("does not consume unrelated actions or retain the internal tool prompt", async () => {
+    const opened: string[] = [];
+    expect(await dispatchNativeSlashAction("history", {
+      openResearchDesk: async () => { opened.push("opened"); },
+    })).toBe(false);
+    expect(opened).toEqual([]);
+    expect(JSON.stringify(SLASH_COMMANDS)).not.toContain("research_project_create");
+    expect(JSON.stringify(SLASH_COMMANDS)).not.toContain("Use the Research Workbench tools");
+  });
+
+  it.each(["claude", "auto", "local"] as const)(
+    "opens research without a completion or conversation mutation on the %s backend",
+    async (backend) => {
+      const conversation = [{ role: "user", content: "Keep this turn" }];
+      const before = structuredClone(conversation);
+      let composer = "/research";
+      let activations = 0;
+      let completions = 0;
+
+      const handled = await runNativeSlashCommand({
+        command: SLASH_COMMANDS.find(({ name }) => name === "research")!,
+        backend,
+        clearComposer: () => { composer = ""; },
+        activateResearchDesk: async () => { activations += 1; },
+        requestCompletion: async () => { completions += 1; },
+      });
+
+      expect(handled).toBe(true);
+      expect(activations).toBe(1);
+      expect(completions).toBe(0);
+      expect(composer).toBe("");
+      expect(conversation).toEqual(before);
+    },
+  );
+});
+
+describe("workflowSlashCommands", () => {
+  it("derives one action command per workflow, dispatched via the workflow: prefix", () => {
+    const cmds = workflowSlashCommands(WORKFLOWS);
+    expect(cmds).toHaveLength(WORKFLOWS.length);
+    for (const c of cmds) {
+      expect(c.kind).toBe("action");
+      expect(c.action?.startsWith(WORKFLOW_ACTION_PREFIX)).toBe(true);
+    }
+    // The id round-trips through the action so ChatView can look it up.
+    const fm = cmds.find((c) => c.name === "frontmatter-audit");
+    expect(fm?.action).toBe(`${WORKFLOW_ACTION_PREFIX}frontmatter-audit`);
+  });
+  it("merges into the slash catalog so a workflow is reachable by typing '/'", () => {
+    const all = [...SLASH_COMMANDS, ...workflowSlashCommands(WORKFLOWS)];
+    expect(filterCommands(all, "manifest-pm").some((c) => c.name === "manifest-pm")).toBe(true);
+    // Both the per-note command and the vault workflow surface under "front".
+    const front = filterCommands(all, "front").map((c) => c.name);
+    expect(front).toContain("frontmatter");
+    expect(front).toContain("frontmatter-audit");
+  });
+});
 
 describe("parseSlashQuery", () => {
   it("returns the token after a leading slash", () => {
@@ -71,7 +148,7 @@ describe("catalog integrity", () => {
   });
   it("includes the newer chat-surface commands", () => {
     const slashNames = new Set(SLASH_COMMANDS.map((c) => c.name));
-    for (const name of ["brainstorm", "diagram", "links", "daily", "outline", "compare", "extract", "capture"]) {
+    for (const name of ["brainstorm", "diagram", "links", "dailynote", "outline", "compare", "extract", "capture"]) {
       expect(slashNames.has(name), name).toBe(true);
     }
   });

@@ -17,7 +17,7 @@ describe("enrichCapture — markdown clip", () => {
     const res = await enrichCapture(deps(app, complete), { kind: "markdown", path: "Clippings/a.md", basename: "a", content: (file as TFile)._content });
     expect(res.type).toBe("article");
     const out = await app.vault.cachedRead(res.file);
-    expect(out).toContain("type: article");
+    expect(out).toContain('type: "article"');
     expect(out).toContain("source_enriched: true");
     expect(out).not.toContain(LEAK);
     expect(out).toContain("‹REDACTED›");
@@ -35,7 +35,7 @@ describe("enrichCapture — dropped CSV", () => {
     expect(res.record.fields.rows).toBe(2);
     const out = await app.vault.cachedRead(res.file);
     expect(out).toContain("![[sales.csv]]");
-    expect(out).toContain("asset: Clippings/sales.csv");
+    expect(out).toContain('asset: "Clippings/sales.csv"');
   });
 });
 

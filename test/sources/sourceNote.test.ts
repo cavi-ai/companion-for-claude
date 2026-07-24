@@ -31,7 +31,7 @@ describe("sourceFrontmatter", () => {
 describe("buildSidecarNote", () => {
   it("embeds the asset and uses the title heading", () => {
     const md = buildSidecarNote(record, "sales.csv", ["source"]);
-    expect(md).toContain("type: dataset");
+    expect(md).toContain('type: "dataset"');
     expect(md).toContain("source_enriched: true");
     expect(md).toContain("# US home sales");
     expect(md).toContain("Monthly sales.");

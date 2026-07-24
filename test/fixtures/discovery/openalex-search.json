@@ -1,0 +1,16 @@
+{
+  "meta": { "next_cursor": "cursor-2" },
+  "results": [{
+    "id": "https://openalex.org/W123",
+    "doi": "https://doi.org/10.1/x",
+    "display_name": "Risk intervention",
+    "authorships": [{ "author": { "display_name": "Ada Researcher" } }],
+    "publication_date": "2024-02-03",
+    "primary_location": { "source": { "display_name": "Journal of Risk" }, "landing_page_url": "https://doi.org/10.1/x" },
+    "best_oa_location": { "pdf_url": "https://example.org/risk.pdf" },
+    "abstract_inverted_index": { "An": [0], "abstract": [1], "about": [2], "risk.": [3] },
+    "referenced_works": ["https://openalex.org/W100"],
+    "cited_by_count": 7,
+    "raw_secret": "must-not-leak"
+  }]
+}

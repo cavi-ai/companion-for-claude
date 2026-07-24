@@ -66,6 +66,10 @@ export class SlashMenu {
     this.matches.forEach((cmd, i) => {
       const row = this.listEl.createDiv({ cls: "cc-slash-item" });
       row.toggleClass("is-selected", i === this.selected);
+      // Full description as a native hover tooltip — the inline `.cc-slash-desc`
+      // is single-line and ellipsis-truncated, so hovering reveals the rest.
+      const aliasNote = cmd.aliases?.length ? ` (also: ${cmd.aliases.map((a) => `/${a}`).join(", ")})` : "";
+      row.setAttr("title", `/${cmd.name} — ${cmd.description}${aliasNote}`);
       row.createSpan({ cls: "cc-slash-name", text: `/${cmd.name}` });
       row.createSpan({ cls: "cc-slash-desc", text: cmd.description });
       row.addEventListener("mouseenter", () => {
