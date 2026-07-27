@@ -119,7 +119,7 @@ function maskNonProse(content: string): string {
   const blank = (s: string): string => s.replace(/[^\n]/g, " ");
 
   // Frontmatter block at the very start.
-  out = out.replace(/^---\n[\s\S]*?\n---(\n|$)/, blank);
+  out = out.replace(/^---\r?\n[\s\S]*?\r?\n---(\r?\n|$)/, blank);
   // Fenced code blocks.
   out = out.replace(/^(```|~~~)[\s\S]*?^\1.*$/gm, blank);
   // Inline code.

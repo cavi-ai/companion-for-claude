@@ -2,6 +2,7 @@ import { buildProjectSnapshot, compareCodeUnits, type ProjectSnapshot } from "./
 import { canonicalSourceId, findDuplicate } from "./identity";
 import { parseResearchCandidate, parseResearchRecord, type ResearchNoteInput } from "./parse";
 import { renderResearchRecord } from "./render";
+import { upsertInterpretation } from "./interpretation";
 import { renderEvidenceOutline } from "./outline";
 import { applyDraftSection, draftMarkdownFingerprint, parseDraftSections, validateDocumentCitationKeys, type DraftSectionEnvelope, type DraftSectionParseResult, type ParsedDraftSection } from "./draftSections";
 import type { DraftGroundingPacket } from "./draftGrounding";
@@ -298,7 +299,7 @@ export class ResearchRepository {
     if (JSON.stringify(input.currentEvidence) !== JSON.stringify(input.envelope.evidence)) throw new Error("Draft evidence changed after the preview was generated");
     if (!input.envelope.claimFingerprint || input.currentClaimFingerprint !== input.envelope.claimFingerprint) throw new Error("Draft claim changed after the preview was generated");
     await this.io.updateText(input.documentPath, (current) => {
-      const frontmatter = /^---\n([\s\S]*?)\n---\n?/.exec(current);
+      const frontmatter = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/.exec(current);
       if (!frontmatter || !/^type:\s*["']?research-document["']?\s*$/m.test(frontmatter[1] ?? "")) throw new Error(`Research record is not a document: ${input.documentPath}`);
       const parsedSections = parseDraftSections(current);
       if (parsedSections.issues.length) throw new Error(`Research document has malformed managed sections: ${parsedSections.issues.join("; ")}`);
@@ -351,6 +352,18 @@ export class ResearchRepository {
     if (!result.record || result.record.type !== "evidence") throw new Error(`Research record is not evidence: ${path}`);
     await this.io.updateFrontmatter(path, (frontmatter) => { frontmatter.review_state = state; });
     return { ...result.record, reviewState: state };
+  }
+
+  /** Replace (or append) the evidence note's Interpretation block. */
+  async updateEvidenceInterpretation(path: string, interpretation: string): Promise<EvidenceRecord> {
+    safePath(path);
+    if (!this.io.updateText) throw new Error("Atomic research note updates are unavailable");
+    const note = (await this.io.listMarkdown()).find((candidate) => candidate.path === path);
+    if (!note) throw new Error(`Research evidence not found: ${path}`);
+    const result = parseResearchRecord(note);
+    if (!result.record || result.record.type !== "evidence") throw new Error(`Research record is not evidence: ${path}`);
+    await this.io.updateText(path, (current) => upsertInterpretation(current, interpretation));
+    return { ...result.record, interpretation: interpretation.trim() };
   }
 
   private async createTyped<T extends ResearchRecord>(record: T): Promise<T> {

@@ -1,7 +1,9 @@
-import { ItemView, Modal, Notice, TFile, type App, type WorkspaceLeaf } from "obsidian";
+import { ItemView, FuzzySuggestModal, Modal, Notice, TFile, type App, type WorkspaceLeaf } from "obsidian";
 import { auditProject } from "../research/audit";
 import type { ProjectSnapshot } from "../research/graph";
 import type { ResearchRepository } from "../research/repository";
+import type { WebCapture } from "../research/webCapture";
+import { parseClipUrl } from "../sources/detect";
 import { buildWorkbenchViewModel } from "../research/viewModel";
 import { isResearchProjectChange, resolveResearchProjectLink } from "../research/workbenchRouting";
 import type { IntelligenceCoordinator, IntelligenceNarratorMode } from "../research/intelligenceCoordinator";
@@ -25,21 +27,21 @@ const TAB_GROUPS: Array<{ label: string; tabs: Tab[] }> = [
   { label: "Expand", tabs: ["Discover"] },
 ];
 const PANEL_META: Record<Tab, { eyebrow: string; title: string; description: string }> = {
-  Overview: { eyebrow: "AT A GLANCE", title: "Project overview", description: "See the shape, health, and immediate priorities of this research system." },
-  Sources: { eyebrow: "BUILD", title: "Source library", description: "Review the material captured for this project and open the source notes behind it." },
-  Evidence: { eyebrow: "BUILD", title: "Evidence review", description: "Inspect the passages and observations that can support, challenge, or qualify claims." },
-  Claims: { eyebrow: "BUILD", title: "Claim map", description: "Develop the propositions this project can defend and trace each one to reviewed evidence." },
-  Outline: { eyebrow: "WRITE", title: "Evidence-backed outline", description: "Shape the document around claims that already have inspectable support." },
-  Draft: { eyebrow: "WRITE", title: "Grounded draft", description: "Draft and revise one supported section at a time without losing its evidence trail." },
+  Overview: { eyebrow: "AT A GLANCE", title: "Project overview", description: "The shape, health, and immediate priorities of this research system — start here if you're unsure of the next step." },
+  Sources: { eyebrow: "BUILD · STEP 1", title: "Source library", description: "Sources are the raw material everything traces back to: papers, articles, vault notes. Nothing enters the project without one." },
+  Evidence: { eyebrow: "BUILD · STEP 2", title: "Evidence review", description: "Evidence is a precise passage lifted from a source, with a locator so anyone can verify it. Only reviewed evidence may support a claim." },
+  Claims: { eyebrow: "BUILD · STEP 3", title: "Claim map", description: "A claim is one defensible proposition the document will argue. Each must trace to reviewed evidence — supporting, challenging, or contextualizing." },
+  Outline: { eyebrow: "WRITE · STEP 4", title: "Evidence-backed outline", description: "The outline arranges reviewed, supported claims into the document's skeleton — no claim enters without inspectable support." },
+  Draft: { eyebrow: "WRITE · STEP 5", title: "Grounded draft", description: "Draft and revise one supported section at a time. Every paragraph keeps its evidence trail, so you can audit where each sentence came from." },
   Audit: { eyebrow: "ASSURE", title: "Assurance audit", description: "Find broken references, unsupported claims, stale evidence, and missing locators before publication." },
-  Intelligence: { eyebrow: "ASSURE", title: "Research intelligence", description: "Review deterministic tensions and request a model briefing only when it is useful." },
-  Discover: { eyebrow: "EXPAND", title: "Scholarly discovery", description: "Search beyond the vault while preserving provenance, ranking factors, and deliberate import." },
+  Intelligence: { eyebrow: "ASSURE", title: "Research intelligence", description: "Deterministic tensions in your evidence and claims, surfaced automatically — request a model briefing only when it is useful." },
+  Discover: { eyebrow: "EXPAND", title: "Scholarly discovery", description: "Search OpenAlex, Crossref, and arXiv beyond the vault — with provenance, ranking factors, and deliberate import." },
 };
-const EMPTY_META: Partial<Record<Tab, { title: string; copy: string }>> = {
-  Sources: { title: "No sources yet", copy: "Add the first source to begin building an inspectable research trail." },
-  Evidence: { title: "No evidence yet", copy: "Create evidence notes from reviewed source passages before developing claims." },
-  Claims: { title: "No claims yet", copy: "Develop a claim when the project has reviewed evidence worth reasoning from." },
-  Outline: { title: "No outline yet", copy: "Build an outline once the project has claims with enough reviewed support." },
+const EMPTY_META: Partial<Record<Tab, { title: string; copy: string; example?: string }>> = {
+  Sources: { title: "No sources yet", copy: "Capture the first source to begin the trail — paste an article's text, or point at a DOI, arXiv id, or vault note.", example: "e.g. “Smith 2024 — attention residue survey”, kind: web, with the key passages pasted in." },
+  Evidence: { title: "No evidence yet", copy: "Open a source, lift the exact passage that matters, and give it a locator (page, section, URL fragment). Then review it here.", example: "e.g. “Participants took 23 min to refocus after an interruption” — locator: p. 4." },
+  Claims: { title: "No claims yet", copy: "Once evidence is reviewed, state one proposition it defends. Claude can sharpen the wording, grounded in the evidence you select.", example: "e.g. “Frequent task-switching measurably delays return to deep work.”" },
+  Outline: { title: "No outline yet", copy: "Build the outline once at least one claim is reviewed and supported — it becomes the document's claim-ordered skeleton." },
   Audit: { title: "No audit findings", copy: "No structural issues were found in the research records currently available." },
 };
 
@@ -53,6 +55,14 @@ export interface ResearchWorkbenchDependencies {
   releaseDiscoveryCoordinator?: () => void;
   draftCoordinator?: DraftCoordinator;
   revisionCoordinator?: RevisionCoordinator;
+  /** Chat-free rewrite helper (inline rewrite) — sharpens draft prose, optionally grounded in supplied context. */
+  rewriteText?: (input: { text: string; instruction: string; context?: string }) => Promise<string>;
+  /** Defuddle web capture for URL sources (renderer only — absent in tests/headless). */
+  captureWeb?: WebCapture;
+  /** Persist a dropped/uploaded file into the project's source-assets folder; returns its vault path. */
+  saveAsset?: (projectPath: string, name: string, data: ArrayBuffer) => Promise<string>;
+  /** Best-effort content tags (autoTagger) applied to freshly clipped sources. */
+  suggestTags?: (content: string) => Promise<string[]>;
   openDesk?(projectPath: string): void | Promise<void>;
   askCompanion?(projectPath: string): void | Promise<void>;
 }
@@ -283,6 +293,7 @@ export class ResearchWorkbenchView extends ItemView {
     const state = root.createDiv({ cls: "cc-research-empty-state", attr: { role: "status" } });
     state.createEl("h4", { cls: "cc-research-empty-state-title", text: meta.title });
     state.createEl("p", { cls: "cc-research-empty-state-copy", text: meta.copy });
+    if ("example" in meta && meta.example) state.createEl("p", { cls: "cc-research-empty-state-example", text: meta.example });
   }
 
   private renderActions(root: HTMLElement, snapshot?: ProjectSnapshot): void {
@@ -345,29 +356,94 @@ export class ResearchWorkbenchView extends ItemView {
   }
 
   private openCreateProject(): void {
-    new ResearchInputModal(this.app, "Create research project", ["Title", "Research question", "Project folder"], async ([title, question, folder]) => {
-      const record = await this.repository.createProject({ title: title ?? "", question: question ?? "", folder: folder ?? "" });
+    new ProjectCreateModal(this.app, async (input) => {
+      const record = await this.repository.createProject(input);
+      this.activeTab = "Sources";
       await this.setProjectPath(record.path);
-    }).open();
+    }, this.dependencies?.rewriteText).open();
   }
 
   private openAddSource(project: string): void {
-    new ResearchInputModal(this.app, "Add research source", ["Title", "Source kind", "URL or stable identifier", "Captured text (optional)"], async ([title, sourceKind, identity, capturedContent]) => {
-      if (!["pdf", "web", "doi", "arxiv", "zotero", "vault"].includes(sourceKind ?? "")) throw new Error("Source kind must be pdf, web, doi, arxiv, zotero, or vault");
-      const kind = sourceKind as "pdf" | "web" | "doi" | "arxiv" | "zotero" | "vault";
-      await this.repository.importSource(project, { title: title ?? "", sourceKind: kind, ...(identity ? (kind === "doi" ? { doi: identity } : kind === "arxiv" ? { arxivId: identity } : { url: identity }) : {}), ...(capturedContent ? { capturedContent } : {}) });
-      await this.render();
+    new SourceCaptureModal(this.app, {
+      captureUrl: async (url) => {
+        const captureWeb = this.dependencies?.captureWeb;
+        if (!captureWeb) throw new Error("Web capture is unavailable in this environment.");
+        const result = await captureWeb(url);
+        if (!result) throw new Error("Couldn't extract readable content from that URL — paste the text into a note and import the note instead.");
+        const title = result.title ?? new URL(url).hostname;
+        const res = await this.repository.importSource(project, { title, sourceKind: "web", url, capturedContent: result.markdown, ...(result.author ? { authors: [result.author] } : {}), ...(result.published ? { published: result.published } : {}) });
+        if (res.kind === "duplicate") { await this.render(); return `Already in the library: ${title}`; }
+        let tagNote = "";
+        const suggest = this.dependencies?.suggestTags;
+        if (suggest) {
+          try {
+            const tags = await suggest(result.markdown);
+            const file = this.app.vault.getAbstractFileByPath(res.path);
+            if (file instanceof TFile && tags.length) {
+              await this.app.fileManager.processFrontMatter(file, (fm) => {
+                const record = fm as Record<string, unknown>;
+                const raw = record.tags;
+                const existing: string[] = Array.isArray(raw) ? raw.map(String) : typeof raw === "string" ? [raw] : [];
+                record.tags = [...new Set([...existing, ...tags])];
+              });
+              tagNote = ` · tags: ${tags.join(", ")}`;
+            }
+          } catch { /* tagging is best-effort */ }
+        }
+        await this.render();
+        return `Clipped “${title}”${tagNote}`;
+      },
+      importFiles: async (files) => {
+        const saveAsset = this.dependencies?.saveAsset;
+        if (!saveAsset) throw new Error("File import is unavailable in this environment.");
+        const imported: string[] = [];
+        for (const file of files) {
+          const ext = (file.name.split(".").pop() ?? "").toLowerCase();
+          const base = file.name.replace(/\.[^.]+$/, "");
+          if (ext === "md") {
+            const text = new TextDecoder().decode(file.data);
+            const clipUrl = parseClipUrl(text);
+            const body = text.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, "").trim();
+            const res = await this.repository.importSource(project, { title: base, sourceKind: "vault", capturedContent: body.slice(0, 50000), ...(clipUrl ? { url: clipUrl } : {}) });
+            if (res.kind === "created") imported.push(base);
+            continue;
+          }
+          const asset = await saveAsset(project, file.name, file.data);
+          const res = await this.repository.importSource(project, { title: base, sourceKind: ext === "pdf" ? "pdf" : "vault", asset, capturedContent: new Uint8Array(file.data) });
+          if (res.kind === "created") imported.push(base);
+        }
+        await this.render();
+        return imported.length ? `Imported ${imported.map((n) => `“${n}”`).join(", ")}` : "Those files are already in the library.";
+      },
+      pickNote: () => new Promise<string | null>((resolve) => {
+        new NotePickModal(this.app, (file) => {
+          void (async () => {
+            try {
+              const content = await this.app.vault.cachedRead(file);
+              const body = content.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, "").trim();
+              const clipUrl = parseClipUrl(content);
+              const res = await this.repository.importSource(project, { title: file.basename, sourceKind: "vault", capturedContent: body.slice(0, 50000), ...(clipUrl ? { url: clipUrl } : {}) });
+              await this.render();
+              resolve(res.kind === "duplicate" ? `Already in the library: ${file.basename}` : `Imported note: ${file.basename}`);
+            } catch (e) {
+              // Resolve (not reject) so the capture modal leaves its busy state.
+              resolve(`Couldn’t import ${file.basename}: ${e instanceof Error ? e.message : String(e)}`);
+            }
+          })();
+        }, () => resolve(null)).open();
+      }),
     }).open();
   }
 
   private openEvidenceReview(snapshot: ProjectSnapshot): void {
     const evidence = snapshot.evidence.find(({ reviewState }) => reviewState === "proposed");
     if (!evidence) { new Notice("No proposed evidence is waiting for review."); return; }
-    new EvidenceReviewModal(this.app, evidence, async (state) => {
+    new EvidenceReviewModal(this.app, evidence, async (state, interpretation) => {
+      if (interpretation && interpretation !== evidence.interpretation) await this.repository.updateEvidenceInterpretation(evidence.path, interpretation);
       await this.repository.reviewEvidence(evidence.path, state);
       this.activeTab = "Evidence";
       await this.render();
-    }, () => this.openPath(evidence.path)).open();
+    }, () => this.openPath(evidence.path), this.dependencies?.rewriteText).open();
   }
 
   private openCreateClaim(snapshot: ProjectSnapshot): void {
@@ -377,7 +453,7 @@ export class ResearchWorkbenchView extends ItemView {
       await this.repository.createClaim({ project: snapshot.project.path, ...input });
       this.activeTab = "Claims";
       await this.render();
-    }).open();
+    }, this.dependencies?.rewriteText).open();
   }
 
   private openBuildOutline(snapshot: ProjectSnapshot): void {
@@ -405,33 +481,204 @@ function sanitizeLoadError(error: unknown): string {
   return raw.replace(/\b(?:sk-ant-[A-Za-z0-9_-]+|Bearer\s+\S+|api[_-]?key\s*[=:]\s*\S+)/gi, "[redacted]").replace(/[\r\n\t]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 300) || "Unknown project load error";
 }
 
-class ResearchInputModal extends Modal {
-  constructor(app: App, private readonly heading: string, private readonly labels: string[], private readonly submit: (values: string[]) => Promise<void>) { super(app); }
+export const QUESTION_INSTRUCTION = "Turn this research topic into one sharp, answerable research question: specific in scope, neutral in stance, a single sentence ending in a question mark.";
+
+export interface ProjectCreateInput {
+  title: string;
+  question: string;
+  folder: string;
+  audience?: string;
+}
+
+export class ProjectCreateModal extends Modal {
+  constructor(app: App, private readonly submit: (input: ProjectCreateInput) => Promise<void>, private readonly rewriteText?: RewriteTextFn, private readonly initial?: Partial<ProjectCreateInput>) { super(app); }
   override onOpen(): void {
     this.contentEl.empty();
-    this.contentEl.createEl("h2", { text: this.heading });
-    const inputs = this.labels.map((label) => {
-      const wrapper = this.contentEl.createDiv({ cls: "cc-research-modal-field" });
-      wrapper.createEl("label", { text: label });
-      return wrapper.createEl(label.includes("text") ? "textarea" : "input");
-    });
+    this.contentEl.createEl("h2", { text: "Create research project" });
+    this.contentEl.createEl("p", { cls: "cc-research-modal-meta", text: "A project frames one question, then builds a traceable trail: sources → evidence → claims → outline → draft." });
+
+    const titleWrap = this.contentEl.createDiv({ cls: "cc-research-modal-field" });
+    titleWrap.createEl("label", { text: "Title" });
+    const title = titleWrap.createEl("input", { attr: { "aria-label": "Project title", placeholder: "Attention residue in remote teams" } });
+    if (this.initial?.title) title.value = this.initial.title;
+
+    const questionWrap = this.contentEl.createDiv({ cls: "cc-research-modal-field" });
+    questionWrap.createEl("label", { text: "Research question — the single question every record answers to" });
+    const question = questionWrap.createEl("textarea", { attr: { "aria-label": "Research question", rows: "3", placeholder: "How does task-switching affect deep-work output for remote engineers?" } });
+    if (this.initial?.question) question.value = this.initial.question;
+    if (this.rewriteText) {
+      const draftWrap = questionWrap.createDiv({ cls: "cc-research-modal-actions" });
+      const draft = draftWrap.createEl("button", { text: "Draft with Claude", attr: { "aria-label": "Draft a sharp research question with Claude from the title" } });
+      draft.addEventListener("click", () => {
+        const topic = title.value.trim();
+        const seed = question.value.trim();
+        if (!topic && !seed) { error.setText("Give the project a title or a rough question first."); return; }
+        draft.disabled = true;
+        draft.setText("Drafting…");
+        error.setText("");
+        void this.rewriteText!({ text: seed || topic, instruction: QUESTION_INSTRUCTION, ...(topic ? { context: `Project title: ${topic}` } : {}) })
+          .then((result) => { question.value = result; })
+          .catch((cause) => error.setText(sanitizeLoadError(cause)))
+          .finally(() => { draft.disabled = false; draft.setText("Draft with Claude"); });
+      });
+    }
+
+    const folderWrap = this.contentEl.createDiv({ cls: "cc-research-modal-field" });
+    folderWrap.createEl("label", { text: "Project folder — where the project notes live" });
+    const folder = folderWrap.createEl("input", { attr: { "aria-label": "Project folder" } });
+    let folderTouched = Boolean(this.initial?.folder);
+    if (this.initial?.folder) folder.value = this.initial.folder;
+    folder.addEventListener("input", () => { folderTouched = true; });
+    title.addEventListener("input", () => { if (!folderTouched) folder.value = title.value.trim() ? `Research/${title.value.trim()}` : ""; });
+
+    const audienceWrap = this.contentEl.createDiv({ cls: "cc-research-modal-field" });
+    audienceWrap.createEl("label", { text: "Audience (optional) — who the final document is written for" });
+    const audience = audienceWrap.createEl("input", { attr: { "aria-label": "Audience (optional)" } });
+
     const error = this.contentEl.createEl("p", { cls: "cc-research-error", attr: { role: "alert" } });
-    const button = this.contentEl.createEl("button", { text: this.heading });
-    button.addEventListener("click", () => void this.submit(inputs.map(({ value }) => value)).then(() => this.close()).catch((cause) => { error.setText(sanitizeLoadError(cause)); }));
+    const submitBar = this.contentEl.createDiv({ cls: "cc-research-modal-submit-bar" });
+    const button = submitBar.createEl("button", { cls: "mod-cta", text: "Create project" });
+    button.addEventListener("click", () => {
+      const input: ProjectCreateInput = { title: title.value, question: question.value, folder: folder.value, ...(audience.value.trim() ? { audience: audience.value } : {}) };
+      if (!input.title.trim() || !input.question.trim() || !input.folder.trim()) { error.setText("Title, research question, and folder are required."); return; }
+      void this.submit(input).then(() => this.close()).catch((cause) => error.setText(sanitizeLoadError(cause)));
+    });
   }
 }
 
+interface SourceCaptureHandlers {
+  /** Clip a URL to clean markdown, import it, tag it. Returns a status message. */
+  captureUrl(url: string): Promise<string>;
+  /** Import dropped/uploaded files (md → text capture; others → project assets). Returns a status message. */
+  importFiles(files: Array<{ name: string; data: ArrayBuffer }>): Promise<string>;
+  /** Fuzzy-pick a vault note and import it. Resolves null when cancelled. */
+  pickNote(): Promise<string | null>;
+}
+
+function extractUrl(text: string): string | undefined {
+  return /https?:\/\/[^\s<>"']+/.exec(text.trim())?.[0];
+}
+
+/**
+ * Capture-first source intake: no form fields. Drop a URL or file, paste a
+ * link, pick a note, or upload — each gesture is one action with an inline
+ * status line instead of a multi-field dialog.
+ */
+class SourceCaptureModal extends Modal {
+  private busy = false;
+
+  constructor(app: App, private readonly handlers: SourceCaptureHandlers) { super(app); }
+
+  override onOpen(): void {
+    this.contentEl.empty();
+    this.contentEl.addClass("cc-source-capture");
+    this.contentEl.createEl("h2", { text: "Add research source" });
+    this.contentEl.createEl("p", { cls: "cc-research-modal-meta", text: "Drop a link or file, paste a URL, or pick a note. URLs are clipped to clean markdown and tagged automatically — no forms." });
+
+    const status = this.contentEl.createEl("p", { cls: "cc-source-capture-status", attr: { role: "status" } });
+    const run = (label: string, action: () => Promise<string | null>) => {
+      if (this.busy) return;
+      this.busy = true;
+      status.setText(`${label}…`);
+      void action()
+        .then((message) => status.setText(message ?? ""))
+        .catch((cause) => status.setText(sanitizeLoadError(cause)))
+        .finally(() => { this.busy = false; });
+    };
+    const readFiles = (list: FileList | File[]) => {
+      const files = [...list];
+      if (!files.length) return;
+      void Promise.all(files.map(async (f) => ({ name: f.name, data: await f.arrayBuffer() })))
+        .then((payload) => run(`Importing ${files.length} file${files.length === 1 ? "" : "s"}`, () => this.handlers.importFiles(payload)))
+        .catch((cause: unknown) => status.setText(sanitizeLoadError(cause)));
+    };
+
+    const drop = this.contentEl.createDiv({ cls: "cc-source-dropzone", text: "Drop a URL, PDF, or file here" });
+    drop.addEventListener("dragover", (e) => { e.preventDefault(); drop.addClass("is-dragover"); });
+    drop.addEventListener("dragleave", () => drop.removeClass("is-dragover"));
+    drop.addEventListener("drop", (e) => {
+      e.preventDefault();
+      drop.removeClass("is-dragover");
+      const dt = e.dataTransfer;
+      if (!dt) return;
+      if (dt.files.length) { readFiles(dt.files); return; }
+      const url = extractUrl(dt.getData("text/uri-list") || dt.getData("text/plain"));
+      if (url) run("Clipping", () => this.handlers.captureUrl(url));
+      else status.setText("Drop a link or a file — that wasn't recognizable.");
+    });
+
+    const urlRow = this.contentEl.createDiv({ cls: "cc-source-url-row" });
+    const urlInput = urlRow.createEl("input", { attr: { type: "url", placeholder: "https://… paste a link to clip", "aria-label": "URL to clip" } });
+    const clip = urlRow.createEl("button", { cls: "mod-cta", text: "Clip & add" });
+    const submitUrl = () => {
+      const url = extractUrl(urlInput.value);
+      if (!url) { status.setText("Paste a valid http(s) URL first."); return; }
+      run("Clipping", () => this.handlers.captureUrl(url));
+    };
+    clip.addEventListener("click", submitUrl);
+    urlInput.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); submitUrl(); } });
+
+    const actions = this.contentEl.createDiv({ cls: "cc-research-modal-actions" });
+    const pick = actions.createEl("button", { text: "Choose a vault note…" });
+    pick.addEventListener("click", () => run("Importing note", () => this.handlers.pickNote()));
+    const upload = actions.createEl("button", { text: "Upload a file…" });
+    const fileInput = this.contentEl.createEl("input", { attr: { type: "file", multiple: "multiple", "aria-label": "Upload source files" } });
+    fileInput.addClass("cc-source-file-input");
+    upload.addEventListener("click", () => fileInput.click());
+    fileInput.addEventListener("change", () => { if (fileInput.files?.length) readFiles(fileInput.files); });
+  }
+}
+
+class NotePickModal extends FuzzySuggestModal<TFile> {
+  private chosen = false;
+
+  constructor(app: App, private readonly choose: (file: TFile) => void, private readonly cancel: () => void) { super(app); }
+
+  override getItems(): TFile[] {
+    return this.app.vault.getMarkdownFiles().sort((a, b) => b.stat.mtime - a.stat.mtime);
+  }
+
+  getItemText(file: TFile): string { return file.path; }
+
+  onChooseItem(file: TFile): void { this.chosen = true; this.choose(file); }
+
+  override onClose(): void { if (!this.chosen) this.cancel(); }
+}
+
+const INTERPRET_INSTRUCTION = "Write a one-to-three sentence interpretation of this evidence excerpt: what it shows and why it matters for the research project, stated cautiously without going beyond the excerpt.";
+
 class EvidenceReviewModal extends Modal {
-  constructor(app: App, private readonly evidence: EvidenceRecord, private readonly submit: (state: "reviewed" | "rejected") => Promise<void>, private readonly openNote: () => Promise<void>) { super(app); }
+  constructor(app: App, private readonly evidence: EvidenceRecord, private readonly submit: (state: "reviewed" | "rejected", interpretation?: string) => Promise<void>, private readonly openNote: () => Promise<void>, private readonly rewriteText?: RewriteTextFn) { super(app); }
   override onOpen(): void {
     this.contentEl.empty();
     this.contentEl.createEl("h2", { text: `Review ${this.evidence.title}` });
     this.contentEl.createEl("p", { cls: "cc-research-modal-meta", text: `${this.evidence.source}${this.evidence.locatorValue ? ` · ${this.evidence.locatorKind ?? "locator"} ${this.evidence.locatorValue}` : ""}` });
     this.contentEl.createEl("p", { cls: "cc-research-evidence-excerpt", text: this.evidence.excerpt });
-    if (this.evidence.interpretation) this.contentEl.createEl("p", { cls: "cc-research-evidence-interpretation", text: this.evidence.interpretation });
+    const interpretationField = this.contentEl.createDiv({ cls: "cc-research-modal-field" });
+    interpretationField.createEl("label", { text: "Interpretation — your reading of what this excerpt shows" });
+    const interpretation = interpretationField.createEl("textarea", { attr: { "aria-label": "Evidence interpretation", rows: "3", placeholder: "What does this passage establish, and why does it matter for the project?" } });
+    interpretation.value = this.evidence.interpretation ?? "";
     const error = this.contentEl.createEl("p", { cls: "cc-research-error", attr: { role: "alert" } });
+    if (this.rewriteText) {
+      const draftWrap = this.contentEl.createDiv({ cls: "cc-research-modal-actions" });
+      const draft = draftWrap.createEl("button", { text: "Draft with Claude", attr: { "aria-label": "Draft an interpretation with Claude, grounded in the excerpt" } });
+      draft.addEventListener("click", () => {
+        const context = `Source: ${this.evidence.title} (${this.evidence.source}${this.evidence.locatorValue ? `, ${this.evidence.locatorKind ?? "locator"} ${this.evidence.locatorValue}` : ""})\nExcerpt:\n${this.evidence.excerpt}`;
+        const seed = interpretation.value.trim();
+        draft.disabled = true;
+        draft.setText("Drafting…");
+        error.setText("");
+        void this.rewriteText!({ text: seed || "Draft the interpretation for this evidence.", instruction: INTERPRET_INSTRUCTION, context })
+          .then((result) => { interpretation.value = result; })
+          .catch((cause) => error.setText(sanitizeLoadError(cause)))
+          .finally(() => { draft.disabled = false; draft.setText("Draft with Claude"); });
+      });
+    }
     const actions = this.contentEl.createDiv({ cls: "cc-research-modal-actions" });
-    const complete = (state: "reviewed" | "rejected") => void this.submit(state).then(() => this.close()).catch((cause) => error.setText(sanitizeLoadError(cause)));
+    const complete = (state: "reviewed" | "rejected") => {
+      const value = interpretation.value.trim();
+      void this.submit(state, value ? value : undefined).then(() => this.close()).catch((cause) => error.setText(sanitizeLoadError(cause)));
+    };
     actions.createEl("button", { cls: "mod-cta", text: "Mark reviewed" }).addEventListener("click", () => complete("reviewed"));
     actions.createEl("button", { text: "Reject" }).addEventListener("click", () => complete("rejected"));
     actions.createEl("button", { text: "Open note" }).addEventListener("click", () => void this.openNote().catch((cause) => error.setText(sanitizeLoadError(cause))));
@@ -447,8 +694,12 @@ interface ClaimModalInput {
   contextualizes: string[];
 }
 
+type RewriteTextFn = (input: { text: string; instruction: string; context?: string }) => Promise<string>;
+
+const SHARPEN_INSTRUCTION = "Rewrite as one precise, defensible claim proposition: a single sentence, hedged to what the grounding evidence supports, no rhetorical framing.";
+
 class ClaimCreateModal extends Modal {
-  constructor(app: App, private readonly evidence: EvidenceRecord[], private readonly submit: (input: ClaimModalInput) => Promise<void>) { super(app); }
+  constructor(app: App, private readonly evidence: EvidenceRecord[], private readonly submit: (input: ClaimModalInput) => Promise<void>, private readonly rewriteText?: RewriteTextFn) { super(app); }
   override onOpen(): void {
     this.contentEl.empty();
     this.contentEl.createEl("h2", { text: "Create evidence-backed claim" });
@@ -474,6 +725,40 @@ class ClaimCreateModal extends Modal {
       relations.set(item.path, inputs);
     }
     const error = this.contentEl.createEl("p", { cls: "cc-research-error", attr: { role: "alert" } });
+
+    if (this.rewriteText) {
+      let sharpened: string | null = null;
+      const preview = this.contentEl.createDiv({ cls: "cc-research-sharpen-preview is-hidden" });
+      preview.createEl("strong", { text: "Sharpened proposition" });
+      const previewText = preview.createEl("p", { cls: "cc-research-sharpen-text" });
+      const previewActions = preview.createDiv({ cls: "cc-research-modal-actions" });
+      const use = previewActions.createEl("button", { cls: "mod-cta", text: "Use rewrite" });
+      use.addEventListener("click", () => { if (sharpened !== null) proposition.value = sharpened; sharpened = null; preview.addClass("is-hidden"); });
+      const dismiss = previewActions.createEl("button", { text: "Dismiss" });
+      dismiss.addEventListener("click", () => { sharpened = null; preview.addClass("is-hidden"); });
+
+      const sharpenWrap = this.contentEl.createDiv({ cls: "cc-research-modal-actions" });
+      const sharpen = sharpenWrap.createEl("button", { text: "Sharpen with Claude", attr: { "aria-label": "Sharpen the proposition with Claude, grounded in the checked evidence" } });
+      sharpen.addEventListener("click", () => {
+        const draft = proposition.value.trim();
+        if (!draft) { error.setText("Write a draft proposition first, then sharpen it."); return; }
+        const context = this.evidence
+          .flatMap((item) => {
+            const choices = relations.get(item.path);
+            const relation = choices ? (Object.entries(choices).find(([, input]) => input.checked)?.[0] as "supports" | "challenges" | "contextualizes" | undefined) : undefined;
+            return relation ? [`Evidence (${relation}) — ${item.title}: ${item.excerpt}`] : [];
+          })
+          .join("\n");
+        sharpen.disabled = true;
+        sharpen.setText("Sharpening…");
+        error.setText("");
+        void this.rewriteText!({ text: draft, instruction: SHARPEN_INSTRUCTION, ...(context ? { context } : {}) })
+          .then((result) => { sharpened = result; previewText.setText(result); preview.removeClass("is-hidden"); })
+          .catch((cause) => error.setText(sanitizeLoadError(cause)))
+          .finally(() => { sharpen.disabled = false; sharpen.setText("Sharpen with Claude"); });
+      });
+    }
+
     const submitBar = this.contentEl.createDiv({ cls: "cc-research-modal-submit-bar" });
     const button = submitBar.createEl("button", { cls: "mod-cta", text: "Create claim" });
     button.addEventListener("click", () => {

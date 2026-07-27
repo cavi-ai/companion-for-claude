@@ -13,6 +13,10 @@ export interface ResearchDeskDependencies {
   openWorkbench(projectPath: string, target: ResearchDeskTarget, path?: string): void | Promise<void>;
   askCompanion?(projectPath: string): void | Promise<void>;
   createProject?(): void | Promise<void>;
+  /** Group the clippings inbox into research themes (one click, project-independent). */
+  triageClippings?(): void | Promise<void>;
+  /** Start a research project seeded from the most recently focused markdown note. */
+  startFromActiveNote?(): void | Promise<void>;
 }
 
 function errorMessage(error: unknown): string {
@@ -74,6 +78,14 @@ export class ResearchDeskView extends ItemView {
     for (const project of projects) select.createEl("option", { text: project.title, value: project.path, attr: { selected: project.path === snapshot.project.path ? "selected" : null } });
     select.value = snapshot.project.path;
     select.addEventListener("change", () => void this.setProjectPath(select.value));
+    if (this.deps.triageClippings) {
+      const triage = headerActions.createEl("button", { text: "Triage clippings", attr: { title: "Group your clippings inbox into research themes with tags and links" } });
+      triage.addEventListener("click", () => void this.deps.triageClippings?.());
+    }
+    if (this.deps.startFromActiveNote) {
+      const fromNote = headerActions.createEl("button", { text: "New project from active note", attr: { title: "Seed a research project from the note you have open" } });
+      fromNote.addEventListener("click", () => void this.deps.startFromActiveNote?.());
+    }
     if (this.deps.askCompanion) {
       const ask = headerActions.createEl("button", { cls: "cc-workspace-companion-action", text: "Ask Companion" });
       ask.addEventListener("click", () => void this.deps.askCompanion?.(snapshot.project.path));
@@ -128,10 +140,19 @@ export class ResearchDeskView extends ItemView {
 
   private renderEmpty(root: HTMLElement, projects: Array<{ path: string; title: string }>, loadError?: string): void {
     const empty = root.createEl("section", { cls: "cc-desk-empty" }); empty.createDiv({ cls: "cc-desk-eyebrow", text: "RESEARCH DESK" }); empty.createEl("h2", { text: loadError ? "This project needs attention" : "Start your research system" });
-    empty.createEl("p", { text: loadError ?? "Create a project or choose an existing one. The Desk will guide sources, evidence, claims, writing, and assurance without hiding the underlying notes." });
+    empty.createEl("p", { text: loadError ?? "A research project builds a traceable trail: sources → evidence → claims → outline → draft. Each step is plain notes in your vault — the Desk just tells you what the next step is and why." });
+    if (!loadError) empty.createEl("p", { cls: "cc-desk-empty-hint", text: "Create a project, capture your first source, and the Desk takes it from there." });
     const controls = empty.createDiv({ cls: "cc-desk-empty-controls" });
     if (projects.length) { const select = controls.createEl("select", { attr: { "aria-label": "Choose research project" } }); select.createEl("option", { text: "Choose a project", value: "" }); for (const project of projects) select.createEl("option", { text: project.title, value: project.path }); select.addEventListener("change", () => { if (select.value) void this.setProjectPath(select.value); }); }
     const create = controls.createEl("button", { cls: "mod-cta", text: "Create project" }); create.addEventListener("click", () => this.deps.createProject ? void this.deps.createProject() : new Notice("Use the Research Workbench to create a project."));
+    if (!loadError && this.deps.startFromActiveNote) {
+      const fromNote = controls.createEl("button", { text: "Start from active note", attr: { title: "Seed a research project from the note you have open" } });
+      fromNote.addEventListener("click", () => void this.deps.startFromActiveNote?.());
+    }
+    if (!loadError && this.deps.triageClippings) {
+      const triage = controls.createEl("button", { text: "Triage clippings", attr: { title: "Group your clippings inbox into research themes with tags and links" } });
+      triage.addEventListener("click", () => void this.deps.triageClippings?.());
+    }
   }
 
   private async updatePreferences(path: string, update: (current: ResearchDeskPreferences) => ResearchDeskPreferences): Promise<void> { await this.deps.updatePreferences(path, update); await this.render(); }

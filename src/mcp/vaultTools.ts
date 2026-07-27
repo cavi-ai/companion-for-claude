@@ -363,9 +363,9 @@ export class VaultTools {
   private researchRepository(): ResearchRepository {
     const readNotes = async (files: TFile[]) => Promise.all(files.map(async (file) => {
       const content = await this.app.vault.cachedRead(file);
-      const body = content.replace(/^---\n[\s\S]*?\n---\n?/, "");
+      const body = content.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, "");
       const cached = this.app.metadataCache.getFileCache(file)?.frontmatter as Record<string, unknown> | undefined;
-      const match = /^---\n([\s\S]*?)\n---\n?/.exec(content);
+      const match = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/.exec(content);
       const frontmatter = cached ?? (match ? parseYaml(match[1] ?? "") as Record<string, unknown> : undefined);
       return { path: file.path, ...(frontmatter ? { frontmatter } : {}), body };
     }));

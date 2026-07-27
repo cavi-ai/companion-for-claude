@@ -13,7 +13,7 @@ export interface Chunk {
   heading: string;
 }
 
-const FRONTMATTER_RE = /^---\n[\s\S]*?\n---\n?/;
+const FRONTMATTER_RE = /^---\r?\n[\s\S]*?\r?\n---\r?\n?/;
 
 /** Strip a leading YAML frontmatter block. */
 export function stripFrontmatter(md: string): string {

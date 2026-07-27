@@ -129,7 +129,21 @@ made merely by opening or navigating the Desk.
 Use **Open advanced research workbench** from the command palette for the full
 record-level interface. Its grouped Build, Write, Assure, and Expand navigation
 covers Overview, Sources, Evidence, Claims, Outline, Draft, Audit,
-Intelligence, and Discover. The end-to-end workflow is:
+Intelligence, and Discover. Getting started is guided rather than blank:
+
+- **Triage clippings** (Research Desk, one click) — groups your clippings
+  inbox into research themes with one model call, tags each note with its
+  `research/<theme>` tag, and writes a `Clippings/Triage.md` board with
+  wikilinks, source URLs, and a potential project per theme.
+- **Add source is capture-first, not a form** — drop a URL (clipped to clean
+  markdown and auto-tagged), drop or upload a file (PDFs land in project
+  assets), or fuzzy-pick an existing vault note. One gesture per source.
+- **New project from active note** (Research Desk or command palette) —
+  drafts a sharp research question grounded in the open note, creates the
+  project, imports the note as the first source, and lands on Discover with a
+  pre-derived query, so the preliminary scholarly search is one click away.
+
+The end-to-end workflow is:
 
 1. Create a project with a focused research question.
 2. Import a source so its metadata and captured-content fingerprint are saved.
@@ -138,8 +152,11 @@ Intelligence, and Discover. The end-to-end workflow is:
    extraction services involved).
 3. Capture an exact excerpt with a source locator as evidence.
 4. Review the excerpt and locator, then mark the evidence reviewed or rejected.
+   **Draft with Claude** writes a grounded interpretation of the excerpt for
+   you to edit before saving.
 5. Build claims with separate supporting, challenging, and contextual evidence
-   relations.
+   relations. **Sharpen with Claude** rewrites the draft proposition, grounded
+   in the evidence you checked — no new facts allowed.
 6. Generate an evidence-backed outline that carries the excerpt, source,
    locator, and fingerprint forward.
 7. Draft sections from their grounded claim and evidence packets.
@@ -174,6 +191,10 @@ same vault, same confirm-before-write guardrails, wherever you are.
   it **proposes the change as a red/green diff**; you accept or reject **each
   hunk** before anything is written, and Claude is told exactly what you
   accepted. Works even with write tools off — the review is the permission.
+- **Inline rewrite in the editor** — select text, then *Rewrite selection with
+  Claude…* (command palette or right-click menu): pick a preset (improve,
+  grammar, shorten, expand, tone) or type your own instruction, and review the
+  result as the same per-hunk diff before it lands. No chat round-trip.
 - **Link suggestions while you write** — the Related panel surfaces **unlinked
   mentions** (note titles and aliases sitting in your prose as plain text) with
   one-click linking, or **Review & link all** as a single diff. No embeddings

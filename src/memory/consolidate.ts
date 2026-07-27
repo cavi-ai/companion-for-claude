@@ -25,7 +25,7 @@ export function selectDigests(files: DigestSource[], opts?: { max?: number; maxC
   const maxChars = opts?.maxChars ?? DEFAULT_MAX_CHARS;
   const digests = files
     .filter((f) => !f.path.endsWith(`/${MEMORY_NOTE_BASENAME}.md`) && f.path !== `${MEMORY_NOTE_BASENAME}.md`)
-    .filter((f) => /^---\n[\s\S]*?^session_id:/m.test(f.content))
+    .filter((f) => /^---\r?\n[\s\S]*?^session_id:/m.test(f.content))
     .sort((a, b) => b.mtime - a.mtime)
     .slice(0, max);
 

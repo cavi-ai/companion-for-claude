@@ -181,6 +181,27 @@ describe("ResearchRepository", () => {
     await expect(repo.reviewEvidence(project.path, "reviewed")).rejects.toThrow(/not evidence/i);
   });
 
+  it("updates an evidence interpretation in place and parses it back", async () => {
+    const io = new MemoryIO();
+    const repo = new ResearchRepository(io);
+    const project = await repo.createProject(projectInput);
+    const source = await repo.importSource(project.path, { title: "Paper", sourceKind: "vault" });
+    if (source.kind !== "created") throw new Error("expected source");
+    const evidence = await repo.createEvidence({ project: project.path, source: source.path, title: "Evidence", excerpt: "Exact quote." });
+
+    const updated = await repo.updateEvidenceInterpretation(evidence.path, "This passage establishes the refocus cost.");
+    expect(updated.interpretation).toBe("This passage establishes the refocus cost.");
+    expect(io.files.get(evidence.path)).toContain("Interpretation: This passage establishes the refocus cost.");
+
+    const replaced = await repo.updateEvidenceInterpretation(evidence.path, "A revised reading.");
+    expect(replaced.interpretation).toBe("A revised reading.");
+    expect(io.files.get(evidence.path)).toContain("Interpretation: A revised reading.");
+    expect(io.files.get(evidence.path)).not.toContain("refocus cost");
+
+    await expect(repo.updateEvidenceInterpretation(evidence.path, "  ")).rejects.toThrow(/must not be empty/i);
+    await expect(repo.updateEvidenceInterpretation(project.path, "x")).rejects.toThrow(/not evidence/i);
+  });
+
   it("rejects claim evidence relations outside the loaded project", async () => {
     const io = new MemoryIO();
     const repo = new ResearchRepository(io);

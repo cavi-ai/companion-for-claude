@@ -2,7 +2,7 @@ import { App, FileSystemAdapter, MarkdownView, Modal, Notice, parseYaml, Platfor
 import { ChatView, CHAT_VIEW_TYPE } from "./view/ChatView";
 import { MemoryView, MEMORY_VIEW_TYPE } from "./view/MemoryView";
 import { RelatedView, RELATED_VIEW_TYPE } from "./view/RelatedView";
-import { ResearchWorkbenchView, RESEARCH_WORKBENCH_VIEW_TYPE, type ResearchWorkbenchTab } from "./view/ResearchWorkbenchView";
+import { ResearchWorkbenchView, RESEARCH_WORKBENCH_VIEW_TYPE, ProjectCreateModal, QUESTION_INSTRUCTION, type ResearchWorkbenchTab } from "./view/ResearchWorkbenchView";
 import { ResearchDeskView, RESEARCH_DESK_VIEW_TYPE } from "./view/ResearchDeskView";
 import { normalizeDeskPreferenceMap, type ResearchDeskPreferenceMap } from "./research/deskPreferences";
 import { ResearchRepository } from "./research/repository";
@@ -29,8 +29,10 @@ import { AGENT_INSTRUCTION } from "./agent/prompt";
 import { findUnlinkedMentions, type LinkCandidate } from "./links/unlinkedMentions";
 import { selectDigests, buildConsolidationPrompt, parseConsolidation, renderMemoryNote, MEMORY_NOTE_BASENAME, type DigestSource } from "./memory/consolidate";
 import { mentionEdits } from "./links/suggest";
-import { planEdits, applyPlan } from "./edit/diff";
+import { planEdits, applyPlan, type EditPlan } from "./edit/diff";
+import { REWRITE_SYSTEM, buildRewriteUser, buildGroundedRewriteUser, rewriteMaxTokens, parseRewrite } from "./edit/rewrite";
 import { DiffModal } from "./view/DiffModal";
+import { RewriteModal } from "./view/RewriteModal";
 import { renderArtifactInline, ArtifactModal, openArtifactExternally } from "./artifacts/renderInline";
 import type { McpHttpServer } from "./mcp/server";
 import { VaultTools } from "./mcp/vaultTools";
@@ -63,7 +65,7 @@ import {
   touch,
 } from "./conversations/store";
 import type { ChatMessage } from "./types";
-import { normalizePath, TFile } from "obsidian";
+import { normalizePath, TFile, type Editor } from "obsidian";
 import { enrichCapture, type EnrichDeps } from "./sources/enrich";
 import { shouldEnrich } from "./sources/watcher";
 import { parseClipUrl } from "./sources/detect";
@@ -73,6 +75,9 @@ import { OntologyRegistry } from "./ontology/registry";
 import { seedFiles } from "./ontology/seed";
 import { auditProject } from "./research/audit";
 import { buildResearchDeskViewModel } from "./research/deskViewModel";
+import { TRIAGE_SYSTEM, buildTriageUser, parseTriageResponse, renderTriageNote, themeTagSlug, noteExcerpt, type TriageNote } from "./research/triage";
+import { captureWebSource } from "./research/webCapture";
+import { summarizeAndTag } from "./indexing/autoTagger";
 import { resolveCompanionWorkspace, type CompanionWorkspaceCard } from "./view/companionWorkspace";
 
 /** Output-token ceiling for artifact-producing flows (plans, artifacts, workflows),
@@ -143,6 +148,8 @@ export default class ClaudeCompanionPlugin extends Plugin {
       openWorkbench: (projectPath, target, path) => this.activateResearchWorkbench(projectPath, target, path),
       askCompanion: (projectPath) => this.askCompanionAboutProject(projectPath),
       createProject: () => this.activateResearchWorkbench(undefined, "Overview"),
+      triageClippings: () => this.triageClippings(),
+      startFromActiveNote: () => void this.startResearchFromActiveNote(),
     }));
     this.registerView(RESEARCH_WORKBENCH_VIEW_TYPE, (leaf: WorkspaceLeaf) => new ResearchWorkbenchView(
       leaf,
@@ -160,6 +167,38 @@ export default class ClaudeCompanionPlugin extends Plugin {
           releaseDiscoveryCoordinator: () => this.releaseDiscoveryCoordinator(discoveryCoordinator),
           draftCoordinator: new DraftCoordinator({ selection: () => this.router().chatProvider(), maxTokens: () => this.settings.maxTokens }),
           revisionCoordinator: new RevisionCoordinator({ selection: () => this.router().chatProvider(), maxTokens: () => this.settings.maxTokens }),
+          rewriteText: this.researchRewriteText(),
+          ...(typeof DOMParser === "undefined" ? {} : {
+            captureWeb: (url: string) => captureWebSource(url, {
+              fetchHtml: async (target) => {
+                const response = await requestUrl({ url: target, method: "GET", throw: false });
+                if (response.status >= 400) throw new Error(`Fetch failed with status ${response.status}`);
+                return response.text;
+              },
+              parseHtml: (html) => new DOMParser().parseFromString(html, "text/html"),
+            }),
+          }),
+          saveAsset: async (projectPath, name, data) => {
+            const folder = `${projectPath.slice(0, -"/Project.md".length)}/Sources/assets`;
+            await this.ensureFolder(folder);
+            let path = normalizePath(`${folder}/${name}`);
+            if (this.app.vault.getAbstractFileByPath(path)) {
+              const base = name.replace(/\.[^.]+$/, "");
+              const ext = name.includes(".") ? `.${name.split(".").pop()}` : "";
+              path = normalizePath(`${folder}/${base}-${Date.now()}${ext}`);
+            }
+            await this.app.vault.createBinary(path, data);
+            return path;
+          },
+          suggestTags: async (content) => {
+            try {
+              const { tags } = await summarizeAndTag(this.app, this.router(), content, existingVaultTags(this.app));
+              return tags;
+            } catch (e) {
+              console.warn("[companion] source tagging failed", e);
+              return [];
+            }
+          },
           openDesk: (projectPath) => this.activateResearchDesk(projectPath),
           askCompanion: (projectPath) => this.askCompanionAboutProject(projectPath),
         };
@@ -221,6 +260,30 @@ export default class ClaudeCompanionPlugin extends Plugin {
     });
 
     this.addCommand({
+      id: "rewrite-selection",
+      name: "Rewrite selection with Claude…",
+      editorCheckCallback: (checking, editor, view) => {
+        const has = editor.getSelection().trim().length > 0 && view instanceof MarkdownView && !!view.file;
+        if (checking) return has;
+        void this.runInlineRewrite(editor, view as MarkdownView);
+        return true;
+      },
+    });
+
+    // Right-click context menu entry, mirroring the command above.
+    this.registerEvent(
+      this.app.workspace.on("editor-menu", (menu, editor, view) => {
+        if (!(view instanceof MarkdownView) || editor.getSelection().trim().length === 0) return;
+        menu.addItem((item) =>
+          item
+            .setTitle("Rewrite with Claude…")
+            .setIcon("sparkles")
+            .onClick(() => void this.runInlineRewrite(editor, view)),
+        );
+      }),
+    );
+
+    this.addCommand({
       id: "ask-vault",
       name: "Ask Claude about my vault (search-augmented)",
       callback: async () => {
@@ -255,6 +318,23 @@ export default class ClaudeCompanionPlugin extends Plugin {
       id: "open-research-workbench",
       name: "Open advanced research workbench",
       callback: () => void this.activateResearchWorkbench(),
+    });
+
+    this.addCommand({
+      id: "triage-clippings",
+      name: "Triage clippings folder into research themes",
+      callback: () => void this.triageClippings(),
+    });
+
+    this.addCommand({
+      id: "research-from-active-note",
+      name: "Start research project from active note",
+      checkCallback: (checking) => {
+        const file = this.app.workspace.getActiveViewOfType(MarkdownView)?.file ?? this.lastMarkdownFile;
+        if (checking) return !!file;
+        void this.startResearchFromActiveNote();
+        return true;
+      },
     });
 
     this.addCommand({
@@ -406,6 +486,10 @@ export default class ClaudeCompanionPlugin extends Plugin {
     // Show a "Build" action in the header of any `type: plan` note.
     this.registerEvent(this.app.workspace.on("file-open", () => this.syncPlanBuildActions()));
     this.registerEvent(this.app.workspace.on("active-leaf-change", () => this.syncPlanBuildActions()));
+    this.registerEvent(this.app.workspace.on("active-leaf-change", () => {
+      const file = this.app.workspace.getActiveViewOfType(MarkdownView)?.file;
+      if (file) this.lastMarkdownFile = file;
+    }));
     this.registerEvent(this.app.metadataCache.on("changed", () => this.syncPlanBuildActions()));
     this.registerEvent(this.app.metadataCache.on("changed", (file) => {
       this.scheduleResearchRefresh(file.path);
@@ -495,6 +579,8 @@ export default class ClaudeCompanionPlugin extends Plugin {
 
   /** Tracks the Build header-action element we added to each plan-note view. */
   private planBuildActions = new WeakMap<MarkdownView, HTMLElement>();
+  /** Most recently focused markdown file — side views (Desk, Chat) steal active-leaf, so "active note" flows must remember it. */
+  private lastMarkdownFile: TFile | null = null;
 
   /**
    * Add (or remove) a "Build" icon in the header of every open markdown note that
@@ -526,6 +612,217 @@ export default class ClaudeCompanionPlugin extends Plugin {
     });
     this.syncPlanBuildActions();
     new Notice("Marked as a plan — a Build icon is now in the note's header.");
+  }
+
+  /**
+   * Inline rewrite (roadmap Track B): selection → instruction modal → one
+   * chat-free completion → per-hunk DiffModal review → vault.process apply.
+   * When the selection isn't unique in the note, the diff is planned against
+   * the selection alone and the apply is anchored at the editor offsets.
+   */
+  private async runInlineRewrite(editor: Editor, view: MarkdownView): Promise<void> {
+    const file = view.file;
+    const selection = editor.getSelection();
+    if (!file || selection.trim().length === 0) {
+      new Notice("Select some text to rewrite first.");
+      return;
+    }
+    const anchorFrom = editor.posToOffset(editor.getCursor("from"));
+    const anchorTo = editor.posToOffset(editor.getCursor("to"));
+
+    const instruction = await new Promise<string | null>((resolve) =>
+      new RewriteModal(this.app, selection.length, resolve).open(),
+    );
+    if (!instruction) return;
+
+    const progress = new Notice("Rewriting selection…", 0);
+    try {
+      const { provider, model } = this.router().resolve("chat");
+      const raw = await provider.complete({
+        system: REWRITE_SYSTEM,
+        model,
+        maxTokens: rewriteMaxTokens(selection),
+        temperature: 0.3,
+        messages: [{ role: "user", content: buildRewriteUser(selection, instruction) }],
+      });
+      const rewritten = parseRewrite(raw, selection);
+
+      const content = editor.getValue();
+      let plan: EditPlan;
+      let anchor: { start: number; end: number } | null = null;
+      try {
+        plan = planEdits(content, [{ old_str: selection, new_str: rewritten }]);
+      } catch {
+        plan = planEdits(selection, [{ old_str: selection, new_str: rewritten }]);
+        anchor = { start: anchorFrom, end: anchorTo };
+      }
+
+      const accepted = await new Promise<boolean[] | null>((resolve) =>
+        new DiffModal(this.app, { path: file.path, description: `Rewrite — ${instruction}`, plan }, resolve).open(),
+      );
+      if (!accepted) return;
+
+      await this.app.vault.process(file, (current) => {
+        if (anchor && current.slice(anchor.start, anchor.end) === selection) {
+          return accepted[0] ? current.slice(0, anchor.start) + rewritten + current.slice(anchor.end) : current;
+        }
+        return applyPlan(current, plan, accepted);
+      });
+      new Notice("Rewrite applied.");
+    } catch (e) {
+      const { provider } = this.router().resolve("chat");
+      const hint = errorHint(e instanceof Error ? e.message : String(e), provider.id === "ollama" ? "ollama" : "anthropic");
+      new Notice(`Rewrite failed${hint ? ` — ${hint}` : ` — ${e instanceof Error ? e.message : String(e)}`}`);
+    } finally {
+      progress.hide();
+    }
+  }
+
+  /** Shared chat-free rewrite helper for the research surfaces (claims, evidence, project questions). */
+  private researchRewriteText(): (input: { text: string; instruction: string; context?: string }) => Promise<string> {
+    return async ({ text, instruction, context }) => {
+      const { provider, model } = this.router().resolve("chat");
+      const raw = await provider.complete({
+        system: REWRITE_SYSTEM,
+        model,
+        maxTokens: rewriteMaxTokens(text),
+        temperature: 0.3,
+        messages: [{ role: "user", content: context ? buildGroundedRewriteUser(text, instruction, context) : buildRewriteUser(text, instruction) }],
+      });
+      return parseRewrite(raw, text);
+    };
+  }
+
+  /**
+   * One-click clippings triage (Research Desk): enrich any un-typed clips in
+   * the inbox, group them into research themes with one chat call, tag each
+   * note with its theme, and write a `Triage.md` board with links and a
+   * potential project per theme. Manual action — no consent gate.
+   */
+  private async triageClippings(): Promise<void> {
+    const folder = this.settings.sourceInboxFolder.replace(/\/+$/, "");
+    if (!folder) {
+      new Notice("Set a clippings inbox folder in Companion settings first.");
+      return;
+    }
+    const files = this.app.vault.getMarkdownFiles().filter((f) => f.path.startsWith(`${folder}/`) && f.name !== "Triage.md");
+    if (files.length === 0) {
+      new Notice(`No clippings in ${folder}/ yet — clip something first.`);
+      return;
+    }
+    const progress = new Notice(`Triaging ${files.length} clipping${files.length === 1 ? "" : "s"}…`, 0);
+    try {
+      for (const file of files) {
+        const content = await this.app.vault.cachedRead(file);
+        if (/^source_enriched:\s*true\s*$/m.test(content)) continue;
+        try {
+          const capture = { kind: "markdown" as const, path: file.path, basename: file.basename, content, url: parseClipUrl(content) };
+          const res = await enrichCapture(this.enrichDeps(), capture);
+          this.enrichRecentlyWritten.add(res.file.path);
+          window.setTimeout(() => this.enrichRecentlyWritten.delete(res.file.path), 5000);
+        } catch (e) {
+          console.warn("[companion] triage enrichment failed", e);
+        }
+      }
+
+      const notes: TriageNote[] = [];
+      for (const file of files) {
+        const content = await this.app.vault.cachedRead(file);
+        const fm = this.app.metadataCache.getFileCache(file)?.frontmatter;
+        const tags = Array.isArray(fm?.tags) ? fm.tags.map(String) : typeof fm?.tags === "string" ? [fm.tags] : [];
+        notes.push({
+          path: file.path,
+          title: typeof fm?.title === "string" ? fm.title : file.basename,
+          type: typeof fm?.type === "string" ? fm.type : "note",
+          ...(typeof fm?.url === "string" ? { url: fm.url } : {}),
+          tags,
+          excerpt: noteExcerpt(content),
+        });
+      }
+
+      const { provider, model } = this.router().resolve("chat");
+      const raw = await provider.complete({
+        system: TRIAGE_SYSTEM,
+        model,
+        maxTokens: 4000,
+        temperature: 0.2,
+        messages: [{ role: "user", content: buildTriageUser(notes) }],
+      });
+      const groups = parseTriageResponse(raw, new Set(notes.map((n) => n.path)));
+      if (groups.length === 0) throw new Error("The model returned no usable groups — try again.");
+
+      for (const group of groups) {
+        const tag = themeTagSlug(group.theme);
+        for (const path of group.paths) {
+          const file = this.app.vault.getAbstractFileByPath(path);
+          if (!(file instanceof TFile)) continue;
+          await this.app.fileManager.processFrontMatter(file, (fm) => {
+            const record = fm as Record<string, unknown>;
+            const raw = record.tags;
+            const existing: string[] = Array.isArray(raw) ? raw.map(String) : typeof raw === "string" ? [raw] : [];
+            record.tags = [...new Set([...existing, tag])];
+          });
+        }
+      }
+
+      const triagePath = normalizePath(`${folder}/Triage.md`);
+      const board = renderTriageNote(groups, new Map(notes.map((n) => [n.path, n])), new Date().toISOString());
+      this.enrichRecentlyWritten.add(triagePath);
+      window.setTimeout(() => this.enrichRecentlyWritten.delete(triagePath), 5000);
+      const existing = this.app.vault.getAbstractFileByPath(triagePath);
+      if (existing instanceof TFile) await this.app.vault.modify(existing, board);
+      else await this.app.vault.create(triagePath, board);
+      new Notice(`Triage: ${groups.length} theme${groups.length === 1 ? "" : "s"} across ${files.length} clippings → ${triagePath}`);
+      const boardFile = this.app.vault.getAbstractFileByPath(triagePath);
+      if (boardFile instanceof TFile) await this.app.workspace.getLeaf(false).openFile(boardFile);
+    } catch (e) {
+      const { provider } = this.router().resolve("chat");
+      const hint = errorHint(e instanceof Error ? e.message : String(e), provider.id === "ollama" ? "ollama" : "anthropic");
+      new Notice(`Triage failed${hint ? ` — ${hint}` : ` — ${e instanceof Error ? e.message : String(e)}`}`);
+    } finally {
+      progress.hide();
+    }
+  }
+
+  /**
+   * Seed a research project from the open note: pre-draft a sharp question
+   * grounded in the note, confirm via the create-project modal, import the
+   * note as the first source, then land on Discover so the preliminary
+   * scholarly search is one click away.
+   */
+  private async startResearchFromActiveNote(): Promise<void> {
+    const file = this.app.workspace.getActiveViewOfType(MarkdownView)?.file ?? this.lastMarkdownFile;
+    if (!file) {
+      new Notice("Open a note first — it becomes the project's first source.");
+      return;
+    }
+    const content = await this.app.vault.cachedRead(file);
+    if (content.trim().length < 200) {
+      new Notice("That note is too short to seed a research project.");
+      return;
+    }
+    let question: string | undefined;
+    const drafting = new Notice("Drafting a research question from the note…", 0);
+    try {
+      question = await this.researchRewriteText()({ text: file.basename, instruction: QUESTION_INSTRUCTION, context: noteExcerpt(content, 3000) });
+    } catch (e) {
+      console.warn("[companion] question drafting failed", e);
+    } finally {
+      drafting.hide();
+    }
+    new ProjectCreateModal(this.app, async (input) => {
+      const record = await this.researchRepository().createProject(input);
+      const url = parseClipUrl(content);
+      const body = content.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, "").trim();
+      await this.researchRepository().importSource(record.path, {
+        title: file.basename,
+        sourceKind: "vault",
+        ...(url ? { url } : {}),
+        capturedContent: body.slice(0, 50000),
+      });
+      new Notice(`Project started with “${file.basename}” as the first source — press Search in Discover for preliminary materials.`);
+      await this.activateResearchWorkbench(record.path, "Discover");
+    }, this.researchRewriteText(), { title: file.basename, folder: `Research/${file.basename}`, ...(question ? { question } : {}) }).open();
   }
 
   override onunload(): void {
@@ -1625,9 +1922,9 @@ export default class ClaudeCompanionPlugin extends Plugin {
   private researchRepository(): ResearchRepository {
     const readNotes = async (files: TFile[]) => Promise.all(files.map(async (file) => {
       const content = await this.app.vault.cachedRead(file);
-      const body = content.replace(/^---\n[\s\S]*?\n---\n?/, "");
+      const body = content.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, "");
       const cached = this.app.metadataCache.getFileCache(file)?.frontmatter as Record<string, unknown> | undefined;
-      const match = /^---\n([\s\S]*?)\n---\n?/.exec(content);
+      const match = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/.exec(content);
       const frontmatter = cached ?? (match ? parseYaml(match[1] ?? "") as Record<string, unknown> : undefined);
       return { path: file.path, ...(frontmatter ? { frontmatter } : {}), body };
     }));
