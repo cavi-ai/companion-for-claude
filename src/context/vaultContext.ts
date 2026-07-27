@@ -2,6 +2,7 @@ import { App, MarkdownView, TFile, getAllTags } from "obsidian";
 import type { ContextToggles, PluginSettings } from "../types";
 import { clip, scoreContent, section, snippetAround, tokenize } from "./search";
 import { reciprocalRankFusion } from "../semantic/similarity";
+import type { AttachedPage } from "./urlContext";
 
 export interface GatheredContext {
   text: string;
@@ -29,6 +30,7 @@ export async function gatherContext(
   userQuery: string,
   semanticSearch?: SemanticSearch,
   attachedPaths: AttachedPath[] = [],
+  attachedPages: AttachedPage[] = [],
 ): Promise<GatheredContext> {
   const sources: string[] = [];
   const blocks: string[] = [];
@@ -77,6 +79,21 @@ export async function gatherContext(
       }
     }
     if (added > 0) sources.push(`${added} attached`);
+  }
+
+  // 2c. Web pages attached via "Attach page content" (clean captured markdown).
+  if (attachedPages.length > 0 && budget > 0) {
+    let added = 0;
+    for (const p of attachedPages) {
+      if (budget <= 0) break;
+      if (!p.markdown) continue; // pending or failed — the pill shows the state
+      const block = section(`Web page: ${p.title ?? p.url} (${p.url})`, p.markdown);
+      const clipped = clip(block, Math.min(budget, 6000));
+      blocks.push(clipped);
+      budget -= clipped.length;
+      added++;
+    }
+    if (added > 0) sources.push(`${added} page${added > 1 ? "s" : ""}`);
   }
 
   // 3. Linked + backlinked notes.

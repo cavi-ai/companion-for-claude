@@ -343,6 +343,16 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
+      .setName("Templates folder")
+      .setDesc("Markdown notes here become your own slash commands in chat (frontmatter: name, description, optional model/context).")
+      .addText((text) =>
+        text.setValue(this.plugin.settings.templatesFolder).onChange(async (v) => {
+          this.plugin.settings.templatesFolder = v.trim() || "Claude/Templates";
+          await this.plugin.saveSettings();
+        }),
+      );
+
+    new Setting(containerEl)
       .setName("Inline artifact height")
       .setDesc("Default pixel height for artifacts rendered inside notes.")
       .addText((text) =>

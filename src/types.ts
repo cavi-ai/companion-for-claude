@@ -66,6 +66,8 @@ export interface PluginSettings {
   chatFolder: string;
   /** Folder for generated plan notes (artifact + build-task checklist, type: plan). */
   planFolder: string;
+  /** Folder holding user-defined prompt templates (one markdown note per slash command). */
+  templatesFolder: string;
   context: ContextToggles;
   /** Max characters of vault context to attach to a request. */
   contextCharBudget: number;
@@ -211,6 +213,7 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   artifactFolder: "Claude/Artifacts",
   chatFolder: "Claude/Chats",
   planFolder: "Claude/Plans",
+  templatesFolder: "Claude/Templates",
   context: {
     activeNote: true,
     selection: true,

@@ -14,3 +14,9 @@ export const AGENT_INSTRUCTION = `You have tools that read (and possibly write) 
 - When durable context about the user's past work would help, check for a "What Claude Knows" memory note (frontmatter \`type: claude-memory\`) via vault_search or frontmatter_query before asking the user.
 - For mind maps, project boards, and visual overviews, use \`canvas_create\` (when available) — prefer \`file\` nodes pointing at real vault notes over restating their content as text cards.
 - For database-style views over notes (trackers, dashboards, review queues), use \`base_create\` (when available) — discover the real frontmatter property names with \`frontmatter_query\`/\`vault_tags\` first.`;
+
+export const PLAN_MODE_INSTRUCTION = `Plan Mode is ON for this turn. You have read-only vault tools only.
+
+- Explore first: search and read the relevant notes before proposing anything.
+- Then propose a concrete plan in chat: what you would create or change, where, and why — ordered steps, with the vault paths involved.
+- Do NOT attempt writes: no note creation, edits, canvases, or bases. If the plan includes changes, present them as steps for the user to approve — execution happens after Plan Mode is turned off.`;

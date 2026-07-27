@@ -1,8 +1,8 @@
 import { ItemView, MarkdownRenderer, MarkdownView, Menu, Modal, Notice, Platform, WorkspaceLeaf, setIcon } from "obsidian";
 import type ClaudeCompanionPlugin from "../main";
-import type { ChatMessage, ToolTraceEntry } from "../types";
+import type { ChatMessage, ContextToggles, ToolTraceEntry } from "../types";
 import { runAgentTurn, type AgentTurnDeps } from "../agent/loop";
-import { executeTool, toAnthropicTools, PROPOSE_EDIT_TOOL } from "../agent/tools";
+import { executeTool, toAnthropicTools, readOnlyAnthropicTools, PROPOSE_EDIT_TOOL } from "../agent/tools";
 import { WriteConfirmModal } from "./WriteConfirmModal";
 import { DiffModal } from "./DiffModal";
 import { planEdits, applyPlan, type ProposedEdit } from "../edit/diff";
@@ -16,7 +16,9 @@ import { type ChatControls, defaultChatControls, shapeRequest } from "../claude/
 import { shouldFallbackToLocal, fallbackReason } from "../providers/fallback";
 import type { CompletionRequest } from "../providers/types";
 import { SlashMenu } from "./SlashMenu";
-import { type SlashCommand, runNativeSlashCommand, SLASH_COMMANDS, parseSlashQuery, workflowSlashCommands, WORKFLOW_ACTION_PREFIX } from "./slashCommands";
+import { type SlashCommand, runNativeSlashCommand, SLASH_COMMANDS, parseSlashQuery, workflowSlashCommands, templateSlashCommand, WORKFLOW_ACTION_PREFIX } from "./slashCommands";
+import { substitutePlaceholders } from "../templates/promptTemplates";
+import { detectPageUrl, pageLabel, type AttachedPage } from "../context/urlContext";
 import { WORKFLOWS } from "../workflows/catalog";
 import { hasIncompleteHtmlArtifactFence, shouldRenderMarkdownDuringStream, splitStreamingArtifact } from "./streamRender";
 import { gatherContext, type AttachedPath } from "../context/vaultContext";
@@ -106,10 +108,24 @@ export class ChatView extends ItemView {
   /** The last user message text, for the Regenerate action. */
   private lastUserText = "";
   private slashMenu!: SlashMenu;
+  /** User-defined prompt templates (notes in the templates folder). */
+  private templateCommands: SlashCommand[] = [];
+  /** Per-turn overrides from a prompt template; reset at the start of each run. */
+  private turnModelOverride: string | null = null;
+  private turnContextOverride: Partial<ContextToggles> | null = null;
+  /** Web pages attached via "Attach page content" (captured markdown). */
+  private attachedPages: AttachedPage[] = [];
+  /** The "attach this page?" offer chip; one at a time. */
+  private pageOfferEl!: HTMLElement;
+  /** URL the user declined to attach — don't re-offer while it stays in the input. */
+  private dismissedPageUrl: string | null = null;
   /** Latest streamed text of the in-flight turn (for clean abort handling). */
   private _lastBuffer = "";
   /** "Allow for this session" on agent write confirmations (cleared with the view). */
   private agentWriteAlways = false;
+  /** Plan Mode: read-only agent turn that ends in a plan (per conversation). */
+  private planMode = false;
+  private planToggleEl: HTMLButtonElement | null = null;
   private renderVersions = new WeakMap<HTMLElement, number>();
 
   constructor(
@@ -202,6 +218,9 @@ export class ChatView extends ItemView {
     // Attached-context pills (what "@" added). Lives above the input.
     this.pillsEl = composer.createDiv({ cls: "cc-attach-pills" });
     this.renderAttachPills();
+    // The "attach this page?" offer for URLs in the composer.
+    this.pageOfferEl = composer.createDiv({ cls: "cc-page-offer" });
+    this.pageOfferEl.setCssStyles({ display: "none" });
 
     // Palettes anchored above the input (built before the textarea so they sit
     // above it in flow; CSS positions them absolutely).
@@ -209,6 +228,20 @@ export class ChatView extends ItemView {
     // workflow (the browsable picker stays reachable via /workflows).
     this.slashMenu = new SlashMenu(composer, [...SLASH_COMMANDS, ...workflowSlashCommands(WORKFLOWS)], (cmd) => void this.runSlashCommand(cmd));
     this.atMenu = new AtMenu(composer, () => this.atItems(), (item) => void this.onAtChoose(item));
+
+    // User templates: load now, refresh when a note in the folder changes.
+    void this.reloadTemplates();
+    const templateTouched = (file: { path: string }): boolean =>
+      file.path.startsWith(`${this.plugin.settings.templatesFolder.replace(/\/+$/, "")}/`);
+    const scheduleTemplateReload = (file: { path: string }) => {
+      if (templateTouched(file)) void this.reloadTemplates();
+    };
+    this.registerEvent(this.app.vault.on("create", scheduleTemplateReload));
+    this.registerEvent(this.app.vault.on("modify", scheduleTemplateReload));
+    this.registerEvent(this.app.vault.on("delete", scheduleTemplateReload));
+    this.registerEvent(this.app.vault.on("rename", (file, oldPath) => {
+      if (templateTouched(file) || templateTouched({ path: oldPath })) void this.reloadTemplates();
+    }));
 
     // On mobile the input shares a row with a thumb-friendly "+" that opens the
     // "@" context picker (the desktop affordance is typing "@"). On desktop the
@@ -268,6 +301,7 @@ export class ChatView extends ItemView {
       this.updateUsageBar();
       this.syncSlashMenu();
       this.syncAtMenu();
+      this.syncPageOffer();
     });
     // Close the menus when focus leaves the composer.
     this.inputEl.addEventListener("blur", () => window.setTimeout(() => { this.slashMenu.hide(); this.atMenu.hide(); }, 120));
@@ -451,7 +485,7 @@ export class ChatView extends ItemView {
 
   private anyContextEnabled(): boolean {
     const c = this.plugin.settings.context;
-    return c.activeNote || c.selection || c.linkedNotes || c.searchVault || this.attachedPaths.length > 0;
+    return c.activeNote || c.selection || c.linkedNotes || c.searchVault || this.attachedPaths.length > 0 || this.attachedPages.length > 0;
   }
 
   override async onClose(): Promise<void> {
@@ -473,10 +507,10 @@ export class ChatView extends ItemView {
 
   // ---------- public entry point (used by commands) ----------
 
-  async submitPrompt(text: string, display?: string, maxTokens?: number): Promise<void> {
+  async submitPrompt(text: string, display?: string, maxTokens?: number, opts?: { model?: string; context?: Partial<ContextToggles> }): Promise<void> {
     if (!text.trim() || this.streaming) return;
     this.inputEl.value = "";
-    await this.run(text.trim(), display, maxTokens);
+    await this.run(text.trim(), display, maxTokens, opts);
   }
 
   // ---------- UI helpers ----------
@@ -578,6 +612,55 @@ export class ChatView extends ItemView {
     else this.atMenu.show(hit.query);
   }
 
+  /**
+   * Offer "Attach page content" when the composer holds a URL. Never fetches
+   * on its own — the capture only fires from the Attach click (spec §7).
+   */
+  private syncPageOffer(): void {
+    if (!this.pageOfferEl) return;
+    const hide = () => this.pageOfferEl.setCssStyles({ display: "none" });
+    if (this.streaming || !this.plugin.captureWebPage()) return hide();
+    const url = detectPageUrl(this.inputEl.value);
+    if (!url || url === this.dismissedPageUrl || this.attachedPages.some((p) => p.url === url)) return hide();
+
+    this.pageOfferEl.empty();
+    this.pageOfferEl.createSpan({ cls: "cc-page-offer-label", text: `Attach page content from ${pageLabel(url)}?` });
+    const attach = this.pageOfferEl.createEl("button", { cls: "cc-page-offer-btn", text: "Attach" });
+    attach.addEventListener("click", () => void this.attachPage(url));
+    const dismiss = this.pageOfferEl.createEl("button", { cls: "cc-page-offer-dismiss", text: "×", attr: { "aria-label": "Dismiss" } });
+    dismiss.addEventListener("click", () => {
+      this.dismissedPageUrl = url;
+      hide();
+    });
+    this.pageOfferEl.setCssStyles({ display: "" });
+  }
+
+  /** Capture a URL into an attached page. Errors land on the pill, not the chat. */
+  private async attachPage(url: string): Promise<void> {
+    const capture = this.plugin.captureWebPage();
+    if (!capture) return;
+    this.pageOfferEl.setCssStyles({ display: "none" });
+    if (this.attachedPages.some((p) => p.url === url)) return;
+    const page: AttachedPage = { url, markdown: "", pending: true };
+    this.attachedPages.push(page);
+    this.renderAttachPills();
+    try {
+      const result = await capture(url);
+      if (!result) {
+        page.error = "No readable content on that page.";
+      } else {
+        page.markdown = result.markdown;
+        if (result.title) page.title = result.title;
+      }
+    } catch (e) {
+      page.error = e instanceof Error ? e.message : String(e);
+    } finally {
+      page.pending = false;
+      this.renderAttachPills();
+      this.updateUsageBar();
+    }
+  }
+
   /** Apply a chosen "@" source: toggle a context flag or attach a note/folder. */
   private async onAtChoose(item: AtItem): Promise<void> {
     // Strip the "@query" token the user typed.
@@ -622,13 +705,15 @@ export class ChatView extends ItemView {
       c.activeNote, c.selection, c.linkedNotes, c.searchVault,
       this.attachedPaths.map((a) => `${a.kind}:${a.path}`),
       this.attachedMedia.map((m) => `${m.kind}:${m.path ?? m.label}`),
+      this.attachedPages.map((p) => `${p.url}:${p.pending ? "…" : (p.error ?? p.title ?? "ok")}`),
     ]);
     if (signature === this.lastPillsSignature) return;
     this.lastPillsSignature = signature;
     this.pillsEl.empty();
 
-    const pill = (label: string, onRemove: () => void) => {
-      const el = this.pillsEl.createDiv({ cls: "cc-attach-pill" });
+    const pill = (label: string, onRemove: () => void, cls = "", title?: string) => {
+      const el = this.pillsEl.createDiv({ cls: `cc-attach-pill${cls}` });
+      if (title) el.setAttr("title", title);
       el.createSpan({ cls: "cc-attach-label", text: label });
       const x = el.createEl("button", { cls: "cc-attach-x", attr: { "aria-label": `Remove ${label}` }, text: "×" });
       x.addEventListener("click", () => {
@@ -653,6 +738,21 @@ export class ChatView extends ItemView {
       pill(`${m.kind === "pdf" ? "📕" : "🖼️"} ${m.label}`, () => {
         this.attachedMedia = this.attachedMedia.filter((x) => x !== m);
       });
+    }
+    for (const p of this.attachedPages) {
+      const label = p.pending
+        ? `🌐 ${pageLabel(p.url)} …`
+        : p.error
+          ? `🌐 ${pageLabel(p.url)} (failed)`
+          : `🌐 ${p.title ?? pageLabel(p.url)}`;
+      pill(
+        label,
+        () => {
+          this.attachedPages = this.attachedPages.filter((x) => x !== p);
+        },
+        p.pending ? " is-pending" : p.error ? " is-error" : "",
+        p.error ?? p.url,
+      );
     }
     this.pillsEl.toggleClass("is-empty", this.pillsEl.childElementCount === 0);
   }
@@ -693,6 +793,20 @@ export class ChatView extends ItemView {
     writes.addEventListener("click", () => void this.toggleAgentWrites());
     this.writesToggleEl = writes;
     this.updateWritesToggle();
+
+    // "Plan" — Plan Mode: the agent explores with read-only tools and ends the
+    // turn with a proposed plan instead of attempting any writes. Same visibility
+    // rules as "Act on vault" (Claude + agent mode only).
+    const plan = this.controlsEl.createEl("button", {
+      cls: "cc-ctl cc-ctl-toggle cc-writes-toggle cc-plan-toggle",
+      attr: { "aria-label": "Plan Mode — Claude explores your vault read-only and proposes a plan before changing anything" },
+    });
+    plan.createSpan({ cls: "cc-writes-toggle-icon" });
+    setIcon(plan.querySelector(".cc-writes-toggle-icon") as HTMLElement, "map");
+    plan.createSpan({ text: "Plan" });
+    plan.addEventListener("click", () => this.togglePlanMode());
+    this.planToggleEl = plan;
+    this.updatePlanToggle();
 
     // Knobs (thinking / effort / temp / max) live in a popover behind a single
     // "tune" button, so the footer stays clean and Send is never buried.
@@ -753,6 +867,7 @@ export class ChatView extends ItemView {
     this.renderKnobs(); // capabilities/provider changed → rebuild dependent knobs
     this.refreshModelLabel();
     this.updateWritesToggle(); // provider changed → show/hide "Act on vault"
+    this.updatePlanToggle();
     this.updateUsageBar();
     void this.refreshBackendPill();
   }
@@ -1004,10 +1119,16 @@ export class ChatView extends ItemView {
     this.streaming = false;
     this.messages = [];
     this.session = { ...EMPTY_SESSION };
+    // Plan Mode is per-conversation — a fresh chat starts with it off.
+    this.planMode = false;
+    this.updatePlanToggle();
     // The previous conversation is already auto-saved; detach so the next turn
     // begins a fresh session.
     void this.plugin.startNewConversation();
     this.attachedPaths = [];
+    this.attachedPages = [];
+    this.dismissedPageUrl = null;
+    this.pageOfferEl?.setCssStyles({ display: "none" });
     this.renderAttachPills();
     this.messagesEl.empty();
     this.renderEmptyState();
@@ -1058,6 +1179,13 @@ export class ChatView extends ItemView {
     else this.slashMenu.show(q);
   }
 
+  /** Re-read the templates folder and rebuild the slash catalog (templates last). */
+  private async reloadTemplates(): Promise<void> {
+    this.templateCommands = (await this.plugin.promptTemplates()).map(templateSlashCommand);
+    this.slashMenu.setCommands([...SLASH_COMMANDS, ...workflowSlashCommands(WORKFLOWS), ...this.templateCommands]);
+    this.syncSlashMenu();
+  }
+
   /** Execute a chosen slash command — either send a prompt or run an action. */
   private async runSlashCommand(cmd: SlashCommand): Promise<void> {
     if (await runNativeSlashCommand({
@@ -1073,6 +1201,20 @@ export class ChatView extends ItemView {
 
     this.inputEl.value = "";
     this.autosizeInput();
+
+    // User template: substitute placeholders against the live editor state,
+    // then send with the note's optional model/context overrides for this turn.
+    if (cmd.template) {
+      const view = this.app.workspace.getActiveViewOfType(MarkdownView);
+      const selection = view?.editor.getSelection() ?? "";
+      const activeNote = view?.file ? await this.app.vault.cachedRead(view.file) : "";
+      const prompt = substitutePlaceholders(cmd.template.prompt, { selection, activeNote });
+      await this.submitPrompt(prompt, `/${cmd.name}`, undefined, {
+        ...(cmd.template.model ? { model: cmd.template.model } : {}),
+        ...(cmd.template.context ? { context: cmd.template.context } : {}),
+      });
+      return;
+    }
 
     if (cmd.kind === "prompt" && cmd.prompt) {
       if (cmd.awaitsInput) {
@@ -1155,8 +1297,10 @@ export class ChatView extends ItemView {
     }
   }
 
-  private async run(userText: string, display?: string, maxTokens?: number): Promise<void> {
+  private async run(userText: string, display?: string, maxTokens?: number, opts?: { model?: string; context?: Partial<ContextToggles> }): Promise<void> {
     this.maxTokensOverride = maxTokens ?? null; // reset each turn
+    this.turnModelOverride = opts?.model ?? null;
+    this.turnContextOverride = opts?.context ?? null;
     this._lastBuffer = ""; // never let a previous turn's partial leak into this one
     void this.refreshBackendPill();
     const router = this.plugin.router();
@@ -1177,7 +1321,9 @@ export class ChatView extends ItemView {
     // Build context-augmented copy of the message list for the API. In agent
     // mode the pre-emptive vault-search stuffing is skipped — the vault_search
     // tool replaces it with better, model-chosen queries.
-    const toggles = agentActive ? { ...this.plugin.settings.context, searchVault: false } : this.plugin.settings.context;
+    const toggles = agentActive
+      ? { ...this.plugin.settings.context, ...this.turnContextOverride, searchVault: false }
+      : { ...this.plugin.settings.context, ...this.turnContextOverride };
     const ctx = await gatherContext(
       this.app,
       this.plugin.settings,
@@ -1185,6 +1331,7 @@ export class ChatView extends ItemView {
       userText,
       (q, k) => this.plugin.semanticSearch(q, k),
       this.attachedPaths,
+      this.attachedPages,
     );
     const apiMessages: ApiMessage[] = toApiMessages(this.messages);
     if (ctx.text) {
@@ -1271,7 +1418,7 @@ export class ChatView extends ItemView {
     const router = this.plugin.router();
     const onClaude = target === "claude";
     const provider = onClaude ? router.anthropic : router.ollama;
-    const model = onClaude ? this.controls.model : this.plugin.settings.ollamaModel;
+    const model = onClaude ? (this.turnModelOverride ?? this.controls.model) : this.plugin.settings.ollamaModel;
     const shape = shapeRequest({ ...this.controls, model: onClaude ? model : this.controls.model }, this.maxTokensOverride ?? this.plugin.settings.maxTokens);
     const wantThinking = onClaude && this.controls.thinking && this.controls.showThinking;
     let thinkingBody: HTMLElement | null = wantThinking ? this.createThinkingPanel(bubble) : null;
@@ -1384,13 +1531,17 @@ export class ChatView extends ItemView {
     let thinkBuf = "";
 
     const request: CompletionRequest = {
-      system: this.plugin.composeSystemPrompt({ agent: true }),
+      system: this.plugin.composeSystemPrompt({ agent: true, plan: this.planMode }),
       messages: apiMessages,
-      model: this.controls.model,
+      model: this.turnModelOverride ?? this.controls.model,
       maxTokens: shape.maxTokens,
-      // propose_note_edit rides along regardless of agentAllowWrites — the
-      // diff modal is its own gate (spec 2026-07-05 apply-to-note, §7 Q1).
-      tools: [...toAnthropicTools(this.plugin.agentTools().definitions()), PROPOSE_EDIT_TOOL],
+      // Plan Mode forces the read-only set regardless of agentAllowWrites, and
+      // drops propose_note_edit — the turn should end in a plan, not an edit.
+      // Otherwise propose_note_edit rides along regardless of agentAllowWrites —
+      // the diff modal is its own gate (spec 2026-07-05 apply-to-note, §7 Q1).
+      tools: this.planMode
+        ? readOnlyAnthropicTools(this.plugin.agentTools().definitions())
+        : [...toAnthropicTools(this.plugin.agentTools().definitions()), PROPOSE_EDIT_TOOL],
     };
     if (shape.temperature !== undefined) request.temperature = shape.temperature;
     if (shape.thinking !== undefined) request.thinking = shape.thinking;
@@ -1561,6 +1712,26 @@ export class ChatView extends ItemView {
     await this.plugin.saveSettings();
     this.updateWritesToggle();
     new Notice(on ? "Act on vault: on — I'll create and edit notes (each change asks first)." : "Act on vault: off — chat only, I won't change your vault.");
+  }
+
+  /**
+   * Reflect Plan Mode: same visibility rules as "Act on vault", lit while on.
+   * While lit the turn is read-only and ends in a proposed plan.
+   */
+  private updatePlanToggle(): void {
+    const el = this.planToggleEl;
+    if (!el) return;
+    const canAct = this.plugin.settings.agentModeEnabled && this.plugin.router().chatProvider().provider.id === "anthropic";
+    el.toggleClass("is-hidden", !canAct);
+    el.toggleClass("is-active", this.planMode);
+    el.setAttr("aria-pressed", String(this.planMode));
+  }
+
+  /** Flip Plan Mode for this conversation (never persisted). */
+  private togglePlanMode(): void {
+    this.planMode = !this.planMode;
+    this.updatePlanToggle();
+    new Notice(this.planMode ? "Plan Mode: on — I'll explore read-only and propose a plan, no writes." : "Plan Mode: off.");
   }
 
   /** Live tool chips for the in-flight agent turn, inserted above the answer body. */

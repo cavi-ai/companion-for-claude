@@ -22,6 +22,15 @@ export function toAnthropicTools(defs: McpToolDef[]): AnthropicToolDef[] {
 }
 
 /**
+ * The Plan Mode tool set: vault reads only — write tools are excluded regardless
+ * of the allow-writes setting, and propose_note_edit is not appended (the turn
+ * should end in a plan, not an edit proposal).
+ */
+export function readOnlyAnthropicTools(defs: McpToolDef[]): AnthropicToolDef[] {
+  return toAnthropicTools(defs).filter((t) => !isWriteTool(t.name));
+}
+
+/**
  * Chat-only edit-proposal tool (spec 2026-07-05 apply-to-note). Not a write
  * tool: the user reviews a per-hunk diff before anything touches the vault,
  * so it is offered even when autonomous writes are off.

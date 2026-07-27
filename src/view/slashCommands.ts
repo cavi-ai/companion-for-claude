@@ -3,6 +3,7 @@
 // query→matches logic so it can be unit-tested.
 
 import type { Workflow } from "../workflows/catalog";
+import type { PromptTemplate } from "../templates/promptTemplates";
 
 export interface SlashCommand {
   /** The token after "/", e.g. "summarize". Lowercase, no spaces. */
@@ -26,6 +27,19 @@ export interface SlashCommand {
   awaitsInput?: boolean;
   /** For kind:"action" — the handler id the ChatView dispatches on. */
   action?: string;
+  /** For user-defined templates: the backing note, substituted at run time. */
+  template?: PromptTemplate;
+}
+
+/** A template note as a slash command (kind "prompt", substituted at run time). */
+export function templateSlashCommand(template: PromptTemplate): SlashCommand {
+  return {
+    name: template.name,
+    description: template.description,
+    kind: "prompt",
+    prompt: template.prompt,
+    template,
+  };
 }
 
 export const REGISTERED_ACTION_COMMANDS: Record<string, string> = {

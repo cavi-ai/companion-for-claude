@@ -1160,6 +1160,56 @@ pre.cc-has-copy:hover .cc-code-copy { opacity: 1; }
 }
 .cc-attach-x:hover { background: color-mix(in srgb, var(--cc-clay) 22%, transparent); }
 
+/* Attached web page states: pending while the capture runs, error when it
+   failed (the pill carries the message — chat itself never errors on it). */
+.cc-attach-pill.is-pending { opacity: 0.65; }
+.cc-attach-pill.is-error {
+  background: color-mix(in srgb, var(--text-error, #c94f4f) 12%, transparent);
+  color: var(--text-error, #c94f4f);
+  border-color: color-mix(in srgb, var(--text-error, #c94f4f) 35%, transparent);
+}
+.cc-attach-pill.is-error .cc-attach-x:hover { background: color-mix(in srgb, var(--text-error, #c94f4f) 22%, transparent); }
+
+/* The "attach this page?" offer, shown when the composer holds a URL. */
+.cc-page-offer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+  padding: 4px 6px 4px 10px;
+  border-radius: 8px;
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.cc-page-offer-label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cc-page-offer-btn {
+  padding: 2px 10px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--cc-clay) 30%, transparent);
+  background: var(--cc-clay-soft, #f3e2da);
+  color: var(--cc-clay, #d97757);
+  font-size: 12px;
+  cursor: pointer;
+}
+.cc-page-offer-btn:hover { border-color: var(--cc-clay); }
+.cc-page-offer-dismiss {
+  border: none;
+  background: transparent;
+  color: var(--text-faint);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 2px 6px;
+}
+.cc-page-offer-dismiss:hover { color: var(--text-normal); }
+
 /* MCP bridge state on its header icon — clay when engaged, to match every other
    "active/engaged" affordance (the ingest toggle, active context, etc.). */
 .cc-mcp-btn.is-on { color: var(--cc-clay); }

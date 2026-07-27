@@ -110,6 +110,7 @@ export function settingDefinitions(): SettingDefinitionItem[] {
       { name: "Artifacts folder", desc: "Where saved artifacts are written." },
       { name: "Chats folder", desc: "Where saved chats are written." },
       { name: "Plans folder", desc: "Where plan notes are written." },
+      { name: "Templates folder", desc: "Notes here become your own slash commands.", aliases: ["templates", "slash", "commands"] },
       { name: "Conversation history limit", desc: "How many saved chats are kept.", aliases: ["history", "retention"] },
     ]),
   ];

@@ -26,6 +26,12 @@ export class SlashMenu {
     return this.open;
   }
 
+  /** Swap the catalog (e.g. user templates reloaded) — closes any open listing. */
+  setCommands(commands: SlashCommand[]): void {
+    this.commands = commands;
+    this.hide();
+  }
+
   /** Show/refresh the menu for a query. Closes if nothing matches. */
   show(query: string): void {
     this.matches = filterCommands(this.commands, query);

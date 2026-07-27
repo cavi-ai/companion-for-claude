@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { toAnthropicTools, executeTool, isWriteTool, TOOL_RESULT_MAX_CHARS, PROPOSE_EDIT_TOOL } from "../src/agent/tools";
+import { toAnthropicTools, executeTool, isWriteTool, readOnlyAnthropicTools, TOOL_RESULT_MAX_CHARS, PROPOSE_EDIT_TOOL } from "../src/agent/tools";
 import type { McpToolDef } from "../src/mcp/protocol";
 import type { ToolUseBlock } from "../src/providers/types";
 import { VaultTools } from "../src/mcp/vaultTools";
@@ -16,6 +16,23 @@ const use = (name: string, input: Record<string, unknown> = {}, extra?: Partial<
   name,
   input,
   ...extra,
+});
+
+describe("readOnlyAnthropicTools (Plan Mode)", () => {
+  it("drops every write tool but keeps all reads", () => {
+    const out = readOnlyAnthropicTools(defs);
+    expect(out.map((t) => t.name)).toEqual(["vault_search"]);
+  });
+
+  it("excludes every write tool the full vault catalog advertises", () => {
+    const advertised = new VaultTools(new App() as never, { allowWrites: true, defaultFolder: "Claude" }).definitions();
+    const names = readOnlyAnthropicTools(advertised).map((t) => t.name);
+    expect(names.length).toBeGreaterThan(0);
+    for (const name of names) expect(isWriteTool(name)).toBe(false);
+    expect(names).toContain("vault_search");
+    expect(names).not.toContain("note_create");
+    expect(names).not.toContain("propose_note_edit");
+  });
 });
 
 describe("toAnthropicTools", () => {

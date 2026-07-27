@@ -25,7 +25,7 @@ import { ClaudeCompanionSettingTab } from "./settings";
 import { ProviderRouter } from "./providers/router";
 import { DEFAULT_SETTINGS, normalizeDiscoverySettings, type PluginSettings, type ArtifactOpenTarget } from "./types";
 import { DESIGN_SYSTEM_PROMPT, PLANNING_INSTRUCTION } from "./artifacts/designSystem";
-import { AGENT_INSTRUCTION } from "./agent/prompt";
+import { AGENT_INSTRUCTION, PLAN_MODE_INSTRUCTION } from "./agent/prompt";
 import { findUnlinkedMentions, type LinkCandidate } from "./links/unlinkedMentions";
 import { selectDigests, buildConsolidationPrompt, parseConsolidation, renderMemoryNote, MEMORY_NOTE_BASENAME, type DigestSource } from "./memory/consolidate";
 import { mentionEdits } from "./links/suggest";
@@ -36,6 +36,8 @@ import { RewriteModal } from "./view/RewriteModal";
 import { renderArtifactInline, ArtifactModal, openArtifactExternally } from "./artifacts/renderInline";
 import type { McpHttpServer } from "./mcp/server";
 import { VaultTools } from "./mcp/vaultTools";
+import { parseTemplateNote, TEMPLATE_SCAFFOLD, type PromptTemplate } from "./templates/promptTemplates";
+import { stripFrontmatter } from "./semantic/chunk";
 import { generateToken, resolveMcpToken } from "./mcp/clientConfig";
 import { extractTasks, specBody, claudeCodeBuildCommand, type SpecInput } from "./build/spec";
 import { trackerArtifact } from "./build/tracker";
@@ -77,6 +79,7 @@ import { auditProject } from "./research/audit";
 import { buildResearchDeskViewModel } from "./research/deskViewModel";
 import { TRIAGE_SYSTEM, buildTriageUser, parseTriageResponse, renderTriageNote, themeTagSlug, noteExcerpt, type TriageNote } from "./research/triage";
 import { captureWebSource } from "./research/webCapture";
+import type { WebCapture } from "./context/webCapture";
 import { summarizeAndTag } from "./indexing/autoTagger";
 import { resolveCompanionWorkspace, type CompanionWorkspaceCard } from "./view/companionWorkspace";
 
@@ -404,6 +407,12 @@ export default class ClaudeCompanionPlugin extends Plugin {
       id: "open-workflows",
       name: "Run a vault workflow… (manifests, rollup, MOC, digest)",
       callback: () => void this.openWorkflowPicker(),
+    });
+
+    this.addCommand({
+      id: "create-prompt-template",
+      name: "Create prompt template",
+      callback: () => void this.createPromptTemplate(),
     });
 
     // Capturing a session reads Claude Code's CLI transcripts off the local
@@ -1296,11 +1305,13 @@ export default class ClaudeCompanionPlugin extends Plugin {
     }, 500);
   }
 
-  composeSystemPrompt(opts?: { agent?: boolean }): string {
+  composeSystemPrompt(opts?: { agent?: boolean; plan?: boolean }): string {
     let base = `${this.settings.systemPrompt}\n\n${DESIGN_SYSTEM_PROMPT}`;
     const digest = this.ontology()?.digest();
     if (digest) base = `${base}\n\n${digest}`;
-    return opts?.agent ? `${base}\n\n${AGENT_INSTRUCTION}` : base;
+    if (opts?.agent) base = `${base}\n\n${AGENT_INSTRUCTION}`;
+    if (opts?.agent && opts?.plan) base = `${base}\n\n${PLAN_MODE_INSTRUCTION}`;
+    return base;
   }
 
   /** Every markdown note as a link-candidate (basename + frontmatter aliases). */
@@ -1365,6 +1376,55 @@ export default class ClaudeCompanionPlugin extends Plugin {
     if (!this.agentVaultTools) this.agentVaultTools = new VaultTools(this.app, opts);
     else this.agentVaultTools.setOptions(opts);
     return this.agentVaultTools;
+  }
+
+  /**
+   * Defuddle capture for chat's "Attach page content" affordance. Undefined in
+   * headless/test environments (no DOMParser) — callers hide the offer then.
+   * Every call is an explicit user action; nothing fetches automatically.
+   */
+  captureWebPage(): WebCapture | undefined {
+    if (typeof DOMParser === "undefined") return undefined;
+    return (url: string) =>
+      captureWebSource(url, {
+        fetchHtml: async (target) => {
+          const response = await requestUrl({ url: target, method: "GET", throw: false });
+          if (response.status >= 400) throw new Error(`Fetch failed with status ${response.status}`);
+          return response.text;
+        },
+        parseHtml: (html) => new DOMParser().parseFromString(html, "text/html"),
+      });
+  }
+
+  // ---------- prompt templates (user slash commands) ----------
+  /** Load every prompt-template note in the templates folder (vault is the source of truth). */
+  async promptTemplates(): Promise<PromptTemplate[]> {
+    const folder = normalizePath(this.settings.templatesFolder).replace(/\/+$/, "");
+    if (!folder) return [];
+    const prefix = `${folder}/`;
+    const out: PromptTemplate[] = [];
+    for (const f of this.app.vault.getMarkdownFiles()) {
+      if (!f.path.startsWith(prefix)) continue;
+      const fm = (this.app.metadataCache.getFileCache(f)?.frontmatter as Record<string, unknown> | undefined) ?? {};
+      const body = stripFrontmatter(await this.app.vault.cachedRead(f));
+      const template = parseTemplateNote(f.path, f.basename, fm, body);
+      if (template) out.push(template);
+    }
+    out.sort((a, b) => a.name.localeCompare(b.name));
+    return out;
+  }
+
+  /** Scaffold a template note with the frontmatter schema and open it for editing. */
+  async createPromptTemplate(): Promise<void> {
+    const folder = normalizePath(this.settings.templatesFolder);
+    await this.ensureFolder(folder);
+    let path = normalizePath(`${folder}/My template.md`);
+    for (let i = 2; this.app.vault.getAbstractFileByPath(path); i++) {
+      path = normalizePath(`${folder}/My template ${i}.md`);
+    }
+    const file = await this.app.vault.create(path, TEMPLATE_SCAFFOLD);
+    await this.app.workspace.getLeaf(false).openFile(file);
+    new Notice("Template created — edit the prompt, then run it as /my-template in chat.");
   }
 
   /** Open an artifact per the user's setting: in-app fullscreen, or a browser. */
