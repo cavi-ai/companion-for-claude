@@ -116,7 +116,7 @@ export const WORKFLOWS: Workflow[] = [
     prompt: `Synthesize what my vault says about the topic of my active note (or the topic I describe): the consensus, the open questions, and the strongest supporting notes (as [[wikilinks]]). Stay strictly grounded in my notes — explicitly flag anything you are unsure about or that isn't supported.`,
   },
   {
-    id: "frontmatter-audit",
+    id: "frontmatter-normalizer",
     name: "Frontmatter audit",
     description: "Audit frontmatter consistency across the vault and propose a schema",
     group: "Knowledge & synthesis",

@@ -65,8 +65,8 @@ describe("workflowSlashCommands", () => {
       expect(c.action?.startsWith(WORKFLOW_ACTION_PREFIX)).toBe(true);
     }
     // The id round-trips through the action so ChatView can look it up.
-    const fm = cmds.find((c) => c.name === "frontmatter-audit");
-    expect(fm?.action).toBe(`${WORKFLOW_ACTION_PREFIX}frontmatter-audit`);
+    const fm = cmds.find((c) => c.name === "frontmatter-normalizer");
+    expect(fm?.action).toBe(`${WORKFLOW_ACTION_PREFIX}frontmatter-normalizer`);
   });
   it("merges into the slash catalog so a workflow is reachable by typing '/'", () => {
     const all = [...SLASH_COMMANDS, ...workflowSlashCommands(WORKFLOWS)];
@@ -74,7 +74,7 @@ describe("workflowSlashCommands", () => {
     // Both the per-note command and the vault workflow surface under "front".
     const front = filterCommands(all, "front").map((c) => c.name);
     expect(front).toContain("frontmatter");
-    expect(front).toContain("frontmatter-audit");
+    expect(front).toContain("frontmatter-normalizer");
   });
 });
 
