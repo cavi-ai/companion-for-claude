@@ -72,6 +72,7 @@ import {
 import type { ChatMessage } from "./types";
 import { normalizePath, TFile, type Editor } from "obsidian";
 import { enrichCapture, type EnrichDeps } from "./sources/enrich";
+import { inboxItems } from "./sources/inbox";
 import { shouldEnrich } from "./sources/watcher";
 import { parseClipUrl } from "./sources/detect";
 import { getSchema } from "./sources/registry";
@@ -137,6 +138,9 @@ export default class ClaudeCompanionPlugin extends Plugin {
   private reindexQueue = new Set<string>();
   private enrichTimers = new Map<string, number>();
   private enrichRecentlyWritten = new Set<string>();
+  /** Source-inbox ribbon icon + its pending-count badge (debounced). */
+  private inboxRibbonEl: HTMLElement | null = null;
+  private inboxBadgeTimer: number | null = null;
   /** Lazily-built ontology registry; null while the feature is disabled. */
   private _ontology: OntologyRegistry | null = null;
   /** Debounce timer for ontology reloads on schema-note changes. */
@@ -236,6 +240,8 @@ export default class ClaudeCompanionPlugin extends Plugin {
     // One ribbon icon for the plugin itself. Workflows and session capture live
     // in the chat panel's header action bar, so they don't need ribbon entries.
     this.addRibbonIcon("sparkles", "Open Companion for Claude", () => void this.activateView());
+    this.inboxRibbonEl = this.addRibbonIcon("inbox", "Source inbox", () => void this.activateInboxView());
+    this.inboxRibbonEl.addClass("cc-inbox-ribbon");
 
     this.addCommand({
       id: "open-chat",
@@ -510,6 +516,14 @@ export default class ClaudeCompanionPlugin extends Plugin {
       this.registerEvent(this.app.vault.on("create", (f) => { if (f.path.endsWith(".md")) this.scheduleResearchRefresh(f.path); }));
       this.registerEvent(this.app.vault.on("delete", (f) => { if (f.path.endsWith(".md")) this.scheduleResearchRefresh(f.path); }));
       this.registerEvent(this.app.vault.on("rename", (f, oldPath) => { if (f.path.endsWith(".md") || oldPath.endsWith(".md")) this.scheduleResearchRefresh(f.path, oldPath); }));
+
+      // Inbox ribbon badge: pending count, refreshed on vault + frontmatter
+      // changes (debounced — enrichment stamps source_enriched via frontmatter).
+      this.syncInboxBadge();
+      this.registerEvent(this.app.vault.on("create", () => this.scheduleInboxBadgeSync()));
+      this.registerEvent(this.app.vault.on("delete", () => this.scheduleInboxBadgeSync()));
+      this.registerEvent(this.app.vault.on("rename", () => this.scheduleInboxBadgeSync()));
+      this.registerEvent(this.app.metadataCache.on("changed", () => this.scheduleInboxBadgeSync()));
 
       // Reload the ontology when schema notes under the ontology folder change
       // (debounced; no-op while the feature is off).
@@ -906,6 +920,7 @@ export default class ClaudeCompanionPlugin extends Plugin {
     if (this.reindexTimer !== null) window.clearTimeout(this.reindexTimer);
     if (this._ontologyReloadTimer !== null) window.clearTimeout(this._ontologyReloadTimer);
     if (this.researchRefreshTimer !== null) window.clearTimeout(this.researchRefreshTimer);
+    if (this.inboxBadgeTimer !== null) window.clearTimeout(this.inboxBadgeTimer);
   }
 
   // ---------- settings ----------
@@ -1992,6 +2007,39 @@ export default class ClaudeCompanionPlugin extends Plugin {
     await this.enrichFile(file);
     for (const leaf of this.app.workspace.getLeavesOfType(INBOX_VIEW_TYPE)) {
       if (leaf.view instanceof InboxView) await leaf.view.render();
+    }
+  }
+
+  /** Unenriched inbox files right now (drives the ribbon badge). */
+  private inboxPendingCount(): number {
+    const entries = this.app.vault.getFiles().map((f: TFile) => ({
+      path: f.path,
+      basename: f.basename,
+      ext: f.extension,
+      frontmatter: this.app.metadataCache.getFileCache(f)?.frontmatter ?? undefined,
+    }));
+    return inboxItems(entries, this.settings.sourceInboxFolder).length;
+  }
+
+  private scheduleInboxBadgeSync(): void {
+    if (this.inboxBadgeTimer !== null) window.clearTimeout(this.inboxBadgeTimer);
+    this.inboxBadgeTimer = window.setTimeout(() => {
+      this.inboxBadgeTimer = null;
+      this.syncInboxBadge();
+    }, 800);
+  }
+
+  private syncInboxBadge(): void {
+    const el = this.inboxRibbonEl;
+    if (!el) return;
+    const n = this.settings.sourceCaptureEnabled ? this.inboxPendingCount() : 0;
+    el.setAttr("aria-label", n > 0 ? `Source inbox — ${n} to type` : "Source inbox");
+    let badge = el.querySelector<HTMLElement>(".cc-inbox-ribbon-badge");
+    if (n > 0) {
+      if (!badge) badge = el.createSpan({ cls: "cc-inbox-ribbon-badge" });
+      badge.setText(String(n));
+    } else {
+      badge?.remove();
     }
   }
 

@@ -1379,6 +1379,38 @@ pre.cc-has-copy:hover .cc-code-copy { opacity: 1; }
   opacity: 0.5;
   cursor: default;
 }
+.cc-inbox-wireup {
+  margin-top: 18px;
+}
+.cc-inbox-wireup .cc-eyebrow {
+  margin-bottom: 8px;
+}
+.cc-inbox-mentions {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+/* Ribbon badge: pending inbox count. */
+.cc-inbox-ribbon {
+  position: relative;
+}
+.cc-inbox-ribbon-badge {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  min-width: 14px;
+  height: 14px;
+  line-height: 14px;
+  padding: 0 3px;
+  border-radius: 8px;
+  background: var(--cc-clay);
+  color: var(--text-on-accent, #fff);
+  font-size: 9px;
+  font-weight: 700;
+  text-align: center;
+  pointer-events: none;
+}
 
 /* ----- related notes panel ----- */
 .cc-related-view {

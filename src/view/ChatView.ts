@@ -2061,6 +2061,7 @@ export class ChatView extends ItemView {
   private openOverflowMenu(evt: MouseEvent): void {
     const menu = new Menu();
     menu.addItem((i) => i.setTitle("Source inbox").setIcon("inbox").onClick(() => void this.plugin.activateInboxView()));
+    menu.addItem((i) => i.setTitle("Related notes").setIcon("link").onClick(() => void this.plugin.activateRelatedView()));
     menu.addItem((i) => i.setTitle("New chat").setIcon("plus").onClick(() => this.clearChat()));
     menu.addItem((i) => i.setTitle("History").setIcon("history").onClick(() => this.openHistory()));
     menu.addItem((i) => i.setTitle("Save chat to vault").setIcon("save").onClick(() => void this.saveChat()));
