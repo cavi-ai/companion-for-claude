@@ -112,17 +112,34 @@ export class ProviderRouter {
 
   /**
    * Whether a local model is actually reachable right now (cached briefly so the
-   * indicator and fallback path don't hammer the Ollama server). Returns false
-   * fast when no host is configured.
+   * indicator and fallback path don't hammer the servers). Returns false fast
+   * when no local backend is configured.
    */
   async localAvailable(): Promise<boolean> {
-    if (!this.ollama.hasCredentials()) return false;
-    const now = Date.now();
-    if (this._localProbe && now - this._localProbe.at < 15000) return this._localProbe.ok;
-    const ok = (await this.ollama.listModels()).length > 0;
-    this._localProbe = { ok, at: now };
-    return ok;
+    return (await this.localFallback()) !== null;
   }
 
-  private _localProbe: { ok: boolean; at: number } | null = null;
+  /**
+   * The local backend a failed Claude turn can fall back to: Ollama first
+   * (the classic path), then the custom OpenAI-compatible endpoint when it's
+   * configured. Probes are cached 15s so the fallback decision stays cheap.
+   */
+  async localFallback(): Promise<{ provider: Provider; model: string } | null> {
+    const now = Date.now();
+    if (this._localProbe && now - this._localProbe.at < 15000) return this._localProbe.fallback;
+    let fallback: { provider: Provider; model: string } | null = null;
+    if (this.ollama.hasCredentials() && (await this.ollama.listModels()).length > 0) {
+      fallback = { provider: this.ollama, model: this.settings.ollamaModel };
+    } else if (
+      this.openaiCompat.hasCredentials() &&
+      this.settings.openaiCompatModel.trim() &&
+      (await this.openaiCompat.listModels()).length > 0
+    ) {
+      fallback = { provider: this.openaiCompat, model: this.settings.openaiCompatModel };
+    }
+    this._localProbe = { fallback, at: now };
+    return fallback;
+  }
+
+  private _localProbe: { fallback: { provider: Provider; model: string } | null; at: number } | null = null;
 }

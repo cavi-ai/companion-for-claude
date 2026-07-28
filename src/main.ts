@@ -75,7 +75,7 @@ import { enrichCapture, type EnrichDeps } from "./sources/enrich";
 import { shouldEnrich } from "./sources/watcher";
 import { parseClipUrl } from "./sources/detect";
 import { getSchema } from "./sources/registry";
-import { clipperTemplateFor, clipperTemplateFileName, serializeClipperTemplate } from "./sources/clipperTemplate";
+import { clipperTemplateFor, clipperTemplateFileName, serializeClipperTemplate, clipperFingerprint } from "./sources/clipperTemplate";
 import type { SourceType } from "./sources/types";
 import { errorHint } from "./providers/errorHints";
 import { ChoiceModal } from "./view/ChoiceModal";
@@ -490,6 +490,11 @@ export default class ClaudeCompanionPlugin extends Plugin {
       this.syncPlanBuildActions();
       if (this.settings.ontologyEnabled) void this.loadOntologyOnStart();
       if (this.settings.semanticEnabled) void this.promptSemanticModelIfNeeded();
+      // Schemas/inbox changed since the clipper templates were exported →
+      // the clipper is clipping against a stale schema. Offer once per session.
+      if (this.settings.sourceCaptureEnabled && this.clipperTemplatesStale()) {
+        new Notice("Source schemas changed since your Web Clipper templates were exported — re-export from Settings → Source capture.", 9000);
+      }
 
       // Keep the semantic index fresh as notes change (debounced; no-op when
       // off). Registered AFTER layout-ready so Obsidian's initial vault scan
@@ -550,16 +555,28 @@ export default class ClaudeCompanionPlugin extends Plugin {
     const folder = "Claude/Clipper templates";
     const opts = { path: this.settings.sourceInboxFolder, tags: this.settings.sourceBaseTags };
     const types: SourceType[] = ["article", "video", "dataset"];
+    const schemas = types.map((t) => getSchema(t, this.settings.sourceSchemaOverrides));
     await this.ensureFolder(folder);
-    for (const type of types) {
-      const template = clipperTemplateFor(getSchema(type, this.settings.sourceSchemaOverrides), opts);
+    for (const schema of schemas) {
+      const template = clipperTemplateFor(schema, opts);
       await this.writeOrReplace(normalizePath(`${folder}/${clipperTemplateFileName(template)}`), serializeClipperTemplate(template));
     }
+    this.settings.clipperTemplateFingerprint = clipperFingerprint(schemas, opts);
+    await this.saveSettings();
     new Notice(
       `Wrote ${types.length} clipper templates to “${folder}”. In the Web Clipper extension: Settings → Templates → Import each file — clips will then arrive already typed for Companion.`,
       10000,
     );
     return { folder, count: types.length };
+  }
+
+  /** True when schemas/inbox/tags moved on since the last template export. */
+  clipperTemplatesStale(): boolean {
+    const saved = this.settings.clipperTemplateFingerprint;
+    if (!saved) return false; // never exported → nothing to be stale
+    const opts = { path: this.settings.sourceInboxFolder, tags: this.settings.sourceBaseTags };
+    const schemas = (["article", "video", "dataset"] as SourceType[]).map((t) => getSchema(t, this.settings.sourceSchemaOverrides));
+    return clipperFingerprint(schemas, opts) !== saved;
   }
 
   private queueEnrich(file: TFile): void {

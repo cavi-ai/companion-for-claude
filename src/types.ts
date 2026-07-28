@@ -202,6 +202,9 @@ export interface PluginSettings {
   sourceBaseTags: string[];
   /** Per-type schema overrides, keyed by source type. */
   sourceSchemaOverrides: Record<string, { version?: number; fields?: unknown[] }>;
+  /** Fingerprint of the schemas/inbox/tags at the last clipper-template export
+   *  ("" = never exported). Drift means the user's clipper templates are stale. */
+  clipperTemplateFingerprint: string;
 
   // ----- vault ontology (typed notes & relations) -----
   /** Master switch: seed/validate typed frontmatter and relations. */
@@ -308,6 +311,7 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   sourceInboxFolder: "Clippings",
   sourceBaseTags: ["source"],
   sourceSchemaOverrides: {},
+  clipperTemplateFingerprint: "",
 
   ontologyEnabled: true,
   ontologyFolder: "Ontology",

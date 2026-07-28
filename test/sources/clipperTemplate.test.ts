@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { clipperTemplateFor, clipperTemplateFileName, serializeClipperTemplate } from "../../src/sources/clipperTemplate";
+import { clipperTemplateFor, clipperTemplateFileName, serializeClipperTemplate, clipperFingerprint } from "../../src/sources/clipperTemplate";
 import { getSchema } from "../../src/sources/registry";
 
 const OPTS = { path: "Clippings", tags: ["source"] };
@@ -11,6 +11,7 @@ describe("clipperTemplateFor", () => {
     expect(props.type).toMatchObject({ value: "article", type: "text" });
     expect(props.source).toMatchObject({ value: "{{url}}", type: "text" });
     expect(props.tags).toMatchObject({ value: "source", type: "multitext" });
+    expect(props.schema_version).toMatchObject({ value: "1", type: "number" });
   });
 
   it("maps page-known schema fields to clipper variables and skips model-only ones", () => {
@@ -73,5 +74,23 @@ describe("serializeClipperTemplate", () => {
     for (const p of parsed.properties as Array<Record<string, unknown>>) {
       expect(Object.keys(p).sort()).toEqual(["name", "type", "value"]);
     }
+  });
+});
+
+describe("clipperFingerprint", () => {
+  const schemas = () => (["article", "video", "dataset"] as const).map((t) => getSchema(t));
+
+  it("is stable for identical inputs regardless of ordering", () => {
+    const a = clipperFingerprint([...schemas()].reverse(), { path: "Clippings", tags: ["b", "a"] });
+    const b = clipperFingerprint(schemas(), { path: "Clippings", tags: ["a", "b"] });
+    expect(a).toBe(b);
+  });
+
+  it("changes when a schema, the inbox path, or the tags change", () => {
+    const base = clipperFingerprint(schemas(), OPTS);
+    const overridden = [getSchema("article", { article: { version: 2 } }), getSchema("video"), getSchema("dataset")];
+    expect(clipperFingerprint(overridden, OPTS)).not.toBe(base);
+    expect(clipperFingerprint(schemas(), { ...OPTS, path: "Inbox" })).not.toBe(base);
+    expect(clipperFingerprint(schemas(), { ...OPTS, tags: ["source", "clip"] })).not.toBe(base);
   });
 });

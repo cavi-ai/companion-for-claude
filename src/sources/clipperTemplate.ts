@@ -69,6 +69,8 @@ export function clipperTemplateFor(schema: SourceTypeSchema, opts: ClipperTempla
     { name: "type", value: schema.type, type: "text" },
     // The clip URL drives provenance and (legacy) video detection.
     { name: "source", value: "{{url}}", type: "text" },
+    // Lets enrichment tell clips made with a stale template apart from current ones.
+    { name: "schema_version", value: String(schema.version), type: "number" },
   ];
   for (const field of schema.fields) {
     if (field.source !== "model") continue;
@@ -111,4 +113,30 @@ export function serializeClipperTemplate(template: ClipperTemplate): string {
   ordered.noteNameFormat = template.noteNameFormat;
   ordered.path = template.path;
   return JSON.stringify(ordered, null, "\t") + "\n";
+}
+
+/**
+ * A stable fingerprint of everything that shapes the exported templates:
+ * resolved schemas (type, version, field shape) + inbox path + tags. Stored at
+ * export time; when it no longer matches, the templates on the user's clipper
+ * are stale and Companion offers to re-export.
+ */
+export function clipperFingerprint(schemas: SourceTypeSchema[], opts: ClipperTemplateOptions): string {
+  const canonical = JSON.stringify({
+    schemas: schemas
+      .map((s) => ({
+        type: s.type,
+        version: s.version,
+        fields: s.fields.map((f) => [f.key, f.type, f.source, f.required ? 1 : 0]),
+      }))
+      .sort((a, b) => a.type.localeCompare(b.type)),
+    path: opts.path,
+    tags: [...opts.tags].sort(),
+  });
+  // djb2 — tiny, deterministic, collision-good-enough for drift detection.
+  let h = 5381;
+  for (let i = 0; i < canonical.length; i++) {
+    h = ((h << 5) + h + canonical.charCodeAt(i)) | 0;
+  }
+  return (h >>> 0).toString(36);
 }

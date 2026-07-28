@@ -1,7 +1,7 @@
 {
   "id": "claude-companion",
   "name": "Companion for Claude",
-  "version": "0.15.0",
+  "version": "0.15.1",
   "minAppVersion": "1.7.2",
   "description": "Chat with Claude using your notes as context. Agent mode with reviewable edits, interactive HTML artifacts, evidence-backed research, local-model fallback, and an MCP bridge so Claude Code works on the same vault.",
   "author": "Sasan Sotoodehfar",

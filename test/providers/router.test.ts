@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { ProviderRouter, migrateUtilityBackend } from "../../src/providers/router";
 import { DEFAULT_SETTINGS, type PluginSettings } from "../../src/types";
 
@@ -57,6 +57,39 @@ describe("ProviderRouter.resolve", () => {
     expect(r.get("anthropic").id).toBe("anthropic");
     expect(r.get("ollama").id).toBe("ollama");
     expect(r.get("openai-compat").id).toBe("openai-compat");
+  });
+});
+
+describe("ProviderRouter.localFallback", () => {
+  it("prefers Ollama when reachable", async () => {
+    const r = new ProviderRouter(settings({ ollamaModel: "qwen2.5" }));
+    vi.spyOn(r.ollama, "listModels").mockResolvedValue(["qwen2.5"]);
+    const fb = await r.localFallback();
+    expect(fb?.provider.id).toBe("ollama");
+    expect(fb?.model).toBe("qwen2.5");
+    await expect(r.localAvailable()).resolves.toBe(true);
+  });
+
+  it("falls through to the custom endpoint when Ollama is down", async () => {
+    const r = new ProviderRouter(settings({ openaiCompatHost: "http://localhost:1234", openaiCompatModel: "mlx-3b" }));
+    vi.spyOn(r.ollama, "listModels").mockResolvedValue([]);
+    vi.spyOn(r.openaiCompat, "listModels").mockResolvedValue(["mlx-3b"]);
+    const fb = await r.localFallback();
+    expect(fb?.provider.id).toBe("openai-compat");
+    expect(fb?.model).toBe("mlx-3b");
+  });
+
+  it("null when neither backend is usable", async () => {
+    const r = new ProviderRouter(settings({}));
+    vi.spyOn(r.ollama, "listModels").mockResolvedValue([]);
+    await expect(r.localFallback()).resolves.toBeNull();
+    await expect(r.localAvailable()).resolves.toBe(false);
+  });
+
+  it("never treats an unmodeled custom endpoint as a fallback", async () => {
+    const r = new ProviderRouter(settings({ openaiCompatHost: "http://localhost:1234", openaiCompatModel: "" }));
+    vi.spyOn(r.ollama, "listModels").mockResolvedValue([]);
+    await expect(r.localFallback()).resolves.toBeNull();
   });
 });
 

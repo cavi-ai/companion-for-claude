@@ -7,6 +7,7 @@ import { generateToken, bridgeUrl, claudeCodeCommand, claudeDesktopConfig, maskT
 import { configError } from "./cloud/routines";
 import { configError as repliesConfigError } from "./cloud/replies";
 import { BUILTIN_EMBEDDING_MODELS, builtinModelById } from "./semantic/transformers/model";
+import { ChoiceModal } from "./view/ChoiceModal";
 import { normalizeDiscoverySettings, type PluginSettings } from "./types";
 import { settingDefinitions } from "./settingsDefinitions";
 
@@ -637,11 +638,14 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
           dd.addOption("ollama", "Ollama");
           dd.addOption("custom", "OpenAI-compatible endpoint");
           dd.setValue(this.plugin.settings.embeddingEngine).onChange(async (v) => {
+            if (v === this.plugin.settings.embeddingEngine) return;
+            const hadNotes = ((await this.plugin.indexer()?.stats().catch(() => null))?.notes ?? 0) > 0;
             this.plugin.settings.embeddingEngine = v as PluginSettings["embeddingEngine"];
             await this.plugin.saveSettings();
             this.plugin.invalidateIndexer();
             containerEl.empty();
             this.renderSemanticSection(containerEl);
+            if (hadNotes) this.offerIndexRebuild(v === "builtin" ? "the built-in model" : v);
           });
         });
 
@@ -654,11 +658,15 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
               dd.addOption(m.id, `${m.hfRepo.split("/")[1]} · ${m.dim}d · ~${m.approxDownloadMB} MB`);
             }
             dd.setValue(builtinModelById(this.plugin.settings.builtinEmbeddingModel).id).onChange(async (v) => {
+              if (v === this.plugin.settings.builtinEmbeddingModel) return;
+              const hadNotes = ((await this.plugin.indexer()?.stats().catch(() => null))?.notes ?? 0) > 0;
+              const label = v.replace(/^builtin:/, "");
               this.plugin.settings.builtinEmbeddingModel = v;
               await this.plugin.saveSettings();
               this.plugin.invalidateIndexer();
               containerEl.empty();
               this.renderSemanticSection(containerEl);
+              if (hadNotes) this.offerIndexRebuild(label);
             });
           });
 
@@ -908,11 +916,24 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
         }),
       );
 
+    const templateStatus = containerEl.createDiv({ cls: "cc-conn-status setting-item-description" });
+    const exported = this.plugin.settings.clipperTemplateFingerprint !== "";
+    if (exported) {
+      const stale = this.plugin.clipperTemplatesStale();
+      templateStatus.setText(stale ? "✗ Templates out of date — schemas or inbox changed since export." : "✓ Templates current with your schemas.");
+      templateStatus.toggleClass("is-err", stale);
+      templateStatus.toggleClass("is-ok", !stale);
+    }
     new Setting(containerEl)
       .setName("Web Clipper templates")
       .setDesc("Write clipper templates matching these schemas into the vault. Import them in the Web Clipper extension and clips arrive already typed — enrichment then only fills what the page couldn't say.")
       .addButton((b) =>
-        b.setButtonText("Export templates").onClick(() => void this.plugin.exportClipperTemplates()),
+        b.setButtonText("Export templates").onClick(async () => {
+          await this.plugin.exportClipperTemplates();
+          templateStatus.setText("✓ Templates current with your schemas.");
+          templateStatus.toggleClass("is-err", false);
+          templateStatus.toggleClass("is-ok", true);
+        }),
       );
   }
 
@@ -1283,6 +1304,22 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
     el.toggleClass("is-ok", status.ok);
     el.toggleClass("is-err", !status.ok);
     el.setText((status.ok ? "✓ " : "✗ ") + status.detail);
+  }
+
+  /** After an embedding model/engine switch: the old index no longer applies. */
+  private offerIndexRebuild(label: string): void {
+    new ChoiceModal<"rebuild" | "later">(this.app, {
+      title: "Rebuild the semantic index?",
+      message: `Embeddings now come from ${label}, so the existing index no longer applies. Rebuild it now, or it refreshes gradually as notes change.`,
+      buttons: [
+        { label: "Rebuild now", value: "rebuild", cta: true },
+        { label: "Later", value: "later" },
+      ],
+      fallback: "later",
+      onChoice: (c) => {
+        if (c === "rebuild") void this.plugin.rebuildSemanticIndex();
+      },
+    }).open();
   }
 }
 

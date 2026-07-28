@@ -6,7 +6,7 @@ import { executeTool, toAnthropicTools, readOnlyAnthropicTools, PROPOSE_EDIT_TOO
 import { WriteConfirmModal } from "./WriteConfirmModal";
 import { DiffModal } from "./DiffModal";
 import { planEdits, applyPlan, type ProposedEdit } from "../edit/diff";
-import type { ApiMessage, ContentBlock, ToolResultBlock, ToolUseBlock } from "../providers/types";
+import type { ApiMessage, ContentBlock, ToolResultBlock, ToolUseBlock, Provider } from "../providers/types";
 import { TFile } from "obsidian";
 import { compactMessages, toApiMessages, type Conversation } from "../conversations/store";
 import { ConversationPicker } from "./ConversationPicker";
@@ -1391,11 +1391,11 @@ export class ChatView extends ItemView {
     // Fallback: if Claude failed with an offline/usage error and a local model is
     // available, retry transparently so you keep working with no internet/tokens.
     if (err1) {
-      const localOk = await router.localAvailable();
-      const doFallback = shouldFallbackToLocal({ backend, localAvailable: localOk, error: err1 });
-      if (doFallback) {
-        this.annotateFallback(bubble, fallbackReason(err1));
-        const err2 = await this.streamTurn("local", apiMessages, bubble, body);
+      const fb = await router.localFallback();
+      const doFallback = shouldFallbackToLocal({ backend, localAvailable: fb !== null, error: err1 });
+      if (doFallback && fb) {
+        this.annotateFallback(bubble, fallbackReason(err1), fb.model);
+        const err2 = await this.streamTurn("local", apiMessages, bubble, body, fb);
         if (err2) {
           // Keep whatever streamed before the failure — persist it like an
           // abort, then append the error below it.
@@ -1432,18 +1432,18 @@ export class ChatView extends ItemView {
     apiMessages: ApiMessage[],
     bubble: HTMLElement,
     body: HTMLElement,
+    localOverride?: { provider: Provider; model: string },
   ): Promise<{ message?: string; status?: number } | null> {
     const router = this.plugin.router();
     const onClaude = target === "claude";
     // "local" = the configured non-Claude chat backend (Ollama, or the custom
-    // OpenAI-compatible endpoint when that's the chat backend).
-    const useCustom = !onClaude && this.plugin.settings.chatBackend === "custom";
-    const provider = onClaude ? router.anthropic : useCustom ? router.openaiCompat : router.ollama;
+    // OpenAI-compatible endpoint when that's the chat backend) — or, for a
+    // fallback attempt, whichever local backend the router found reachable.
+    const useCustom = !onClaude && !localOverride && this.plugin.settings.chatBackend === "custom";
+    const provider = onClaude ? router.anthropic : localOverride?.provider ?? (useCustom ? router.openaiCompat : router.ollama);
     const model = onClaude
       ? (this.turnModelOverride ?? this.controls.model)
-      : useCustom
-        ? this.plugin.settings.openaiCompatModel
-        : this.plugin.settings.ollamaModel;
+      : localOverride?.model ?? (useCustom ? this.plugin.settings.openaiCompatModel : this.plugin.settings.ollamaModel);
     const shape = shapeRequest({ ...this.controls, model: onClaude ? model : this.controls.model }, this.maxTokensOverride ?? this.plugin.settings.maxTokens);
     const wantThinking = onClaude && this.controls.thinking && this.controls.showThinking;
     let thinkingBody: HTMLElement | null = wantThinking ? this.createThinkingPanel(bubble) : null;
@@ -2124,10 +2124,10 @@ export class ChatView extends ItemView {
   }
 
   /** Note in the assistant bubble that we fell back to the local model. */
-  private annotateFallback(bubble: HTMLElement, reason: string): void {
+  private annotateFallback(bubble: HTMLElement, reason: string, model?: string): void {
     bubble.createDiv({
       cls: "cc-fallback-note",
-      text: `${reason} — answered locally with ${this.plugin.settings.ollamaModel}.`,
+      text: `${reason} — answered locally with ${model ?? this.plugin.settings.ollamaModel}.`,
     });
   }
 
