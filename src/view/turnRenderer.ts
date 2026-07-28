@@ -36,7 +36,8 @@ export class TurnRenderer {
   private thinkingBody: HTMLElement | null = null;
   private scheduled = false;
   private finalizing = false;
-  private lastMd = 0;
+  /** -Infinity so the first flush paints immediately; only later frames throttle. */
+  private lastMd = -Infinity;
   private artifactPainted = false;
   /** Agent turns: separate text across tool-call iterations with a paragraph break. */
   private needSeparator = false;

@@ -1454,6 +1454,22 @@ pre.cc-has-copy:hover .cc-code-copy { opacity: 1; }
   color: var(--cc-gray-500);
   flex: 0 0 auto;
 }
+.cc-related-view .cc-neighborhood-group {
+  margin-bottom: 6px;
+}
+.cc-related-view .cc-neighborhood-title {
+  font-size: var(--font-ui-smaller);
+  font-weight: 600;
+  color: var(--text-muted);
+  padding: 4px 0 0;
+}
+.cc-related-view .cc-neighborhood-unresolved {
+  color: var(--text-muted);
+  cursor: default;
+}
+.cc-related-view .cc-neighborhood-unresolved:hover {
+  color: var(--text-muted);
+}
 
 /* ----- settings accordions ----- */
 .cc-accordion {

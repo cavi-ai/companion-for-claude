@@ -2,6 +2,7 @@ import { ItemView, WorkspaceLeaf, TFile, MarkdownView, setIcon, debounce } from 
 import type ClaudeCompanionPlugin from "../main";
 import { findUnlinkedMentions, linkMention, type Mention } from "../links/unlinkedMentions";
 import { buildSuggestions } from "../links/suggest";
+import { neighborhood } from "../links/neighborhood";
 
 export const RELATED_VIEW_TYPE = "claude-related-view";
 
@@ -62,6 +63,9 @@ export class RelatedView extends ItemView {
       return;
     }
 
+    // ---- Neighborhood: outgoing links, backlinks, typed relations ----
+    this.renderNeighborhood(root, file);
+
     // ---- Link suggestions (pure text — no embeddings needed) ----
     await this.renderSuggestions(root, file, seq);
     if (seq !== this.renderSeq) return;
@@ -121,6 +125,57 @@ export class RelatedView extends ItemView {
       });
       setIcon(link, "link");
       link.addEventListener("click", () => this.insertLink(file, name));
+    }
+  }
+
+  /**
+   * The "Connections" section: the active note's one-hop graph neighborhood
+   * (backlinks, outgoing links, typed ontology relations) as grouped lists.
+   */
+  private renderNeighborhood(root: HTMLElement, file: TFile): void {
+    const fm = this.app.metadataCache.getFileCache(file)?.frontmatter as Record<string, unknown> | undefined;
+    const registry = this.plugin.ontology();
+    const typeName = fm?.type;
+    const type = registry && typeof typeName === "string" ? registry.resolve(typeName) : undefined;
+    const n = neighborhood(this.app.metadataCache.resolvedLinks, file.path, fm, type);
+    if (n.incoming.length === 0 && n.outgoing.length === 0 && n.relations.length === 0) return;
+
+    root.createEl("div", { cls: "cc-eyebrow", text: "CONNECTIONS" });
+    this.renderNeighborhoodGroup(root, "Backlinks", n.incoming);
+    this.renderNeighborhoodGroup(root, "Links out", n.outgoing);
+
+    const byKey = new Map<string, string[]>();
+    for (const r of n.relations) {
+      const list = byKey.get(r.key) ?? [];
+      list.push(r.to);
+      byKey.set(r.key, list);
+    }
+    for (const [key, targets] of byKey) {
+      const def = type?.relations.find((r) => r.key === key);
+      this.renderNeighborhoodGroup(
+        root,
+        def?.description ?? key.replace(/_/g, " "),
+        targets.map((t) => this.app.metadataCache.getFirstLinkpathDest(t, file.path)?.path ?? t),
+      );
+    }
+  }
+
+  private renderNeighborhoodGroup(root: HTMLElement, title: string, paths: string[]): void {
+    if (paths.length === 0) return;
+    const group = root.createDiv({ cls: "cc-neighborhood-group" });
+    group.createEl("div", { cls: "cc-neighborhood-title", text: title });
+    const list = group.createDiv({ cls: "cc-related-list" });
+    for (const path of paths) {
+      const target = this.app.vault.getAbstractFileByPath(path);
+      const name = target instanceof TFile ? target.basename : path.replace(/\.md$/, "");
+      const row = list.createDiv({ cls: "cc-related-row" });
+      const open = row.createEl("button", { cls: "cc-related-open", text: name });
+      if (target instanceof TFile) {
+        open.addEventListener("click", () => void this.app.workspace.getLeaf(false).openFile(target));
+      } else {
+        open.addClass("cc-neighborhood-unresolved");
+        open.setAttr("title", `${path} — not resolved to a note`);
+      }
     }
   }
 
