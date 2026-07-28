@@ -5,6 +5,7 @@
 import { App, normalizePath, TFile } from "obsidian";
 import { buildFrontmatter, normalizeTags, type FrontmatterData } from "../indexing/frontmatter";
 import { sanitizeFileName } from "../artifacts/parse";
+import { ensureVaultFolder, uniqueNotePath } from "../vault/vaultFiles";
 import type { SessionDigest } from "./transcript";
 
 export interface RenderOptions {
@@ -81,18 +82,7 @@ export function renderDigestNote(d: SessionDigest, opts: RenderOptions): string 
 }
 
 async function ensureFolder(app: App, folder: string): Promise<void> {
-  const parts = normalizePath(folder).split("/").filter(Boolean);
-  let cur = "";
-  for (const part of parts) {
-    cur = cur ? `${cur}/${part}` : part;
-    if (!app.vault.getAbstractFileByPath(cur)) {
-      try {
-        await app.vault.createFolder(cur);
-      } catch {
-        // created concurrently — fine
-      }
-    }
-  }
+  await ensureVaultFolder(app, folder);
 }
 
 function escapeRe(s: string): string {
@@ -128,11 +118,6 @@ export async function writeDigestNote(
   }
 
   const safe = sanitizeFileName(fileBase);
-  let path = normalizePath(`${dir}/${safe}.md`);
-  let i = 1;
-  while (app.vault.getAbstractFileByPath(path)) {
-    path = normalizePath(`${dir}/${safe} ${i}.md`);
-    i++;
-  }
+  const path = await uniqueNotePath(app, dir, safe, "md", 1);
   return app.vault.create(path, content);
 }

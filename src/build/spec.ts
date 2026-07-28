@@ -59,15 +59,37 @@ export function specBody(input: SpecInput): string {
   return lines.join("\n");
 }
 
+/** How Claude Code reaches the vault during a build. */
+export type HandoffTransport = "mcp" | "cli";
+
 /**
- * The prompt to paste into Claude Code. The vault is exposed to Claude Code as
- * an MCP server (Companion for Claude, pre-wired in the plugin's .mcp.json), so
- * the build is driven through the `note_read` / `note_append` MCP tools — not a
- * separate CLI.
+ * The prompt to paste into Claude Code. `mcp` drives the vault through
+ * Companion's optional MCP bridge (which must be configured in that client,
+ * with writes allowed). `cli` drives it through the official `obsidian` CLI
+ * (1.12.7+), the same transport the portable obsidian-agent skills use — no
+ * bridge required.
  */
-export function buildPrompt(input: SpecInput): string {
+export function buildPrompt(input: SpecInput, transport: HandoffTransport = "mcp"): string {
+  if (transport === "cli") {
+    const vaultArg = input.vault ? ` vault="${input.vault}"` : "";
+    return [
+      `This Obsidian vault is reachable through the official \`obsidian\` CLI (Obsidian 1.12.7+, app running).`,
+      `Drive this build through the CLI — do not use MCP tools.`,
+      ``,
+      `1. Read the build spec:`,
+      `   obsidian${vaultArg} read path="${input.specPath}"`,
+      `2. Implement the tasks in order. Keep changes focused and runnable.`,
+      `3. After each task, record progress:`,
+      `   obsidian${vaultArg} append path="${input.trackerPath}" content="- [x] <task> — <one-line note> (<ISO timestamp>)"`,
+      `   Then re-read the tracker to verify the append.`,
+      `4. If a task is blocked, append "- [ ] <task> — BLOCKED: <reason>" instead and continue.`,
+      `5. When all tasks are done, append a "## Summary" section the same way, then re-read to verify.`,
+      ``,
+      `Build spec title: ${input.title}`,
+    ].join("\n");
+  }
   return [
-    `This Obsidian vault is exposed to you as an MCP server (Companion for Claude).`,
+    `This Obsidian vault is exposed through an optional Companion MCP server that is already configured in this client.`,
     `Drive this build through its tools — do not shell out to any CLI.`,
     ``,
     `1. Read the build spec with the \`note_read\` tool:  path = "${input.specPath}"`,
@@ -83,10 +105,10 @@ export function buildPrompt(input: SpecInput): string {
 }
 
 /** The `claude` CLI invocation that starts the build in a terminal. */
-export function claudeCodeBuildCommand(input: SpecInput): string {
+export function claudeCodeBuildCommand(input: SpecInput, transport: HandoffTransport = "mcp"): string {
   // Escape backslashes before quotes so literal backslashes cannot interfere
   // with the quote escaping for the shell's double-quoted -p argument.
-  const prompt = buildPrompt(input)
+  const prompt = buildPrompt(input, transport)
     .replace(/\\/g, "\\\\")
     .replace(/"/g, '\\"')
     .replace(/\$/g, "\\$")

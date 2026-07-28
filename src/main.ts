@@ -1,11 +1,14 @@
 import { App, FileSystemAdapter, MarkdownView, Modal, Notice, parseYaml, Platform, Plugin, requestUrl, WorkspaceLeaf } from "obsidian";
 import { ChatView, CHAT_VIEW_TYPE } from "./view/ChatView";
 import { MemoryView, MEMORY_VIEW_TYPE } from "./view/MemoryView";
+import { InboxView, INBOX_VIEW_TYPE } from "./view/InboxView";
 import { RelatedView, RELATED_VIEW_TYPE } from "./view/RelatedView";
 import { ResearchWorkbenchView, RESEARCH_WORKBENCH_VIEW_TYPE, ProjectCreateModal, QUESTION_INSTRUCTION, type ResearchWorkbenchTab } from "./view/ResearchWorkbenchView";
 import { ResearchDeskView, RESEARCH_DESK_VIEW_TYPE } from "./view/ResearchDeskView";
 import { normalizeDeskPreferenceMap, type ResearchDeskPreferenceMap } from "./research/deskPreferences";
 import { ResearchRepository } from "./research/repository";
+import { createResearchRepository } from "./research/repositoryFactory";
+import { ensureVaultFolder } from "./vault/vaultFiles";
 import { IntelligenceCoordinator } from "./research/intelligenceCoordinator";
 import { DiscoveryCoordinator } from "./discovery/coordinator";
 import { DraftCoordinator } from "./research/draftCoordinator";
@@ -22,7 +25,7 @@ import { WORKFLOWS, type Workflow } from "./workflows/catalog";
 import { listSessionsForVault, type SessionMeta } from "./memory/sessions";
 import { ingestSession, ingestConversation } from "./memory/ingest";
 import { ClaudeCompanionSettingTab } from "./settings";
-import { ProviderRouter } from "./providers/router";
+import { ProviderRouter, migrateUtilityBackend } from "./providers/router";
 import { DEFAULT_SETTINGS, normalizeDiscoverySettings, type PluginSettings, type ArtifactOpenTarget } from "./types";
 import { DESIGN_SYSTEM_PROMPT, PLANNING_INSTRUCTION } from "./artifacts/designSystem";
 import { AGENT_INSTRUCTION, PLAN_MODE_INSTRUCTION } from "./agent/prompt";
@@ -50,7 +53,7 @@ import { FrontmatterModal } from "./view/FrontmatterModal";
 import { SemanticIndexer, type IndexFile } from "./semantic/indexer";
 import type { IndexData } from "./semantic/store";
 import { OllamaEmbedder, embedderId, migrateEmbeddingEngine, type Embedder } from "./semantic/embedder";
-import { BUILTIN_EMBEDDING_MODEL } from "./semantic/transformers/model";
+import { builtinModelById } from "./semantic/transformers/model";
 import { clearCachedModel, hasCachedModel } from "./semantic/transformers/cache";
 import { TransformersEmbedder, type WorkerLike } from "./semantic/transformers/embedder";
 import { createEmbedWorker } from "./semantic/transformers/workerSource";
@@ -71,6 +74,9 @@ import { normalizePath, TFile, type Editor } from "obsidian";
 import { enrichCapture, type EnrichDeps } from "./sources/enrich";
 import { shouldEnrich } from "./sources/watcher";
 import { parseClipUrl } from "./sources/detect";
+import { getSchema } from "./sources/registry";
+import { clipperTemplateFor, clipperTemplateFileName, serializeClipperTemplate } from "./sources/clipperTemplate";
+import type { SourceType } from "./sources/types";
 import { errorHint } from "./providers/errorHints";
 import { ChoiceModal } from "./view/ChoiceModal";
 import { OntologyRegistry } from "./ontology/registry";
@@ -144,6 +150,7 @@ export default class ClaudeCompanionPlugin extends Plugin {
 
     this.registerView(CHAT_VIEW_TYPE, (leaf: WorkspaceLeaf) => new ChatView(leaf, this));
     this.registerView(MEMORY_VIEW_TYPE, (leaf: WorkspaceLeaf) => new MemoryView(leaf, this));
+    this.registerView(INBOX_VIEW_TYPE, (leaf: WorkspaceLeaf) => new InboxView(leaf, this));
     this.registerView(RELATED_VIEW_TYPE, (leaf: WorkspaceLeaf) => new RelatedView(leaf, this));
     this.registerView(RESEARCH_DESK_VIEW_TYPE, (leaf: WorkspaceLeaf) => new ResearchDeskView(leaf, this.researchRepository(), {
       preferencesFor: (projectPath) => this.researchDeskPreferences[projectPath] ?? { dismissedActionIds: [] },
@@ -450,6 +457,22 @@ export default class ClaudeCompanionPlugin extends Plugin {
     });
 
     this.addCommand({
+      id: "open-source-inbox",
+      name: "Open source inbox (clip triage)",
+      callback: () => void this.activateInboxView(),
+    });
+
+    this.addCommand({
+      id: "export-clipper-templates",
+      name: "Export Web Clipper templates (typed clipping)",
+      checkCallback: (checking) => {
+        if (checking) return this.settings.sourceCaptureEnabled;
+        void this.exportClipperTemplates();
+        return true;
+      },
+    });
+
+    this.addCommand({
       id: "seed-ontology",
       name: "Seed ontology (default type schemas)",
       checkCallback: (checking) => {
@@ -506,16 +529,37 @@ export default class ClaudeCompanionPlugin extends Plugin {
   }
 
   private enrichDeps(): EnrichDeps {
-    const { provider, model } = this.router().resolve("utility");
+    const router = this.router();
+    const { provider } = router.resolve("utility");
     return {
       app: this.app,
-      complete: (system, user) =>
-        provider.complete({ system, model, maxTokens: 1024, temperature: 0, messages: [{ role: "user", content: user }] }),
+      complete: async (system, user) => (await router.complete("utility", { system, user })).text,
       overrides: this.settings.sourceSchemaOverrides,
       baseTags: this.settings.sourceBaseTags,
-      enrichedBy: provider.id === "ollama" ? "local" : "claude",
+      enrichedBy: provider.id === "anthropic" ? "claude" : "local",
       now: () => new Date().toISOString(),
     };
+  }
+
+  /**
+   * Write one Web Clipper template per source type into the vault so clips land
+   * pre-typed (schema keys + page-known values) instead of clip-then-convert.
+   * The user imports the JSON files in the clipper's template settings.
+   */
+  async exportClipperTemplates(): Promise<{ folder: string; count: number }> {
+    const folder = "Claude/Clipper templates";
+    const opts = { path: this.settings.sourceInboxFolder, tags: this.settings.sourceBaseTags };
+    const types: SourceType[] = ["article", "video", "dataset"];
+    await this.ensureFolder(folder);
+    for (const type of types) {
+      const template = clipperTemplateFor(getSchema(type, this.settings.sourceSchemaOverrides), opts);
+      await this.writeOrReplace(normalizePath(`${folder}/${clipperTemplateFileName(template)}`), serializeClipperTemplate(template));
+    }
+    new Notice(
+      `Wrote ${types.length} clipper templates to “${folder}”. In the Web Clipper extension: Settings → Templates → Import each file — clips will then arrive already typed for Companion.`,
+      10000,
+    );
+    return { folder, count: types.length };
   }
 
   private queueEnrich(file: TFile): void {
@@ -581,7 +625,7 @@ export default class ClaudeCompanionPlugin extends Plugin {
     } catch (e) {
       console.warn("[companion] source enrichment failed", e);
       const { provider } = this.router().resolve("utility");
-      const hint = errorHint(e instanceof Error ? e.message : String(e), provider.id === "ollama" ? "ollama" : "anthropic");
+      const hint = errorHint(e instanceof Error ? e.message : String(e), provider.id === "anthropic" ? "anthropic" : "ollama");
       new Notice(`Couldn't enrich ${file.basename}${hint ? ` — ${hint}` : " — see console."}`);
     }
   }
@@ -646,13 +690,11 @@ export default class ClaudeCompanionPlugin extends Plugin {
 
     const progress = new Notice("Rewriting selection…", 0);
     try {
-      const { provider, model } = this.router().resolve("chat");
-      const raw = await provider.complete({
+      const { text: raw } = await this.router().complete("chat", {
         system: REWRITE_SYSTEM,
-        model,
+        user: buildRewriteUser(selection, instruction),
         maxTokens: rewriteMaxTokens(selection),
         temperature: 0.3,
-        messages: [{ role: "user", content: buildRewriteUser(selection, instruction) }],
       });
       const rewritten = parseRewrite(raw, selection);
 
@@ -680,7 +722,7 @@ export default class ClaudeCompanionPlugin extends Plugin {
       new Notice("Rewrite applied.");
     } catch (e) {
       const { provider } = this.router().resolve("chat");
-      const hint = errorHint(e instanceof Error ? e.message : String(e), provider.id === "ollama" ? "ollama" : "anthropic");
+      const hint = errorHint(e instanceof Error ? e.message : String(e), provider.id === "anthropic" ? "anthropic" : "ollama");
       new Notice(`Rewrite failed${hint ? ` — ${hint}` : ` — ${e instanceof Error ? e.message : String(e)}`}`);
     } finally {
       progress.hide();
@@ -690,13 +732,11 @@ export default class ClaudeCompanionPlugin extends Plugin {
   /** Shared chat-free rewrite helper for the research surfaces (claims, evidence, project questions). */
   private researchRewriteText(): (input: { text: string; instruction: string; context?: string }) => Promise<string> {
     return async ({ text, instruction, context }) => {
-      const { provider, model } = this.router().resolve("chat");
-      const raw = await provider.complete({
+      const { text: raw } = await this.router().complete("chat", {
         system: REWRITE_SYSTEM,
-        model,
+        user: context ? buildGroundedRewriteUser(text, instruction, context) : buildRewriteUser(text, instruction),
         maxTokens: rewriteMaxTokens(text),
         temperature: 0.3,
-        messages: [{ role: "user", content: context ? buildGroundedRewriteUser(text, instruction, context) : buildRewriteUser(text, instruction) }],
       });
       return parseRewrite(raw, text);
     };
@@ -749,13 +789,11 @@ export default class ClaudeCompanionPlugin extends Plugin {
         });
       }
 
-      const { provider, model } = this.router().resolve("chat");
-      const raw = await provider.complete({
+      const { text: raw } = await this.router().complete("chat", {
         system: TRIAGE_SYSTEM,
-        model,
+        user: buildTriageUser(notes),
         maxTokens: 4000,
         temperature: 0.2,
-        messages: [{ role: "user", content: buildTriageUser(notes) }],
       });
       const groups = parseTriageResponse(raw, new Set(notes.map((n) => n.path)));
       if (groups.length === 0) throw new Error("The model returned no usable groups — try again.");
@@ -786,7 +824,7 @@ export default class ClaudeCompanionPlugin extends Plugin {
       if (boardFile instanceof TFile) await this.app.workspace.getLeaf(false).openFile(boardFile);
     } catch (e) {
       const { provider } = this.router().resolve("chat");
-      const hint = errorHint(e instanceof Error ? e.message : String(e), provider.id === "ollama" ? "ollama" : "anthropic");
+      const hint = errorHint(e instanceof Error ? e.message : String(e), provider.id === "anthropic" ? "anthropic" : "ollama");
       new Notice(`Triage failed${hint ? ` — ${hint}` : ` — ${e instanceof Error ? e.message : String(e)}`}`);
     } finally {
       progress.hide();
@@ -865,11 +903,13 @@ export default class ClaudeCompanionPlugin extends Plugin {
     // instead of letting the builtin default repoint their index. Persisted on
     // the next save, like the shape migration above.
     const migratedEngine = migrateEmbeddingEngine(settingsData);
+    const migratedUtility = migrateUtilityBackend(settingsData);
     this.settings = {
       ...DEFAULT_SETTINGS,
       ...settingsData,
       ...normalizeDiscoverySettings(settingsData ?? {}),
       ...(migratedEngine ? { embeddingEngine: migratedEngine } : {}),
+      ...(migratedUtility ? { utilityBackend: migratedUtility } : {}),
       context: { ...DEFAULT_SETTINGS.context, ...(settingsData?.context ?? {}) },
     };
     this.convState = isNamespaced
@@ -894,7 +934,7 @@ export default class ClaudeCompanionPlugin extends Plugin {
     // Rebuild providers if any credentials/hosts changed.
     this._router = null;
     // Rebuild the indexer if the embedding engine/model or enabled state changed.
-    const activeEmbedder = embedderId(this.settings.embeddingEngine, this.settings.embeddingModel);
+    const activeEmbedder = embedderId(this.settings.embeddingEngine, this.settings.embeddingModel, this.settings.builtinEmbeddingModel, this.settings.openaiCompatEmbeddingModel);
     if (this.indexerModel !== activeEmbedder || (!this.settings.semanticEnabled && this._indexer)) {
       this.invalidateIndexer();
     }
@@ -1188,16 +1228,24 @@ export default class ClaudeCompanionPlugin extends Plugin {
 
   /** The built-in engine's embedder (worker-backed); created lazily, torn down on unload. */
   builtinEmbedder(): TransformersEmbedder {
+    const model = builtinModelById(this.settings.builtinEmbeddingModel);
+    // Model selection changed → swap the worker pipeline (and re-probe the cache).
+    if (this._builtinEmbedder && this._builtinEmbedder.id !== model.id) {
+      this._builtinEmbedder.terminate();
+      this._builtinEmbedder = null;
+      this._builtinModelCached = false;
+    }
     // Runtime-compatible: WorkerLike is the DOM Worker surface the embedder uses;
     // only the onmessage/onerror event-param types differ (narrower here).
-    if (!this._builtinEmbedder) this._builtinEmbedder = new TransformersEmbedder(() => createEmbedWorker() as unknown as WorkerLike);
+    if (!this._builtinEmbedder) this._builtinEmbedder = new TransformersEmbedder(() => createEmbedWorker() as unknown as WorkerLike, model);
     return this._builtinEmbedder;
   }
 
-  /** Whether the built-in model's weights are already in the local cache (a load needs no network). */
+  /** Whether the selected built-in model's weights are already in the local cache (a load needs no network). */
   async builtinModelCached(): Promise<boolean> {
     if (this._builtinModelCached) return true;
-    if (await hasCachedModel(typeof caches !== "undefined" ? caches : undefined)) this._builtinModelCached = true;
+    const repo = builtinModelById(this.settings.builtinEmbeddingModel).hfRepo;
+    if (await hasCachedModel(typeof caches !== "undefined" ? caches : undefined, repo)) this._builtinModelCached = true;
     return this._builtinModelCached;
   }
 
@@ -1454,7 +1502,7 @@ export default class ClaudeCompanionPlugin extends Plugin {
    */
   indexer(): SemanticIndexer | null {
     if (!this.settings.semanticEnabled) return null;
-    const model = embedderId(this.settings.embeddingEngine, this.settings.embeddingModel);
+    const model = embedderId(this.settings.embeddingEngine, this.settings.embeddingModel, this.settings.builtinEmbeddingModel, this.settings.openaiCompatEmbeddingModel);
     if (this._indexer && this.indexerModel === model) return this._indexer;
 
     const adapter = this.app.vault.adapter;
@@ -1462,7 +1510,9 @@ export default class ClaudeCompanionPlugin extends Plugin {
     const embedder: Embedder =
       this.settings.embeddingEngine === "builtin"
         ? this.builtinEmbedder()
-        : new OllamaEmbedder(this.settings.embeddingModel, (m, input) => this.router().ollama.embed(m, input));
+        : this.settings.embeddingEngine === "custom"
+          ? new OllamaEmbedder(model, (_m, input) => this.router().openaiCompat.embed(this.settings.openaiCompatEmbeddingModel, input))
+          : new OllamaEmbedder(this.settings.embeddingModel, (m, input) => this.router().ollama.embed(m, input));
     this._indexer = new SemanticIndexer({
       embeddingModel: model,
       listMarkdown: (): IndexFile[] =>
@@ -1507,7 +1557,7 @@ export default class ClaudeCompanionPlugin extends Plugin {
     if (await this.builtinModelCached()) return; // loads on first use, offline
     this.settings.semanticModelPrompted = true;
     await this.saveSettings();
-    const model = BUILTIN_EMBEDDING_MODEL;
+    const model = builtinModelById(this.settings.builtinEmbeddingModel);
     new ChoiceModal<"download" | "skip">(this.app, {
       title: "Set up semantic search",
       message:
@@ -1540,9 +1590,13 @@ export default class ClaudeCompanionPlugin extends Plugin {
 
   /** Human-readable label for the active embedding engine/model (Notices, status copy). */
   private embeddingLabel(): string {
-    return this.settings.embeddingEngine === "builtin"
-      ? `built-in (${BUILTIN_EMBEDDING_MODEL.id.replace(/^builtin:/, "")})`
-      : this.settings.embeddingModel;
+    if (this.settings.embeddingEngine === "builtin") {
+      return `built-in (${builtinModelById(this.settings.builtinEmbeddingModel).id.replace(/^builtin:/, "")})`;
+    }
+    if (this.settings.embeddingEngine === "custom") {
+      return `${this.settings.openaiCompatEmbeddingModel || "custom endpoint"}`;
+    }
+    return this.settings.embeddingModel;
   }
 
   /** Drop the cached indexer (after the embedding model / enabled state changes). */
@@ -1826,13 +1880,11 @@ export default class ClaudeCompanionPlugin extends Plugin {
 
     if (!opts?.quiet) new Notice(`Consolidating ${digests.length} session digest${digests.length === 1 ? "" : "s"}…`);
     try {
-      const { provider, model } = this.router().resolve("utility");
-      const raw = await provider.complete({
+      const { text: raw, provider } = await this.router().complete("utility", {
         system: "You maintain concise, factual memory notes. Output markdown only.",
-        model,
+        user: buildConsolidationPrompt(existing, digests.map((d) => d.content)),
         maxTokens: 4000,
         temperature: 0.2,
-        messages: [{ role: "user", content: buildConsolidationPrompt(existing, digests.map((d) => d.content)) }],
       });
       const body = parseConsolidation(raw);
       const note = renderMemoryNote(body, {
@@ -1908,6 +1960,24 @@ export default class ClaudeCompanionPlugin extends Plugin {
     if (leaf) await workspace.revealLeaf(leaf);
   }
 
+  async activateInboxView(): Promise<void> {
+    const { workspace } = this.app;
+    let leaf: WorkspaceLeaf | null = workspace.getLeavesOfType(INBOX_VIEW_TYPE)[0] ?? null;
+    if (!leaf) {
+      leaf = workspace.getRightLeaf(false);
+      if (leaf) await leaf.setViewState({ type: INBOX_VIEW_TYPE, active: true });
+    }
+    if (leaf) await workspace.revealLeaf(leaf);
+  }
+
+  /** Inbox-view entry point: guard + consent + enrich, then refresh open inbox views. */
+  async enrichInboxItem(file: TFile): Promise<void> {
+    await this.enrichFile(file);
+    for (const leaf of this.app.workspace.getLeavesOfType(INBOX_VIEW_TYPE)) {
+      if (leaf.view instanceof InboxView) await leaf.view.render();
+    }
+  }
+
   private async refreshMemoryView(): Promise<void> {
     for (const leaf of this.app.workspace.getLeavesOfType(MEMORY_VIEW_TYPE)) {
       if (leaf.view instanceof MemoryView) await leaf.view.render();
@@ -1980,42 +2050,9 @@ export default class ClaudeCompanionPlugin extends Plugin {
   }
 
   private researchRepository(): ResearchRepository {
-    const readNotes = async (files: TFile[]) => Promise.all(files.map(async (file) => {
-      const content = await this.app.vault.cachedRead(file);
-      const body = content.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, "");
-      const cached = this.app.metadataCache.getFileCache(file)?.frontmatter as Record<string, unknown> | undefined;
-      const match = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/.exec(content);
-      const frontmatter = cached ?? (match ? parseYaml(match[1] ?? "") as Record<string, unknown> : undefined);
-      return { path: file.path, ...(frontmatter ? { frontmatter } : {}), body };
-    }));
-    return new ResearchRepository({
-      listMarkdown: async () => readNotes(this.app.vault.getMarkdownFiles()),
-      listProjectMarkdown: async (projectPath) => {
-        const folder = projectPath.slice(0, -"/Project.md".length);
-        const prefixes = ["Sources", "Evidence", "Claims", "Questions", "Documents"].map((name) => `${folder}/${name}/`);
-        return readNotes(this.app.vault.getMarkdownFiles().filter((file) => file.path === projectPath || prefixes.some((prefix) => file.path.startsWith(prefix))));
-      },
-      createWithParents: async (path, content) => {
-        const normalized = normalizePath(path);
-        if (this.app.vault.getAbstractFileByPath(normalized)) throw new Error(`File already exists: ${normalized}`);
-        await this.ensureFolder(normalized.slice(0, normalized.lastIndexOf("/")));
-        await this.app.vault.create(normalized, content);
-      },
-      updateFrontmatter: async (path, mutator) => {
-        const file = this.app.vault.getAbstractFileByPath(normalizePath(path));
-        if (!(file instanceof TFile)) throw new Error(`Research note not found: ${path}`);
-        await this.app.fileManager.processFrontMatter(file, mutator);
-      },
-      updateText: async (path, updater) => {
-        const file = this.app.vault.getAbstractFileByPath(normalizePath(path));
-        if (!(file instanceof TFile)) throw new Error(`Research note not found: ${path}`);
-        await this.app.vault.process(file, updater);
-      },
-      readBinary: async (path) => {
-        const file = this.app.vault.getAbstractFileByPath(normalizePath(path));
-        if (!(file instanceof TFile)) throw new Error(`Research source asset not found: ${path}`);
-        return new Uint8Array(await this.app.vault.readBinary(file));
-      },
+    return createResearchRepository(this.app, {
+      ensureFolder: (folder) => this.ensureFolder(folder),
+      includeBinary: true,
     });
   }
 
@@ -2053,17 +2090,14 @@ export default class ClaudeCompanionPlugin extends Plugin {
 
     const existingTags = existingVaultTags(this.app);
     const typeOptions = this.settings.ontologyEnabled ? [...(this.ontology()?.resolved().keys() ?? [])] : [];
-    const { provider, model } = this.router().resolve("utility");
     const notice = new Notice("Suggesting frontmatter…", 0);
     try {
       const existingLine = existingTags.length > 0 ? `Existing tags (prefer these when relevant): ${existingTags.join(", ")}\n\n` : "";
       const body = content.length > 8000 ? content.slice(0, 8000) + "\n…[truncated]" : content;
-      const raw = await provider.complete({
+      const { text: raw, provider } = await this.router().complete("utility", {
         system: frontmatterSuggestSystem(typeOptions),
-        model,
+        user: `${existingLine}Document:\n\n${body}`,
         maxTokens: 200,
-        temperature: 0,
-        messages: [{ role: "user", content: `${existingLine}Document:\n\n${body}` }],
       });
       const suggestion = parseFrontmatterSuggestion(raw);
 
@@ -2148,28 +2182,24 @@ export default class ClaudeCompanionPlugin extends Plugin {
     const trackerBody = [trackerFm, "", `# ${title} — build tracker`, "", "```claude-html height=520", trackerArtifact(title, tasks), "```", "", "## Progress log", "", "<!-- Claude Code appends progress here -->", ""].join("\n");
     const trackerFile = await this.writeOrReplace(trackerPath, trackerBody);
 
-    // Hand off: copy the ready-to-run command, open the tracker.
-    const command = claudeCodeBuildCommand(input);
+    // Hand off: copy the ready-to-run command, open the tracker. The MCP
+    // transport only works when the bridge is up with writes allowed;
+    // otherwise fall back to the official `obsidian` CLI (no bridge needed).
+    const transport = !Platform.isMobile && this.settings.mcpEnabled && this.settings.mcpAllowWrites ? "mcp" : "cli";
+    const command = claudeCodeBuildCommand(input, transport);
     await navigator.clipboard.writeText(command).catch(() => {});
     await this.app.workspace.getLeaf(true).openFile(trackerFile);
 
-    new Notice("Build spec + tracker created. Claude Code command copied — run it in a terminal (drives the tracker over the MCP bridge).", 8000);
+    new Notice(
+      transport === "mcp"
+        ? "Build spec + tracker created. Claude Code command copied — run it in a terminal (drives the tracker over the MCP bridge)."
+        : "Build spec + tracker created. Claude Code command copied — run it in a terminal (drives the tracker with the official obsidian CLI).",
+      8000,
+    );
   }
 
   private async ensureFolder(folder: string): Promise<void> {
-    const p = normalizePath(folder);
-    if (p === "" || p === "/" || this.app.vault.getAbstractFileByPath(p)) return;
-    let cur = "";
-    for (const part of p.split("/")) {
-      cur = cur ? `${cur}/${part}` : part;
-      if (!this.app.vault.getAbstractFileByPath(cur)) {
-        try {
-          await this.app.vault.createFolder(cur);
-        } catch {
-          /* race */
-        }
-      }
-    }
+    await ensureVaultFolder(this.app, folder);
   }
 
   private async writeOrReplace(path: string, content: string): Promise<TFile> {

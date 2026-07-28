@@ -11,42 +11,43 @@ interface Capability {
   tier: string;
   name: string;
   description: string;
-  surfaces: { skill: boolean; command: string | false; companion: string | false };
+  portable: boolean;
+  surfaces: { skill: boolean; command: string | false };
 }
 
 // The claude-plugin submodule is optional: obsidian-plugin must build and test standalone.
 // Guard the read behind `present` too: describe.skipIf only skips the its, not this
 // synchronous setup, so an unconditional readFileSync would still throw ENOENT.
-describe.skipIf(!present)("companion catalog ↔ capability registry", () => {
-  const registry: { capabilities: Capability[] } = present
+describe.skipIf(!present)("Companion adapters ↔ obsidian-agent capability registry", () => {
+  const registry: { plugin?: string; transport?: string; capabilities: Capability[] } = present
     ? JSON.parse(readFileSync(registryPath, "utf8"))
     : { capabilities: [] };
   const byId = new Map(registry.capabilities.map((c) => [c.id, c]));
 
-  it("every workflow resolves to a registry entry that declares a companion surface", () => {
+  it("targets the universal CLI registry without restoring Companion metadata", () => {
+    expect(registry.plugin).toBe("obsidian-agent");
+    expect(registry.transport).toBe("cli");
+    for (const cap of registry.capabilities) {
+      expect(cap.surfaces).not.toHaveProperty("companion");
+    }
+  });
+
+  it("every Companion-native workflow adapts a portable universal capability", () => {
     for (const w of WORKFLOWS) {
       const cap = byId.get(w.id);
       expect(cap, `workflow '${w.id}' is not in capabilities.json`).toBeDefined();
       if (!cap) continue;
-      expect(typeof cap.surfaces.companion, `workflow '${w.id}' is not declared as a companion surface`).toBe("string");
+      expect(cap.portable, `workflow '${w.id}' adapts a non-portable capability`).toBe(true);
     }
   });
 
-  it("every workflow's name and group match the registry", () => {
+  it("keeps universal capability names aligned while Companion owns presentation groups", () => {
     for (const w of WORKFLOWS) {
       const cap = byId.get(w.id);
       expect(cap, `workflow '${w.id}' is not in capabilities.json`).toBeDefined();
       if (!cap) continue;
       expect(w.name, `name drift on '${w.id}'`).toBe(cap.name);
-      expect(w.group, `group drift on '${w.id}'`).toBe(cap.surfaces.companion);
-    }
-  });
-
-  it("every registry entry declaring a companion surface has a workflow", () => {
-    const ids = new Set(WORKFLOWS.map((w) => w.id));
-    for (const cap of registry.capabilities) {
-      if (cap.surfaces.companion === false) continue;
-      expect(ids.has(cap.id), `registry declares a companion surface for '${cap.id}' but catalog.ts has no workflow`).toBe(true);
+      expect(["Manifest", "Knowledge & synthesis"]).toContain(w.group);
     }
   });
 });

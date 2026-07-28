@@ -1,5 +1,5 @@
-import { App, TFile, normalizePath } from "obsidian";
-import type { FieldValue, RawCapture, SourceRecord, SourceType } from "./types";
+import { App, TFile, normalizePath, parseYaml } from "obsidian";
+import type { FieldValue, RawCapture, SourceRecord, SourceType, SourceTypeSchema } from "./types";
 import { detectType, parseClipUrl } from "./detect";
 import { getSchema, type SchemaOverrides } from "./registry";
 import { parseCsvMeta } from "./csvMeta";
@@ -38,6 +38,45 @@ function sanitizeFields(fields: Record<string, FieldValue>): Record<string, Fiel
   return out;
 }
 
+/**
+ * Model-sourced schema values the capture already carries in frontmatter
+ * (e.g. stamped by a Companion-generated Web Clipper template). Only
+ * type-compatible, non-empty values count — anything else is left to the model.
+ */
+export function prefilledFields(schema: SourceTypeSchema, frontmatter: Record<string, unknown> | undefined): Record<string, FieldValue> {
+  const out: Record<string, FieldValue> = {};
+  if (!frontmatter) return out;
+  for (const field of schema.fields) {
+    if (field.source !== "model") continue;
+    const v = frontmatter[field.key];
+    if (v === undefined || v === null || v === "") continue;
+    if (field.type === "string[]") {
+      const arr = Array.isArray(v) ? v.map(String).filter(Boolean) : typeof v === "string" ? v.split(",").map((s) => s.trim()).filter(Boolean) : [];
+      if (arr.length > 0) out[field.key] = arr;
+    } else if (field.type === "number") {
+      if (typeof v === "number" && Number.isFinite(v)) out[field.key] = v;
+    } else if (typeof v === "string" && v.trim()) {
+      out[field.key] = v.trim();
+    }
+  }
+  return out;
+}
+
+/** Frontmatter of an existing markdown capture: metadata cache first, raw parse fallback. */
+function existingFrontmatter(app: App, path: string, content: string): Record<string, unknown> | undefined {
+  const file = app.vault.getAbstractFileByPath(path);
+  const cached = file instanceof TFile ? app.metadataCache.getFileCache(file)?.frontmatter : undefined;
+  if (cached) return cached;
+  const m = /^---\r?\n([\s\S]*?)\r?\n---/.exec(content);
+  if (!m || m[1] === undefined) return undefined;
+  try {
+    const parsed: unknown = parseYaml(m[1]);
+    return parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** Run a capture through the pipeline and write the typed result. */
 export async function enrichCapture(deps: EnrichDeps, capture: RawCapture): Promise<EnrichResult> {
   const type = detectType(capture);
@@ -54,7 +93,11 @@ export async function enrichCapture(deps: EnrichDeps, capture: RawCapture): Prom
     content = csvPreview(capture.content);
   }
 
-  const { fields } = await extractFields(schema, content, derived, { complete: deps.complete });
+  // Values the clipper already stamped (title/author/site/published/…) are
+  // trusted as-is: the model is only asked for what the page couldn't say.
+  const prefilled =
+    capture.kind === "markdown" ? prefilledFields(schema, existingFrontmatter(deps.app, capture.path, capture.content)) : {};
+  const { fields } = await extractFields(schema, content, derived, { complete: deps.complete }, 2, prefilled);
   const safeFields = sanitizeFields(fields);
   const url = capture.kind === "markdown" ? capture.url ?? parseClipUrl(capture.content) : undefined;
 
@@ -76,7 +119,6 @@ export async function enrichCapture(deps: EnrichDeps, capture: RawCapture): Prom
     await applySourceFrontmatter(deps.app, file, sourceFrontmatter(record, deps.baseTags));
     return { file, type, record };
   }
-
   const dir = capture.path.includes("/") ? capture.path.slice(0, capture.path.lastIndexOf("/")) : "";
   const base = sanitizeFileName(String(record.fields.title ?? capture.basename));
   const assetFileName = `${capture.basename}.${capture.ext}`;

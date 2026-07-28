@@ -24,4 +24,44 @@ describe("extractFields", () => {
     const complete = async () => JSON.stringify({ title: "T" });
     await expect(extractFields(article, "content", {}, { complete }, 1)).rejects.toBeInstanceOf(ExtractError);
   });
+
+  it("does not ask the model for prefilled fields, and merges them into the result", async () => {
+    let system = "";
+    const complete = async (sys: string) => {
+      system = sys;
+      // The reply only carries what it was asked for; required title/site are prefilled.
+      return JSON.stringify({ summary: "Sum" });
+    };
+    const r = await extractFields(article, "content", {}, { complete }, 2, { title: "Clip title", site: "Clip site" });
+    expect(system).not.toContain("- title (");
+    expect(system).not.toContain("- site (");
+    expect(system).toContain("- summary (");
+    expect(r.fields).toMatchObject({ title: "Clip title", site: "Clip site", summary: "Sum" });
+  });
+
+  it("skips the model call entirely when every model field is prefilled", async () => {
+    let calls = 0;
+    const complete = async () => {
+      calls++;
+      return "{}";
+    };
+    const r = await extractFields(article, "content", { reading_time: "9 min" }, { complete }, 2, {
+      title: "T",
+      author: "A",
+      authors: ["A"],
+      site: "S",
+      publication: "P",
+      published: "2026-01-01",
+      doi: "10.1/x",
+      arxiv_id: "1234.5678",
+      zotero_key: "ZK",
+      reading_time: "5 min",
+      topics: ["x"],
+      key_claims: ["c"],
+      summary: "S",
+    });
+    expect(calls).toBe(0);
+    expect(r.fields.reading_time).toBe("9 min"); // derived still wins over prefilled
+    expect(r.fields.title).toBe("T");
+  });
 });

@@ -7,8 +7,17 @@ describe("embedderId", () => {
   it("ollama keeps the raw model name — existing indexes stay valid", () => {
     expect(embedderId("ollama", "nomic-embed-text")).toBe("nomic-embed-text");
   });
-  it("builtin uses the pinned prefixed id", () => {
+  it("builtin uses the pinned prefixed id by default", () => {
     expect(embedderId("builtin", "nomic-embed-text")).toBe(BUILTIN_EMBEDDING_MODEL.id);
+  });
+  it("builtin honors the selected catalog model", () => {
+    expect(embedderId("builtin", "nomic-embed-text", "builtin:snowflake-arctic-embed-m")).toBe("builtin:snowflake-arctic-embed-m");
+    // Unknown selection falls back to the default, never a phantom index key.
+    expect(embedderId("builtin", "nomic-embed-text", "builtin:nope")).toBe(BUILTIN_EMBEDDING_MODEL.id);
+  });
+  it("custom is prefixed so it can never collide with an ollama model name", () => {
+    expect(embedderId("custom", "nomic-embed-text", undefined, "nomic-embed-text")).toBe("custom:nomic-embed-text");
+    expect(embedderId("custom", "x", undefined, "  ")).toBe("custom:default");
   });
 });
 

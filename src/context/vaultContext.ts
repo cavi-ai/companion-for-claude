@@ -1,7 +1,7 @@
-import { App, MarkdownView, TFile, getAllTags } from "obsidian";
+import { App, MarkdownView, TFile } from "obsidian";
 import type { ContextToggles, PluginSettings } from "../types";
-import { clip, scoreContent, section, snippetAround, tokenize } from "./search";
-import { reciprocalRankFusion } from "../semantic/similarity";
+import { clip, section } from "./search";
+import { fuseKeywordAndSemantic, keywordVaultSearch, type SemanticSearch } from "./hybridSearch";
 import type { AttachedPage } from "./urlContext";
 
 export interface GatheredContext {
@@ -11,7 +11,7 @@ export interface GatheredContext {
 }
 
 /** Optional semantic retriever (local embeddings); absent → keyword-only. */
-export type SemanticSearch = (query: string, k: number) => Promise<{ path: string; text: string }[]>;
+export type { SemanticSearch } from "./hybridSearch";
 
 /** A note or folder explicitly attached via the "@" picker. */
 export interface AttachedPath {
@@ -116,7 +116,7 @@ export async function gatherContext(
   //    when no semantic retriever is wired or the local index is unavailable.
   if (toggles.searchVault && userQuery.trim().length > 0 && budget > 0) {
     const exclude = activeFile instanceof TFile ? activeFile.path : null;
-    const keyword = await searchVault(app, userQuery, settings.maxContextNotes, exclude);
+    const keyword = (await keywordVaultSearch(app, userQuery, exclude)).slice(0, settings.maxContextNotes);
     let semantic: { path: string; text: string }[] = [];
     if (semanticSearch) {
       try {
@@ -125,7 +125,7 @@ export async function gatherContext(
         // local index/Ollama unavailable → keyword-only, no regression
       }
     }
-    const fused = fuseHits(keyword, semantic, settings.maxContextNotes);
+    const fused = fuseKeywordAndSemantic(keyword, semantic, settings.maxContextNotes);
     let added = 0;
     for (const item of fused) {
       if (budget <= 0) break;
@@ -190,54 +190,4 @@ function collectLinkedFiles(app: App, file: TFile, limit: number): TFile[] {
   }
 
   return out.slice(0, limit);
-}
-
-interface SearchHit {
-  file: TFile;
-  score: number;
-  snippet: string;
-}
-
-/**
- * Fuse keyword + semantic hits into one note-deduped, ranked list via reciprocal
- * rank fusion. Each note keeps the best snippet we have (keyword match excerpt,
- * else the semantic chunk text).
- */
-function fuseHits(keyword: SearchHit[], semantic: { path: string; text: string }[], limit: number): { path: string; snippet: string }[] {
-  const snippet = new Map<string, string>();
-  for (const k of keyword) if (!snippet.has(k.file.path)) snippet.set(k.file.path, k.snippet);
-  for (const s of semantic) if (!snippet.has(s.path)) snippet.set(s.path, s.text);
-
-  const fused = reciprocalRankFusion([
-    keyword.map((h) => ({ id: h.file.path, score: h.score })),
-    semantic.map((s) => ({ id: s.path, score: 1 })),
-  ]);
-  return fused
-    .slice(0, limit)
-    .map((f) => ({ path: f.id, snippet: snippet.get(f.id) ?? "" }))
-    .filter((x) => x.snippet);
-}
-
-/** Lightweight keyword scoring over markdown files — no embeddings required. */
-async function searchVault(app: App, query: string, limit: number, excludePath: string | null): Promise<SearchHit[]> {
-  const terms = tokenize(query);
-  if (terms.length === 0) return [];
-  const files = app.vault.getMarkdownFiles();
-  const hits: SearchHit[] = [];
-
-  for (const file of files) {
-    if (file.path === excludePath) continue;
-
-    const cache = app.metadataCache.getFileCache(file);
-    const lowerTags = cache ? (getAllTags(cache) ?? []).join(" ").toLowerCase() : "";
-    const content = await app.vault.cachedRead(file);
-    const { score, firstIdx } = scoreContent(terms, file.path.toLowerCase(), lowerTags, content);
-
-    if (score > 0) {
-      hits.push({ file, score, snippet: snippetAround(content, firstIdx) });
-    }
-  }
-
-  hits.sort((a, b) => b.score - a.score);
-  return hits.slice(0, limit);
 }

@@ -2,18 +2,32 @@ import type { PluginSettings } from "../types";
 import type { Provider, ProviderId, TaskRole } from "./types";
 import { AnthropicProvider } from "./anthropic";
 import { OllamaProvider } from "./ollama";
+import { OpenAICompatProvider } from "./openaiCompat";
 import { readAnthropicEnv } from "./env";
 import { resolveModelId } from "../claude/models";
 
 /**
+ * Settings migration for `utilityBackend`: a persisted `localUtilityEnabled`
+ * (pre-split) maps to "ollama", anything else to the default ("claude").
+ * Returns the backend to force, or undefined when the new key already exists.
+ */
+export function migrateUtilityBackend(
+  persisted: Partial<{ utilityBackend: PluginSettings["utilityBackend"]; localUtilityEnabled: boolean }> | null | undefined,
+): PluginSettings["utilityBackend"] | undefined {
+  if (!persisted || "utilityBackend" in persisted) return undefined;
+  return persisted.localUtilityEnabled === true ? "ollama" : undefined;
+}
+
+/**
  * Builds providers from settings and routes a task to the right one:
  * - "chat"    → the user's primary provider (Claude by default)
- * - "utility" → the local model if enabled (summaries, tagging, ingestion),
+ * - "utility" → the configured utility backend (summaries, tagging, ingestion),
  *               otherwise falls back to the chat provider.
  */
 export class ProviderRouter {
   readonly anthropic: AnthropicProvider;
   readonly ollama: OllamaProvider;
+  readonly openaiCompat: OpenAICompatProvider;
 
   constructor(private settings: PluginSettings) {
     this.anthropic = new AnthropicProvider({
@@ -24,21 +38,40 @@ export class ProviderRouter {
       env: readAnthropicEnv(),
     });
     this.ollama = new OllamaProvider(settings.ollamaHost, settings.ollamaModel);
+    this.openaiCompat = new OpenAICompatProvider(settings.openaiCompatHost, settings.openaiCompatModel, settings.openaiCompatKey);
   }
 
   get(id: ProviderId): Provider {
-    return id === "ollama" ? this.ollama : this.anthropic;
+    if (id === "ollama") return this.ollama;
+    if (id === "openai-compat") return this.openaiCompat;
+    return this.anthropic;
+  }
+
+  /** The utility model on the Ollama backend (falls back to the chat model). */
+  private ollamaUtilityModel(): string {
+    return this.settings.ollamaUtilityModel.trim() || this.settings.ollamaModel;
   }
 
   /** Resolve which provider + model id to use for a given task role. */
   resolve(role: TaskRole): { provider: Provider; model: string } {
-    if (role === "utility" && this.settings.localUtilityEnabled && this.ollama.hasCredentials()) {
-      return { provider: this.ollama, model: this.settings.ollamaModel };
+    if (role === "utility") {
+      if (this.settings.utilityBackend === "ollama" && this.ollama.hasCredentials()) {
+        return { provider: this.ollama, model: this.ollamaUtilityModel() };
+      }
+      if (this.settings.utilityBackend === "custom" && this.openaiCompat.hasCredentials()) {
+        return { provider: this.openaiCompat, model: this.settings.openaiCompatModel };
+      }
     }
-    // Chat honors the chosen backend: "local" forces Ollama; "claude"/"auto"
-    // start on Claude (auto degrades to local on failure — handled in ChatView).
-    if (role === "chat" && this.settings.chatBackend === "local" && this.ollama.hasCredentials()) {
-      return { provider: this.ollama, model: this.settings.ollamaModel };
+    // Chat honors the chosen backend: "local" forces Ollama, "custom" the
+    // OpenAI-compatible endpoint; "claude"/"auto" start on Claude (auto
+    // degrades to local on failure — handled in ChatView).
+    if (role === "chat") {
+      if (this.settings.chatBackend === "local" && this.ollama.hasCredentials()) {
+        return { provider: this.ollama, model: this.settings.ollamaModel };
+      }
+      if (this.settings.chatBackend === "custom" && this.openaiCompat.hasCredentials()) {
+        return { provider: this.openaiCompat, model: this.settings.openaiCompatModel };
+      }
     }
     return {
       provider: this.anthropic,
@@ -51,8 +84,29 @@ export class ProviderRouter {
     return this.resolve("chat");
   }
 
+  /**
+   * One buffered completion on a role's provider — the shared shape for the
+   * summarize/tag/enrich call sites that used to hand-roll resolve+complete.
+   */
+  async complete(
+    role: TaskRole,
+    req: { system: string; user: string; maxTokens?: number; temperature?: number; responseFormat?: "json"; responseSchema?: Record<string, unknown> },
+  ): Promise<{ text: string; provider: Provider }> {
+    const { provider, model } = this.resolve(role);
+    const text = await provider.complete({
+      system: req.system,
+      model,
+      maxTokens: req.maxTokens ?? 1024,
+      temperature: req.temperature ?? 0,
+      messages: [{ role: "user", content: req.user }],
+      ...(req.responseFormat ? { responseFormat: req.responseFormat } : {}),
+      ...(req.responseSchema ? { responseSchema: req.responseSchema } : {}),
+    });
+    return { text, provider };
+  }
+
   /** The configured chat backend mode. */
-  get chatBackend(): "claude" | "local" | "auto" {
+  get chatBackend(): PluginSettings["chatBackend"] {
     return this.settings.chatBackend;
   }
 

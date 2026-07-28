@@ -176,8 +176,9 @@ export class ChatView extends ItemView {
     const actions = header.createDiv({ cls: "cc-header-actions" });
     if (Platform.isMobile) {
       // Mobile: the model name is the model picker, and one ⋯ menu carries the
-      // actions the desktop icon row holds. Desktop-only chrome (MCP, capture,
-      // ingest toggle) is omitted entirely — those features don't run on a phone.
+      // actions the desktop icon row holds, plus the session toggles from the
+      // hidden controls bar (Act on vault, Plan mode, memory ingest). Truly
+      // desktop-only chrome (MCP, session capture) stays omitted.
       this.modelLabelEl.addClass("cc-model-tappable");
       this.modelLabelEl.addEventListener("click", (e) => this.openModelMenu(e));
       const more = actions.createEl("button", { cls: "cc-icon-btn", attr: { "aria-label": "More actions" } });
@@ -451,8 +452,9 @@ export class ChatView extends ItemView {
    * after each response, and when the model changes.
    */
   private updateUsageBar(): void {
-    const { provider } = this.plugin.router().chatProvider();
-    const model = provider.id === "ollama" ? this.plugin.settings.ollamaModel : this.controls?.model ?? this.plugin.settings.model;
+    const { provider, model: resolvedModel } = this.plugin.router().chatProvider();
+    const local = provider.id !== "anthropic";
+    const model = local ? resolvedModel : this.controls?.model ?? this.plugin.settings.model;
     const reserved = this.controls?.maxTokens ?? this.plugin.settings.maxTokens;
 
     // Estimate input tokens: system + conversation so far + the draft + a
@@ -468,7 +470,7 @@ export class ChatView extends ItemView {
     this.gaugeFillEl.toggleClass("is-danger", g.fraction >= 0.92);
 
     const parts: string[] = [];
-    if (provider.id === "ollama") {
+    if (local) {
       parts.push(`~${formatTokens(estIn)} ctx · local (no metered cost)`);
     } else {
       parts.push(`~${formatTokens(estIn)} / ${formatTokens(g.window)} ctx`);
@@ -498,9 +500,8 @@ export class ChatView extends ItemView {
   }
 
   refreshModelLabel(): void {
-    const { provider } = this.plugin.router().chatProvider();
-    const model = provider.id === "ollama" ? this.plugin.settings.ollamaModel : this.controls?.model ?? this.plugin.settings.model;
-    const label = provider.id === "ollama" ? `${model} · local` : modelLabel(model);
+    const { provider, model: resolvedModel } = this.plugin.router().chatProvider();
+    const label = provider.id !== "anthropic" ? `${resolvedModel} · local` : modelLabel(this.controls?.model ?? this.plugin.settings.model);
     this.modelLabelEl.setText(label);
     if (this.usageEl) this.updateUsageBar();
   }
@@ -778,6 +779,7 @@ export class ChatView extends ItemView {
     // Pull in detected Ollama models so a local model can be picked here without
     // opening settings. Async — appended once the local server answers.
     void this.appendLocalModelOptions(select);
+    this.appendCustomModelOption(select);
 
     // "Act on vault" — the discoverable switch for whether Claude can create /
     // edit notes in chat (agent writes). Only meaningful for Claude (Ollama has
@@ -850,6 +852,15 @@ export class ChatView extends ItemView {
     if (this.plugin.settings.chatBackend === "local" && configured) select.value = `ollama:${configured}`;
   }
 
+  /** Append a "Local (endpoint)" option for the configured OpenAI-compatible server. */
+  private appendCustomModelOption(select: HTMLSelectElement): void {
+    const model = this.plugin.settings.openaiCompatModel.trim();
+    if (!this.plugin.settings.openaiCompatHost.trim() || !model) return;
+    const group = select.createEl("optgroup", { attr: { label: "Local (endpoint)" } });
+    group.createEl("option", { value: `custom:${model}`, text: `${model} · endpoint` });
+    if (this.plugin.settings.chatBackend === "custom") select.value = `custom:${model}`;
+  }
+
   /**
    * Apply a model-switcher choice. Picking a `ollama:<model>` entry routes the
    * chat to that local model (backend → local); picking a Claude model routes
@@ -859,9 +870,11 @@ export class ChatView extends ItemView {
     if (value.startsWith("ollama:")) {
       this.plugin.settings.ollamaModel = value.slice("ollama:".length);
       this.plugin.settings.chatBackend = "local";
+    } else if (value.startsWith("custom:")) {
+      this.plugin.settings.chatBackend = "custom";
     } else {
       this.controls.model = value;
-      if (this.plugin.settings.chatBackend === "local") this.plugin.settings.chatBackend = "auto";
+      if (this.plugin.settings.chatBackend === "local" || this.plugin.settings.chatBackend === "custom") this.plugin.settings.chatBackend = "auto";
     }
     await this.plugin.saveSettings();
     this.renderKnobs(); // capabilities/provider changed → rebuild dependent knobs
@@ -896,7 +909,7 @@ export class ChatView extends ItemView {
     });
     font.addEventListener("change", () => void this.plugin.saveSettings());
 
-    if (this.plugin.router().chatProvider().provider.id === "ollama") {
+    if (this.plugin.router().chatProvider().provider.id !== "anthropic") {
       parent.createSpan({ cls: "cc-ctl-note", text: "local model · Claude controls apply when routed to Claude" });
       return;
     }
@@ -1307,7 +1320,12 @@ export class ChatView extends ItemView {
     const { provider } = router.chatProvider();
     const backend = router.chatBackend;
     if (!provider.hasCredentials() && backend !== "auto") {
-      const where = provider.id === "ollama" ? "Start Ollama (`ollama serve`) or set the host in settings." : "Add your Anthropic credential in Claude Companion settings first.";
+      const where =
+        provider.id === "ollama"
+          ? "Start Ollama (`ollama serve`) or set the host in settings."
+          : provider.id === "openai-compat"
+            ? "Set the endpoint host and model in Companion settings → Local models."
+            : "Add your Anthropic credential in Claude Companion settings first.";
       new Notice(where);
       return;
     }
@@ -1362,8 +1380,8 @@ export class ChatView extends ItemView {
     this.abort = new AbortController();
     this._turnUsage = null;
 
-    // Attempt #1 on the primary backend (Claude unless backend is "local").
-    const startedOnLocal = provider.id === "ollama";
+    // Attempt #1 on the primary backend (Claude unless backend is "local"/"custom").
+    const startedOnLocal = provider.id !== "anthropic";
     const err1 = startedOnLocal
       ? await this.streamTurn("local", apiMessages, bubble, body)
       : agentActive
@@ -1417,8 +1435,15 @@ export class ChatView extends ItemView {
   ): Promise<{ message?: string; status?: number } | null> {
     const router = this.plugin.router();
     const onClaude = target === "claude";
-    const provider = onClaude ? router.anthropic : router.ollama;
-    const model = onClaude ? (this.turnModelOverride ?? this.controls.model) : this.plugin.settings.ollamaModel;
+    // "local" = the configured non-Claude chat backend (Ollama, or the custom
+    // OpenAI-compatible endpoint when that's the chat backend).
+    const useCustom = !onClaude && this.plugin.settings.chatBackend === "custom";
+    const provider = onClaude ? router.anthropic : useCustom ? router.openaiCompat : router.ollama;
+    const model = onClaude
+      ? (this.turnModelOverride ?? this.controls.model)
+      : useCustom
+        ? this.plugin.settings.openaiCompatModel
+        : this.plugin.settings.ollamaModel;
     const shape = shapeRequest({ ...this.controls, model: onClaude ? model : this.controls.model }, this.maxTokensOverride ?? this.plugin.settings.maxTokens);
     const wantThinking = onClaude && this.controls.thinking && this.controls.showThinking;
     let thinkingBody: HTMLElement | null = wantThinking ? this.createThinkingPanel(bubble) : null;
@@ -2035,10 +2060,43 @@ export class ChatView extends ItemView {
   /** Mobile: the single ⋯ menu that replaces the desktop header icon row. */
   private openOverflowMenu(evt: MouseEvent): void {
     const menu = new Menu();
+    menu.addItem((i) => i.setTitle("Source inbox").setIcon("inbox").onClick(() => void this.plugin.activateInboxView()));
     menu.addItem((i) => i.setTitle("New chat").setIcon("plus").onClick(() => this.clearChat()));
     menu.addItem((i) => i.setTitle("History").setIcon("history").onClick(() => this.openHistory()));
     menu.addItem((i) => i.setTitle("Save chat to vault").setIcon("save").onClick(() => void this.saveChat()));
     menu.addItem((i) => i.setTitle("Model controls…").setIcon("sliders-horizontal").onClick(() => this.openTuneModal()));
+    // Session toggles that live in the hidden desktop controls bar — without
+    // these, phone users can't reach agent writes, Plan Mode, or memory ingest.
+    const canAct = this.plugin.settings.agentModeEnabled && this.plugin.router().chatProvider().provider.id === "anthropic";
+    if (canAct || this.plugin.settings.memoryEnabled) menu.addSeparator();
+    if (canAct) {
+      menu.addItem((i) =>
+        i
+          .setTitle("Act on vault")
+          .setIcon("pencil-line")
+          .setChecked(this.plugin.settings.agentAllowWrites)
+          .onClick(() => void this.toggleAgentWrites()),
+      );
+      menu.addItem((i) =>
+        i
+          .setTitle("Plan mode")
+          .setIcon("list-todo")
+          .setChecked(this.planMode)
+          .onClick(() => this.togglePlanMode()),
+      );
+    }
+    if (this.plugin.settings.memoryEnabled) {
+      menu.addItem((i) =>
+        i
+          .setTitle("File chats into session memory")
+          .setIcon("archive")
+          .setChecked(this.plugin.settings.memoryIngestOnSave)
+          .onClick(() => {
+            this.plugin.settings.memoryIngestOnSave = !this.plugin.settings.memoryIngestOnSave;
+            void this.plugin.saveSettings();
+          }),
+      );
+    }
     // Cloud actions only when actually configured — a menu item that just
     // bounces a "feature is off" notice is noise.
     const cloudDispatch = this.plugin.settings.cloudDispatchEnabled;

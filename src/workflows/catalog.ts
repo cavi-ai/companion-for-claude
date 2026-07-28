@@ -1,7 +1,7 @@
-// Companion-native adaptations of the claude-obsidian Claude Code workflows, so
-// Obsidian users get the same portfolio (manifest personas, rollups, MOCs, digests)
-// without the CLI. Each is a self-contained prompt that produces a `claude-html`
-// artifact or grounded Markdown over the Companion's vault context. Pure data.
+// Companion-native adaptations of selected portable obsidian-agent capabilities.
+// This catalog owns the Companion presentation and prompts; the universal plugin
+// remains CLI-only and carries no Companion or MCP metadata. Each adaptation is a
+// self-contained prompt over Companion's vault context. Pure data.
 
 export interface Workflow {
   id: string;

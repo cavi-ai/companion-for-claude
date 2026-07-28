@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { detectType, parseClipUrl } from "../../src/sources/detect";
+import { detectType, parseClipUrl, parseStampedType } from "../../src/sources/detect";
 
 describe("parseClipUrl", () => {
   it("reads the clipper's source/url frontmatter key", () => {
@@ -21,5 +21,18 @@ describe("detectType", () => {
   });
   it("defaults to article", () => {
     expect(detectType({ kind: "markdown", path: "Clippings/a.md", basename: "a", content: "---\nsource: https://stratechery.com/p\n---" })).toBe("article");
+  });
+  it("trusts a stamped type from a clipper template over the URL", () => {
+    expect(detectType({ kind: "markdown", path: "Clippings/v.md", basename: "v", content: "---\ntype: video\nsource: https://example.com/page\n---" })).toBe("video");
+    expect(detectType({ kind: "markdown", path: "Clippings/a.md", basename: "a", content: "---\ntype: article\nsource: https://www.youtube.com/watch?v=1\n---" })).toBe("article");
+  });
+});
+
+describe("parseStampedType", () => {
+  it("reads a known type stamp and rejects unknown ones", () => {
+    expect(parseStampedType("---\ntype: dataset\n---")).toBe("dataset");
+    expect(parseStampedType('---\ntype: "video"\n---')).toBe("video");
+    expect(parseStampedType("---\ntype: project\n---")).toBeUndefined();
+    expect(parseStampedType("no frontmatter")).toBeUndefined();
   });
 });

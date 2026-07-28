@@ -1,6 +1,6 @@
 // Map a raw provider error message to an actionable hint. Pure + testable.
 
-export type ErrorHintProvider = "anthropic" | "ollama";
+export type ErrorHintProvider = "anthropic" | "ollama" | "openai-compat";
 
 export function errorHint(message: string, provider: ErrorHintProvider = "anthropic"): string | null {
   const m = message.toLowerCase();

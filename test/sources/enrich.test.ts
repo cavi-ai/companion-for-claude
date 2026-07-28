@@ -23,6 +23,39 @@ describe("enrichCapture — markdown clip", () => {
     expect(out).toContain("‹REDACTED›");
     expect(out).toContain("Article body.");
   });
+
+  it("keeps clipper-stamped values and only asks the model for the rest", async () => {
+    const app = new App();
+    const clipped = [
+      "---",
+      "type: article",
+      "title: Clipped Title",
+      "author: Jane Doe",
+      "site: Example",
+      "published: 2026-07-01",
+      "source: https://example.com/post",
+      "---",
+      "",
+      "Body text.",
+    ].join("\n");
+    const file = app.vault.seed("Clippings/b.md", clipped);
+    let system = "";
+    const complete = async (sys: string) => {
+      system = sys;
+      return JSON.stringify({ summary: "A one-liner." });
+    };
+    const res = await enrichCapture(deps(app, complete), { kind: "markdown", path: "Clippings/b.md", basename: "b", content: (file as TFile)._content });
+    // The model was never asked for the page-known fields…
+    expect(system).not.toContain("- title (");
+    expect(system).not.toContain("- author (");
+    expect(system).not.toContain("- site (");
+    // …and the clipper's values survive into the enriched note.
+    const out = await app.vault.cachedRead(res.file);
+    expect(out).toContain("Clipped Title");
+    expect(out).toContain("Jane Doe");
+    expect(out).toContain("A one-liner.");
+    expect(out).toContain("source_enriched: true");
+  });
 });
 
 describe("enrichCapture — dropped CSV", () => {

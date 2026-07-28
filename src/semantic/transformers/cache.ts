@@ -8,7 +8,7 @@
 // src/backends/onnx.js). The CacheStorage is injected so this stays pure and
 // unit-testable.
 
-import { BUILTIN_EMBEDDING_MODEL } from "./model";
+import { BUILTIN_EMBEDDING_MODELS } from "./model";
 
 /** transformers.js's default Cache API bucket (env.cacheKey). */
 export const TRANSFORMERS_CACHE_NAME = "transformers-cache";
@@ -21,12 +21,12 @@ export interface CachesLike {
   }>;
 }
 
-/** Entries the built-in engine put in the bucket: our repo's files, or the
+/** Entries the built-in engine put in the bucket: a catalog repo's files, or the
  *  ORT runtime assets that env.useWasmCache stores alongside them. */
 function isBuiltinEngineEntry(url: string): boolean {
   try {
     const parsed = new URL(url);
-    const isBuiltinRepoFile = parsed.pathname.includes(`/${BUILTIN_EMBEDDING_MODEL.hfRepo}/`);
+    const isBuiltinRepoFile = BUILTIN_EMBEDDING_MODELS.some((m) => parsed.pathname.includes(`/${m.hfRepo}/`));
     const isOrtRuntimeAsset =
       parsed.hostname === "cdn.jsdelivr.net" &&
       parsed.pathname.includes("/npm/onnxruntime-web@") &&
@@ -38,13 +38,13 @@ function isBuiltinEngineEntry(url: string): boolean {
 }
 
 /**
- * Whether the built-in model's weights are already in the local cache — i.e.
+ * Whether the given model's weights are already in the local cache — i.e.
  * embedding can proceed fully offline, no new download. Requires the .onnx
  * weights entry specifically (a stray config.json from an aborted download
  * must not pass the consent gate). False when the Cache API is unavailable
  * or unreadable.
  */
-export async function hasCachedModel(cachesLike: CachesLike | undefined): Promise<boolean> {
+export async function hasCachedModel(cachesLike: CachesLike | undefined, hfRepo: string): Promise<boolean> {
   if (!cachesLike) return false;
   try {
     const cache = await cachesLike.open(TRANSFORMERS_CACHE_NAME);
@@ -52,7 +52,7 @@ export async function hasCachedModel(cachesLike: CachesLike | undefined): Promis
     return keys.some((k) => {
       try {
         const parsed = new URL(k.url);
-        return parsed.pathname.includes(`/${BUILTIN_EMBEDDING_MODEL.hfRepo}/`) && parsed.pathname.endsWith(".onnx");
+        return parsed.pathname.includes(`/${hfRepo}/`) && parsed.pathname.endsWith(".onnx");
       } catch {
         return false;
       }

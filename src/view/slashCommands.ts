@@ -100,7 +100,7 @@ export async function dispatchNativeSlashAction(
 
 export interface NativeSlashCommandContext {
   command: SlashCommand;
-  backend: "claude" | "auto" | "local";
+  backend: "claude" | "auto" | "local" | "custom";
   clearComposer: () => void;
   activateResearchDesk: () => Promise<void>;
   requestCompletion: (prompt: string, display?: string) => Promise<void>;

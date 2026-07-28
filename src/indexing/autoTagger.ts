@@ -42,16 +42,13 @@ const TAG_SYSTEM =
  * enabled — keeping this cheap, bulk work off the Anthropic bill.
  */
 export async function summarizeAndTag(app: App, router: ProviderRouter, content: string, existing: string[]): Promise<TagResult> {
-  const { provider, model } = router.resolve("utility");
   const existingLine = existing.length > 0 ? `Existing tags (prefer these when relevant): ${existing.join(", ")}\n\n` : "";
   const body = content.length > 8000 ? content.slice(0, 8000) + "\n…[truncated]" : content;
 
-  const raw = await provider.complete({
+  const { text: raw, provider } = await router.complete("utility", {
     system: TAG_SYSTEM,
-    model,
+    user: `${existingLine}Document:\n\n${body}`,
     maxTokens: 240,
-    temperature: 0,
-    messages: [{ role: "user", content: `${existingLine}Document:\n\n${body}` }],
   });
 
   return { ...parseTaggerOutput(raw), via: provider.label };

@@ -45,21 +45,45 @@ describe("specBody", () => {
 });
 
 describe("buildPrompt / claudeCodeBuildCommand", () => {
-  it("drives the build through the MCP note tools, not a phantom CLI", () => {
-    const p = buildPrompt(input);
-    expect(p).toContain("MCP server");
+  it("mcp transport drives the build through the MCP note tools, not a CLI", () => {
+    const p = buildPrompt(input, "mcp");
+    expect(p).toContain("optional Companion MCP server");
+    expect(p).toContain("already configured");
+    expect(p).not.toContain("obsidian-agent");
     expect(p).toContain("note_read");
     expect(p).toContain(`path = "${input.specPath}"`);
     expect(p).toContain("note_append");
     expect(p).toContain(`path = "${input.trackerPath}"`);
-    expect(p).not.toContain("obsidian read"); // no non-existent CLI
+    expect(p).not.toContain("obsidian read");
     expect(p).not.toContain("obsidian append");
+  });
+  it("mcp is the default transport", () => {
+    expect(buildPrompt(input)).toBe(buildPrompt(input, "mcp"));
+  });
+  it("cli transport drives the build through the official obsidian CLI", () => {
+    const p = buildPrompt(input, "cli");
+    expect(p).toContain("official `obsidian` CLI");
+    expect(p).toContain(`obsidian vault="My Vault" read path="${input.specPath}"`);
+    expect(p).toContain(`obsidian vault="My Vault" append path="${input.trackerPath}"`);
+    expect(p).not.toContain("note_read");
+    expect(p).not.toContain("note_append");
+    expect(p).not.toContain("MCP server");
+  });
+  it("cli transport omits the vault selector when no vault is known", () => {
+    const p = buildPrompt({ ...input, vault: undefined }, "cli");
+    expect(p).toContain(`obsidian read path="${input.specPath}"`);
+    expect(p).not.toContain("vault=");
   });
   it("double-quote wraps and escapes the prompt for -p", () => {
     const cmd = claudeCodeBuildCommand(input);
     expect(cmd.startsWith('claude -p "')).toBe(true);
     expect(cmd.endsWith('"')).toBe(true);
     expect(cmd).toContain("\\`note_read\\`"); // backticks escaped for the shell
+  });
+  it("escapes the cli prompt for -p too", () => {
+    const cmd = claudeCodeBuildCommand(input, "cli");
+    expect(cmd.startsWith('claude -p "')).toBe(true);
+    expect(cmd).toContain(String.raw`obsidian vault=\"My Vault\" read`);
   });
   it("escapes backslashes before double quotes in the -p argument", () => {
     const cmd = claudeCodeBuildCommand({

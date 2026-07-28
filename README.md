@@ -206,9 +206,11 @@ same vault, same confirm-before-write guardrails, wherever you are.
 - **Never lose functionality (offline)** — an **Auto** backend transparently
   falls back to a local **Ollama** model when Claude is offline or out of usage,
   with a live connectivity indicator; or run **Local only** for full offline use.
-  Cheap utility work (summaries, auto-tagging) can route to Ollama too.
-- **Unified bridge** — expose the vault as a local MCP server so Claude Code
-  and Claude Desktop operate on the same notes ([details below](#unified-bridge-mcp-server)).
+  Cheap utility work (summaries, auto-tagging) can route to Ollama too — on its
+  own smaller model if you like. Any **OpenAI-compatible endpoint** (LM Studio,
+  mlx-lm, vLLM) can serve chat, utility work, or embeddings instead.
+- **Agent bridge** — optionally expose the vault as a local MCP server so Claude
+  Code and Claude Desktop operate on the same notes ([details below](#agent-bridge-mcp-server)).
 - **Cloud sessions (mobile-friendly)** — dispatch a Claude Code **cloud
   session** that works your vault's Git repo and writes replies back as notes
   pulled over HTTPS — the agent path that works from a phone, where the local
@@ -226,6 +228,13 @@ same vault, same confirm-before-write guardrails, wherever you are.
   (article, video, dataset) from per-type schemas. Auto-enrichment asks for
   one-time consent first (it sends each new inbox file to your utility model);
   the *Enrich note as source* command works manually either way.
+- **Clipper schema sync** — export Web Clipper templates generated from those
+  schemas (command or *Source capture* settings). Imported into the official
+  Web Clipper, clips arrive already typed with everything the page knows;
+  enrichment only fills what it couldn't.
+- **Source inbox** — a touch-first triage view of everything in the inbox that
+  isn't typed yet, with one-tap enrich and *Enrich all*. Built for clipping
+  from your phone.
 - **Vault ontology** — schema notes in an
   `Ontology/` folder define **note types and typed wikilink relations**; on
   first run Companion offers to create the default schemas (or run
@@ -250,13 +259,15 @@ Browse* → search **Companion for Claude** → Install → Enable, or use
 For active development use `pnpm run dev` (esbuild watch) and symlink the plugin
 folder into a test vault.
 
-## Unified bridge (MCP server)
+## Agent bridge (MCP server, desktop)
 
-Companion can expose your vault as a local **MCP server**, so **Claude Code** and
-**Claude Desktop** work against the *same* knowledge base you chat with here —
-the compliant way to unify all three without subscription OAuth.
+Companion can optionally expose your vault as a local **MCP server**, so **Claude Code** and
+**Claude Desktop** work against the *same* knowledge base you chat with here.
+The bridge is off by default — chat, agent mode, and the build handoff all work
+without it (the handoff uses the official `obsidian` CLI when the bridge is
+disabled).
 
-Enable it in *Settings → Companion for Claude → Unified bridge (MCP server)*.
+Enable it in *Settings → Companion for Claude → Agent bridge — MCP server (desktop)*.
 The server binds to **127.0.0.1 only** (never the network), requires a
 **bearer token**, and shows ready-to-paste connection snippets for both clients.
 

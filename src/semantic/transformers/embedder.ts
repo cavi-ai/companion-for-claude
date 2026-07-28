@@ -4,7 +4,7 @@
 // stays pure and unit-testable.
 
 import type { Embedder } from "../embedder";
-import { BUILTIN_EMBEDDING_MODEL } from "./model";
+import { BUILTIN_EMBEDDING_MODEL, type BuiltinModel } from "./model";
 import { RequestTracker, type ProgressEvent, type WorkerRequest, type WorkerResponse } from "./protocol";
 
 export interface WorkerLike {
@@ -15,14 +15,19 @@ export interface WorkerLike {
 }
 
 export class TransformersEmbedder implements Embedder {
-  readonly id = BUILTIN_EMBEDDING_MODEL.id;
-
   private worker: WorkerLike | null = null;
   private tracker = new RequestTracker();
   private loaded: Promise<void> | null = null;
   private _backend: string | null = null;
 
-  constructor(private createWorker: () => WorkerLike) {}
+  constructor(
+    private createWorker: () => WorkerLike,
+    private model: BuiltinModel = BUILTIN_EMBEDDING_MODEL,
+  ) {}
+
+  get id(): string {
+    return this.model.id;
+  }
 
   /** "webgpu" | "wasm" once loaded; null before. */
   backend(): string | null {
@@ -56,7 +61,7 @@ export class TransformersEmbedder implements Embedder {
   private ensureLoaded(onProgress?: (p: ProgressEvent) => void): Promise<void> {
     if (!this.loaded) {
       const req = this.tracker.create<number[][]>(onProgress);
-      this.post({ id: req.id, type: "load" });
+      this.post({ id: req.id, type: "load", repo: this.model.hfRepo, pooling: this.model.pooling });
       const loadPromise = req.promise.then(() => undefined).catch((e: unknown) => {
         if (this.loaded === loadPromise) this.loaded = null; // allow retry after a failed load
         throw e;

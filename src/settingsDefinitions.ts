@@ -60,8 +60,10 @@ export function settingDefinitions(): SettingDefinitionItem[] {
     ]),
     group("Semantic search", [
       { name: "Enable semantic search", desc: "Local vector index so the vault is searchable by meaning.", aliases: ["embeddings", "vector", "related"] },
-      { name: "Embedding engine", desc: "Built-in on-device model or Ollama.", aliases: ["embeddings"] },
+      { name: "Embedding engine", desc: "Built-in on-device model, Ollama, or OpenAI-compatible endpoint.", aliases: ["embeddings"] },
+      { name: "Built-in model", desc: "Pick the on-device embedding model size.", aliases: ["embeddings", "download"] },
       { name: "Embedding model", desc: "Download, load, or clear the on-device embedding model.", aliases: ["download"] },
+      { name: "Endpoint embedding model", desc: "Embedding model id on the OpenAI-compatible endpoint.", aliases: ["endpoint", "embeddings"] },
       { name: "Rebuild index", desc: "Re-embed the whole vault.", aliases: ["reindex"] },
     ]),
     group("Indexing & tags", [
@@ -74,6 +76,7 @@ export function settingDefinitions(): SettingDefinitionItem[] {
       { name: "Auto-enrich on create", desc: "Type files automatically as they appear in the inbox.", aliases: ["enrich"] },
       { name: "Inbox folder", desc: "Folder the Web Clipper writes to and Companion watches." },
       { name: "Base tags", desc: "Tags added to every enriched source note." },
+      { name: "Web Clipper templates", desc: "Export clipper templates matching the source schemas.", aliases: ["clipper", "web clipper"] },
     ]),
     group("Vault ontology", [
       { name: "Enable ontology", desc: "Typed frontmatter and wikilink relations from schema notes.", aliases: ["schema", "types"] },
@@ -85,11 +88,16 @@ export function settingDefinitions(): SettingDefinitionItem[] {
       { name: "Discovery reranker", desc: "Which model reranks discovery results." },
       { name: "Clear discovery cache", desc: "Delete derived discovery state." },
     ]),
-    group("Local models (Ollama)", [
-      { name: "Use local model for utility tasks", desc: "Route summaries, tagging, and ingestion to Ollama.", aliases: ["ollama", "offline"] },
+    group("Local models", [
+      { name: "Utility tasks backend", desc: "Route summaries, tagging, and ingestion to a local backend.", aliases: ["ollama", "offline", "utility"] },
       { name: "Ollama host", desc: "Local Ollama server address.", aliases: ["ollama"] },
-      { name: "Local model", desc: "Ollama model for chat and utility work.", aliases: ["ollama"] },
+      { name: "Local chat model", desc: "Ollama model for chat.", aliases: ["ollama"] },
+      { name: "Utility model (optional)", desc: "A smaller Ollama model for utility tasks; empty = use the chat model.", aliases: ["ollama", "utility"] },
       { name: "Test local connection", desc: "Verify the Ollama server is reachable.", aliases: ["ollama"] },
+      { name: "Endpoint host", desc: "OpenAI-compatible server URL (LM Studio, mlx-lm, vLLM).", aliases: ["lm studio", "mlx", "openai", "endpoint"] },
+      { name: "Endpoint model", desc: "Model id on the OpenAI-compatible endpoint.", aliases: ["endpoint"] },
+      { name: "Endpoint API key", desc: "Optional bearer key for the endpoint.", aliases: ["endpoint"] },
+      { name: "Test endpoint", desc: "Verify the OpenAI-compatible endpoint is reachable.", aliases: ["endpoint"] },
     ]),
     group("Agent bridge — MCP server", [
       { name: "Enable MCP server", desc: "Expose the vault to Claude Code and Claude Desktop over loopback HTTP.", aliases: ["mcp", "claude code", "bridge"] },

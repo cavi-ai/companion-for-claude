@@ -14,9 +14,8 @@ export interface ExtractDeps {
 
 const MAX_CONTENT = 8000;
 
-function buildSystem(schema: SourceTypeSchema): string {
-  const fields = schema.fields.filter((f) => f.source === "model");
-  const lines = fields.map((f) => `- ${f.key} (${f.type}${f.required ? ", required" : ""}): ${f.description}`);
+function buildSystem(schema: SourceTypeSchema, asked: SourceTypeSchema["fields"]): string {
+  const lines = asked.map((f) => `- ${f.key} (${f.type}${f.required ? ", required" : ""}): ${f.description}`);
   return (
     "You extract structured metadata from a source document. " +
     "Reply with a SINGLE JSON object and nothing else. Use EXACTLY these keys:\n" +
@@ -26,15 +25,29 @@ function buildSystem(schema: SourceTypeSchema): string {
   );
 }
 
-/** Extract model fields (validated, with a repair loop) and merge derived fields in. */
+/** A schema with the model fields the caller already has (prefilled) removed. */
+function reducedSchema(schema: SourceTypeSchema, prefilled: Record<string, FieldValue>): SourceTypeSchema {
+  return { ...schema, fields: schema.fields.filter((f) => f.source !== "model" || !(f.key in prefilled)) };
+}
+
+/**
+ * Extract model fields (validated, with a repair loop) and merge derived and
+ * prefilled fields in. `prefilled` holds model-sourced values the capture
+ * already carries (e.g. stamped by the Web Clipper from page metadata) — those
+ * keys are neither asked of the model nor overwritten by it.
+ */
 export async function extractFields(
   schema: SourceTypeSchema,
   content: string,
   derived: Record<string, FieldValue>,
   deps: ExtractDeps,
   maxRepairs = 2,
+  prefilled: Record<string, FieldValue> = {},
 ): Promise<{ fields: Record<string, FieldValue> }> {
-  const system = buildSystem(schema);
+  const reduced = reducedSchema(schema, prefilled);
+  const asked = reduced.fields.filter((f) => f.source === "model");
+  if (asked.length === 0) return { fields: { ...prefilled, ...derived } };
+  const system = buildSystem(reduced, asked);
   const base = `SOURCE CONTENT:\n\n${content.length > MAX_CONTENT ? content.slice(0, MAX_CONTENT) + "\n…[truncated]" : content}`;
   let lastErrors: string[] = ["no reply"];
 
@@ -48,8 +61,8 @@ export async function extractFields(
       lastErrors = ["reply was not valid JSON"];
       continue;
     }
-    const res = validateAgainstSchema(obj, schema);
-    if (res.ok) return { fields: { ...res.value, ...derived } };
+    const res = validateAgainstSchema(obj, reduced);
+    if (res.ok) return { fields: { ...prefilled, ...res.value, ...derived } };
     lastErrors = res.errors;
   }
   throw new ExtractError(lastErrors);

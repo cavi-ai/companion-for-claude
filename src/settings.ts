@@ -6,7 +6,7 @@ import { readAnthropicEnv, hasAnthropicEnvCredential } from "./providers/env";
 import { generateToken, bridgeUrl, claudeCodeCommand, claudeDesktopConfig, maskToken, resolveMcpToken, mcpTokenEnvRef, MCP_TOKEN_ENV } from "./mcp/clientConfig";
 import { configError } from "./cloud/routines";
 import { configError as repliesConfigError } from "./cloud/replies";
-import { BUILTIN_EMBEDDING_MODEL } from "./semantic/transformers/model";
+import { BUILTIN_EMBEDDING_MODELS, builtinModelById } from "./semantic/transformers/model";
 import { normalizeDiscoverySettings, type PluginSettings } from "./types";
 import { settingDefinitions } from "./settingsDefinitions";
 
@@ -185,9 +185,10 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
       .addDropdown((dd) => {
         dd.addOption("claude", "Claude only");
         dd.addOption("auto", "Auto (Claude, fall back to local)");
-        dd.addOption("local", "Local only (offline)");
+        dd.addOption("local", "Local only — Ollama (offline)");
+        dd.addOption("custom", "Local only — OpenAI-compatible endpoint");
         dd.setValue(this.plugin.settings.chatBackend).onChange(async (v) => {
-          this.plugin.settings.chatBackend = v as "claude" | "local" | "auto";
+          this.plugin.settings.chatBackend = v as PluginSettings["chatBackend"];
           await this.plugin.saveSettings();
           this.plugin.refreshViews();
         });
@@ -272,7 +273,7 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
     this.accordion(containerEl, "Vault ontology (typed notes & relations)", (c) => this.renderOntologySection(c));
     this.accordion(containerEl, "Scholarly discovery", (c) => this.renderDiscoverySection(c));
     if (!Platform.isMobile) {
-      this.accordion(containerEl, "Local models (Ollama)", (c) => this.renderLocalModelsSection(c));
+      this.accordion(containerEl, "Local models (Ollama & endpoints)", (c) => this.renderLocalModelsSection(c));
       this.accordion(containerEl, "Agent bridge — MCP server (desktop)", (c) => this.renderMcpSection(c));
       this.accordion(containerEl, "Session memory", (c) => this.renderMemorySection(c));
     } else {
@@ -286,7 +287,7 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
       });
       const ul = body.createEl("ul");
       for (const t of [
-        "Local models (Ollama) — runs a localhost model server",
+        "Local models (Ollama & endpoints) — runs a localhost model server",
         "Agent bridge — MCP server (desktop) — exposes your vault to Claude Code",
         "Session capture — reads Claude Code transcripts from disk (browsing captured memory works here)",
       ]) {
@@ -296,21 +297,25 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
   }
 
   private renderStorageSection(containerEl: HTMLElement): void {
-    new Setting(containerEl)
-      .setName("Open artifacts in")
-      .setDesc("Where the “Open” button on an artifact sends it. Keeping it in Obsidian is tidiest; choose a browser to pop it out.")
-      .addDropdown((dd) => {
-        dd.addOption("obsidian", "Obsidian (in-app, full screen)");
-        dd.addOption("default", "System default browser");
-        dd.addOption("chrome", "Google Chrome");
-        dd.addOption("safari", "Safari");
-        dd.addOption("brave", "Brave");
-        dd.addOption("firefox", "Firefox");
-        dd.setValue(this.plugin.settings.artifactOpenTarget).onChange(async (v) => {
-          this.plugin.settings.artifactOpenTarget = v as typeof this.plugin.settings.artifactOpenTarget;
-          await this.plugin.saveSettings();
+    // "Open in browser" shells out to the OS — desktop only. On mobile the
+    // setting can never take effect, so don't offer it.
+    if (!Platform.isMobile) {
+      new Setting(containerEl)
+        .setName("Open artifacts in")
+        .setDesc("Where the “Open” button on an artifact sends it. Keeping it in Obsidian is tidiest; choose a browser to pop it out.")
+        .addDropdown((dd) => {
+          dd.addOption("obsidian", "Obsidian (in-app, full screen)");
+          dd.addOption("default", "System default browser");
+          dd.addOption("chrome", "Google Chrome");
+          dd.addOption("safari", "Safari");
+          dd.addOption("brave", "Brave");
+          dd.addOption("firefox", "Firefox");
+          dd.setValue(this.plugin.settings.artifactOpenTarget).onChange(async (v) => {
+            this.plugin.settings.artifactOpenTarget = v as typeof this.plugin.settings.artifactOpenTarget;
+            await this.plugin.saveSettings();
+          });
         });
-      });
+    }
 
     new Setting(containerEl)
       .setName("Artifacts folder")
@@ -386,14 +391,19 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
     });
 
     new Setting(containerEl)
-      .setName("Use local model for utility tasks")
-      .setDesc("Summaries, auto-tagging, and ingestion go to Ollama instead of Claude.")
-      .addToggle((t) =>
-        t.setValue(this.plugin.settings.localUtilityEnabled).onChange(async (v) => {
-          this.plugin.settings.localUtilityEnabled = v;
+      .setName("Utility tasks backend")
+      .setDesc("Summaries, auto-tagging, and ingestion go to this backend instead of Claude.")
+      .addDropdown((dd) => {
+        dd.addOption("claude", "Claude");
+        dd.addOption("ollama", "Ollama (local)");
+        dd.addOption("custom", "OpenAI-compatible endpoint");
+        dd.setValue(this.plugin.settings.utilityBackend).onChange(async (v) => {
+          this.plugin.settings.utilityBackend = v as PluginSettings["utilityBackend"];
           await this.plugin.saveSettings();
-        }),
-      );
+        });
+      });
+
+    new Setting(containerEl).setName("Ollama").setHeading();
 
     new Setting(containerEl)
       .setName("Ollama host")
@@ -408,7 +418,7 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
     // Local model: a dropdown auto-populated from the Ollama server when
     // models have been detected, otherwise a free-text field.
     const modelSetting = new Setting(containerEl)
-      .setName("Local model")
+      .setName("Local chat model")
       .setDesc("Choose a detected model, or type one (e.g. llama3.1, qwen2.5). Click Detect to refresh the list.");
 
     const detected = this.detectedOllamaModels;
@@ -465,6 +475,70 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
         }),
       );
 
+    new Setting(containerEl)
+      .setName("Utility model (optional)")
+      .setDesc("A smaller model for utility tasks (tagging, summaries, ingestion). Empty = use the chat model above. A 1–3B model is plenty and much faster.")
+      .addText((text) =>
+        text
+          .setPlaceholder(this.plugin.settings.ollamaModel)
+          .setValue(this.plugin.settings.ollamaUtilityModel)
+          .onChange(async (v) => {
+            this.plugin.settings.ollamaUtilityModel = v.trim();
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl).setName("OpenAI-compatible endpoint").setHeading();
+    containerEl.createEl("p", {
+      cls: "setting-item-description",
+      text: "Point at LM Studio, mlx-lm, vLLM, Jan, or Ollama's /v1 mode — including Apple-silicon-optimized servers like `mlx_lm.server`. Select it as the chat backend or utility backend above, and as an embedding engine under Semantic search.",
+    });
+
+    new Setting(containerEl)
+      .setName("Endpoint host")
+      .setDesc("Base URL, with or without /v1 (e.g. http://localhost:1234).")
+      .addText((text) =>
+        text
+          .setPlaceholder("http://localhost:1234")
+          .setValue(this.plugin.settings.openaiCompatHost)
+          .onChange(async (v) => {
+            this.plugin.settings.openaiCompatHost = v.trim();
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName("Endpoint model")
+      .setDesc("The model id the server exposes (see Test / its model list).")
+      .addText((text) =>
+        text.setValue(this.plugin.settings.openaiCompatModel).onChange(async (v) => {
+          this.plugin.settings.openaiCompatModel = v.trim();
+          await this.plugin.saveSettings();
+        }),
+      );
+
+    new Setting(containerEl)
+      .setName("Endpoint API key")
+      .setDesc("Optional. Most local servers accept anything or nothing.")
+      .addText((text) => {
+        text.inputEl.type = "password";
+        text.setValue(this.plugin.settings.openaiCompatKey).onChange(async (v) => {
+          this.plugin.settings.openaiCompatKey = v.trim();
+          await this.plugin.saveSettings();
+        });
+      });
+
+    const customStatus = containerEl.createDiv({ cls: "cc-conn-status" });
+    new Setting(containerEl)
+      .setName("Test endpoint")
+      .setDesc("Checks the endpoint is reachable and lists its models.")
+      .addButton((btn) =>
+        btn.setButtonText("Test endpoint").onClick(async () => {
+          await this.plugin.saveSettings();
+          this.renderStatus(customStatus, { ok: true, detail: "Testing…" });
+          this.renderStatus(customStatus, await this.plugin.router().openaiCompat.test());
+        }),
+      );
   }
 
   private renderDiscoverySection(containerEl: HTMLElement): void {
@@ -557,12 +631,13 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
     if (this.plugin.settings.semanticEnabled) {
       new Setting(containerEl)
         .setName("Embedding engine")
-        .setDesc("Built-in runs a small model inside Obsidian on every platform (one-time ~45 MB download). Ollama uses your local Ollama server (desktop).")
+        .setDesc("Built-in runs a small model inside Obsidian on every platform (one-time download). Ollama uses your local Ollama server (desktop). Endpoint uses the OpenAI-compatible server from Local models.")
         .addDropdown((dd) => {
           dd.addOption("builtin", "Built-in (recommended)");
           dd.addOption("ollama", "Ollama");
+          dd.addOption("custom", "OpenAI-compatible endpoint");
           dd.setValue(this.plugin.settings.embeddingEngine).onChange(async (v) => {
-            this.plugin.settings.embeddingEngine = v as "builtin" | "ollama";
+            this.plugin.settings.embeddingEngine = v as PluginSettings["embeddingEngine"];
             await this.plugin.saveSettings();
             this.plugin.invalidateIndexer();
             containerEl.empty();
@@ -571,7 +646,23 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
         });
 
       if (this.plugin.settings.embeddingEngine === "builtin") {
-        const model = BUILTIN_EMBEDDING_MODEL;
+        new Setting(containerEl)
+          .setName("Built-in model")
+          .setDesc("Larger models index more accurately at a slower speed and bigger download. Switching rebuilds the index.")
+          .addDropdown((dd) => {
+            for (const m of BUILTIN_EMBEDDING_MODELS) {
+              dd.addOption(m.id, `${m.hfRepo.split("/")[1]} · ${m.dim}d · ~${m.approxDownloadMB} MB`);
+            }
+            dd.setValue(builtinModelById(this.plugin.settings.builtinEmbeddingModel).id).onChange(async (v) => {
+              this.plugin.settings.builtinEmbeddingModel = v;
+              await this.plugin.saveSettings();
+              this.plugin.invalidateIndexer();
+              containerEl.empty();
+              this.renderSemanticSection(containerEl);
+            });
+          });
+
+        const model = builtinModelById(this.plugin.settings.builtinEmbeddingModel);
         const status = containerEl.createDiv({ cls: "cc-conn-status setting-item-description" });
         const backend = this.plugin.builtinEmbedder().backend();
         status.setText(backend ? `Model ready · ${backend === "webgpu" ? "WebGPU" : "WASM"}` : "Model not downloaded yet.");
@@ -647,6 +738,19 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
                 /* Ollama not reachable — leave just the current value. */
               });
           });
+      }
+
+      if (this.plugin.settings.embeddingEngine === "custom") {
+        new Setting(containerEl)
+          .setName("Endpoint embedding model")
+          .setDesc("An embedding model id on the OpenAI-compatible endpoint (configured under Local models), e.g. text-embedding-nomic-embed-text-v1.5.")
+          .addText((text) =>
+            text.setValue(this.plugin.settings.openaiCompatEmbeddingModel).onChange(async (v) => {
+              this.plugin.settings.openaiCompatEmbeddingModel = v.trim();
+              await this.plugin.saveSettings();
+              this.plugin.invalidateIndexer();
+            }),
+          );
       }
 
       const idxStatus = containerEl.createDiv({ cls: "cc-conn-status setting-item-description" });
@@ -802,6 +906,13 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
           this.plugin.settings.sourceBaseTags = v.split(",").map((s) => s.trim()).filter(Boolean);
           await this.plugin.saveSettings();
         }),
+      );
+
+    new Setting(containerEl)
+      .setName("Web Clipper templates")
+      .setDesc("Write clipper templates matching these schemas into the vault. Import them in the Web Clipper extension and clips arrive already typed — enrichment then only fills what the page couldn't say.")
+      .addButton((b) =>
+        b.setButtonText("Export templates").onClick(() => void this.plugin.exportClipperTemplates()),
       );
   }
 
@@ -1004,7 +1115,7 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
       .setDesc("Fine-grained token with Contents:read on the repo. Stored locally in this vault's plugin data.")
       .addText((text) => {
         text.inputEl.type = "password";
-        text.inputEl.setCssStyles({ width: "320px" });
+        text.inputEl.setCssStyles({ width: "min(320px, 100%)" });
         text
           .setPlaceholder("github_pat_… / ghp_…")
           .setValue(s.cloudReplyToken)
@@ -1074,7 +1185,7 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
         .setDesc(`Required by clients as a bearer token. Keep it secret. Tip: set $${MCP_TOKEN_ENV} to source it from the environment instead of this vault's data.`)
         .addText((text) => {
           text.inputEl.type = "password"; // bearer token — don't render in plaintext
-          text.inputEl.setCssStyles({ width: "260px" });
+          text.inputEl.setCssStyles({ width: "min(260px, 100%)" });
           text.setValue(s.mcpToken).onChange(async (v) => {
             s.mcpToken = v.trim();
             await this.plugin.saveSettings();

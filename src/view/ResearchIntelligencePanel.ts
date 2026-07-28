@@ -119,9 +119,9 @@ export class ResearchIntelligencePanel {
     }
   }
 
-  private renderProvider(root: HTMLElement, providerId: "anthropic" | "ollama", model: string, fallback: boolean): void {
+  private renderProvider(root: HTMLElement, providerId: "anthropic" | "ollama" | "openai-compat", model: string, fallback: boolean): void {
     const meta = root.createDiv({ cls: "cc-intelligence-meta" });
-    meta.createSpan({ text: providerId === "anthropic" ? "Anthropic" : "Ollama" });
+    meta.createSpan({ text: providerId === "anthropic" ? "Anthropic" : providerId === "ollama" ? "Ollama" : "Endpoint" });
     meta.createSpan({ text: model });
     if (fallback) meta.createSpan({ text: "Fallback" });
   }

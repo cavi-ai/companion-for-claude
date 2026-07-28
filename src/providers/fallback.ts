@@ -3,7 +3,7 @@
 // or when tokens run out. The router/ChatView own the wiring; this owns the
 // decision and stays unit-testable.
 
-export type ChatBackend = "claude" | "local" | "auto";
+export type ChatBackend = "claude" | "local" | "auto" | "custom";
 
 /**
  * Classify an error as one where falling back to a local model makes sense:
@@ -55,16 +55,17 @@ export interface FallbackContext {
  * Always requires a local model to actually be available.
  */
 export function shouldFallbackToLocal(ctx: FallbackContext): boolean {
-  if (ctx.backend === "local") return false;
+  // Already on a local backend — never fall back again.
+  if (ctx.backend === "local" || ctx.backend === "custom") return false;
   if (!ctx.localAvailable) return false;
   return isOfflineOrUsageError(ctx.error);
 }
 
 /** Which provider a turn should *start* on, given the backend mode. */
 export function primaryBackend(backend: ChatBackend): "claude" | "local" {
-  // "local" starts local; "claude" and "auto" start on Claude (auto degrades
-  // to local only on failure).
-  return backend === "local" ? "local" : "claude";
+  // "local"/"custom" start local; "claude" and "auto" start on Claude (auto
+  // degrades to local only on failure).
+  return backend === "local" || backend === "custom" ? "local" : "claude";
 }
 
 /** A short, user-facing reason for a fallback, derived from the error. */

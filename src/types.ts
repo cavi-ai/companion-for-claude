@@ -83,14 +83,27 @@ export interface PluginSettings {
   // ----- local models (Ollama) -----
   /** Base URL of the local Ollama server. */
   ollamaHost: string;
-  /** Default local model for utility tasks (summaries, tagging). */
+  /** Local model for chat when the chat backend is "local". */
   ollamaModel: string;
-  /** Route cheap "utility" work (summarize/tag/ingest) to Ollama. */
-  localUtilityEnabled: boolean;
-  /** Chat backend: always Claude, always local, or auto (Claude with local fallback). */
-  chatBackend: "claude" | "local" | "auto";
+  /** Local model for utility tasks; empty = use ollamaModel. */
+  ollamaUtilityModel: string;
+  /** Route cheap "utility" work (summarize/tag/ingest) to this backend. */
+  utilityBackend: "claude" | "ollama" | "custom";
+  /** Chat backend: always Claude, always local, auto (Claude with local
+   *  fallback), or custom (an OpenAI-compatible endpoint). */
+  chatBackend: "claude" | "local" | "auto" | "custom";
   /** Provider policy for explicit Research Intelligence narrative analysis. */
   intelligenceNarrator: "current" | "claude" | "local" | "disabled";
+
+  // ----- OpenAI-compatible endpoint (LM Studio, mlx-lm, vLLM, …) -----
+  /** Base URL, with or without the /v1 suffix (e.g. http://localhost:1234). */
+  openaiCompatHost: string;
+  /** Model id the server exposes. */
+  openaiCompatModel: string;
+  /** Optional bearer key (most local servers accept anything or nothing). */
+  openaiCompatKey: string;
+  /** Embedding model id on the custom endpoint (engine "custom"). */
+  openaiCompatEmbeddingModel: string;
 
   // ----- scholarly discovery -----
   /** Enable explicit, user-triggered scholarly discovery network requests. */
@@ -108,8 +121,11 @@ export interface PluginSettings {
   semanticEnabled: boolean;
   /** Ollama embedding model (e.g. nomic-embed-text). Local + private. */
   embeddingModel: string;
-  /** Which engine computes embeddings: the bundled in-webview model or Ollama. */
-  embeddingEngine: "builtin" | "ollama";
+  /** Which engine computes embeddings: the bundled in-webview model, Ollama,
+   *  or the custom OpenAI-compatible endpoint. */
+  embeddingEngine: "builtin" | "ollama" | "custom";
+  /** Selected built-in embedding model (catalog id from transformers/model). */
+  builtinEmbeddingModel: string;
   /** Set once the built-in embedding-model download prompt has been shown. */
   semanticModelPrompted: boolean;
 
@@ -228,9 +244,15 @@ export const DEFAULT_SETTINGS: PluginSettings = {
 
   ollamaHost: "http://localhost:11434",
   ollamaModel: "llama3.1",
-  localUtilityEnabled: false,
+  ollamaUtilityModel: "",
+  utilityBackend: "claude",
   chatBackend: "claude",
   intelligenceNarrator: "current",
+
+  openaiCompatHost: "",
+  openaiCompatModel: "",
+  openaiCompatKey: "",
+  openaiCompatEmbeddingModel: "",
 
   discoveryEnabled: true,
   openAlexContactEmail: "",
@@ -242,6 +264,7 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   semanticEnabled: true,
   embeddingModel: "nomic-embed-text",
   embeddingEngine: "builtin",
+  builtinEmbeddingModel: "builtin:snowflake-arctic-embed-xs",
   /** Set once the built-in embedding-model download prompt has been shown. */
   semanticModelPrompted: false,
 

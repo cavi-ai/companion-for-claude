@@ -32,27 +32,27 @@ describe("hasCachedModel", () => {
       ],
       opened,
     );
-    await expect(hasCachedModel(caches)).resolves.toBe(true);
+    await expect(hasCachedModel(caches, repo)).resolves.toBe(true);
     expect(opened).toEqual([TRANSFORMERS_CACHE_NAME]);
   });
 
   it("false for unrelated cached entries", async () => {
     const caches = fakeCaches(["https://huggingface.co/other/model/resolve/main/onnx/model.onnx", ORT_WASM]);
-    await expect(hasCachedModel(caches)).resolves.toBe(false);
+    await expect(hasCachedModel(caches, repo)).resolves.toBe(false);
   });
 
   it("false when only non-weight repo files are cached (aborted download)", async () => {
     const caches = fakeCaches([`https://huggingface.co/${repo}/resolve/main/config.json`]);
-    await expect(hasCachedModel(caches)).resolves.toBe(false);
+    await expect(hasCachedModel(caches, repo)).resolves.toBe(false);
   });
 
   it("false when the Cache API is unavailable", async () => {
-    await expect(hasCachedModel(undefined)).resolves.toBe(false);
+    await expect(hasCachedModel(undefined, repo)).resolves.toBe(false);
   });
 
   it("false when opening the cache throws", async () => {
     const caches: CachesLike = { open: () => Promise.reject(new Error("denied")) };
-    await expect(hasCachedModel(caches)).resolves.toBe(false);
+    await expect(hasCachedModel(caches, repo)).resolves.toBe(false);
   });
 });
 
@@ -76,7 +76,7 @@ describe("clearCachedModel", () => {
     expect(deleted).not.toContain(otherModel);
     expect(deleted).toHaveLength(5);
     // and the presence check flips back to false
-    await expect(hasCachedModel(caches)).resolves.toBe(false);
+    await expect(hasCachedModel(caches, repo)).resolves.toBe(false);
   });
 
   it("0 when nothing of ours is cached", async () => {

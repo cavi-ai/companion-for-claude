@@ -19,7 +19,6 @@
 
 import "./forceWebEnv"; // MUST precede the transformers import — see that file
 import { pipeline, env } from "@huggingface/transformers";
-import { BUILTIN_EMBEDDING_MODEL } from "./model";
 import type { WorkerRequest, WorkerResponse } from "./protocol";
 
 // The dedicated-worker global, narrowed to what this file uses. (A plain
@@ -53,10 +52,10 @@ let backend = "wasm";
 let loading: Promise<void> | null = null;
 /** Bumped by "dispose" so an in-flight load can tell it was cancelled. */
 let generation = 0;
+/** The loaded model's config (set on load; embed uses its pooling). */
+let active: { repo: string; pooling: "cls" | "mean" } | null = null;
 
-const POOLING_OPTS = { pooling: BUILTIN_EMBEDDING_MODEL.pooling, normalize: true } as const;
-
-function makeExtractor(device: "webgpu" | "wasm", id: number): Promise<Extractor> {
+function makeExtractor(device: "webgpu" | "wasm", id: number, repo: string): Promise<Extractor> {
   // Hub progress events carry {status:"progress", file, progress: 0-100};
   // other statuses (initiate/download/done/ready) have no progress field.
   const progress = (p: unknown) => {
@@ -65,18 +64,19 @@ function makeExtractor(device: "webgpu" | "wasm", id: number): Promise<Extractor
       ctx.postMessage({ id, type: "progress", percent: Math.round(info.progress), file: info.file ?? "" });
     }
   };
-  // q8 → onnx/model_quantized.onnx (verified present in the pinned repo).
-  return pipeline("feature-extraction", BUILTIN_EMBEDDING_MODEL.hfRepo, {
+  // q8 → onnx/model_quantized.onnx (verified present in the catalog repos).
+  return pipeline("feature-extraction", repo, {
     device,
     dtype: "q8",
     progress_callback: progress,
   });
 }
 
-async function doLoad(id: number): Promise<void> {
+async function doLoad(id: number, repo: string, pooling: "cls" | "mean"): Promise<void> {
   const gen = generation;
   let candidate: Extractor | null = null;
   let chosen = "wasm";
+  const poolingOpts = { pooling, normalize: true } as const;
   // pipeline() throws synchronously-via-rejection when navigator.gpu is
   // missing ("Unsupported device"), but some WebGPU failures only surface at
   // session creation or first inference — probe the API up front, then verify
@@ -85,8 +85,8 @@ async function doLoad(id: number): Promise<void> {
   if (typeof navigator !== "undefined" && "gpu" in navigator) {
     let webgpu: Extractor | null = null;
     try {
-      webgpu = await makeExtractor("webgpu", id);
-      await webgpu(["warm-up"], POOLING_OPTS);
+      webgpu = await makeExtractor("webgpu", id, repo);
+      await webgpu(["warm-up"], poolingOpts);
       candidate = webgpu;
       chosen = "webgpu";
     } catch {
@@ -94,7 +94,7 @@ async function doLoad(id: number): Promise<void> {
     }
   }
   if (!candidate) {
-    candidate = await makeExtractor("wasm", id);
+    candidate = await makeExtractor("wasm", id, repo);
   }
   if (gen !== generation) {
     // "dispose" arrived while we were loading: don't resurrect the pipeline.
@@ -103,9 +103,18 @@ async function doLoad(id: number): Promise<void> {
   }
   extractor = candidate;
   backend = chosen;
+  active = { repo, pooling };
 }
 
-async function load(id: number): Promise<void> {
+async function load(id: number, repo: string, pooling: "cls" | "mean"): Promise<void> {
+  // A load for a different model than the loaded one swaps the pipeline out.
+  if (extractor && active?.repo !== repo) {
+    generation++;
+    void extractor.dispose?.()?.catch(() => {});
+    extractor = null;
+    loading = null;
+    active = null;
+  }
   if (!extractor) {
     // Memoize the in-flight construction: a second "load" while the first is
     // still running must not build a second pipeline (that would leak the
@@ -113,7 +122,7 @@ async function load(id: number): Promise<void> {
     // events — later joiners just await the shared promise and post their
     // own result by id.
     if (!loading) {
-      const p = doLoad(id).catch((e: unknown) => {
+      const p = doLoad(id, repo, pooling).catch((e: unknown) => {
         if (loading === p) loading = null; // allow retry after a failed load
         throw e;
       });
@@ -125,11 +134,11 @@ async function load(id: number): Promise<void> {
 }
 
 async function embed(id: number, texts: string[]): Promise<void> {
-  if (!extractor) {
+  if (!extractor || !active) {
     ctx.postMessage({ id, type: "error", message: "model not loaded" });
     return;
   }
-  const out = await extractor(texts, POOLING_OPTS);
+  const out = await extractor(texts, { pooling: active.pooling, normalize: true });
   ctx.postMessage({ id, type: "result", vectors: out.tolist() });
 }
 
@@ -141,12 +150,13 @@ ctx.onmessage = (e) => {
       type: "error",
       message: err instanceof Error ? err.message : String(err),
     });
-  if (msg.type === "load") void load(msg.id).catch(fail);
+  if (msg.type === "load") void load(msg.id, msg.repo, msg.pooling).catch(fail);
   else if (msg.type === "embed") void embed(msg.id, msg.texts).catch(fail);
   else if (msg.type === "dispose") {
     generation++; // cancels any in-flight load (see doLoad)
     void extractor?.dispose?.()?.catch(() => {});
     extractor = null;
     loading = null;
+    active = null;
   }
 };

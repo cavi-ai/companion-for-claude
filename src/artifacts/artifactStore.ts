@@ -1,37 +1,13 @@
-import { App, Notice, TFile, normalizePath } from "obsidian";
+import { App, Notice, TFile } from "obsidian";
 import { sanitizeFileName, type ExtractedArtifact } from "./parse";
 import { buildFrontmatter, normalizeTags, datedTitleBase } from "../indexing/frontmatter";
+import { ensureVaultFolder, uniqueNotePath } from "../vault/vaultFiles";
 
 export { extractArtifact, type ExtractedArtifact } from "./parse";
 
-async function ensureFolder(app: App, folder: string): Promise<void> {
-  const path = normalizePath(folder);
-  if (path === "" || path === "/") return;
-  if (app.vault.getAbstractFileByPath(path)) return;
-  // Create nested folders segment by segment.
-  const parts = path.split("/");
-  let cur = "";
-  for (const part of parts) {
-    cur = cur ? `${cur}/${part}` : part;
-    if (!app.vault.getAbstractFileByPath(cur)) {
-      try {
-        await app.vault.createFolder(cur);
-      } catch {
-        /* race: already exists */
-      }
-    }
-  }
-}
-
 async function writeUnique(app: App, folder: string, base: string, ext: string, content: string): Promise<TFile> {
-  await ensureFolder(app, folder);
-  const safe = sanitizeFileName(base);
-  let path = normalizePath(`${folder}/${safe}.${ext}`);
-  let i = 2;
-  while (app.vault.getAbstractFileByPath(path)) {
-    path = normalizePath(`${folder}/${safe} ${i}.${ext}`);
-    i++;
-  }
+  await ensureVaultFolder(app, folder);
+  const path = await uniqueNotePath(app, folder, sanitizeFileName(base), ext);
   return app.vault.create(path, content);
 }
 

@@ -1,7 +1,8 @@
-import { App, TFile, normalizePath, getAllTags, parseYaml, requestUrl } from "obsidian";
+import { App, TFile, normalizePath, getAllTags, requestUrl } from "obsidian";
 import type { McpToolDef } from "./protocol";
-import { scoreContent, snippetAround, tokenize } from "../context/search";
-import { reciprocalRankFusion } from "../semantic/similarity";
+import { tokenize } from "../context/search";
+import { fuseKeywordAndSemantic, keywordVaultSearch, type SemanticSearch } from "../context/hybridSearch";
+import { ensureVaultFolder } from "../vault/vaultFiles";
 import { buildFrontmatter, normalizeTags, type FrontmatterData } from "../indexing/frontmatter";
 import { conform } from "../ontology/conform";
 import type { OntologyRegistry } from "../ontology/registry";
@@ -10,6 +11,7 @@ import { replaceSection } from "./edit";
 import { buildCanvas, serializeCanvas, type ProposedCanvasNode, type ProposedCanvasEdge } from "../canvas/jsonCanvas";
 import { buildBaseFile, type ProposedBase } from "../bases/baseFile";
 import { ResearchRepository } from "../research/repository";
+import { createResearchRepository } from "../research/repositoryFactory";
 import { RESEARCH_WRITE_TOOLS, ResearchTools } from "../research/tools";
 import { captureWebSource, type WebCapture } from "../research/webCapture";
 
@@ -29,7 +31,7 @@ export function assertVaultPath(p: string): string {
 }
 
 /** Optional semantic retriever (local embeddings); absent → keyword-only. */
-export type SemanticSearch = (query: string, k: number) => Promise<{ path: string; text: string }[]>;
+export type { SemanticSearch } from "../context/hybridSearch";
 
 export interface VaultToolsOptions {
   allowWrites: boolean;
@@ -361,55 +363,15 @@ export class VaultTools {
   }
 
   private researchRepository(): ResearchRepository {
-    const readNotes = async (files: TFile[]) => Promise.all(files.map(async (file) => {
-      const content = await this.app.vault.cachedRead(file);
-      const body = content.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, "");
-      const cached = this.app.metadataCache.getFileCache(file)?.frontmatter as Record<string, unknown> | undefined;
-      const match = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/.exec(content);
-      const frontmatter = cached ?? (match ? parseYaml(match[1] ?? "") as Record<string, unknown> : undefined);
-      return { path: file.path, ...(frontmatter ? { frontmatter } : {}), body };
-    }));
-    return new ResearchRepository({
-      listMarkdown: async () => readNotes(this.app.vault.getMarkdownFiles()),
-      listProjectMarkdown: async (projectPath) => {
-        const folder = projectPath.slice(0, -"/Project.md".length);
-        const canonicalPrefixes = ["Sources", "Evidence", "Claims", "Questions", "Documents"].map((name) => `${folder}/${name}/`);
-        const candidates = this.app.vault.getMarkdownFiles().filter((file) => {
-          return file.path === projectPath || canonicalPrefixes.some((prefix) => file.path.startsWith(prefix));
-        });
-        return readNotes(candidates);
-      },
-      createWithParents: async (path, content) => {
-        const safe = assertVaultPath(path);
-        if (this.app.vault.getAbstractFileByPath(safe)) throw new Error(`File already exists: ${safe}`);
-        await this.ensureFolder(safe.slice(0, safe.lastIndexOf("/")));
-        await this.app.vault.create(safe, content);
-      },
-      updateFrontmatter: async (path, mutator) => {
-        const file = this.resolveFile(path);
-        await this.app.fileManager.processFrontMatter(file, mutator);
-      },
-      updateText: async (path, updater) => {
-        const file = this.resolveFile(path);
-        await this.app.vault.process(file, updater);
-      },
+    return createResearchRepository(this.app, {
+      ensureFolder: (folder) => this.ensureFolder(folder),
+      normalizeWritePath: (p) => assertVaultPath(p),
     });
   }
 
   private async search(query: string, limit: number): Promise<string> {
-    // Keyword pass.
     const terms = tokenize(query);
-    const keyword: Array<{ path: string; score: number; snippet: string }> = [];
-    if (terms.length > 0) {
-      for (const file of this.app.vault.getMarkdownFiles()) {
-        const cache = this.app.metadataCache.getFileCache(file);
-        const lowerTags = cache ? (getAllTags(cache) ?? []).join(" ").toLowerCase() : "";
-        const content = await this.app.vault.cachedRead(file);
-        const { score, firstIdx } = scoreContent(terms, file.path.toLowerCase(), lowerTags, content);
-        if (score > 0) keyword.push({ path: file.path, score, snippet: snippetAround(content, firstIdx) });
-      }
-      keyword.sort((a, b) => b.score - a.score);
-    }
+    const keyword = await keywordVaultSearch(this.app, query);
 
     // Semantic pass (when enabled + index built); degrades to keyword on failure.
     let semantic: { path: string; text: string }[] = [];
@@ -425,17 +387,9 @@ export class VaultTools {
       return terms.length === 0 && !this.opts.semantic ? "No searchable terms in query." : `No matches for "${query}".`;
     }
 
-    // Fuse by path (reciprocal rank fusion); keep the best snippet per note.
-    const snippet = new Map<string, string>();
-    for (const k of keyword) if (!snippet.has(k.path)) snippet.set(k.path, k.snippet);
-    for (const doc of semantic) if (!snippet.has(doc.path)) snippet.set(doc.path, doc.text);
-    const fused = reciprocalRankFusion([
-      keyword.map((h) => ({ id: h.path, score: h.score })),
-      semantic.map((doc) => ({ id: doc.path, score: 1 })),
-    ]).slice(0, limit);
-
+    const fused = fuseKeywordAndSemantic(keyword, semantic, limit);
     const mode = semantic.length ? "semantic + keyword" : "keyword";
-    const body = fused.map((f) => `## ${f.id}\n${snippet.get(f.id) ?? ""}`).join("\n\n");
+    const body = fused.map((f) => `## ${f.path}\n${f.snippet}`).join("\n\n");
     return `(${mode} search)\n\n${body}`;
   }
 
@@ -658,19 +612,7 @@ export class VaultTools {
   }
 
   private async ensureFolder(folder: string): Promise<void> {
-    const p = assertVaultPath(folder);
-    if (p === "" || p === "/" || this.app.vault.getAbstractFileByPath(p)) return;
-    let cur = "";
-    for (const part of p.split("/")) {
-      cur = cur ? `${cur}/${part}` : part;
-      if (!this.app.vault.getAbstractFileByPath(cur)) {
-        try {
-          await this.app.vault.createFolder(cur);
-        } catch {
-          /* race */
-        }
-      }
-    }
+    await ensureVaultFolder(this.app, assertVaultPath(folder));
   }
 
   private async uniquePath(folder: string, title: string, ext = ".md"): Promise<string> {
