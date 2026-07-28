@@ -1,4 +1,5 @@
 import type { Provider } from "../providers/types";
+import { completeJsonWithRepair } from "../providers/jsonRepair";
 import { buildDraftGrounding, groundingClaimFingerprint, type DraftGroundingPacket } from "./draftGrounding";
 import { buildDraftRequest, parseDraftResponse } from "./draftRequest";
 import type { DraftSectionEnvelope, ParsedDraftSection } from "./draftSections";
@@ -74,21 +75,11 @@ export class DraftCoordinator {
     if (!provider.hasCredentials()) throw new Error(`The selected ${provider.label} provider is missing its credential or connection`);
     const request = buildDraftRequest(packet);
     const completion = { ...request, model, maxTokens: this.deps.maxTokens(), temperature: 0, responseFormat: "json" as const, responseSchema: DRAFT_RESPONSE_SCHEMA, ...(signal ? { signal } : {}) };
-    let raw = await provider.complete(completion);
     let response: ValidatedDraftResponse;
     try {
-      response = parseDraftResponse(packet, raw);
-    } catch (error) {
-      const feedback = error instanceof Error ? error.message : "The response did not match the required schema";
-      raw = await provider.complete({
-        ...completion,
-        messages: [...completion.messages, { role: "assistant", content: raw }, { role: "user", content: `Your previous JSON was rejected: ${feedback}. Return one complete corrected JSON object matching responseSchema.` }],
-      });
-      try {
-        response = parseDraftResponse(packet, raw);
-      } catch {
-        response = groundedFallback(packet, section);
-      }
+      response = (await completeJsonWithRepair(provider, completion, (raw) => parseDraftResponse(packet, raw))).response;
+    } catch {
+      response = groundedFallback(packet, section);
     }
     const citations = [...new Map(packet.evidence.map(({ citationKey: key, sourcePath }) => [sourcePath, { key, sourcePath }])).values()];
     return {

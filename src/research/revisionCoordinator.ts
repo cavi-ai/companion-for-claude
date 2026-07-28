@@ -1,4 +1,5 @@
 import type { Provider } from "../providers/types";
+import { completeJsonWithRepair } from "../providers/jsonRepair";
 import { buildDraftGrounding, groundingClaimFingerprint, type DraftGroundingPacket } from "./draftGrounding";
 import { draftMarkdownFingerprint, type DraftSectionEnvelope, type ParsedDraftSection } from "./draftSections";
 import type { ProjectSnapshot } from "./graph";
@@ -38,14 +39,7 @@ export class RevisionCoordinator {
     if (!provider.hasCredentials()) throw new Error(`The selected ${provider.label} provider is missing its credential or connection`);
     const built = buildRevisionRequest(packet, section.markdown, request);
     const completion = { ...built, model, maxTokens: this.deps.maxTokens(), temperature: 0, responseFormat: "json" as const, responseSchema: RESPONSE_SCHEMA, ...(signal ? { signal } : {}) };
-    let raw = await provider.complete(completion);
-    let response: ValidatedRevisionResponse;
-    try { response = parseRevisionResponse(packet, request, raw, section.markdown); }
-    catch (error) {
-      const feedback = error instanceof Error ? error.message : "The response did not match the required schema";
-      raw = await provider.complete({ ...completion, messages: [...completion.messages, { role: "assistant", content: raw }, { role: "user", content: `Your previous JSON was rejected: ${feedback}. Return one complete corrected JSON object matching responseSchema.` }] });
-      response = parseRevisionResponse(packet, request, raw, section.markdown);
-    }
+    const { response } = await completeJsonWithRepair(provider, completion, (raw) => parseRevisionResponse(packet, request, raw, section.markdown));
     return {
       section, packet, request, response,
       envelope: { ...section.envelope, provider: provider.id, model, generatedAt: this.deps.now?.() ?? new Date().toISOString(), revisionIntent: request.intent, ...(request.customInstruction?.trim() ? { revisionInstruction: request.customInstruction.trim() } : {}), revisedFromFingerprint: draftMarkdownFingerprint(section.markdown), claimFingerprint: groundingClaimFingerprint(packet), evidence: packet.evidence.map(({ path, fingerprint }) => ({ path, fingerprint })) },

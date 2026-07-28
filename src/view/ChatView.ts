@@ -20,7 +20,8 @@ import { type SlashCommand, runNativeSlashCommand, SLASH_COMMANDS, parseSlashQue
 import { substitutePlaceholders } from "../templates/promptTemplates";
 import { detectPageUrl, pageLabel, type AttachedPage } from "../context/urlContext";
 import { WORKFLOWS } from "../workflows/catalog";
-import { hasIncompleteHtmlArtifactFence, shouldRenderMarkdownDuringStream, splitStreamingArtifact } from "./streamRender";
+import { hasIncompleteHtmlArtifactFence, splitStreamingArtifact } from "./streamRender";
+import { TurnRenderer, type TurnRendererHost } from "./turnRenderer";
 import { gatherContext, type AttachedPath } from "../context/vaultContext";
 import { arrayBufferToBase64, maxBytesFor, mediaBlock, mediaKind, mediaMime, sniffMime, type MediaAttachment } from "../context/attachments";
 import { AtMenu } from "./AtMenu";
@@ -1422,6 +1423,24 @@ export class ChatView extends ItemView {
     }
   }
 
+  /** Adapt this view to the TurnRenderer host contract (one per turn). */
+  private turnHost(): TurnRendererHost {
+    return {
+      renderMarkdownInto: (el, md) => this.renderMarkdownInto(el, md),
+      renderStreamingArtifactInto: (el, buffer) => this.renderStreamingArtifactInto(el, buffer),
+      scrollToBottom: () => this.scrollToBottom(),
+      clearThinkingStatus: () => this.clearThinkingStatus(),
+      createThinkingPanel: (bubble) => this.createThinkingPanel(bubble),
+      annotateTruncated: (bubble) => this.annotateTruncated(bubble),
+      mergeTurnUsage: (usage) => {
+        this._turnUsage = mergeUsage(this._turnUsage ?? undefined, usage);
+      },
+      syncBuffer: (buffer) => {
+        this._lastBuffer = buffer;
+      },
+    };
+  }
+
   /**
    * Run one streaming attempt on a backend. Resolves to the error if it failed
    * (for the fallback decision), or null on success (onDone fired). The answer
@@ -1445,36 +1464,7 @@ export class ChatView extends ItemView {
       ? (this.turnModelOverride ?? this.controls.model)
       : localOverride?.model ?? (useCustom ? this.plugin.settings.openaiCompatModel : this.plugin.settings.ollamaModel);
     const shape = shapeRequest({ ...this.controls, model: onClaude ? model : this.controls.model }, this.maxTokensOverride ?? this.plugin.settings.maxTokens);
-    const wantThinking = onClaude && this.controls.thinking && this.controls.showThinking;
-    let thinkingBody: HTMLElement | null = wantThinking ? this.createThinkingPanel(bubble) : null;
-
-    let buffer = "";
-    let thinkBuf = "";
-    let scheduled = false;
-    let finalizing = false;
-    // Throttle the (expensive) full markdown re-render during streaming. Rendering
-    // every animation frame swaps the whole subtree via replaceChildren ~60×/s,
-    // which reads as flicker. ~100ms keeps it lively without churn; onDone always
-    // does a final authoritative render, and skipped frames just keep the last
-    // paint (the next delta reschedules a flush, so content never stalls visibly).
-    const MD_THROTTLE_MS = 100;
-    let lastMd = 0;
-    let artifactPainted = false;
-    const flush = () => {
-      scheduled = false;
-      if (finalizing) return;
-      if (shouldRenderMarkdownDuringStream(buffer)) {
-        artifactPainted = false;
-        const now = performance.now();
-        if (now - lastMd < MD_THROTTLE_MS) return; // skip; next delta reschedules
-        lastMd = now;
-        void this.renderMarkdownInto(body, buffer);
-      } else if (!artifactPainted) {
-        artifactPainted = true; // paint the "building" chip once; the fence is streaming
-        this.renderStreamingArtifactInto(body, buffer);
-      }
-      this.scrollToBottom();
-    };
+    const renderer = new TurnRenderer(this.turnHost(), bubble, body, onClaude && this.controls.thinking && this.controls.showThinking);
 
     return new Promise((resolve) => {
       let settled = false;
@@ -1492,38 +1482,20 @@ export class ChatView extends ItemView {
       void provider.stream(
         request,
         {
-          onThinking: (delta) => {
-            if (!thinkingBody) thinkingBody = this.createThinkingPanel(bubble);
-            thinkBuf += delta;
-            thinkingBody.setText(thinkBuf);
-            this.scrollToBottom();
-          },
-          onText: (delta) => {
-            if (buffer === "") this.clearThinkingStatus(); // first token landed
-            buffer += delta;
-            this._lastBuffer = buffer;
-            if (!scheduled) {
-              scheduled = true;
-              window.requestAnimationFrame(flush);
-            }
-          },
+          onThinking: (delta) => renderer.onThinking(delta),
+          onText: (delta) => renderer.onText(delta),
           onError: (err) => {
             if (settled) return;
             settled = true;
             const status = (err as { status?: number }).status;
             resolve(status !== undefined ? { message: err.message, status } : { message: err.message });
           },
-          onUsage: (usage) => {
-            this._turnUsage = mergeUsage(this._turnUsage ?? undefined, usage);
-          },
-          onTruncated: () => this.annotateTruncated(bubble),
+          onUsage: (usage) => renderer.onUsage(usage),
+          onTruncated: () => renderer.onTruncated(),
           onDone: (full) => {
             if (settled) return;
             settled = true;
-            finalizing = true;
-            buffer = full;
-            this._lastBuffer = full;
-            void this.renderMarkdownInto(body, full).then(() => {
+            void renderer.finalize(full).then(() => {
               this.finishAssistant(full, bubble);
               resolve(null);
             });
@@ -1551,9 +1523,7 @@ export class ChatView extends ItemView {
   ): Promise<{ message?: string; status?: number } | null> {
     const provider = this.plugin.router().anthropic;
     const shape = shapeRequest(this.controls, this.maxTokensOverride ?? this.plugin.settings.maxTokens);
-    const wantThinking = this.controls.thinking && this.controls.showThinking;
-    let thinkingBody: HTMLElement | null = wantThinking ? this.createThinkingPanel(bubble) : null;
-    let thinkBuf = "";
+    const renderer = new TurnRenderer(this.turnHost(), bubble, body, this.controls.thinking && this.controls.showThinking);
 
     const request: CompletionRequest = {
       system: this.plugin.composeSystemPrompt({ agent: true, plan: this.planMode }),
@@ -1574,32 +1544,6 @@ export class ChatView extends ItemView {
     if (shape.outputConfig !== undefined) request.outputConfig = shape.outputConfig;
     if (this.abort?.signal) request.signal = this.abort.signal;
 
-    // Throttled streaming render (same pattern as streamTurn; the final render
-    // below is authoritative). Iteration boundaries insert a paragraph break so
-    // the live view matches the loop's joined result.
-    let buffer = "";
-    let scheduled = false;
-    let finalizing = false;
-    let needSeparator = false;
-    const MD_THROTTLE_MS = 100;
-    let lastMd = 0;
-    let artifactPainted = false;
-    const flush = () => {
-      scheduled = false;
-      if (finalizing) return;
-      if (shouldRenderMarkdownDuringStream(buffer)) {
-        artifactPainted = false;
-        const now = performance.now();
-        if (now - lastMd < MD_THROTTLE_MS) return;
-        lastMd = now;
-        void this.renderMarkdownInto(body, buffer);
-      } else if (!artifactPainted) {
-        artifactPainted = true; // paint the "building" chip once; the fence is streaming
-        this.renderStreamingArtifactInto(body, buffer);
-      }
-      this.scrollToBottom();
-    };
-
     const chips = this.createToolChips(bubble, body);
     const deps: AgentTurnDeps = {
       stream: (req, handlers) => provider.stream(req, handlers),
@@ -1617,31 +1561,14 @@ export class ChatView extends ItemView {
     };
 
     const result = await runAgentTurn(deps, request, {
-      onText: (delta) => {
-        if (buffer === "") this.clearThinkingStatus();
-        if (needSeparator && buffer.length > 0) buffer += "\n\n";
-        needSeparator = false;
-        buffer += delta;
-        this._lastBuffer = buffer;
-        if (!scheduled) {
-          scheduled = true;
-          window.requestAnimationFrame(flush);
-        }
-      },
-      onThinking: (delta) => {
-        if (!thinkingBody) thinkingBody = this.createThinkingPanel(bubble);
-        thinkBuf += delta;
-        thinkingBody.setText(thinkBuf);
-        this.scrollToBottom();
-      },
-      onUsage: (usage) => {
-        this._turnUsage = mergeUsage(this._turnUsage ?? undefined, usage);
-      },
-      onTruncated: () => this.annotateTruncated(bubble),
+      onText: (delta) => renderer.onText(delta),
+      onThinking: (delta) => renderer.onThinking(delta),
+      onUsage: (usage) => renderer.onUsage(usage),
+      onTruncated: () => renderer.onTruncated(),
       onToolStart: (block) => chips.start(block),
       onToolResult: (block, res) => {
         chips.finish(block, res);
-        needSeparator = true;
+        renderer.markToolBoundary();
       },
       onNotice: (text) => this.annotateAgentNotice(bubble, text),
     });
@@ -1652,10 +1579,8 @@ export class ChatView extends ItemView {
       return { message: result.error.message, ...(status !== undefined ? { status } : {}) };
     }
 
-    finalizing = true;
-    this._lastBuffer = result.text;
     if (result.error) this.annotateAgentNotice(bubble, `Turn ended early: ${result.error.message}`);
-    await this.renderMarkdownInto(body, result.text);
+    await renderer.finalize(result.text);
     this.finishAssistant(result.text.trim().length > 0 ? result.text : null, bubble, result.trace);
     return null;
   }

@@ -1,5 +1,6 @@
 import type { AuditFinding } from "./audit";
 import { compareCodeUnits, type ProjectSnapshot } from "./graph";
+import { researchContinuationStep, recordBasename as basename } from "./nextStep";
 import type { ResearchProjectRecord } from "./types";
 
 export interface WorkbenchViewModel {
@@ -9,10 +10,6 @@ export interface WorkbenchViewModel {
   counts: { sources: number; evidence: number; claims: number; openQuestions: number };
   health: { unsupportedClaims: number; unreviewedEvidence: number; missingLocators: number; brokenReferences: number };
   nextActions: Array<{ kind: "review" | "repair" | "continue"; label: string; path?: string }>;
-}
-
-function basename(path: string): string {
-  return (path.split("/").pop() ?? path).replace(/\.md$/, "");
 }
 
 export function buildWorkbenchViewModel(snapshot: ProjectSnapshot | undefined, findings: AuditFinding[]): WorkbenchViewModel {
@@ -36,10 +33,18 @@ export function buildWorkbenchViewModel(snapshot: ProjectSnapshot | undefined, f
     .sort((left, right) => (left.kind === "repair" ? 0 : 1) - (right.kind === "repair" ? 0 : 1) || compareCodeUnits(left.path, right.path));
 
   if (nextActions.length === 0) {
-    if (snapshot.sources.length === 0) nextActions.push({ kind: "continue", label: "Add a source", path: snapshot.project.path });
-    else if (snapshot.evidence.length === 0) nextActions.push({ kind: "continue", label: "Create evidence", path: snapshot.sources[0]!.path });
-    else if (snapshot.claims.length === 0) nextActions.push({ kind: "continue", label: "Create a claim", path: snapshot.project.path });
-    else nextActions.push({ kind: "continue", label: "Build the outline", path: snapshot.project.path });
+    // The continuation step is decided once, in nextStep.ts — the desk and the
+    // workbench can never drift; only the labels are per-surface.
+    const { step, path } = researchContinuationStep(snapshot);
+    const label = {
+      "add-source": "Add a source",
+      "create-evidence": "Create evidence",
+      "create-claim": "Create a claim",
+      "build-outline": "Build the outline",
+      "continue-outline": "Continue into the draft",
+      "assure-document": "Assure the draft",
+    }[step];
+    nextActions.push({ kind: "continue", label, path });
   }
 
   return {

@@ -1,5 +1,6 @@
 import type { AuditFinding } from "./audit";
 import { compareCodeUnits, type ProjectSnapshot } from "./graph";
+import { researchContinuationStep, recordBasename as basename } from "./nextStep";
 import type { ResearchProjectRecord } from "./types";
 
 export const RESEARCH_STAGES = ["frame", "gather", "read", "reason", "shape", "write", "assure"] as const;
@@ -45,7 +46,6 @@ export interface ResearchDeskViewModel {
 }
 
 function title(value: string): string { return value[0]?.toUpperCase() + value.slice(1); }
-function basename(path: string): string { return (path.split("/").pop() ?? path).replace(/\.md$/i, ""); }
 
 function findingAction(finding: AuditFinding): ResearchDeskAction | undefined {
   const name = basename(finding.path);
@@ -61,13 +61,21 @@ function findingAction(finding: AuditFinding): ResearchDeskAction | undefined {
 }
 
 function continuationActions(snapshot: ProjectSnapshot): ResearchDeskAction[] {
-  if (!snapshot.sources.length) return [{ id: `add-source:${snapshot.project.path}`, label: "Capture the first source", reason: "A project needs source material before evidence and claims can be developed.", target: "Sources", priority: 4, path: snapshot.project.path, tone: "continue" }];
-  if (!snapshot.evidence.length) return [{ id: `create-evidence:${snapshot.sources[0]!.path}`, label: "Extract the first evidence", reason: "Turn a precise source passage into reviewable evidence.", target: "Evidence", priority: 4, path: snapshot.sources[0]!.path, tone: "continue" }];
-  if (!snapshot.claims.length) return [{ id: `create-claim:${snapshot.project.path}`, label: "Develop the first claim", reason: "Connect reviewed evidence to a proposition the document can use.", target: "Claims", priority: 4, path: snapshot.project.path, tone: "continue" }];
-  if (!snapshot.documents.length) return [{ id: `build-outline:${snapshot.project.path}`, label: "Build the evidence-backed outline", reason: "The reviewed claims are ready to become a document structure.", target: "Outline", priority: 6, path: snapshot.project.path, tone: "continue" }];
-  const draft = snapshot.documents.find(({ documentKind }) => documentKind === "draft");
-  if (!draft) return [{ id: `continue-outline:${snapshot.documents[0]!.path}`, label: "Continue into the draft", reason: "The outline is ready for claim-grounded section drafting.", target: "Draft", priority: 6, path: snapshot.documents[0]!.path, tone: "continue" }];
-  return [{ id: `assure-document:${draft.path}`, label: "Assure the current draft", reason: "Audit the document for grounding, evidence drift, and unresolved research gaps.", target: "Audit", priority: 8, path: draft.path, tone: "assure" }];
+  const { step, path } = researchContinuationStep(snapshot);
+  switch (step) {
+    case "add-source":
+      return [{ id: `add-source:${path}`, label: "Capture the first source", reason: "A project needs source material before evidence and claims can be developed.", target: "Sources", priority: 4, path, tone: "continue" }];
+    case "create-evidence":
+      return [{ id: `create-evidence:${path}`, label: "Extract the first evidence", reason: "Turn a precise source passage into reviewable evidence.", target: "Evidence", priority: 4, path, tone: "continue" }];
+    case "create-claim":
+      return [{ id: `create-claim:${path}`, label: "Develop the first claim", reason: "Connect reviewed evidence to a proposition the document can use.", target: "Claims", priority: 4, path, tone: "continue" }];
+    case "build-outline":
+      return [{ id: `build-outline:${path}`, label: "Build the evidence-backed outline", reason: "The reviewed claims are ready to become a document structure.", target: "Outline", priority: 6, path, tone: "continue" }];
+    case "continue-outline":
+      return [{ id: `continue-outline:${path}`, label: "Continue into the draft", reason: "The outline is ready for claim-grounded section drafting.", target: "Draft", priority: 6, path, tone: "continue" }];
+    case "assure-document":
+      return [{ id: `assure-document:${path}`, label: "Assure the current draft", reason: "Audit the document for grounding, evidence drift, and unresolved research gaps.", target: "Audit", priority: 8, path, tone: "assure" }];
+  }
 }
 
 export function buildResearchDeskViewModel(snapshot: ProjectSnapshot, findings: AuditFinding[], preferences: ResearchDeskPreferences, document?: ResearchDeskDocumentProgress): ResearchDeskViewModel {
