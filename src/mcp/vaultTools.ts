@@ -12,8 +12,10 @@ import { buildCanvas, serializeCanvas, type ProposedCanvasNode, type ProposedCan
 import { buildBaseFile, type ProposedBase } from "../bases/baseFile";
 import { ResearchRepository } from "../research/repository";
 import { createResearchRepository } from "../research/repositoryFactory";
-import { RESEARCH_WRITE_TOOLS, ResearchTools } from "../research/tools";
+import { RESEARCH_WRITE_TOOLS, ResearchTools, type ZoteroResolve } from "../research/tools";
 import { captureWebSource, type WebCapture } from "../research/webCapture";
+import { ZoteroAdapter, type ZoteroLibrary } from "../discovery/adapters/zotero";
+import { createObsidianDiscoveryHttp } from "../discovery/adapters/obsidianHttp";
 
 /**
  * Normalize a caller-supplied vault path and reject anything that escapes the
@@ -40,6 +42,8 @@ export interface VaultToolsOptions {
   semantic?: SemanticSearch;
   /** Ontology registry accessor; absent/null disables typed creation. */
   ontology?: (() => OntologyRegistry | null) | undefined;
+  /** Zotero library accessor; absent/undefined disables zotero_key resolution on import. */
+  zotero?: (() => ZoteroLibrary | undefined) | undefined;
 }
 
 /**
@@ -300,7 +304,7 @@ export class VaultTools {
   async call(name: string, args: Record<string, unknown>): Promise<string> {
     if (name.startsWith("research_")) {
       if (RESEARCH_WRITE_TOOLS.has(name)) this.assertWrites();
-      return new ResearchTools(this.researchRepository(), this.webCapture()).call(name, args);
+      return new ResearchTools(this.researchRepository(), this.webCapture(), this.zoteroResolve()).call(name, args);
     }
     switch (name) {
       case "vault_search":
@@ -347,6 +351,14 @@ export class VaultTools {
 
   private assertWrites(): void {
     if (!this.opts.allowWrites) throw new Error("Write tools are disabled. Enable 'Allow MCP writes' in Companion for Claude settings.");
+  }
+
+  /** Zotero item-key resolution for research_source_import; undefined when no library is configured. */
+  private zoteroResolve(): ZoteroResolve | undefined {
+    const library = this.opts.zotero;
+    if (!library) return undefined;
+    const adapter = new ZoteroAdapter(createObsidianDiscoveryHttp(), library);
+    return (key) => adapter.lookup(key);
   }
 
   /** Readable-markdown web capture for research_source_import (renderer only). */

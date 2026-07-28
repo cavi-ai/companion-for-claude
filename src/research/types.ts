@@ -13,7 +13,7 @@ export type ResearchTypeName = (typeof RESEARCH_TYPE_NAMES)[number];
 export type EvidenceRelation = "supports" | "challenges" | "contextualizes";
 
 export interface DiscoverySourceProvenance {
-  adapter: "openalex" | "crossref" | "arxiv";
+  adapter: "openalex" | "crossref" | "arxiv" | "zotero";
   externalId: string;
 }
 

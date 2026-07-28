@@ -3,6 +3,10 @@ import { auditProject } from "./audit";
 import type { ResearchRepository } from "./repository";
 import { isReviewState, type EvidenceRelation, type SourceLocatorKind } from "./types";
 import type { WebCapture } from "./webCapture";
+import type { AdapterWork } from "../discovery/types";
+
+/** Resolve a Zotero item key into bibliographic metadata (undefined when unconfigured or missing). */
+export type ZoteroResolve = (itemKey: string) => Promise<AdapterWork | undefined>;
 
 export const RESEARCH_WRITE_TOOLS = new Set([
   "research_project_create", "research_source_import",
@@ -19,17 +23,25 @@ export const HIDDEN_RESEARCH_TOOL_ALIASES: ReadonlySet<string> = new Set([
 
 type Repository = Pick<ResearchRepository, "loadProject" | "createProject" | "importSource" | "createEvidence" | "reviewEvidence" | "createClaim" | "linkClaimEvidence" | "createOutline">;
 
-const object = (properties: Record<string, unknown>, required: string[]): McpToolDef["inputSchema"] => ({ type: "object", properties, required });
+const object = (properties: Record<string, unknown>, required: string[], extra: Record<string, unknown> = {}): McpToolDef["inputSchema"] => ({ type: "object", properties, required, ...extra });
 const text = (description: string) => ({ type: "string", description });
 
+/** title is required unless a zotero_key can resolve it; mirrors the runtime check in research_source_import. */
+const SOURCE_IMPORT_TITLE_RULE = {
+  anyOf: [
+    { required: ["title"] },
+    { properties: { source_kind: { const: "zotero" } }, required: ["source_kind", "zotero_key"] },
+  ],
+};
+
 export class ResearchTools {
-  constructor(private readonly repository: Repository, private readonly captureWeb?: WebCapture) {}
+  constructor(private readonly repository: Repository, private readonly captureWeb?: WebCapture, private readonly resolveZotero?: ZoteroResolve) {}
 
   definitions(): McpToolDef[] {
     const project = { project: text("Vault path to the research Project.md note.") };
     return [
       { name: "research_project_create", description: "Create a canonical vault-native research project after user confirmation.", inputSchema: object({ title: text("Project title."), question: text("Research question."), folder: text("Vault-relative project folder."), audience: text("Optional audience.") }, ["title", "question", "folder"]) },
-      { name: "research_source_import", description: "Import a canonical text capture or metadata-only source into a research project. Web sources with a url and no captured_text are fetched and reduced to clean readable markdown automatically. Binary sources require an existing vault asset and an adapter-supported path.", inputSchema: object({ ...project, title: text("Source title."), source_kind: text("pdf, web, doi, arxiv, zotero, or vault."), canonical_id: text("Optional stable identifier."), url: text("Optional source URL."), asset: text("Optional existing vault asset path."), captured_text: text("Optional canonical captured text (omit for web sources to auto-capture the page)."), doi: text("Optional DOI."), arxiv_id: text("Optional arXiv id."), zotero_key: text("Optional Zotero key."), authors: { type: "array", items: { type: "string" } }, published: text("Optional publication date."), publication: text("Optional publication title.") }, ["project", "title", "source_kind"]) },
+      { name: "research_source_import", description: "Import a canonical text capture or metadata-only source into a research project. Web sources with a url and no captured_text are fetched and reduced to clean readable markdown automatically. Zotero sources with a zotero_key resolve the title and bibliographic metadata from the configured Zotero library when missing. Binary sources require an existing vault asset and an adapter-supported path.", inputSchema: object({ ...project, title: text("Source title (optional for zotero sources whose key resolves)."), source_kind: text("pdf, web, doi, arxiv, zotero, or vault."), canonical_id: text("Optional stable identifier."), url: text("Optional source URL."), asset: text("Optional existing vault asset path."), captured_text: text("Optional canonical captured text (omit for web sources to auto-capture the page)."), doi: text("Optional DOI."), arxiv_id: text("Optional arXiv id."), zotero_key: text("Optional Zotero item key."), authors: { type: "array", items: { type: "string" } }, published: text("Optional publication date."), publication: text("Optional publication title."), abstract: text("Optional abstract.") }, ["project", "source_kind"], SOURCE_IMPORT_TITLE_RULE) },
       { name: "research_project_read", description: "Read a compact research project snapshot with sources, evidence, claims, issues, and health.", inputSchema: object(project, ["project"]) },
       { name: "research_evidence_capture", description: "Create a provenance-linked evidence card inside a research project.", inputSchema: object({ ...project, source: text("Source record path in this project."), title: text("Evidence title."), excerpt: text("Exact source excerpt."), locator_kind: text("page, section, paragraph, timestamp, or quote."), locator_value: text("Exact locator text."), interpretation: text("Optional interpretation."), review_state: text("proposed, reviewed, or rejected.") }, ["project", "source", "title", "excerpt"]) },
       { name: "research_evidence_review", description: "Mark an evidence card as reviewed or rejected.", inputSchema: object({ evidence: text("Evidence record path."), review_state: text("reviewed or rejected.") }, ["evidence", "review_state"]) },
@@ -53,7 +65,35 @@ export class ResearchTools {
         let capturedContent = optionalString(args.captured_text);
         let authors = stringArray(args.authors, "authors");
         let published = optionalString(args.published);
-        const url = optionalString(args.url);
+        let publication = optionalString(args.publication);
+        let doi = optionalString(args.doi);
+        let url = optionalString(args.url);
+        let abstract = optionalString(args.abstract);
+        let title = optionalString(args.title);
+        const zoteroKey = optionalString(args.zotero_key);
+        // Zotero sources: resolve the item key against the configured library
+        // to fill any missing bibliographic metadata. Like web auto-capture, a
+        // failed lookup degrades to a key-only import rather than failing.
+        let zoteroResolved: boolean | undefined;
+        if (sourceKind === "zotero" && zoteroKey && this.resolveZotero) {
+          zoteroResolved = false;
+          try {
+            const work = await this.resolveZotero(zoteroKey);
+            if (work) {
+              zoteroResolved = true;
+              title ??= work.title;
+              if (!authors.length && work.authors.length) authors = work.authors;
+              published ??= work.published;
+              publication ??= work.publication;
+              doi ??= work.doi;
+              url ??= work.url;
+              abstract ??= work.abstract;
+            }
+          } catch {
+            // Key-only import still succeeds; the caller sees zotero_resolved: false.
+          }
+        }
+        if (!title) throw new Error("research_source_import requires a title (or a zotero_key that resolves to one)");
         // Auto-capture web sources: fetch + readable-markdown extraction, so
         // the note holds trustworthy fingerprinted text, not just a link.
         let autoCapture: boolean | undefined;
@@ -72,13 +112,16 @@ export class ResearchTools {
           }
         }
         const result = await this.repository.importSource(requiredString(args.project), {
-          title: requiredString(args.title), sourceKind: sourceKind as "pdf" | "web" | "doi" | "arxiv" | "zotero" | "vault",
+          title, sourceKind: sourceKind as "pdf" | "web" | "doi" | "arxiv" | "zotero" | "vault",
           ...optionalField("canonicalId", args.canonical_id), ...(url ? { url } : {}), ...optionalField("asset", args.asset),
-          ...(capturedContent ? { capturedContent } : {}), ...optionalField("doi", args.doi), ...optionalField("arxivId", args.arxiv_id),
-          ...optionalField("zoteroKey", args.zotero_key), ...(authors.length ? { authors } : {}),
-          ...(published ? { published } : {}), ...optionalField("publication", args.publication),
+          ...(capturedContent ? { capturedContent } : {}), ...optionalField("doi", doi), ...optionalField("arxivId", args.arxiv_id),
+          ...optionalField("zoteroKey", zoteroKey), ...(authors.length ? { authors } : {}),
+          ...(published ? { published } : {}), ...(publication ? { publication } : {}), ...(abstract ? { abstract } : {}),
         });
-        return JSON.stringify(autoCapture === undefined ? result : { ...result, captured: autoCapture });
+        const extras: Record<string, unknown> = {};
+        if (autoCapture !== undefined) extras.captured = autoCapture;
+        if (zoteroResolved !== undefined) extras.zotero_resolved = zoteroResolved;
+        return JSON.stringify({ ...result, ...extras });
       }
       case "research_project_read": {
         const project = requiredString(args.project);

@@ -110,6 +110,10 @@ export interface PluginSettings {
   discoveryEnabled: boolean;
   /** Optional contact address sent to OpenAlex. */
   openAlexContactEmail: string;
+  /** Zotero user id for resolving zotero_key imports (empty disables Zotero resolution). */
+  zoteroUserId: string;
+  /** Zotero Web API key; required for private libraries, optional for public ones. */
+  zoteroApiKey: string;
   /** Provider policy for explicit discovery reranking. */
   discoveryReranker: "current" | "claude" | "local" | "disabled";
   discoveryMaxResults: number;
@@ -259,6 +263,8 @@ export const DEFAULT_SETTINGS: PluginSettings = {
 
   discoveryEnabled: true,
   openAlexContactEmail: "",
+  zoteroUserId: "",
+  zoteroApiKey: "",
   discoveryReranker: "current",
   discoveryMaxResults: 20,
   discoveryExpansionLimit: 20,

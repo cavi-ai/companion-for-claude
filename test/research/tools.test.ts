@@ -21,6 +21,15 @@ describe("ResearchTools", () => {
     expect(names).not.toEqual(expect.arrayContaining(["research_evidence_create", "research_outline_create"]));
   });
 
+  it("declares the conditional title requirement of research_source_import in its schema", () => {
+    const schema = new ResearchTools(repository() as never).definitions().find(({ name }) => name === "research_source_import")?.inputSchema as { required: string[]; anyOf: unknown[] };
+    expect(schema.required).toEqual(["project", "source_kind"]);
+    expect(schema.anyOf).toEqual([
+      { required: ["title"] },
+      { properties: { source_kind: { const: "zotero" } }, required: ["source_kind", "zotero_key"] },
+    ]);
+  });
+
   it.each(["research_evidence_capture", "research_evidence_create"])("dispatches %s to evidence creation", async (name) => {
     const repo = repository();
     await new ResearchTools(repo as never).call(name, { project: "P/Project.md", source: "P/Sources/S.md", title: "E", excerpt: "x" });
@@ -86,6 +95,54 @@ describe("ResearchTools", () => {
     expect(capture).not.toHaveBeenCalled();
     const noDep = JSON.parse(await new ResearchTools(repo as never).call("research_source_import", { project: "P/Project.md", title: "Post", source_kind: "web", url: "https://example.test/post" }));
     expect(noDep).not.toHaveProperty("captured");
+  });
+
+  const zoteroWork = {
+    adapter: "zotero" as const,
+    externalId: "ABCD2345",
+    zoteroKey: "ABCD2345",
+    title: "Resolved Title",
+    authors: ["Ada Researcher"],
+    published: "2024-02-03",
+    publication: "Journal of Tests",
+    doi: "10.1/xyz",
+    url: "https://example.test/article",
+    abstract: "An abstract.",
+  };
+
+  it("resolves a zotero_key into full metadata, title included", async () => {
+    const repo = repository();
+    const resolve = vi.fn().mockResolvedValue(zoteroWork);
+    const tools = new ResearchTools(repo as never, undefined, resolve);
+    const result = JSON.parse(await tools.call("research_source_import", { project: "P/Project.md", source_kind: "zotero", zotero_key: "ABCD2345" }));
+    expect(resolve).toHaveBeenCalledWith("ABCD2345");
+    expect(repo.importSource).toHaveBeenCalledWith("P/Project.md", expect.objectContaining({
+      sourceKind: "zotero", zoteroKey: "ABCD2345", title: "Resolved Title", authors: ["Ada Researcher"],
+      published: "2024-02-03", publication: "Journal of Tests", doi: "10.1/xyz", url: "https://example.test/article", abstract: "An abstract.",
+    }));
+    expect(result.zotero_resolved).toBe(true);
+  });
+
+  it("keeps caller-provided metadata over the resolved Zotero item", async () => {
+    const repo = repository();
+    const tools = new ResearchTools(repo as never, undefined, vi.fn().mockResolvedValue(zoteroWork));
+    await tools.call("research_source_import", { project: "P/Project.md", source_kind: "zotero", zotero_key: "ABCD2345", title: "Caller Title", authors: ["Caller"], doi: "10.9/caller" });
+    expect(repo.importSource).toHaveBeenCalledWith("P/Project.md", expect.objectContaining({ title: "Caller Title", authors: ["Caller"], doi: "10.9/caller" }));
+  });
+
+  it("imports key-only when the Zotero lookup fails, and reports it", async () => {
+    const repo = repository();
+    const tools = new ResearchTools(repo as never, undefined, vi.fn().mockRejectedValue(new Error("HTTP 403")));
+    const result = JSON.parse(await tools.call("research_source_import", { project: "P/Project.md", source_kind: "zotero", zotero_key: "ABCD2345", title: "Known Title" }));
+    expect(repo.importSource).toHaveBeenCalledWith("P/Project.md", expect.objectContaining({ sourceKind: "zotero", zoteroKey: "ABCD2345", title: "Known Title" }));
+    expect(result.zotero_resolved).toBe(false);
+  });
+
+  it("requires a title when no Zotero resolution supplies one", async () => {
+    const repo = repository();
+    await expect(new ResearchTools(repo as never).call("research_source_import", { project: "P/Project.md", source_kind: "zotero", zotero_key: "ABCD2345" })).rejects.toThrow(/title/i);
+    await expect(new ResearchTools(repo as never, undefined, vi.fn().mockResolvedValue(undefined)).call("research_source_import", { project: "P/Project.md", source_kind: "zotero", zotero_key: "ABCD2345" })).rejects.toThrow(/title/i);
+    expect(repo.importSource).not.toHaveBeenCalled();
   });
 
   it.each([

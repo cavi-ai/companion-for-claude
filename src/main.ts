@@ -17,6 +17,7 @@ import { OpenAlexAdapter } from "./discovery/adapters/openAlex";
 import { CrossrefAdapter } from "./discovery/adapters/crossref";
 import { ArxivAdapter } from "./discovery/adapters/arxiv";
 import { createObsidianDiscoveryHttp } from "./discovery/adapters/obsidianHttp";
+import type { ZoteroLibrary } from "./discovery/adapters/zotero";
 import { resolveModelId } from "./claude/models";
 import { inferResearchProjectPath, isResearchProjectChange, projectPathForActivation } from "./research/workbenchRouting";
 import { SessionPicker } from "./view/SessionPicker";
@@ -1097,6 +1098,7 @@ export default class ClaudeCompanionPlugin extends Plugin {
       defaultFolder: s.mcpWriteFolder,
       semantic: (q: string, k: number) => this.semanticSearch(q, k),
       ontology: () => this.ontology(),
+      zotero: () => this.zoteroLibrary(),
     };
     if (!this.vaultTools) {
       this.vaultTools = new VaultTools(this.app, toolOpts);
@@ -1445,6 +1447,14 @@ export default class ClaudeCompanionPlugin extends Plugin {
     }
   }
 
+  /** Configured Zotero library for zotero_key import resolution; undefined until a user id is set. */
+  private zoteroLibrary(): ZoteroLibrary | undefined {
+    const userId = this.settings.zoteroUserId.trim();
+    if (!userId) return undefined;
+    const apiKey = this.settings.zoteroApiKey.trim();
+    return { userId, ...(apiKey ? { apiKey } : {}) };
+  }
+
   /** Vault tools for the in-chat agent loop, options refreshed from settings on every call. */
   agentTools(): VaultTools {
     const opts = {
@@ -1452,6 +1462,7 @@ export default class ClaudeCompanionPlugin extends Plugin {
       defaultFolder: this.settings.mcpWriteFolder,
       semantic: (q: string, k: number) => this.semanticSearch(q, k),
       ontology: () => this.ontology(),
+      zotero: () => this.zoteroLibrary(),
     };
     if (!this.agentVaultTools) this.agentVaultTools = new VaultTools(this.app, opts);
     else this.agentVaultTools.setOptions(opts);

@@ -580,6 +580,25 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
       }));
 
     new Setting(containerEl)
+      .setName("Zotero user id")
+      .setDesc("Optional. Numeric user id from zotero.org/settings/keys — lets research_source_import resolve a zotero_key into full metadata. Requests fire only on an explicit import.")
+      .addText((text) => text.setValue(this.plugin.settings.zoteroUserId).onChange(async (value) => {
+        this.plugin.settings.zoteroUserId = value.trim();
+        await this.plugin.saveSettings();
+      }));
+
+    new Setting(containerEl)
+      .setName("Zotero API key")
+      .setDesc("Optional. Required for private libraries; a public library resolves without one.")
+      .addText((text) => {
+        text.inputEl.type = "password";
+        text.setValue(this.plugin.settings.zoteroApiKey).onChange(async (value) => {
+          this.plugin.settings.zoteroApiKey = value.trim();
+          await this.plugin.saveSettings();
+        });
+      });
+
+    new Setting(containerEl)
       .setName("Discovery reranker")
       .setDesc("Provider used only when you explicitly rerank derived discovery results.")
       .addDropdown((dropdown) => {

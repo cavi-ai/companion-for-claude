@@ -1,4 +1,4 @@
-export type DiscoveryAdapterId = "openalex" | "crossref" | "arxiv";
+export type DiscoveryAdapterId = "openalex" | "crossref" | "arxiv" | "zotero";
 export type CitationDirection = "references" | "cited-by";
 
 export interface DiscoveryQuery {
@@ -14,6 +14,7 @@ export interface AdapterWork {
   doi?: string;
   arxivId?: string;
   openAlexId?: string;
+  zoteroKey?: string;
   published?: string;
   publication?: string;
   abstract?: string;
