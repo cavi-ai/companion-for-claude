@@ -8,11 +8,37 @@ export class ExtractError extends Error {
   }
 }
 
+export interface ExtractCompletionOpts {
+  /** Extraction needs room for 10+ fields; the shared utility default (1024) truncates long replies. */
+  maxTokens?: number;
+  /** JSON Schema for constrained local decoding (Ollama `format`). */
+  responseSchema?: Record<string, unknown>;
+  /** Thinking models otherwise spend the whole budget on reasoning and reply empty. */
+  disableThinking?: boolean;
+}
+
 export interface ExtractDeps {
-  complete: (system: string, user: string) => Promise<string>;
+  complete: (system: string, user: string, opts?: ExtractCompletionOpts) => Promise<string>;
 }
 
 const MAX_CONTENT = 8000;
+const EXTRACT_MAX_TOKENS = 4096;
+
+/** JSON Schema for the asked model fields (constrained local decoding). */
+export function extractionJsonSchema(asked: SourceTypeSchema["fields"]): Record<string, unknown> {
+  const properties: Record<string, unknown> = {};
+  const required: string[] = [];
+  for (const f of asked) {
+    properties[f.key] =
+      f.type === "string[]"
+        ? { type: ["array", "null"], items: { type: "string" } }
+        : f.type === "number"
+          ? { type: ["number", "null"] }
+          : { type: ["string", "null"] };
+    if (f.required) required.push(f.key);
+  }
+  return { type: "object", properties, required };
+}
 
 function buildSystem(schema: SourceTypeSchema, asked: SourceTypeSchema["fields"]): string {
   const lines = asked.map((f) => `- ${f.key} (${f.type}${f.required ? ", required" : ""}): ${f.description}`);
@@ -49,11 +75,12 @@ export async function extractFields(
   if (asked.length === 0) return { fields: { ...prefilled, ...derived } };
   const system = buildSystem(reduced, asked);
   const base = `SOURCE CONTENT:\n\n${content.length > MAX_CONTENT ? content.slice(0, MAX_CONTENT) + "\n…[truncated]" : content}`;
+  const opts: ExtractCompletionOpts = { maxTokens: EXTRACT_MAX_TOKENS, responseSchema: extractionJsonSchema(asked), disableThinking: true };
   let lastErrors: string[] = ["no reply"];
 
   for (let attempt = 0; attempt <= maxRepairs; attempt++) {
     const user = attempt === 0 ? base : `${base}\n\nYour previous reply was invalid: ${lastErrors.join("; ")}. Return corrected JSON only.`;
-    const raw = await deps.complete(system, user);
+    const raw = await deps.complete(system, user, opts);
     let obj: unknown;
     try {
       obj = extractJson(raw);

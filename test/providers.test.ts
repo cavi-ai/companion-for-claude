@@ -1,7 +1,35 @@
 import { describe, it, expect } from "vitest";
 import { parseOllamaLine } from "../src/providers/ollamaParse";
+import { buildOllamaRequestBody } from "../src/providers/ollamaBody";
 import { errorHint } from "../src/providers/errorHints";
 import { parseTaggerOutput } from "../src/indexing/taggerParse";
+import type { CompletionRequest } from "../src/providers/types";
+
+const baseReq: CompletionRequest = {
+  system: "Extract JSON.",
+  messages: [{ role: "user", content: "content" }],
+  model: "qwen3.6:latest",
+  maxTokens: 4096,
+  temperature: 0,
+};
+
+describe("buildOllamaRequestBody", () => {
+  it("sends think:false when thinking is disabled — thinking models otherwise reply empty", () => {
+    const body = JSON.parse(buildOllamaRequestBody({ ...baseReq, thinking: { type: "disabled" } }, "default"));
+    expect(body.think).toBe(false);
+    expect(body.options.num_predict).toBe(4096);
+  });
+
+  it("omits think for ordinary requests and maps JSON mode to format", () => {
+    const plain = JSON.parse(buildOllamaRequestBody(baseReq, "default"));
+    expect(plain).not.toHaveProperty("think");
+    expect(plain).not.toHaveProperty("format");
+    const json = JSON.parse(buildOllamaRequestBody({ ...baseReq, responseFormat: "json", responseSchema: { type: "object" } }, "default"));
+    expect(json.format).toEqual({ type: "object" });
+    const jsonMode = JSON.parse(buildOllamaRequestBody({ ...baseReq, responseFormat: "json" }, "default"));
+    expect(jsonMode.format).toBe("json");
+  });
+});
 
 describe("parseOllamaLine", () => {
   it("extracts streamed content", () => {

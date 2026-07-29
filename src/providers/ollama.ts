@@ -1,7 +1,8 @@
 import { requestUrl } from "obsidian";
 import type { StreamHandlers } from "../types";
-import { type ApiMessage, type CompletionRequest, type Provider, type ProviderStatus, ProviderError, isAbort, textContent } from "./types";
+import { type CompletionRequest, type Provider, type ProviderStatus, ProviderError, isAbort } from "./types";
 import { parseOllamaLine } from "./ollamaParse";
+import { buildOllamaRequestBody } from "./ollamaBody";
 
 /**
  * Local model provider speaking the Ollama HTTP API (http://localhost:11434).
@@ -26,17 +27,7 @@ export class OllamaProvider implements Provider {
   }
 
   private body(req: CompletionRequest): string {
-    return JSON.stringify({
-      model: req.model || this.defaultModel,
-      stream: true,
-      ...(req.responseFormat === "json" ? { format: req.responseSchema ?? "json" } : {}),
-      options: { temperature: req.temperature ?? 0.7, num_predict: req.maxTokens },
-      messages: [
-        ...(req.system ? [{ role: "system", content: req.system }] : []),
-        // Ollama has no tool-use wire format — flatten any block content to text.
-        ...req.messages.map((m: ApiMessage) => ({ role: m.role, content: textContent(m.content) })),
-      ],
-    });
+    return buildOllamaRequestBody(req, this.defaultModel);
   }
 
   async stream(req: CompletionRequest, handlers: StreamHandlers): Promise<void> {

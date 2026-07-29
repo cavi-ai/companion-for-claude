@@ -482,6 +482,30 @@
 }
 
 /* ---------- settings: connection status ---------- */
+.cc-setup-checklist {
+  margin: 4px 0 10px;
+  font-size: 13px;
+}
+.cc-setup-step {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  padding: 2px 0;
+  color: var(--text-muted);
+}
+.cc-setup-step.is-ok {
+  color: var(--text-normal);
+}
+.cc-setup-step .cc-setup-mark {
+  flex: 0 0 auto;
+  font-weight: 600;
+}
+.cc-setup-step.is-ok .cc-setup-mark {
+  color: var(--color-green, #1e5631);
+}
+.cc-setup-step.is-err .cc-setup-mark {
+  color: var(--color-red, #5c1a10);
+}
 .cc-conn-status {
   font-size: 13px;
   padding: 6px 10px;

@@ -3,7 +3,7 @@ import type { FieldValue, RawCapture, SourceRecord, SourceType, SourceTypeSchema
 import { detectType, parseClipUrl } from "./detect";
 import { getSchema, type SchemaOverrides } from "./registry";
 import { parseCsvMeta } from "./csvMeta";
-import { extractFields } from "./extract";
+import { extractFields, type ExtractCompletionOpts } from "./extract";
 import { sanitize } from "../memory/sanitize";
 import { sourceFrontmatter, buildSidecarNote } from "./sourceNote";
 import { applySourceFrontmatter } from "./frontmatterMerge";
@@ -11,7 +11,7 @@ import { sanitizeFileName } from "../artifacts/parse";
 
 export interface EnrichDeps {
   app: App;
-  complete: (system: string, user: string) => Promise<string>;
+  complete: (system: string, user: string, opts?: ExtractCompletionOpts) => Promise<string>;
   overrides?: SchemaOverrides | undefined;
   baseTags: string[];
   enrichedBy: "claude" | "local";

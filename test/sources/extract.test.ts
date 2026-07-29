@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { extractFields, ExtractError } from "../../src/sources/extract";
+import { extractFields, ExtractError, extractionJsonSchema, type ExtractCompletionOpts } from "../../src/sources/extract";
 import { getSchema } from "../../src/sources/registry";
 
 const article = getSchema("article");
@@ -10,6 +10,23 @@ describe("extractFields", () => {
     const r = await extractFields(article, "content", { reading_time: "9 min" }, { complete });
     expect(r.fields.title).toBe("T");
     expect(r.fields.reading_time).toBe("9 min");
+  });
+
+  it("asks for constrained JSON output with thinking disabled and room to answer", async () => {
+    const seen: ExtractCompletionOpts[] = [];
+    const complete = async (_s: string, _u: string, opts?: ExtractCompletionOpts) => {
+      seen.push(opts ?? {});
+      return JSON.stringify({ title: "T", site: "S", summary: "Sum" });
+    };
+    await extractFields(article, "content", {}, { complete });
+    const opts = seen[0]!;
+    // Thinking models spend the whole budget on hidden reasoning and reply
+    // empty ("reply was not valid JSON") — extraction must disable it.
+    expect(opts.disableThinking).toBe(true);
+    expect(opts.maxTokens).toBeGreaterThan(1024);
+    const schema = opts.responseSchema as { properties: Record<string, unknown>; required: string[] };
+    expect(Object.keys(schema.properties)).toEqual(article.fields.filter((f) => f.source === "model").map((f) => f.key));
+    expect(schema.required).toEqual(["title", "site", "summary"]);
   });
 
   it("repairs after an invalid first reply", async () => {
@@ -57,11 +74,24 @@ describe("extractFields", () => {
       zotero_key: "ZK",
       reading_time: "5 min",
       topics: ["x"],
-      key_claims: ["c"],
-      summary: "S",
+      key_claims: ["c"],      summary: "S",
     });
     expect(calls).toBe(0);
     expect(r.fields.reading_time).toBe("9 min"); // derived still wins over prefilled
     expect(r.fields.title).toBe("T");
+  });
+});
+
+describe("extractionJsonSchema", () => {
+  it("maps field types to nullable JSON Schema with the required keys", () => {
+    const schema = extractionJsonSchema(article.fields.filter((f) => f.source === "model"));
+    expect(schema).toMatchObject({
+      type: "object",
+      properties: {
+        title: { type: ["string", "null"] },
+        authors: { type: ["array", "null"], items: { type: "string" } },
+      },
+      required: ["title", "site", "summary"],
+    });
   });
 });

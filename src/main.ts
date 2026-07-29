@@ -553,7 +553,16 @@ export default class ClaudeCompanionPlugin extends Plugin {
     const { provider } = router.resolve("utility");
     return {
       app: this.app,
-      complete: async (system, user) => (await router.complete("utility", { system, user })).text,
+      complete: async (system, user, opts) =>
+        (
+          await router.complete("utility", {
+            system,
+            user,
+            ...(opts?.maxTokens !== undefined ? { maxTokens: opts.maxTokens } : {}),
+            ...(opts?.responseSchema ? { responseFormat: "json" as const, responseSchema: opts.responseSchema } : {}),
+            ...(opts?.disableThinking ? { thinking: { type: "disabled" as const } } : {}),
+          })
+        ).text,
       overrides: this.settings.sourceSchemaOverrides,
       baseTags: this.settings.sourceBaseTags,
       enrichedBy: provider.id === "anthropic" ? "claude" : "local",
@@ -2353,6 +2362,27 @@ export default class ClaudeCompanionPlugin extends Plugin {
   }
 
   /**
+   * Live-verify the replies config: one read of the replies folder over the
+   * Contents API. Powers the settings "Test connection" button — read-only,
+   * no side effects, works on mobile.
+   */
+  async testCloudReplies(): Promise<{ ok: boolean; message: string }> {
+    const cfg = this.replyConfig();
+    const cfgErr = repliesConfigError(cfg);
+    if (cfgErr) return { ok: false, message: cfgErr };
+    try {
+      const req = buildContentsRequest(cfg, cfg.folder);
+      const res = await requestUrl({ url: req.url, method: req.method, headers: req.headers, throw: false });
+      const files = parseDirListing(res.status, res.text);
+      return { ok: true, message: `Connected — ${files.length} file${files.length === 1 ? "" : "s"} in “${cfg.folder}” on ${cfg.branch}.` };
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      const hint = errorHint(msg, "anthropic");
+      return { ok: false, message: `${msg}${hint ? ` — ${hint}` : ""}` };
+    }
+  }
+
+  /**
    * Fetch reply notes a cloud session wrote into the vault's GitHub repo and
    * land any new ones in the vault — over HTTPS, so it works on mobile. Existing
    * notes are left untouched (never clobbers local edits).
@@ -2384,7 +2414,9 @@ export default class ClaudeCompanionPlugin extends Plugin {
       new Notice(pulled > 0 ? `Pulled ${pulled} cloud repl${pulled === 1 ? "y" : "ies"} into the vault.` : "No new cloud replies.", 7000);
     } catch (e) {
       pending.hide();
-      new Notice(`Couldn't pull cloud replies: ${e instanceof Error ? e.message : String(e)}`, 10000);
+      const msg = e instanceof Error ? e.message : String(e);
+      const hint = errorHint(msg, "anthropic");
+      new Notice(`Couldn't pull cloud replies: ${msg}${hint ? ` — ${hint}` : ""}`, 10000);
     }
   }
 

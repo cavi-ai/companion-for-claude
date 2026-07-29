@@ -1,5 +1,5 @@
 import type { PluginSettings } from "../types";
-import type { Provider, ProviderId, TaskRole } from "./types";
+import type { Provider, ProviderId, TaskRole, CompletionRequest } from "./types";
 import { AnthropicProvider } from "./anthropic";
 import { OllamaProvider } from "./ollama";
 import { OpenAICompatProvider } from "./openaiCompat";
@@ -90,7 +90,7 @@ export class ProviderRouter {
    */
   async complete(
     role: TaskRole,
-    req: { system: string; user: string; maxTokens?: number; temperature?: number; responseFormat?: "json"; responseSchema?: Record<string, unknown> },
+    req: { system: string; user: string; maxTokens?: number; temperature?: number; responseFormat?: "json"; responseSchema?: Record<string, unknown>; thinking?: CompletionRequest["thinking"] },
   ): Promise<{ text: string; provider: Provider }> {
     const { provider, model } = this.resolve(role);
     const text = await provider.complete({
@@ -101,6 +101,7 @@ export class ProviderRouter {
       messages: [{ role: "user", content: req.user }],
       ...(req.responseFormat ? { responseFormat: req.responseFormat } : {}),
       ...(req.responseSchema ? { responseSchema: req.responseSchema } : {}),
+      ...(req.thinking ? { thinking: req.thinking } : {}),
     });
     return { text, provider };
   }

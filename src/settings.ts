@@ -4,8 +4,7 @@ import { CLAUDE_MODELS } from "./claude/models";
 import type { ProviderStatus } from "./providers/types";
 import { readAnthropicEnv, hasAnthropicEnvCredential } from "./providers/env";
 import { generateToken, bridgeUrl, claudeCodeCommand, claudeDesktopConfig, maskToken, resolveMcpToken, mcpTokenEnvRef, MCP_TOKEN_ENV } from "./mcp/clientConfig";
-import { configError } from "./cloud/routines";
-import { configError as repliesConfigError } from "./cloud/replies";
+import { dispatchSetupSteps, repliesSetupSteps } from "./cloud/setup";
 import { BUILTIN_EMBEDDING_MODELS, builtinModelById } from "./semantic/transformers/model";
 import { ChoiceModal } from "./view/ChoiceModal";
 import { normalizeDiscoverySettings, type PluginSettings } from "./types";
@@ -1031,14 +1030,24 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
         "Dispatch a Claude Code session in the cloud to work your vault's Git repo and report back — so you can cowork with Claude from a phone, where the local bridge can't run. " +
         "The Routines API is experimental; if Anthropic ships a newer beta revision, update the header below.",
     });
-    const checklist = containerEl.createEl("ol", { cls: "setting-item-description" });
-    for (const step of [
-      "In the Claude Code web UI, create a routine pointed at your vault's Git repo.",
-      "Paste the routine's “fire” URL and per-routine token below.",
-      "Set up “Cloud replies” (further down) so the session's answers land back in your vault.",
-    ]) {
-      checklist.createEl("li", { text: step });
-    }
+    containerEl.createEl("p", {
+      cls: "setting-item-description",
+      text: "In the Claude Code web UI, create a routine pointed at your vault's Git repo, then complete the checklist below.",
+    });
+    const checklistEl = containerEl.createDiv({ cls: "cc-setup-checklist" });
+    const renderChecklist = (): void => {
+      checklistEl.empty();
+      const steps = dispatchSetupSteps({ fireUrl: s.cloudRoutineFireUrl, token: s.cloudRoutineToken, betaHeader: s.cloudRoutineBetaHeader });
+      for (const item of steps) {
+        const row = checklistEl.createDiv({ cls: `cc-setup-step ${item.ok ? "is-ok" : "is-err"}` });
+        row.createSpan({ cls: "cc-setup-mark", text: item.ok ? "✓" : "✗" });
+        row.createSpan({ text: item.detail && !item.ok ? `${item.label} — ${item.detail}` : item.label });
+      }
+      if (steps.every((item) => item.ok)) {
+        checklistEl.createDiv({ cls: "cc-setup-step is-ok", text: "✓ Ready — run “Send to cloud Claude session” from the command palette." });
+      }
+    };
+    renderChecklist();
 
     new Setting(containerEl)
       .setName("Enable cloud dispatch")
@@ -1064,6 +1073,7 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
           .onChange(async (v) => {
             s.cloudRoutineFireUrl = v.trim();
             await this.plugin.saveSettings();
+            renderChecklist();
           });
       });
 
@@ -1079,6 +1089,7 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
           .onChange(async (v) => {
             s.cloudRoutineToken = v.trim();
             await this.plugin.saveSettings();
+            renderChecklist();
           });
       });
 
@@ -1090,6 +1101,7 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
         text.setValue(s.cloudRoutineBetaHeader).onChange(async (v) => {
           s.cloudRoutineBetaHeader = v.trim();
           await this.plugin.saveSettings();
+          renderChecklist();
         });
       });
 
@@ -1099,12 +1111,6 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
       "⚠️ Unlike the local bridge, this sends your prompt + attached note context to Anthropic's cloud and runs against your vault's Git repo. " +
         "The token sits in this vault's data.json — if the vault itself syncs, the token syncs too. Use a private repo.",
     );
-
-    const status = containerEl.createDiv({ cls: "cc-conn-status" });
-    const err = configError({ fireUrl: s.cloudRoutineFireUrl, token: s.cloudRoutineToken, betaHeader: s.cloudRoutineBetaHeader });
-    status.toggleClass("is-ok", !err);
-    status.toggleClass("is-err", !!err);
-    status.setText(err ? `✗ ${err}` : "✓ Configured — run “Send to cloud Claude session” from the command palette.");
   }
 
   private renderRepliesSection(containerEl: HTMLElement): void {
@@ -1115,6 +1121,17 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
         "Pull notes a cloud session wrote back into your vault's GitHub repo — over HTTPS, so it works on a phone with no local git. " +
         "Point this at the repo, branch, and folder the session writes replies to.",
     });
+
+    const checklistEl = containerEl.createDiv({ cls: "cc-setup-checklist" });
+    const renderChecklist = (): void => {
+      checklistEl.empty();
+      for (const item of repliesSetupSteps({ repo: s.cloudReplyRepo, branch: s.cloudReplyBranch, folder: s.cloudReplyFolder, token: s.cloudReplyToken })) {
+        const row = checklistEl.createDiv({ cls: `cc-setup-step ${item.ok ? "is-ok" : "is-err"}` });
+        row.createSpan({ cls: "cc-setup-mark", text: item.ok ? "✓" : "✗" });
+        row.createSpan({ text: item.detail && !item.ok ? `${item.label} — ${item.detail}` : item.label });
+      }
+    };
+    renderChecklist();
 
     new Setting(containerEl)
       .setName("Vault repo")
@@ -1127,6 +1144,7 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
           .onChange(async (v) => {
             s.cloudReplyRepo = v.trim();
             await this.plugin.saveSettings();
+            renderChecklist();
           });
       });
 
@@ -1137,6 +1155,7 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
         text.setValue(s.cloudReplyBranch).onChange(async (v) => {
           s.cloudReplyBranch = v.trim() || "main";
           await this.plugin.saveSettings();
+          renderChecklist();
         }),
       );
 
@@ -1147,6 +1166,7 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
         text.setValue(s.cloudReplyFolder).onChange(async (v) => {
           s.cloudReplyFolder = v.trim() || "Claude/Replies";
           await this.plugin.saveSettings();
+          renderChecklist();
         }),
       );
 
@@ -1162,14 +1182,27 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
           .onChange(async (v) => {
             s.cloudReplyToken = v.trim();
             await this.plugin.saveSettings();
+            renderChecklist();
           });
       });
 
-    const status = containerEl.createDiv({ cls: "cc-conn-status" });
-    const err = repliesConfigError({ repo: s.cloudReplyRepo, branch: s.cloudReplyBranch, folder: s.cloudReplyFolder, token: s.cloudReplyToken });
-    status.toggleClass("is-ok", !err);
-    status.toggleClass("is-err", !!err);
-    status.setText(err ? `✗ ${err}` : "✓ Configured — run “Pull cloud session replies into the vault”.");
+    const testStatus = containerEl.createDiv({ cls: "cc-conn-status" });
+    new Setting(containerEl)
+      .setName("Test connection")
+      .setDesc("Read the replies folder from GitHub with the current settings — verifies repo, branch, folder, and token in one shot.")
+      .addButton((button) =>
+        button.setButtonText("Test").onClick(async () => {
+          button.setDisabled(true);
+          testStatus.toggleClass("is-ok", false);
+          testStatus.toggleClass("is-err", false);
+          testStatus.setText("Testing…");
+          const result = await this.plugin.testCloudReplies();
+          testStatus.toggleClass("is-ok", result.ok);
+          testStatus.toggleClass("is-err", !result.ok);
+          testStatus.setText(`${result.ok ? "✓" : "✗"} ${result.message}`);
+          button.setDisabled(false);
+        }),
+      );
   }
 
   private renderMcpSection(containerEl: HTMLElement): void {
