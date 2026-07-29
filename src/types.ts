@@ -48,6 +48,18 @@ export type AuthMode = "apiKey" | "oauthToken" | "environment";
 /** Where the "Open" button on an artifact sends it. "obsidian" = in-app fullscreen. */
 export type ArtifactOpenTarget = "obsidian" | "default" | "chrome" | "safari" | "brave" | "firefox";
 
+/** One external MCP server the in-chat agent may consume (roadmap: two-way MCP hub). */
+export interface McpServerConfig {
+  name: string;
+  enabled: boolean;
+  transport: "http" | "stdio";
+  /** HTTP transport: the server's streamable-HTTP endpoint. */
+  url: string;
+  /** stdio transport (desktop only): command + space-separated args. */
+  command: string;
+  args: string;
+}
+
 export interface PluginSettings {
   apiKey: string;
   /** How to authenticate to Anthropic: API key (default), long-term OAuth token, or the environment. */
@@ -132,6 +144,8 @@ export interface PluginSettings {
   builtinEmbeddingModel: string;
   /** Set once the built-in embedding-model download prompt has been shown. */
   semanticModelPrompted: boolean;
+  /** Also extract and index text from vault PDFs (page locators preserved). */
+  semanticIndexPdfs: boolean;
 
   // ----- indexing -----
   /** Auto-add tags + summary frontmatter when saving artifacts/chats. */
@@ -148,6 +162,14 @@ export interface PluginSettings {
   agentAllowWrites: boolean;
   /** Max stream→tools→stream iterations per turn. */
   agentMaxIterations: number;
+  /** Offer the web_search agent tool (explicit calls only). */
+  webSearchEnabled: boolean;
+  /** Engine behind web_search: keyless DuckDuckGo HTML or the keyed Brave API. */
+  webSearchEngine: "duckduckgo" | "brave";
+  /** Brave Search API key (only when webSearchEngine is "brave"). */
+  braveSearchApiKey: string;
+  /** Offer the web_fetch agent tool (reads one public page per explicit call). */
+  webFetchEnabled: boolean;
 
   // ----- MCP bridge (vault-as-MCP-server) -----
   /** Run a local MCP server exposing vault tools to Claude Code / Desktop. */
@@ -160,6 +182,8 @@ export interface PluginSettings {
   mcpAllowWrites: boolean;
   /** Default folder for notes created via MCP. */
   mcpWriteFolder: string;
+  /** External MCP servers the agent can use (each call asks for confirmation). */
+  mcpClientServers: McpServerConfig[];
 
   // ----- cloud dispatch (Claude Code Routines API) -----
   /** Enable the "Send to cloud Claude session" command (fires a pre-created routine). */
@@ -202,6 +226,8 @@ export interface PluginSettings {
   sourceCaptureConsent: "ask" | "allow" | "deny";
   /** Folder the Web Clipper writes to and Companion watches. */
   sourceInboxFolder: string;
+  /** Base folder organized clippings move into (per-domain subfolders inside). */
+  clipOrganizedFolder: string;
   /** Tags every enriched source note gets. */
   sourceBaseTags: string[];
   /** Per-type schema overrides, keyed by source type. */
@@ -276,6 +302,7 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   builtinEmbeddingModel: "builtin:snowflake-arctic-embed-xs",
   /** Set once the built-in embedding-model download prompt has been shown. */
   semanticModelPrompted: false,
+  semanticIndexPdfs: true,
 
   autoTagOnSave: true,
   artifactBaseTags: ["claude", "artifact"],
@@ -288,12 +315,17 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   // "Act on vault" toggle flips it per session.
   agentAllowWrites: true,
   agentMaxIterations: 10,
+  webSearchEnabled: false,
+  webSearchEngine: "duckduckgo",
+  braveSearchApiKey: "",
+  webFetchEnabled: false,
 
   mcpEnabled: false,
   mcpPort: 22360,
   mcpToken: "",
   mcpAllowWrites: false,
   mcpWriteFolder: "Claude/Inbox",
+  mcpClientServers: [],
 
   cloudDispatchEnabled: false,
   cloudRoutineFireUrl: "",
@@ -315,6 +347,7 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   sourceEnrichOnCreate: true,
   sourceCaptureConsent: "ask",
   sourceInboxFolder: "Clippings",
+  clipOrganizedFolder: "Library",
   sourceBaseTags: ["source"],
   sourceSchemaOverrides: {},
   clipperTemplateFingerprint: "",
@@ -337,6 +370,21 @@ export function normalizeDiscoverySettings(settings: Partial<DiscoveryNumericSet
     discoveryExpansionLimit: boundedInteger(settings.discoveryExpansionLimit, DEFAULT_SETTINGS.discoveryExpansionLimit, 5, 50),
     discoveryCacheHours: boundedInteger(settings.discoveryCacheHours, DEFAULT_SETTINGS.discoveryCacheHours, 1, 168),
   };
+}
+
+/**
+ * The pre-0.12.1 default system prompt told the model to PREFER artifacts;
+ * persisted settings keep it forever, so those installs see artifact-everything
+ * behavior long after the default changed. Upgrade only an exact match of the
+ * legacy default — never a user-customized prompt.
+ */
+const LEGACY_DEFAULT_SYSTEM_PROMPT =
+  "You are Claude, working inside the user's Obsidian vault. Be concise and precise. " +
+  "When the user asks for a plan, report, diagram, or anything visual, prefer producing a single " +
+  "self-contained HTML artifact in a ```claude-html code block using the provided design system.";
+
+export function migrateSystemPrompt(value: string | undefined): string | undefined {
+  return value !== undefined && value.trim() === LEGACY_DEFAULT_SYSTEM_PROMPT ? DEFAULT_SETTINGS.systemPrompt : undefined;
 }
 
 /** Streaming callbacks for a single Claude request. */

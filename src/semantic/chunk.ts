@@ -84,7 +84,7 @@ export function chunkNote(md: string, opts: ChunkOptions = {}): Chunk[] {
 }
 
 /** Greedily split text to <= maxChars, preferring paragraph/sentence boundaries. */
-function splitToSize(text: string, maxChars: number, overlap: number): string[] {
+export function splitToSize(text: string, maxChars: number, overlap: number): string[] {
   if (text.length <= maxChars) return [text];
   const out: string[] = [];
   let start = 0;

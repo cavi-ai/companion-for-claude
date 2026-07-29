@@ -55,6 +55,29 @@ export function compactMessages(messages: ChatMessage[]): ChatMessage[] {
 }
 
 /**
+ * Elide artifact bodies from OLDER assistant turns before sending history to
+ * the API. A full ```claude-html block in history is a 200-line few-shot
+ * example saying "respond with artifacts" — one artifact makes every later
+ * turn an artifact. The LATEST assistant turn stays intact so "change the
+ * artifact" follow-ups still have something to edit. Display/persistence keep
+ * the full content; this shapes only the API payload.
+ */
+export function compactArtifactsInHistory(messages: ChatMessage[]): ChatMessage[] {
+  let lastAssistant = -1;
+  messages.forEach((m, i) => {
+    if (m.role === "assistant") lastAssistant = i;
+  });
+  return messages.map((m, i) => {
+    if (m.role !== "assistant" || i === lastAssistant) return m;
+    if (!/```(?:claude-html|codex-html)\b[\s\S]*?```/.test(m.content)) return m;
+    return {
+      ...m,
+      content: m.content.replace(/```(?:claude-html|codex-html)\b[\s\S]*?```/g, "```claude-html\n[artifact content omitted from history]\n```"),
+    };
+  });
+}
+
+/**
  * Coalesce a message list into strictly alternating roles for the Anthropic
  * Messages API, merging consecutive same-role messages (the API 400s on two in
  * a row). Guards the case where a failed turn left a trailing `user` message and

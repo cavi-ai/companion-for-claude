@@ -114,6 +114,10 @@ export interface Provider {
   readonly label: string;
   /** True if the provider has what it needs to run (key / reachable host). */
   hasCredentials(): boolean;
+  /** True when the provider round-trips tool_use/tool_result — gates agent mode. */
+  readonly supportsTools?: boolean;
+  /** Per-model capability flags ("tools", "thinking", …) when the provider can report them. */
+  capabilities?(model: string): Promise<readonly string[]>;
   /** Stream a completion, calling handlers as text arrives. */
   stream(req: CompletionRequest, handlers: StreamHandlers): Promise<void>;
   /** Buffered completion. */

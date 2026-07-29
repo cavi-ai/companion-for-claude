@@ -806,6 +806,63 @@
   width: 13px;
   height: 13px;
 }
+/* Reasoning indicator — icon-only, non-interactive. */
+.cc-reasoning-indicator {
+  padding: 2px 7px;
+  cursor: default;
+  opacity: 0.55;
+}
+.cc-reasoning-indicator.is-active {
+  opacity: 1;
+  background: var(--cc-clay, #d97757);
+  border-color: var(--cc-clay, #d97757);
+  color: #fff;
+}
+
+/* settings: per-model capability badges */
+.cc-model-caps {
+  margin: 2px 0 10px;
+}
+.cc-model-caps-row {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  padding: 1px 0;
+}
+.cc-model-caps-name {
+  font-family: var(--cc-mono, monospace);
+}
+.cc-model-caps-row .is-ok {
+  color: var(--color-green, #1e5631);
+}
+.cc-model-caps-row .is-err {
+  color: var(--color-red, #5c1a10);
+}
+
+/* organize-clippings review modal */
+.cc-organize-review .cc-organize-row {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 8px 0;
+  border-top: 1px solid var(--background-modifier-border);
+}
+.cc-organize-review .cc-organize-row input[type="checkbox"] {
+  margin-top: 3px;
+}
+.cc-organize-review .cc-organize-from {
+  font-size: 12px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cc-organize-review .cc-organize-to {
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .cc-ctl-label {
   color: var(--cc-gray-500, #87867f);
   font-family: var(--cc-mono, "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace);

@@ -2,7 +2,8 @@
 // IO is injected (vault read, embed, load/save) so the logic is unit-testable
 // without Obsidian or a running Ollama. main.ts wires the real implementations.
 
-import { chunkNote, contentHash, stripFrontmatter } from "./chunk";
+import { chunkNote, contentHash, stripFrontmatter, type Chunk } from "./chunk";
+import { chunkPdfPages, pdfPagesText, type PdfPage } from "./pdf";
 import { SemanticStore, type IndexData, type SearchHit } from "./store";
 
 export interface IndexFile {
@@ -17,6 +18,10 @@ export interface IndexerDeps {
   listMarkdown(): IndexFile[];
   /** Read a note's full text. */
   read(path: string): Promise<string>;
+  /** PDF files to index; absent → markdown-only index. */
+  listPdf?(): IndexFile[];
+  /** Extract a PDF's per-page text; null → skipped this build (unreadable/encrypted). */
+  readPdfPages?(path: string): Promise<PdfPage[] | null>;
   /** Embed texts with the configured model; one vector per input, in order. */
   embed(input: string[]): Promise<number[][]>;
   /** Load the persisted index blob (or null/undefined if none). */
@@ -56,7 +61,7 @@ export class SemanticIndexer {
    */
   async build(opts: { force?: boolean; onProgress?: (done: number, total: number) => void } = {}): Promise<BuildResult> {
     const store = await this.ensureLoaded();
-    const files = this.deps.listMarkdown();
+    const files = [...this.deps.listMarkdown(), ...(this.deps.listPdf?.() ?? [])];
     const live = new Set(files.map((f) => f.path));
     let indexed = 0;
     let skipped = 0;
@@ -65,16 +70,17 @@ export class SemanticIndexer {
       const f = files[i];
       if (!f) continue;
       try {
-        const text = await this.deps.read(f.path);
-        const hash = contentHash(stripFrontmatter(text));
-        if (!opts.force && !store.needsReindex(f.path, hash)) {
+        const prepared = await this.prepare(f.path);
+        if (!prepared) {
+          skipped++;
+        } else if (!opts.force && !store.needsReindex(f.path, prepared.hash)) {
           skipped++;
         } else {
-          await this.embedInto(store, f.path, f.mtime, text, hash);
+          await this.embedInto(store, f.path, f.mtime, prepared.chunks, prepared.hash);
           indexed++;
         }
       } catch {
-        // Unreadable / embed failure for one note shouldn't abort the whole build.
+        // Unreadable / embed failure for one file shouldn't abort the whole build.
         skipped++;
       }
       opts.onProgress?.(i + 1, files.length);
@@ -88,10 +94,10 @@ export class SemanticIndexer {
   /** Re-embed a single note (on modify). No-op if semantic store can't load. */
   async updateNote(path: string, mtime: number): Promise<void> {
     const store = await this.ensureLoaded();
-    const text = await this.deps.read(path);
-    const hash = contentHash(stripFrontmatter(text));
-    if (!store.needsReindex(path, hash)) return;
-    await this.embedInto(store, path, mtime, text, hash);
+    const prepared = await this.prepare(path);
+    if (!prepared) return;
+    if (!store.needsReindex(path, prepared.hash)) return;
+    await this.embedInto(store, path, mtime, prepared.chunks, prepared.hash);
     await this.deps.save(store.toJSON());
   }
 
@@ -140,8 +146,19 @@ export class SemanticIndexer {
       .slice(0, k);
   }
 
-  private async embedInto(store: SemanticStore, path: string, mtime: number, text: string, hash: string): Promise<void> {
-    const chunks = chunkNote(text);
+  /** Chunks + change hash for one file: markdown notes directly, PDFs via page extraction. */
+  private async prepare(path: string): Promise<{ hash: string; chunks: Chunk[] } | null> {
+    if (path.toLowerCase().endsWith(".pdf")) {
+      if (!this.deps.readPdfPages) return null;
+      const pages = await this.deps.readPdfPages(path);
+      if (!pages || pages.length === 0) return null;
+      return { hash: contentHash(pdfPagesText(pages)), chunks: chunkPdfPages(pages) };
+    }
+    const text = await this.deps.read(path);
+    return { hash: contentHash(stripFrontmatter(text)), chunks: chunkNote(text) };
+  }
+
+  private async embedInto(store: SemanticStore, path: string, mtime: number, chunks: Chunk[], hash: string): Promise<void> {
     if (chunks.length === 0) {
       store.removeNote(path); // empty / frontmatter-only note carries nothing
       return;

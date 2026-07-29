@@ -27,7 +27,7 @@ import { listSessionsForVault, type SessionMeta } from "./memory/sessions";
 import { ingestSession, ingestConversation } from "./memory/ingest";
 import { ClaudeCompanionSettingTab } from "./settings";
 import { ProviderRouter, migrateUtilityBackend } from "./providers/router";
-import { DEFAULT_SETTINGS, normalizeDiscoverySettings, type PluginSettings, type ArtifactOpenTarget } from "./types";
+import { DEFAULT_SETTINGS, migrateSystemPrompt, normalizeDiscoverySettings, type PluginSettings, type ArtifactOpenTarget } from "./types";
 import { DESIGN_SYSTEM_PROMPT, PLANNING_INSTRUCTION } from "./artifacts/designSystem";
 import { AGENT_INSTRUCTION, PLAN_MODE_INSTRUCTION } from "./agent/prompt";
 import { findUnlinkedMentions, type LinkCandidate } from "./links/unlinkedMentions";
@@ -39,8 +39,15 @@ import { DiffModal } from "./view/DiffModal";
 import { RewriteModal } from "./view/RewriteModal";
 import { renderArtifactInline, ArtifactModal, openArtifactExternally } from "./artifacts/renderInline";
 import type { McpHttpServer } from "./mcp/server";
-import { VaultTools } from "./mcp/vaultTools";
+import { VaultTools, type VaultToolsOptions } from "./mcp/vaultTools";
+import { ExternalMcpManager } from "./mcp/externalManager";
+import { externalAnthropicTools } from "./mcp/external";
+import type { AnthropicToolDef } from "./providers/types";
+import { braveSearch, duckDuckGoSearch, formatSearchResults } from "./web/search";
+import { webFetch as webFetchPage } from "./web/fetch";
 import { parseTemplateNote, TEMPLATE_SCAFFOLD, type PromptTemplate } from "./templates/promptTemplates";
+import { buildOrganizePrompt, parseOrganizeResponse, planOrganizeMoves, type OrganizeCandidate } from "./sources/organize";
+import { OrganizeReviewModal } from "./view/OrganizeReviewModal";
 import { stripFrontmatter } from "./semantic/chunk";
 import { generateToken, resolveMcpToken } from "./mcp/clientConfig";
 import { extractTasks, specBody, claudeCodeBuildCommand, type SpecInput } from "./build/spec";
@@ -52,6 +59,8 @@ import { existingVaultTags } from "./indexing/autoTagger";
 import { frontmatterSuggestSystem, parseFrontmatterSuggestion } from "./indexing/frontmatterSuggest";
 import { FrontmatterModal } from "./view/FrontmatterModal";
 import { SemanticIndexer, type IndexFile } from "./semantic/indexer";
+import { extractPdfPages } from "./semantic/pdf";
+import { loadPdf } from "./semantic/pdfjs";
 import type { IndexData } from "./semantic/store";
 import { OllamaEmbedder, embedderId, migrateEmbeddingEngine, type Embedder } from "./semantic/embedder";
 import { builtinModelById } from "./semantic/transformers/model";
@@ -117,6 +126,8 @@ export default class ClaudeCompanionPlugin extends Plugin {
   private _viewIntelligenceCoordinators?: Set<IntelligenceCoordinator>;
   private _viewDiscoveryCoordinators?: Set<DiscoveryCoordinator>;
   private mcpServer: McpHttpServer | null = null;
+  private _externalMcp: ExternalMcpManager | null = null;
+  private _mcpServersSnapshot = "[]";
   private vaultTools: VaultTools | null = null;
   /** Chat-scoped vault tools (agent mode) — separate instance and write gate from the MCP bridge. */
   private agentVaultTools: VaultTools | null = null;
@@ -400,6 +411,12 @@ export default class ClaudeCompanionPlugin extends Plugin {
     });
 
     this.addCommand({
+      id: "organize-clippings",
+      name: "Organize clippings (rename, tag, sort into folders)",
+      callback: () => void this.organizeClippings(),
+    });
+
+    this.addCommand({
       id: "dispatch-cloud-session",
       name: "Send to cloud Claude session (mobile-friendly)",
       callback: () => void this.dispatchCloudSession(),
@@ -507,13 +524,13 @@ export default class ClaudeCompanionPlugin extends Plugin {
       // off). Registered AFTER layout-ready so Obsidian's initial vault scan
       // doesn't fire create/modify for every note and stampede the indexer —
       // a full build only happens via the explicit "Rebuild" command.
-      this.registerEvent(this.app.vault.on("modify", (f) => { if (f instanceof TFile && f.extension === "md") this.queueReindex(f.path); }));
-      this.registerEvent(this.app.vault.on("create", (f) => { if (f instanceof TFile && f.extension === "md") this.queueReindex(f.path); }));
+      this.registerEvent(this.app.vault.on("modify", (f) => { if (f instanceof TFile && (f.extension === "md" || (f.extension === "pdf" && this.settings.semanticIndexPdfs))) this.queueReindex(f.path); }));
+      this.registerEvent(this.app.vault.on("create", (f) => { if (f instanceof TFile && (f.extension === "md" || (f.extension === "pdf" && this.settings.semanticIndexPdfs))) this.queueReindex(f.path); }));
       this.registerEvent(this.app.vault.on("create", (f) => {
         if (f instanceof TFile && (f.extension === "md" || f.extension === "csv") && this.settings.sourceCaptureEnabled && this.settings.sourceEnrichOnCreate) this.queueEnrich(f);
       }));
-      this.registerEvent(this.app.vault.on("delete", (f) => { if (f instanceof TFile && f.extension === "md") void this.indexer()?.removeNote(f.path); }));
-      this.registerEvent(this.app.vault.on("rename", (f, oldPath) => { if (f instanceof TFile && f.extension === "md") void this.indexer()?.renameNote(oldPath, f.path); }));
+      this.registerEvent(this.app.vault.on("delete", (f) => { if (f instanceof TFile && (f.extension === "md" || f.extension === "pdf")) void this.indexer()?.removeNote(f.path); }));
+      this.registerEvent(this.app.vault.on("rename", (f, oldPath) => { if (f instanceof TFile && (f.extension === "md" || f.extension === "pdf")) void this.indexer()?.renameNote(oldPath, f.path); }));
       this.registerEvent(this.app.vault.on("create", (f) => { if (f.path.endsWith(".md")) this.scheduleResearchRefresh(f.path); }));
       this.registerEvent(this.app.vault.on("delete", (f) => { if (f.path.endsWith(".md")) this.scheduleResearchRefresh(f.path); }));
       this.registerEvent(this.app.vault.on("rename", (f, oldPath) => { if (f.path.endsWith(".md") || oldPath.endsWith(".md")) this.scheduleResearchRefresh(f.path, oldPath); }));
@@ -671,8 +688,88 @@ export default class ClaudeCompanionPlugin extends Plugin {
     }
   }
 
-  /** Tracks the Build header-action element we added to each plan-note view. */
-  private planBuildActions = new WeakMap<MarkdownView, HTMLElement>();
+  /**
+   * Clipping organizer: enrich every unenriched inbox clip (meaningful title,
+   * tags, summary via the existing pipeline), batch-infer a domain folder per
+   * clip, review the proposed rename+move plan, then apply the accepted subset.
+   */
+  async organizeClippings(): Promise<void> {
+    const inbox = this.settings.sourceInboxFolder.replace(/\/+$/, "");
+    const base = this.settings.clipOrganizedFolder.replace(/\/+$/, "");
+    const files = this.app.vault
+      .getMarkdownFiles()
+      .filter((f) => (f.path === inbox || f.path.startsWith(`${inbox}/`)) && !(base && (f.path === base || f.path.startsWith(`${base}/`))));
+    if (files.length === 0) {
+      new Notice(`No clippings found in ${inbox}/.`);
+      return;
+    }
+
+    const pending = new Notice(`Organizing ${files.length} clipping${files.length === 1 ? "" : "s"}…`, 0);
+    try {
+      // 1) Enrich anything not yet enriched (per-file consent + errors handled inside).
+      for (const file of files) {
+        const content = await this.app.vault.cachedRead(file);
+        if (!/^source_enriched:\s*true\s*$/m.test(content)) await this.enrichFile(file);
+      }
+
+      // 2) Titles + summaries from the (now enriched) frontmatter.
+      const candidates: OrganizeCandidate[] = [];
+      const titles = new Map<string, string>();
+      for (const file of files) {
+        const fm = this.app.metadataCache.getFileCache(file)?.frontmatter as Record<string, unknown> | undefined;
+        const title = typeof fm?.title === "string" && fm.title.trim() ? fm.title.trim() : file.basename;
+        const summary = typeof fm?.summary === "string" ? fm.summary.trim() : "";
+        titles.set(file.path, title);
+        candidates.push({ path: file.path, title, summary });
+      }
+
+      // 3) One batch call infers the domain folder for the whole set.
+      const existingFolders = [...new Set(this.app.vault.getMarkdownFiles().map((f) => f.parent?.path ?? "").filter((p) => p.startsWith(`${base}/`)))].sort();
+      const { system, user } = buildOrganizePrompt(candidates, existingFolders);
+      let proposals = candidates.map((c) => ({ path: c.path, domain: "misc" }));
+      try {
+        const raw = (
+          await this.router().complete("utility", {
+            system,
+            user,
+            maxTokens: 2048,
+            responseFormat: "json",
+            thinking: { type: "disabled" },
+          })
+        ).text;
+        proposals = parseOrganizeResponse(raw, candidates);
+      } catch {
+        // Folder inference failed — the review modal still offers the misc move.
+      }
+
+      // 4) Review, then apply the accepted subset.
+      const moves = planOrganizeMoves(proposals, titles, { baseFolder: base, taken: (p) => this.app.vault.getAbstractFileByPath(p) !== null });
+      pending.hide();
+      if (moves.length === 0) {
+        new Notice("Everything is already named and filed.");
+        return;
+      }
+      new OrganizeReviewModal(this.app, moves, (accepted) => {
+        if (!accepted || accepted.length === 0) return;
+        void (async () => {
+          let moved = 0;
+          for (const move of accepted) {
+            const file = this.app.vault.getAbstractFileByPath(move.from);
+            if (!(file instanceof TFile)) continue;
+            const dir = move.to.slice(0, move.to.lastIndexOf("/"));
+            await this.ensureFolder(dir);
+            await this.app.fileManager.renameFile(file, move.to);
+            moved++;
+          }
+          new Notice(`Organized ${moved} clipping${moved === 1 ? "" : "s"} into ${base}/.`);
+        })();
+      }).open();
+    } finally {
+      pending.hide();
+    }
+  }
+
+  /** Tracks the Build header-action element we added to each plan-note view. */  private planBuildActions = new WeakMap<MarkdownView, HTMLElement>();
   /** Most recently focused markdown file — side views (Desk, Chat) steal active-leaf, so "active note" flows must remember it. */
   private lastMarkdownFile: TFile | null = null;
 
@@ -925,12 +1022,31 @@ export default class ClaudeCompanionPlugin extends Plugin {
     this._viewDiscoveryCoordinators?.clear();
     void this.mcpServer?.stop();
     this.mcpServer = null;
+    void this._externalMcp?.close();
+    this._externalMcp = null;
     this._builtinEmbedder?.terminate();
     this._builtinEmbedder = null;
     if (this.reindexTimer !== null) window.clearTimeout(this.reindexTimer);
     if (this._ontologyReloadTimer !== null) window.clearTimeout(this._ontologyReloadTimer);
     if (this.researchRefreshTimer !== null) window.clearTimeout(this.researchRefreshTimer);
     if (this.inboxBadgeTimer !== null) window.clearTimeout(this.inboxBadgeTimer);
+  }
+
+  /** Lazy external-MCP manager; null until first configured use. */
+  externalMcp(): ExternalMcpManager {
+    if (!this._externalMcp) this._externalMcp = new ExternalMcpManager(() => this.settings.mcpClientServers);
+    return this._externalMcp;
+  }
+
+  /** External servers' namespaced tool lists (empty when none are configured/reachable). */
+  async externalMcpTools(): Promise<AnthropicToolDef[]> {
+    if (this.settings.mcpClientServers.every((s) => !s.enabled)) return [];
+    return externalAnthropicTools(await this.externalMcp().servers());
+  }
+
+  /** Route an mcp__<server>__<tool> call to its server. */
+  async callExternalMcp(name: string, args: Record<string, unknown>): Promise<string> {
+    return this.externalMcp().call(name, args);
   }
 
   // ---------- settings ----------
@@ -946,12 +1062,14 @@ export default class ClaudeCompanionPlugin extends Plugin {
     // the next save, like the shape migration above.
     const migratedEngine = migrateEmbeddingEngine(settingsData);
     const migratedUtility = migrateUtilityBackend(settingsData);
+    const migratedPrompt = migrateSystemPrompt(settingsData?.systemPrompt);
     this.settings = {
       ...DEFAULT_SETTINGS,
       ...settingsData,
       ...normalizeDiscoverySettings(settingsData ?? {}),
       ...(migratedEngine ? { embeddingEngine: migratedEngine } : {}),
       ...(migratedUtility ? { utilityBackend: migratedUtility } : {}),
+      ...(migratedPrompt ? { systemPrompt: migratedPrompt } : {}),
       context: { ...DEFAULT_SETTINGS.context, ...(settingsData?.context ?? {}) },
     };
     this.convState = isNamespaced
@@ -975,6 +1093,12 @@ export default class ClaudeCompanionPlugin extends Plugin {
     await this.persist();
     // Rebuild providers if any credentials/hosts changed.
     this._router = null;
+    // External MCP server list changed → drop stale sessions so they reconnect fresh.
+    const serversJson = JSON.stringify(this.settings.mcpClientServers);
+    if (this._mcpServersSnapshot !== serversJson) {
+      this._mcpServersSnapshot = serversJson;
+      if (this._externalMcp) void this._externalMcp.close();
+    }
     // Rebuild the indexer if the embedding engine/model or enabled state changed.
     const activeEmbedder = embedderId(this.settings.embeddingEngine, this.settings.embeddingModel, this.settings.builtinEmbeddingModel, this.settings.openaiCompatEmbeddingModel);
     if (this.indexerModel !== activeEmbedder || (!this.settings.semanticEnabled && this._indexer)) {
@@ -1108,6 +1232,7 @@ export default class ClaudeCompanionPlugin extends Plugin {
       semantic: (q: string, k: number) => this.semanticSearch(q, k),
       ontology: () => this.ontology(),
       zotero: () => this.zoteroLibrary(),
+      ...this.webToolImpls(),
     };
     if (!this.vaultTools) {
       this.vaultTools = new VaultTools(this.app, toolOpts);
@@ -1472,6 +1597,7 @@ export default class ClaudeCompanionPlugin extends Plugin {
       semantic: (q: string, k: number) => this.semanticSearch(q, k),
       ontology: () => this.ontology(),
       zotero: () => this.zoteroLibrary(),
+      ...this.webToolImpls(),
     };
     if (!this.agentVaultTools) this.agentVaultTools = new VaultTools(this.app, opts);
     else this.agentVaultTools.setOptions(opts);
@@ -1494,6 +1620,54 @@ export default class ClaudeCompanionPlugin extends Plugin {
         },
         parseHtml: (html) => new DOMParser().parseFromString(html, "text/html"),
       });
+  }
+
+  /**
+   * The agent's web tools, built from settings on every call. Each fires only
+   * on an explicit model tool call — nothing searches or fetches in the
+   * background. DOMParser-less environments (headless tests) get no tools.
+   */
+  private webToolImpls(): Pick<VaultToolsOptions, "webSearch" | "webFetch"> {
+    const s = this.settings;
+    const out: { webSearch?: (query: string, count: number) => Promise<string>; webFetch?: (url: string) => Promise<string> } = {};
+    if (s.webSearchEnabled) {
+      out.webSearch = async (query, count) => {
+        if (s.webSearchEngine === "brave") {
+          if (!s.braveSearchApiKey.trim()) {
+            throw new Error("Brave Search needs an API key — add it in Companion settings → Agent, or switch to DuckDuckGo.");
+          }
+          return formatSearchResults(query, await braveSearch(createObsidianDiscoveryHttp(), s.braveSearchApiKey, query, count));
+        }
+        if (typeof DOMParser === "undefined") throw new Error("Web search is unavailable in this environment.");
+        return formatSearchResults(
+          query,
+          await duckDuckGoSearch(
+            {
+              fetchHtml: async (url) => {
+                const response = await requestUrl({ url, method: "GET", throw: false });
+                if (response.status >= 400) throw new Error(`Search failed (${response.status}).`);
+                return response.text;
+              },
+              parseHtml: (html) => new DOMParser().parseFromString(html, "text/html"),
+            },
+            query,
+            count,
+          ),
+        );
+      };
+    }
+    if (s.webFetchEnabled && typeof DOMParser !== "undefined") {
+      out.webFetch = (url) =>
+        webFetchPage(url, {
+          fetchHtml: async (target) => {
+            const response = await requestUrl({ url: target, method: "GET", throw: false });
+            if (response.status >= 400) throw new Error(`Fetch failed with status ${response.status}`);
+            return response.text;
+          },
+          parseHtml: (html) => new DOMParser().parseFromString(html, "text/html"),
+        });
+    }
+    return out;
   }
 
   // ---------- prompt templates (user slash commands) ----------
@@ -1573,6 +1747,21 @@ export default class ClaudeCompanionPlugin extends Plugin {
         const f = this.app.vault.getAbstractFileByPath(p);
         return f instanceof TFile ? this.app.vault.cachedRead(f) : "";
       },
+      ...(this.settings.semanticIndexPdfs
+        ? {
+            listPdf: (): IndexFile[] =>
+              this.app.vault.getFiles().filter((f) => f.extension === "pdf").map((f) => ({ path: f.path, mtime: f.stat.mtime })),
+            readPdfPages: async (p: string) => {
+              const f = this.app.vault.getAbstractFileByPath(p);
+              if (!(f instanceof TFile)) return null;
+              try {
+                return await extractPdfPages(loadPdf, await this.app.vault.readBinary(f));
+              } catch {
+                return null; // encrypted/corrupt PDFs skip, they never abort a build
+              }
+            },
+          }
+        : {}),
       embed: async (input: string[]) => {
         // Belt-and-braces consent gate: no indexer path (build, update, query,
         // related-notes fallback) may implicitly fetch weights from the network.

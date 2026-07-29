@@ -2,13 +2,14 @@ import { ItemView, MarkdownRenderer, MarkdownView, Menu, Modal, Notice, Platform
 import type ClaudeCompanionPlugin from "../main";
 import type { ChatMessage, ContextToggles, ToolTraceEntry } from "../types";
 import { runAgentTurn, type AgentTurnDeps } from "../agent/loop";
-import { executeTool, toAnthropicTools, readOnlyAnthropicTools, PROPOSE_EDIT_TOOL } from "../agent/tools";
+import { executeTool, toAnthropicTools, readOnlyAnthropicTools, PROPOSE_EDIT_TOOL, truncateResult } from "../agent/tools";
+import { parseExternalToolName } from "../mcp/external";
 import { WriteConfirmModal } from "./WriteConfirmModal";
 import { DiffModal } from "./DiffModal";
 import { planEdits, applyPlan, type ProposedEdit } from "../edit/diff";
 import type { ApiMessage, ContentBlock, ToolResultBlock, ToolUseBlock, Provider } from "../providers/types";
 import { TFile } from "obsidian";
-import { compactMessages, toApiMessages, type Conversation } from "../conversations/store";
+import { compactArtifactsInHistory, compactMessages, toApiMessages, type Conversation } from "../conversations/store";
 import { ConversationPicker } from "./ConversationPicker";
 import { modelLabel, CLAUDE_MODELS, resolveModelId } from "../claude/models";
 import { capabilitiesFor, effortLevels } from "../claude/capabilities";
@@ -126,6 +127,33 @@ export class ChatView extends ItemView {
   private agentWriteAlways = false;
   /** Plan Mode: read-only agent turn that ends in a plan (per conversation). */
   private planMode = false;
+  /** Whether the current chat backend can run tool-driven agent turns (refreshed per turn + backend change). */
+  private agentCapable = false;
+  private reasoningEl: HTMLButtonElement | null = null;
+
+  /** Re-derive agent capability + reasoning state for the controls row (async, backend-aware). */
+  private refreshCapabilityIndicators(): void {
+    void (async () => {
+      const router = this.plugin.router();
+      this.agentCapable = this.plugin.settings.agentModeEnabled && (await router.chatToolCapable());
+      this.updateWritesToggle();
+      this.updatePlanToggle();
+      const el = this.reasoningEl;
+      if (!el) return;
+      const reasoning = await router.chatReasoningActive(this.controls.thinking);
+      const { provider, model } = router.chatProvider();
+      el.toggleClass("is-active", reasoning);
+      el.setAttr(
+        "aria-label",
+        reasoning
+          ? "Reasoning on — this model thinks before answering"
+          : provider.id === "anthropic"
+            ? "Reasoning off — enable thinking in model controls (the tune button)"
+            : `Reasoning off — ${model} doesn't report a thinking capability`,
+      );
+      el.setAttr("title", el.getAttr("aria-label") ?? "");
+    })();
+  }
   private planToggleEl: HTMLButtonElement | null = null;
   private renderVersions = new WeakMap<HTMLElement, number>();
 
@@ -811,6 +839,17 @@ export class ChatView extends ItemView {
     this.planToggleEl = plan;
     this.updatePlanToggle();
 
+    // Reasoning indicator: lit when the current backend thinks before
+    // answering (Claude thinking on, or a local model with thinking metadata).
+    const reasoning = this.controlsEl.createEl("button", {
+      cls: "cc-ctl cc-ctl-toggle cc-reasoning-indicator",
+      attr: { "aria-label": "Reasoning status", tabindex: "-1" },
+    });
+    reasoning.createSpan({ cls: "cc-writes-toggle-icon" });
+    setIcon(reasoning.querySelector(".cc-writes-toggle-icon") as HTMLElement, "brain");
+    this.reasoningEl = reasoning;
+    this.refreshCapabilityIndicators();
+
     // Knobs (thinking / effort / temp / max) live in a popover behind a single
     // "tune" button, so the footer stays clean and Send is never buried.
     const tuneWrap = this.controlsEl.createDiv({ cls: "cc-tune" });
@@ -880,8 +919,7 @@ export class ChatView extends ItemView {
     await this.plugin.saveSettings();
     this.renderKnobs(); // capabilities/provider changed → rebuild dependent knobs
     this.refreshModelLabel();
-    this.updateWritesToggle(); // provider changed → show/hide "Act on vault"
-    this.updatePlanToggle();
+    this.refreshCapabilityIndicators(); // provider changed → gates + reasoning
     this.updateUsageBar();
     void this.refreshBackendPill();
   }
@@ -924,6 +962,7 @@ export class ChatView extends ItemView {
         this.controls.thinking = !this.controls.thinking;
         this.renderKnobsInto(parent);
         this.updateUsageBar();
+        this.refreshCapabilityIndicators();
       });
 
       if (caps.effort && this.controls.thinking) {
@@ -1334,8 +1373,17 @@ export class ChatView extends ItemView {
     this.messages.push({ role: "user", content: userText, ...(display !== undefined ? { display } : {}) });
     this.renderMessage("user", display ?? userText, { command: display !== undefined });
 
-    // Agent mode: Claude pulls vault context itself via tools (Anthropic only).
-    const agentActive = this.plugin.settings.agentModeEnabled && provider.id === "anthropic";
+    // Agent mode: the model pulls vault context itself via tools. Gated on the
+    // provider actually round-tripping tool_use (Claude, and local models whose
+    // metadata reports "tools") — local-only setups get the same agent.
+    const toolCapable = await router.chatToolCapable();
+    this.agentCapable = this.plugin.settings.agentModeEnabled && toolCapable;
+    this.updateWritesToggle();
+    this.updatePlanToggle();
+    const agentActive = this.agentCapable;
+    if (this.plugin.settings.agentModeEnabled && !toolCapable && provider.id !== "anthropic") {
+      new Notice(`The selected local model doesn't support tools, so the agent is off. Pick a tool-capable model (e.g. llama3.1, qwen3) in settings → Local models.`, 8000);
+    }
 
     // Build context-augmented copy of the message list for the API. In agent
     // mode the pre-emptive vault-search stuffing is skipped — the vault_search
@@ -1352,7 +1400,7 @@ export class ChatView extends ItemView {
       this.attachedPaths,
       this.attachedPages,
     );
-    const apiMessages: ApiMessage[] = toApiMessages(this.messages);
+    const apiMessages: ApiMessage[] = toApiMessages(compactArtifactsInHistory(this.messages));
     if (ctx.text) {
       const last = apiMessages[apiMessages.length - 1];
       if (last && typeof last.content === "string") last.content = `${ctx.text}\n\n---\n\n${last.content}`;
@@ -1383,10 +1431,10 @@ export class ChatView extends ItemView {
 
     // Attempt #1 on the primary backend (Claude unless backend is "local"/"custom").
     const startedOnLocal = provider.id !== "anthropic";
-    const err1 = startedOnLocal
-      ? await this.streamTurn("local", apiMessages, bubble, body)
-      : agentActive
-        ? await this.agentTurn(apiMessages, bubble, body)
+    const err1 = agentActive
+      ? await this.agentTurn(apiMessages, bubble, body)
+      : startedOnLocal
+        ? await this.streamTurn("local", apiMessages, bubble, body)
         : await this.streamTurn("claude", apiMessages, bubble, body);
 
     // Fallback: if Claude failed with an offline/usage error and a local model is
@@ -1521,14 +1569,15 @@ export class ChatView extends ItemView {
     bubble: HTMLElement,
     body: HTMLElement,
   ): Promise<{ message?: string; status?: number } | null> {
-    const provider = this.plugin.router().anthropic;
+    const { provider, model: providerModel } = this.plugin.router().chatProvider();
     const shape = shapeRequest(this.controls, this.maxTokensOverride ?? this.plugin.settings.maxTokens);
     const renderer = new TurnRenderer(this.turnHost(), bubble, body, this.controls.thinking && this.controls.showThinking);
+    const externalTools = this.planMode ? [] : await this.plugin.externalMcpTools().catch(() => []);
 
     const request: CompletionRequest = {
       system: this.plugin.composeSystemPrompt({ agent: true, plan: this.planMode }),
       messages: apiMessages,
-      model: this.turnModelOverride ?? this.controls.model,
+      model: this.turnModelOverride ?? providerModel,
       maxTokens: shape.maxTokens,
       // Plan Mode forces the read-only set regardless of agentAllowWrites, and
       // drops propose_note_edit — the turn should end in a plan, not an edit.
@@ -1536,7 +1585,7 @@ export class ChatView extends ItemView {
       // the diff modal is its own gate (spec 2026-07-05 apply-to-note, §7 Q1).
       tools: this.planMode
         ? readOnlyAnthropicTools(this.plugin.agentTools().definitions())
-        : [...toAnthropicTools(this.plugin.agentTools().definitions()), PROPOSE_EDIT_TOOL],
+        : [...toAnthropicTools(this.plugin.agentTools().definitions()), PROPOSE_EDIT_TOOL, ...externalTools],
     };
     if (shape.temperature !== undefined) request.temperature = shape.temperature;
     if (shape.thinking !== undefined) request.thinking = shape.thinking;
@@ -1548,14 +1597,16 @@ export class ChatView extends ItemView {
     const deps: AgentTurnDeps = {
       stream: (req, handlers) => provider.stream(req, handlers),
       execute: (block) =>
-        executeTool(
-          {
-            call: (name, args) => this.plugin.agentTools().call(name, args),
-            confirmWrite: (b) => this.confirmAgentWrite(b),
-            proposeEdit: (b) => this.proposeAgentEdit(b),
-          },
-          block,
-        ),
+        parseExternalToolName(block.name)
+          ? this.executeExternalMcp(block)
+          : executeTool(
+              {
+                call: (name, args) => this.plugin.agentTools().call(name, args),
+                confirmWrite: (b) => this.confirmAgentWrite(b),
+                proposeEdit: (b) => this.proposeAgentEdit(b),
+              },
+              block,
+            ),
       maxIterations: this.plugin.settings.agentMaxIterations,
       ...(this.abort?.signal ? { signal: this.abort.signal } : {}),
     };
@@ -1618,8 +1669,28 @@ export class ChatView extends ItemView {
       : `Applied ${applied} of ${plan.hunks.length} edits to ${path} (the user rejected the rest).`;
   }
 
-  /** Ask the user before an agent write tool runs; honors "allow for this session". */
-  private confirmAgentWrite(block: ToolUseBlock): Promise<boolean> {
+  /**
+   * Route an external MCP tool call: every call confirms first (external
+   * servers can do anything), then dispatch; errors become is_error results
+   * so the model adapts instead of the turn dying.
+   */
+  private async executeExternalMcp(block: ToolUseBlock): Promise<ToolResultBlock> {
+    const result = (content: string, isError?: boolean): ToolResultBlock => ({
+      type: "tool_result",
+      tool_use_id: block.id,
+      content,
+      ...(isError ? { is_error: true } : {}),
+    });
+    if (block.parseError) return result(block.parseError, true);
+    if (!(await this.confirmAgentWrite(block))) return result("User declined.", true);
+    try {
+      return result(truncateResult(await this.plugin.callExternalMcp(block.name, block.input)));
+    } catch (err) {
+      return result(err instanceof Error ? err.message : String(err), true);
+    }
+  }
+
+  /** Ask the user before an agent write tool runs; honors "allow for this session". */  private confirmAgentWrite(block: ToolUseBlock): Promise<boolean> {
     if (this.agentWriteAlways) return Promise.resolve(true);
     return new Promise((resolve) => {
       new WriteConfirmModal(this.app, block, (choice) => {
@@ -1649,7 +1720,7 @@ export class ChatView extends ItemView {
   private updateWritesToggle(): void {
     const el = this.writesToggleEl;
     if (!el) return;
-    const canAct = this.plugin.settings.agentModeEnabled && this.plugin.router().chatProvider().provider.id === "anthropic";
+    const canAct = this.agentCapable;
     el.toggleClass("is-hidden", !canAct);
     el.toggleClass("is-active", this.plugin.settings.agentAllowWrites);
     el.setAttr("aria-pressed", String(this.plugin.settings.agentAllowWrites));
@@ -1671,8 +1742,7 @@ export class ChatView extends ItemView {
   private updatePlanToggle(): void {
     const el = this.planToggleEl;
     if (!el) return;
-    const canAct = this.plugin.settings.agentModeEnabled && this.plugin.router().chatProvider().provider.id === "anthropic";
-    el.toggleClass("is-hidden", !canAct);
+    el.toggleClass("is-hidden", !this.agentCapable);
     el.toggleClass("is-active", this.planMode);
     el.setAttr("aria-pressed", String(this.planMode));
   }

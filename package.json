@@ -1,6 +1,6 @@
 {
   "name": "claude-companion",
-  "version": "0.20.0",
+  "version": "0.21.0",
   "description": "Chat with Claude inside your Obsidian vault, generate beautiful interactive artifacts, and sync them back into your notes.",
   "main": "main.js",
   "type": "module",
@@ -62,6 +62,7 @@
   },
   "dependencies": {
     "@huggingface/transformers": "^4.2.0",
-    "defuddle": "^0.19.2"
+    "defuddle": "^0.19.2",
+    "pdfjs-dist": "^6.2.108"
   }
 }

@@ -56,7 +56,9 @@ vault stays the single source of truth.
   a built-in on-device model (one-time ~45MB model + ~23MB ONNX
   runtime download from huggingface.co / cdn.jsdelivr.net, offered on first
   run, cached and fully offline afterwards) or a local Ollama server. Search
-  stays keyword-only until the model is downloaded. The ONNX runtime is
+  stays keyword-only until the model is downloaded. The index also covers
+  **vault PDFs** — text is extracted with pdf.js and every chunk keeps its page
+  number, so results cite the page. The ONNX runtime is
   `ort-wasm-simd-threaded.asyncify.wasm`, shipped by the `@huggingface/transformers`
   dependency; it executes the embedding model on-device and makes no network
   requests of its own.
@@ -147,9 +149,11 @@ The end-to-end workflow is:
 
 1. Create a project with a focused research question.
 2. Import a source so its metadata and captured-content fingerprint are saved.
-   Web sources are fetched and reduced to clean readable markdown automatically
-   (powered by Defuddle, the Obsidian Web Clipper engine — no third-party
-   extraction services involved).
+   Sources can be web pages (fetched and reduced to clean readable markdown
+   automatically, powered by Defuddle — no third-party extraction services
+   involved), PDFs, DOI or arXiv references, **Zotero items** (a `zotero_key`
+   resolves full bibliographic metadata from your library when you set a Zotero
+   user id in settings), or existing vault notes.
 3. Capture an exact excerpt with a source locator as evidence.
 4. Review the excerpt and locator, then mark the evidence reviewed or rejected.
    **Draft with Claude** writes a grounded interpretation of the excerpt for
@@ -186,7 +190,17 @@ same vault, same confirm-before-write guardrails, wherever you are.
   expandable tool chip. Read-only by default; an optional setting also lets it
   **create and edit notes**, with a confirmation dialog before every write
   ("Allow", "Allow for this session", or "Deny"). Turn it all off in settings
-  for plain chat with pre-attached context.
+  for plain chat with pre-attached context. The same agent runs **fully local**
+  on tool-capable Ollama models — Companion reads each model's metadata and
+  tells you when it can't drive tools, and a composer indicator shows when the
+  current backend reasons before answering.
+- **Web search & fetch tools (opt-in)** — let the agent search the public web
+  (DuckDuckGo keyless, or Brave with an API key) and read pages as clean
+  markdown. Off by default; fires only on explicit searches, with URLs cited.
+- **External MCP servers (MCP client)** — the agent also *consumes* tools from
+  other MCP servers (HTTP or, on desktop, stdio), namespaced per server and
+  confirm-per-call. Companion is the two-way hub: your vault is served to
+  Claude Code while the agent uses everything else.
 - **Apply edits as reviewable diffs** — ask Claude to improve or fix a note and
   it **proposes the change as a red/green diff**; you accept or reject **each
   hunk** before anything is written, and Claude is told exactly what you
@@ -197,8 +211,10 @@ same vault, same confirm-before-write guardrails, wherever you are.
   result as the same per-hunk diff before it lands. No chat round-trip.
 - **Link suggestions while you write** — the Related panel surfaces **unlinked
   mentions** (note titles and aliases sitting in your prose as plain text) with
-  one-click linking, or **Review & link all** as a single diff. No embeddings
-  needed; works alongside the semantic related-notes list.
+  one-click linking, or **Review & link all** as a single diff. A **Connections**
+  section lists the note's one-hop graph neighborhood — backlinks, outgoing
+  links, and typed ontology relations — as grouped lists. No embeddings needed
+  for either; they work alongside the semantic related-notes list.
 - **Consolidated memory** — merge captured session digests into one evolving
   **"What Claude Knows"** note (manual command or auto after each capture).
   It's a normal note — agent mode reads it back with its own tools, so Claude
@@ -235,6 +251,12 @@ same vault, same confirm-before-write guardrails, wherever you are.
 - **Source inbox** — a touch-first triage view of everything in the inbox that
   isn't typed yet, with one-tap enrich and *Enrich all*. Built for clipping
   from your phone.
+- **Organize clippings** — one command takes the existing pile: every clip is
+  enriched (meaningful title, tags, summary), a batch model call infers a
+  domain/project folder per clip (preferring your existing folders), and a
+  review modal shows each old path → new path before accepted moves rename and
+  file clips into `<Organized folder>/<domain>/` (default `Library/`),
+  collision-safe, with links updated.
 - **Vault ontology** — schema notes in an
   `Ontology/` folder define **note types and typed wikilink relations**; on
   first run Companion offers to create the default schemas (or run
@@ -289,8 +311,9 @@ The server binds to **127.0.0.1 only** (never the network), requires a
 | | `research_outline_generate` |
 
 That is 10 always-available read/audit tools and 14 write-gated mutation tools
-(24 advertised tools when writes are enabled). Research Workbench reads and
-audits remain available with writes disabled. Creating projects, importing
+(24 advertised tools when writes are enabled), plus the optional `web_search`
+and `web_fetch` read tools when enabled in settings. Research Workbench reads
+and audits remain available with writes disabled. Creating projects, importing
 sources, capturing or reviewing evidence, creating or linking claims, and
 generating outlines requires *Allow writes*; agent mode also keeps its normal
 per-action confirmation gate. Evidence review applies only to evidence records

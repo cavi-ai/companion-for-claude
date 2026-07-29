@@ -29,6 +29,19 @@ await esbuild.build({
   logLevel: "info",
 });
 
+// Pass 1b: the pdf.js worker, likewise inlined and Blob-URL'd at runtime (PDF
+// text extraction for the semantic index).
+await esbuild.build({
+  entryPoints: ["node_modules/pdfjs-dist/legacy/build/pdf.worker.min.mjs"],
+  bundle: true,
+  format: "iife",
+  target: "es2021",
+  platform: "browser",
+  outfile: ".build/pdf-worker.txt",
+  minify: true,
+  logLevel: "info",
+});
+
 const context = await esbuild.context({
   banner: { js: banner },
   entryPoints: ["src/main.ts"],

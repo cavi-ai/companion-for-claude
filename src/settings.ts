@@ -7,7 +7,7 @@ import { generateToken, bridgeUrl, claudeCodeCommand, claudeDesktopConfig, maskT
 import { dispatchSetupSteps, repliesSetupSteps } from "./cloud/setup";
 import { BUILTIN_EMBEDDING_MODELS, builtinModelById } from "./semantic/transformers/model";
 import { ChoiceModal } from "./view/ChoiceModal";
-import { normalizeDiscoverySettings, type PluginSettings } from "./types";
+import { normalizeDiscoverySettings, type McpServerConfig, type PluginSettings } from "./types";
 import { settingDefinitions } from "./settingsDefinitions";
 
 export class ClaudeCompanionSettingTab extends PluginSettingTab {
@@ -272,6 +272,7 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
     this.accordion(containerEl, "Source capture (typed clips)", (c) => this.renderSourceCaptureSection(c));
     this.accordion(containerEl, "Vault ontology (typed notes & relations)", (c) => this.renderOntologySection(c));
     this.accordion(containerEl, "Scholarly discovery", (c) => this.renderDiscoverySection(c));
+    this.accordion(containerEl, "External tools — MCP client", (c) => this.renderMcpClientSection(c));
     if (!Platform.isMobile) {
       this.accordion(containerEl, "Local models (Ollama & endpoints)", (c) => this.renderLocalModelsSection(c));
       this.accordion(containerEl, "Agent bridge — MCP server (desktop)", (c) => this.renderMcpSection(c));
@@ -462,6 +463,25 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
           this.renderSettings(); // re-render so the dropdown appears/updates
         }),
     );
+
+    // Capability badges per detected model — tools gates the agent; thinking
+    // means the model reasons before answering (shows in the chat indicator).
+    const capsEl = containerEl.createDiv({ cls: "cc-model-caps setting-item-description" });
+    void (async () => {
+      const models = this.detectedOllamaModels ?? [];
+      if (models.length === 0) return;
+      const ollama = this.plugin.router().ollama;
+      for (const m of models) {
+        const caps = await ollama.capabilities(m);
+        const tools = caps.includes("tools");
+        const thinking = caps.includes("thinking");
+        const row = capsEl.createDiv({ cls: "cc-model-caps-row" });
+        row.createSpan({ text: m, cls: "cc-model-caps-name" });
+        row.createSpan({ text: `tools ${tools ? "✓" : "✗"}`, cls: tools ? "is-ok" : "is-err" });
+        row.createSpan({ text: `thinking ${thinking ? "✓" : "✗"}`, cls: thinking ? "is-ok" : "" });
+        if (!tools) row.createSpan({ text: " — chat only, no agent", cls: "setting-item-description" });
+      }
+    })();
 
     const ollamaStatus = containerEl.createDiv({ cls: "cc-conn-status" });
     new Setting(containerEl)
@@ -787,6 +807,17 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
         .catch(() => idxStatus.setText("Index: not built yet."));
 
       new Setting(containerEl)
+        .setName("Index PDF text")
+        .setDesc("Extract text from vault PDFs into the semantic index (page numbers kept, so results cite the page). Rebuilds the index on the next save or manual rebuild.")
+        .addToggle((t) =>
+          t.setValue(this.plugin.settings.semanticIndexPdfs).onChange(async (v) => {
+            this.plugin.settings.semanticIndexPdfs = v;
+            await this.plugin.saveSettings();
+            this.plugin.invalidateIndexer();
+          }),
+        );
+
+      new Setting(containerEl)
         .setName("Rebuild index")
         .setDesc("Embed every note now. Re-embeds only changed notes on save afterward.")
         .addButton((btn) =>
@@ -925,6 +956,16 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
+      .setName("Organized folder")
+      .setDesc("Where “Organize clippings” moves reviewed clips — one subfolder per inferred topic/project.")
+      .addText((text) =>
+        text.setValue(this.plugin.settings.clipOrganizedFolder).onChange(async (v) => {
+          this.plugin.settings.clipOrganizedFolder = v.trim() || "Library";
+          await this.plugin.saveSettings();
+        }),
+      );
+
+    new Setting(containerEl)
       .setName("Base tags")
       .setDesc("Comma-separated tags added to every enriched source note.")
       .addText((text) =>
@@ -1019,6 +1060,170 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
             this.plugin.settings.agentMaxIterations = v;
             await this.plugin.saveSettings();
           }),
+      );
+
+    new Setting(containerEl)
+      .setName("Web search tool")
+      .setDesc("Let Claude search the public web from chat (explicit searches only — nothing fires in the background).")
+      .addToggle((t) =>
+        t.setValue(this.plugin.settings.webSearchEnabled).onChange(async (v) => {
+          this.plugin.settings.webSearchEnabled = v;
+          await this.plugin.saveSettings();
+          this.renderSettings();
+        }),
+      );
+
+    if (this.plugin.settings.webSearchEnabled) {
+      new Setting(containerEl)
+        .setName("Search engine")
+        .setDesc("DuckDuckGo needs no key; Brave gives higher-quality results with an API key.")
+        .addDropdown((dd) => {
+          dd.addOption("duckduckgo", "DuckDuckGo (no key)");
+          dd.addOption("brave", "Brave Search (API key)");
+          dd.setValue(this.plugin.settings.webSearchEngine).onChange(async (v) => {
+            this.plugin.settings.webSearchEngine = v as "duckduckgo" | "brave";
+            await this.plugin.saveSettings();
+            this.renderSettings();
+          });
+        });
+
+      if (this.plugin.settings.webSearchEngine === "brave") {
+        new Setting(containerEl)
+          .setName("Brave Search API key")
+          .setDesc("Subscription token from brave.com/search/api. Stored locally in this vault's plugin data.")
+          .addText((text) => {
+            text.inputEl.type = "password";
+            text.setValue(this.plugin.settings.braveSearchApiKey).onChange(async (v) => {
+              this.plugin.settings.braveSearchApiKey = v.trim();
+              await this.plugin.saveSettings();
+            });
+          });
+      }
+    }
+
+    new Setting(containerEl)
+      .setName("Web fetch tool")
+      .setDesc("Let Claude read a public web page as clean markdown — after a search, or a URL you give it.")
+      .addToggle((t) =>
+        t.setValue(this.plugin.settings.webFetchEnabled).onChange(async (v) => {
+          this.plugin.settings.webFetchEnabled = v;
+          await this.plugin.saveSettings();
+        }),
+      );
+  }
+
+  private renderMcpClientSection(containerEl: HTMLElement): void {
+    const s = this.plugin.settings;
+    containerEl.createEl("p", {
+      cls: "setting-item-description",
+      text:
+        "Let the in-chat agent use tools from external MCP servers — Companion is the two-way hub: it serves your vault to Claude Code (Agent bridge) and consumes other servers here. " +
+        "Every external tool call asks for your confirmation. HTTP servers work on mobile; stdio commands run on desktop only.",
+    });
+
+    s.mcpClientServers.forEach((server, index) => {
+      const box = containerEl.createDiv({ cls: "cc-mcp-server" });
+      new Setting(box)
+        .setName(server.name.trim() || `Server ${index + 1}`)
+        .setDesc(`${server.transport === "http" ? "HTTP" : "stdio (desktop)"}${server.enabled ? "" : " · disabled"}`)
+        .addToggle((t) =>
+          t.setValue(server.enabled).onChange(async (v) => {
+            server.enabled = v;
+            await this.plugin.saveSettings();
+            this.renderSettings();
+          }),
+        )
+        .addButton((b) =>
+          b.setButtonText("Remove").onClick(async () => {
+            s.mcpClientServers.splice(index, 1);
+            await this.plugin.saveSettings();
+            this.renderSettings();
+          }),
+        );
+
+      new Setting(box)
+        .setName("Name")
+        .addText((text) =>
+          text.setValue(server.name).onChange(async (v) => {
+            server.name = v;
+            await this.plugin.saveSettings();
+          }),
+        );
+
+      new Setting(box)
+        .setName("Transport")
+        .addDropdown((dd) => {
+          dd.addOption("http", "HTTP (streamable)");
+          dd.addOption("stdio", "stdio command (desktop)");
+          dd.setValue(server.transport).onChange(async (v) => {
+            server.transport = v as McpServerConfig["transport"];
+            await this.plugin.saveSettings();
+            this.renderSettings();
+          });
+        });
+
+      if (server.transport === "http") {
+        new Setting(box)
+          .setName("Server URL")
+          .addText((text) => {
+            text.inputEl.setCssStyles({ width: "320px" });
+            text.setPlaceholder("https://example.test/mcp").setValue(server.url).onChange(async (v) => {
+              server.url = v.trim();
+              await this.plugin.saveSettings();
+            });
+          });
+      } else {
+        new Setting(box)
+          .setName("Command")
+          .addText((text) => {
+            text.inputEl.setCssStyles({ width: "240px" });
+            text.setPlaceholder("npx").setValue(server.command).onChange(async (v) => {
+              server.command = v.trim();
+              await this.plugin.saveSettings();
+            });
+          });
+        new Setting(box)
+          .setName("Arguments")
+          .addText((text) => {
+            text.inputEl.setCssStyles({ width: "320px" });
+            text.setPlaceholder("-y @modelcontextprotocol/server-filesystem /path").setValue(server.args).onChange(async (v) => {
+              server.args = v;
+              await this.plugin.saveSettings();
+            });
+          });
+      }
+
+      const status = box.createDiv({ cls: "cc-conn-status" });
+      const error = this.plugin.externalMcp().errorFor(server.name.trim());
+      if (error) {
+        status.addClass("is-err");
+        status.setText(`✗ ${error}`);
+      }
+      new Setting(box)
+        .setName("Test connection")
+        .setDesc("Connect now and count the exposed tools.")
+        .addButton((button) =>
+          button.setButtonText("Test").onClick(async () => {
+            button.setDisabled(true);
+            status.removeClass("is-ok");
+            status.removeClass("is-err");
+            status.setText("Connecting…");
+            const result = await this.plugin.externalMcp().test(server);
+            status.addClass(result.ok ? "is-ok" : "is-err");
+            status.setText(`${result.ok ? "✓" : "✗"} ${result.message}`);
+            button.setDisabled(false);
+          }),
+        );
+    });
+
+    new Setting(containerEl)
+      .setName("Add server")
+      .addButton((b) =>
+        b.setButtonText("Add MCP server").setCta().onClick(async () => {
+          s.mcpClientServers.push({ name: "", enabled: true, transport: "http", url: "", command: "", args: "" });
+          await this.plugin.saveSettings();
+          this.renderSettings();
+        }),
       );
   }
 

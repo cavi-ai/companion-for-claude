@@ -113,6 +113,62 @@ describe("SemanticIndexer", () => {
     expect(rel[0].path).toBe("kittens.md"); // closest by shared cat/feline terms
   });
 
+  it("indexes PDFs with page-locator chunks, skips unchanged, prunes removed", async () => {
+    const ctx = makeDeps({ "cats.md": "# Cats\nThe feline cat is a small mammal." });
+    const pdfPages = [
+      { page: 1, text: "Cats are wonderful feline companions on page one." },
+      { page: 2, text: "Fish appear on page two of this cat book." },
+    ];
+    let pdfs: IndexFile[] = [{ path: "book.pdf", mtime: 1 }];
+    ctx.deps.listPdf = () => pdfs;
+    const pdfReads: string[] = [];
+    ctx.deps.readPdfPages = async (path: string) => {
+      pdfReads.push(path);
+      return path === "book.pdf" ? pdfPages : null;
+    };
+
+    const ix = new SemanticIndexer(ctx.deps);
+    const res = await ix.build();
+    expect(res.indexed).toBe(2); // the note + the pdf
+
+    const hits = await ix.search("feline companion", 3);
+    expect(hits[0]?.path).toBe("cats.md");
+    const pdfHit = hits.find((h) => h.path === "book.pdf");
+    expect(pdfHit?.text).toContain("Page 1");
+
+    // Rebuild: unchanged pdf skipped (no re-read needed for embedding).
+    const before = ctx.embedCalls.length;
+    const res2 = await ix.build();
+    expect(res2.indexed).toBe(0);
+    expect(ctx.embedCalls.length).toBe(before);
+
+    // PDF leaves the vault → pruned from the store.
+    pdfs = [];
+    const res3 = await ix.build();
+    expect(res3.removed).toBe(1);
+    expect((await ix.search("feline", 5)).every((h) => h.path !== "book.pdf")).toBe(true);
+  });
+
+  it("updateNote re-embeds a changed PDF and skips it without the pdf deps", async () => {
+    const ctx = makeDeps({});
+    let text = "Cats on page one.";
+    ctx.deps.listPdf = () => [{ path: "doc.pdf", mtime: 1 }];
+    ctx.deps.readPdfPages = async () => [{ page: 1, text }];
+    const ix = new SemanticIndexer(ctx.deps);
+    await ix.build();
+    expect((await ix.search("cat", 1))[0]?.path).toBe("doc.pdf");
+
+    text = "Fish swim in the ocean.";
+    await ix.updateNote("doc.pdf", 2);
+    expect((await ix.search("ocean fish", 1))[0]?.path).toBe("doc.pdf");
+
+    // Without readPdfPages the pdf is simply not indexed.
+    const plain = makeDeps({});
+    const ix2 = new SemanticIndexer(plain.deps);
+    await ix2.updateNote("other.pdf", 1);
+    expect(await ix2.search("anything", 1)).toEqual([]);
+  });
+
   it("search returns [] when the index is empty", async () => {
     const ctx = makeDeps({});
     const ix = new SemanticIndexer(ctx.deps);

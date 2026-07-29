@@ -3,7 +3,21 @@ import { parseOllamaLine } from "../src/providers/ollamaParse";
 import { buildOllamaRequestBody } from "../src/providers/ollamaBody";
 import { errorHint } from "../src/providers/errorHints";
 import { parseTaggerOutput } from "../src/indexing/taggerParse";
+import { migrateSystemPrompt, DEFAULT_SETTINGS } from "../src/types";
 import type { CompletionRequest } from "../src/providers/types";
+
+describe("migrateSystemPrompt", () => {
+  it("upgrades only the exact legacy default, never a customized prompt", () => {
+    const legacy =
+      "You are Claude, working inside the user's Obsidian vault. Be concise and precise. " +
+      "When the user asks for a plan, report, diagram, or anything visual, prefer producing a single " +
+      "self-contained HTML artifact in a ```claude-html code block using the provided design system.";
+    expect(migrateSystemPrompt(legacy)).toBe(DEFAULT_SETTINGS.systemPrompt);
+    expect(migrateSystemPrompt(`${legacy} Extra user sentence.`)).toBeUndefined();
+    expect(migrateSystemPrompt(DEFAULT_SETTINGS.systemPrompt)).toBeUndefined();
+    expect(migrateSystemPrompt(undefined)).toBeUndefined();
+  });
+});
 
 const baseReq: CompletionRequest = {
   system: "Extract JSON.",
@@ -29,6 +43,50 @@ describe("buildOllamaRequestBody", () => {
     const jsonMode = JSON.parse(buildOllamaRequestBody({ ...baseReq, responseFormat: "json" }, "default"));
     expect(jsonMode.format).toBe("json");
   });
+
+  it("maps tool defs to Ollama's function shape", () => {
+    const body = JSON.parse(
+      buildOllamaRequestBody(
+        { ...baseReq, tools: [{ name: "vault_search", description: "Search notes.", input_schema: { type: "object", properties: { query: { type: "string" } } } }] },
+        "default",
+      ),
+    );
+    expect(body.tools).toEqual([
+      { type: "function", function: { name: "vault_search", description: "Search notes.", parameters: { type: "object", properties: { query: { type: "string" } } } } },
+    ]);
+    expect(JSON.parse(buildOllamaRequestBody(baseReq, "default"))).not.toHaveProperty("tools");
+  });
+
+  it("translates tool_use / tool_result history into Ollama's tool messages", () => {
+    const body = JSON.parse(
+      buildOllamaRequestBody(
+        {
+          ...baseReq,
+          messages: [
+            { role: "user", content: "search my notes" },
+            {
+              role: "assistant",
+              content: [
+                { type: "text", text: "Let me look." },
+                { type: "tool_use", id: "ollama-tc-0", name: "vault_search", input: { query: "cats" } },
+              ],
+            },
+            { role: "user", content: [{ type: "tool_result", tool_use_id: "ollama-tc-0", content: "3 hits about cats" }] },
+          ],
+        },
+        "default",
+      ),
+    );
+    const [system, user, assistant, tool] = body.messages;
+    expect(system.role).toBe("system");
+    expect(user).toEqual({ role: "user", content: "search my notes" });
+    expect(assistant).toEqual({
+      role: "assistant",
+      content: "Let me look.",
+      tool_calls: [{ function: { name: "vault_search", arguments: { query: "cats" } } }],
+    });
+    expect(tool).toEqual({ role: "tool", content: "3 hits about cats" });
+  });
 });
 
 describe("parseOllamaLine", () => {
@@ -49,6 +107,16 @@ describe("parseOllamaLine", () => {
   it("surfaces an error field", () => {
     const r = parseOllamaLine('{"error":"model not found"}');
     expect(r.error).toBe("model not found");
+    expect(r.done).toBe(true);
+  });
+  it("extracts tool calls and coerces malformed arguments to {}", () => {
+    const r = parseOllamaLine(
+      '{"message":{"role":"assistant","content":"","tool_calls":[{"function":{"name":"vault_search","arguments":{"query":"cats"}}},{"function":{"name":"bad","arguments":[1]}},{}]},"done":true}',
+    );
+    expect(r.toolCalls).toEqual([
+      { name: "vault_search", input: { query: "cats" } },
+      { name: "bad", input: {} },
+    ]);
     expect(r.done).toBe(true);
   });
 });

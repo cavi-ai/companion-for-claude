@@ -11,6 +11,7 @@ import {
   setActive,
   fromPersisted,
   compactMessages,
+  compactArtifactsInHistory,
   relativeTime,
   type Conversation,
 } from "../src/conversations/store";
@@ -80,6 +81,28 @@ describe("compactMessages", () => {
 
   it("removes any adjacent assistant-only continuation because chat turns should alternate", () => {
     expect(compactMessages([u("one"), a("first"), a("second")])).toEqual([u("one"), a("first")]);
+  });
+});
+
+describe("compactArtifactsInHistory", () => {
+  const artifact = (n: number) => a(`Report ${n}:\n\n\`\`\`claude-html\n<html>${"x".repeat(500)}</html>\n\`\`\`\n\nDone.`);
+
+  it("elides artifact bodies from older assistant turns but keeps the latest intact", () => {
+    const out = compactArtifactsInHistory([u("first report please"), artifact(1), u("and another"), artifact(2), u("thanks")]);
+    // Older artifact: elided to a placeholder, prose kept.
+    expect(out[1]!.content).toContain("Report 1:");
+    expect(out[1]!.content).toContain("[artifact content omitted from history]");
+    expect(out[1]!.content).not.toContain("x".repeat(100));
+    // Latest assistant artifact: fully intact so follow-up edits have the source.
+    expect(out[3]!.content).toContain("x".repeat(500));
+    expect(out[3]!.content).not.toContain("omitted");
+  });
+
+  it("keeps the ONLY assistant message intact and leaves non-artifact turns alone", () => {
+    const single = compactArtifactsInHistory([u("make one"), artifact(1)]);
+    expect(single[1]!.content).toContain("x".repeat(500));
+    const plain = [u("hi"), a("just markdown"), u("ok"), a("more markdown")];
+    expect(compactArtifactsInHistory(plain)).toEqual(plain);
   });
 });
 

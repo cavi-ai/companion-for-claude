@@ -85,6 +85,37 @@ export class ProviderRouter {
   }
 
   /**
+   * Whether the current chat backend can run tool-driven agent turns. Claude
+   * always can; local providers must report "tools" for the selected model
+   * (unqueryable → not capable, so the UI never offers a broken agent).
+   */
+  async chatToolCapable(): Promise<boolean> {
+    const { provider, model } = this.chatProvider();
+    if (provider.id === "anthropic") return true;
+    if (provider.supportsTools !== true || !provider.capabilities) return provider.supportsTools === true;
+    try {
+      return (await provider.capabilities(model)).includes("tools");
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Whether the current chat backend reasons before answering: Claude with
+   * thinking toggled on, or a local model whose metadata reports "thinking".
+   */
+  async chatReasoningActive(thinkingToggled: boolean): Promise<boolean> {
+    const { provider, model } = this.chatProvider();
+    if (provider.id === "anthropic") return thinkingToggled;
+    if (!provider.capabilities) return false;
+    try {
+      return (await provider.capabilities(model)).includes("thinking");
+    } catch {
+      return false;
+    }
+  }
+
+  /**
    * One buffered completion on a role's provider — the shared shape for the
    * summarize/tag/enrich call sites that used to hand-roll resolve+complete.
    */

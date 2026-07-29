@@ -42,6 +42,7 @@ export function buildRequestBody(req: CompletionRequest, stream: boolean, auth: 
 export class AnthropicProvider implements Provider {
   readonly id = "anthropic" as const;
   readonly label = "Claude (Anthropic API)";
+  readonly supportsTools = true;
 
   constructor(private authInputs: AuthInputs) {}
 

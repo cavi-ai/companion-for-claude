@@ -44,6 +44,9 @@ export interface VaultToolsOptions {
   ontology?: (() => OntologyRegistry | null) | undefined;
   /** Zotero library accessor; absent/undefined disables zotero_key resolution on import. */
   zotero?: (() => ZoteroLibrary | undefined) | undefined;
+  /** Web tools (read-only, explicit calls only); absent disables each. */
+  webSearch?: ((query: string, count: number) => Promise<string>) | undefined;
+  webFetch?: ((url: string) => Promise<string>) | undefined;
 }
 
 /**
@@ -137,6 +140,32 @@ export class VaultTools {
 
     const researchDefinitions = new ResearchTools(this.researchRepository()).definitions();
     defs.push(...researchDefinitions.filter(({ name }) => !RESEARCH_WRITE_TOOLS.has(name)));
+
+    if (this.opts.webSearch) {
+      defs.push({
+        name: "web_search",
+        description: "Search the public web. Returns numbered results with titles, URLs, and snippets. Use for current events, external facts, or anything the vault can't answer; follow up with web_fetch to read a promising page.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            query: { type: "string", description: "Search query." },
+            count: { type: "number", description: "Max results (default 5, cap 10)." },
+          },
+          required: ["query"],
+        },
+      });
+    }
+    if (this.opts.webFetch) {
+      defs.push({
+        name: "web_fetch",
+        description: "Read one public web page as clean markdown (readable-content extraction). Use after web_search or on a URL the user gave you.",
+        inputSchema: {
+          type: "object",
+          properties: { url: { type: "string", description: "The http(s) URL to read." } },
+          required: ["url"],
+        },
+      });
+    }
 
     if (this.opts.allowWrites) {
       defs.push(
@@ -309,6 +338,14 @@ export class VaultTools {
     switch (name) {
       case "vault_search":
         return this.search(str(args.query), num(args.limit, 8));
+      case "web_search": {
+        if (!this.opts.webSearch) throw new Error("Web search is disabled. Enable it in Companion settings → Agent.");
+        return this.opts.webSearch(str(args.query), Math.min(num(args.count, 5), 10));
+      }
+      case "web_fetch": {
+        if (!this.opts.webFetch) throw new Error("Web fetch is disabled. Enable it in Companion settings → Agent.");
+        return this.opts.webFetch(str(args.url));
+      }
       case "note_read":
         return this.read(str(args.path));
       case "list_recent":

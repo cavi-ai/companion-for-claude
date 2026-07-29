@@ -1,7 +1,7 @@
 import { requestUrl } from "obsidian";
 import type { StreamHandlers } from "../types";
 import { type CompletionRequest, type Provider, type ProviderStatus, ProviderError, isAbort } from "./types";
-import { parseOllamaLine } from "./ollamaParse";
+import { parseOllamaLine, type OllamaToolCall } from "./ollamaParse";
 import { buildOllamaRequestBody } from "./ollamaBody";
 
 /**
@@ -12,6 +12,10 @@ import { buildOllamaRequestBody } from "./ollamaBody";
 export class OllamaProvider implements Provider {
   readonly id = "ollama" as const;
   readonly label = "Local (Ollama)";
+  // Ollama's /api/chat supports function tools natively on tool-capable models
+  // (llama3.1+, qwen3, …); on older models the tools key is ignored and the
+  // turn degrades to plain chat.
+  readonly supportsTools = true;
 
   constructor(
     private host: string,
@@ -46,6 +50,7 @@ export class OllamaProvider implements Provider {
       const decoder = new TextDecoder();
       let buffer = "";
       let full = "";
+      const toolCalls: OllamaToolCall[] = [];
       for (;;) {
         const { done, value } = await reader.read();
         if (done) break;
@@ -54,14 +59,21 @@ export class OllamaProvider implements Provider {
         while ((nl = buffer.indexOf("\n")) !== -1) {
           const line = buffer.slice(0, nl);
           buffer = buffer.slice(nl + 1);
-          const { text, error } = parseOllamaLine(line);
+          const { text, error, toolCalls: chunkCalls } = parseOllamaLine(line);
           if (error) throw new ProviderError(error);
           if (text) {
             full += text;
             handlers.onText(text);
           }
+          if (chunkCalls) toolCalls.push(...chunkCalls);
         }
       }
+      // Tool calls arrive complete in the final chunks; emit after the stream
+      // ends (the agent loop collects them before its own stop handling).
+      toolCalls.forEach((call, i) => {
+        handlers.onToolUse?.({ type: "tool_use", id: `ollama-tc-${i}`, name: call.name, input: call.input });
+      });
+      if (toolCalls.length > 0) handlers.onStopReason?.("tool_use");
       handlers.onDone?.(full);
     } catch (err) {
       if (isAbort(err)) return;
@@ -109,6 +121,31 @@ export class OllamaProvider implements Provider {
     } catch {
       return [];
     }
+  }
+
+  /**
+   * Model capability flags from /api/show ("tools", "thinking", "vision", …),
+   * cached per model. Empty array when the server or model can't be queried —
+   * callers treat that as "unknown", not as proof of incapability.
+   */
+  private capsCache = new Map<string, string[]>();
+
+  async capabilities(model: string): Promise<readonly string[]> {
+    const key = model.trim() || this.defaultModel;
+    const cached = this.capsCache.get(key);
+    if (cached) return cached;
+    let caps: string[] = [];
+    try {
+      const res = await requestUrl({ url: `${this.base()}/api/show`, method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ model: key }), throw: false });
+      if (res.status >= 200 && res.status < 300) {
+        const data = res.json as { capabilities?: unknown };
+        if (Array.isArray(data.capabilities)) caps = data.capabilities.filter((c): c is string => typeof c === "string");
+      }
+    } catch {
+      /* unreachable → empty */
+    }
+    this.capsCache.set(key, caps);
+    return caps;
   }
 
   /**
