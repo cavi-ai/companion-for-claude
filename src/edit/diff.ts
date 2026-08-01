@@ -31,6 +31,10 @@ export interface EditPlan {
 
 const MAX_EDITS = 20;
 const CONTEXT_LINES = 2;
+/** Changed regions closer than this many unchanged lines merge into one hunk. */
+const MERGE_GAP = 3;
+/** LCS table cells cap — bigger inputs fall back to one coarse region. */
+const MAX_DIFF_CELLS = 4_000_000;
 
 /**
  * Validate edits against `content` and build the reviewable plan. Throws with
@@ -99,6 +103,199 @@ export function applyPlan(content: string, plan: EditPlan, accepted: boolean[]):
     result = result.slice(0, start) + hunk.newText + result.slice(start + hunk.oldText.length);
   }
   return result;
+}
+
+// ---- diffToEdits ----
+
+interface Region {
+  /** Start (inclusive) / end (exclusive) line in the old text. */
+  aStart: number;
+  aEnd: number;
+  /** Start (inclusive) / end (exclusive) line in the new text. */
+  bStart: number;
+  bEnd: number;
+}
+
+/**
+ * Turn an old→new text pair into planEdits-compatible edits: line-level
+ * changed regions, grown until each old_str is unique and merged so no two
+ * edits ever overlap (the failure mode of per-mention edits on one line).
+ * Regions that cannot be uniquified are skipped, never thrown on.
+ */
+export function diffToEdits(oldText: string, newText: string, maxEdits = MAX_EDITS): ProposedEdit[] {
+  if (oldText === newText) return [];
+  const oldLines = oldText.split("\n");
+  const newLines = newText.split("\n");
+  const regions = mergeNear(changedRegions(oldLines, newLines));
+
+  // Reduce to the edit budget by merging the closest adjacent pairs first.
+  while (regions.length > maxEdits) {
+    let best = 1;
+    let bestGap = Infinity;
+    for (let i = 1; i < regions.length; i++) {
+      const gap = regions[i]!.aStart - regions[i - 1]!.aEnd;
+      if (gap < bestGap) {
+        bestGap = gap;
+        best = i;
+      }
+    }
+    const prev = regions[best - 1]!;
+    const cur = regions[best]!;
+    regions.splice(best - 1, 2, { aStart: prev.aStart, aEnd: cur.aEnd, bStart: prev.bStart, bEnd: cur.bEnd });
+  }
+
+  const blocks: Region[] = [];
+  for (const r of regions) {
+    let { aStart, aEnd, bStart, bEnd } = r;
+    // Pure insertion: anchor one unchanged context line so old_str is non-empty.
+    if (aStart === aEnd) {
+      if (aStart > 0 && bStart > 0) {
+        aStart--;
+        bStart--;
+      } else if (aEnd < oldLines.length && bEnd < newLines.length) {
+        aEnd++;
+        bEnd++;
+      } else {
+        continue;
+      }
+    }
+    // Pure deletion: swallow the newline by anchoring an adjacent line, else
+    // the replacement would leave a blank line behind.
+    if (bStart === bEnd) {
+      if (aEnd < oldLines.length && bEnd < newLines.length) {
+        aEnd++;
+        bEnd++;
+      } else if (aStart > 0 && bStart > 0) {
+        aStart--;
+        bStart--;
+      }
+    }
+    // Grow upward (context lines are unchanged, so both sides extend together)
+    // until the old block occurs exactly once; skip when it never does.
+    while (countOccurrences(oldText, oldLines.slice(aStart, aEnd).join("\n")) !== 1) {
+      if (aStart === 0 || bStart === 0) {
+        aStart = -1;
+        break;
+      }
+      aStart--;
+      bStart--;
+    }
+    if (aStart === -1) continue;
+    // Growth can reach back into the previous block — merge (a superset of a
+    // unique block is still unique).
+    const prev = blocks[blocks.length - 1];
+    if (prev && aStart < prev.aEnd) {
+      if (aStart < prev.aStart) {
+        prev.aStart = aStart;
+        prev.bStart = bStart;
+      }
+      prev.aEnd = Math.max(prev.aEnd, aEnd);
+      prev.bEnd = bEnd;
+    } else {
+      blocks.push({ aStart, aEnd, bStart, bEnd });
+    }
+  }
+
+  const edits: ProposedEdit[] = [];
+  for (const b of blocks) {
+    const old_str = oldLines.slice(b.aStart, b.aEnd).join("\n");
+    const new_str = newLines.slice(b.bStart, b.bEnd).join("\n");
+    if (old_str !== new_str) edits.push({ old_str, new_str });
+  }
+  return edits;
+}
+
+/** Line-level changed regions between two texts (LCS-based; coarse fallback for huge inputs). */
+function changedRegions(a: string[], b: string[]): Region[] {
+  let start = 0;
+  while (start < a.length && start < b.length && a[start] === b[start]) start++;
+  let aEnd = a.length;
+  let bEnd = b.length;
+  while (aEnd > start && bEnd > start && a[aEnd - 1] === b[bEnd - 1]) {
+    aEnd--;
+    bEnd--;
+  }
+  const n = aEnd - start;
+  const m = bEnd - start;
+  if (n === 0 && m === 0) return [];
+  if (n === 0) return [{ aStart: start, aEnd: start, bStart: start, bEnd }];
+  if (m === 0) return [{ aStart: start, aEnd, bStart: start, bEnd: start }];
+  if (n * m > MAX_DIFF_CELLS) return [{ aStart: start, aEnd, bStart: start, bEnd }];
+
+  const width = m + 1;
+  const dp = new Uint32Array((n + 1) * (m + 1));
+  for (let i = n - 1; i >= 0; i--) {
+    for (let j = m - 1; j >= 0; j--) {
+      dp[i * width + j] =
+        a[start + i] === b[start + j]
+          ? dp[(i + 1) * width + j + 1]! + 1
+          : Math.max(dp[(i + 1) * width + j]!, dp[i * width + j + 1]!);
+    }
+  }
+  const regions: Region[] = [];
+  let i = 0;
+  let j = 0;
+  let cur: Region | null = null;
+  const extend = (): Region => {
+    if (!cur) cur = { aStart: start + i, aEnd: start + i, bStart: start + j, bEnd: start + j };
+    return cur;
+  };
+  while (i < n && j < m) {
+    if (a[start + i] === b[start + j]) {
+      if (cur) {
+        regions.push(cur);
+        cur = null;
+      }
+      i++;
+      j++;
+    } else if (dp[(i + 1) * width + j]! >= dp[i * width + j + 1]!) {
+      const r = extend();
+      r.aEnd = start + i + 1;
+      i++;
+    } else {
+      const r = extend();
+      r.bEnd = start + j + 1;
+      j++;
+    }
+  }
+  while (i < n) {
+    const r = extend();
+    r.aEnd = start + i + 1;
+    i++;
+  }
+  while (j < m) {
+    const r = extend();
+    r.bEnd = start + j + 1;
+    j++;
+  }
+  if (cur) regions.push(cur);
+  return regions;
+}
+
+/** Merge regions separated by fewer than MERGE_GAP unchanged lines. */
+function mergeNear(regions: Region[]): Region[] {
+  const out: Region[] = [];
+  for (const r of regions) {
+    const prev = out[out.length - 1];
+    if (prev && r.aStart - prev.aEnd <= MERGE_GAP) {
+      prev.aEnd = r.aEnd;
+      prev.bEnd = r.bEnd;
+    } else {
+      out.push({ ...r });
+    }
+  }
+  return out;
+}
+
+function countOccurrences(haystack: string, needle: string): number {
+  if (needle.length === 0) return 0;
+  let n = 0;
+  let idx = haystack.indexOf(needle);
+  while (idx !== -1) {
+    n++;
+    idx = haystack.indexOf(needle, idx + 1);
+  }
+  return n;
 }
 
 // ---- internals ----

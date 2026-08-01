@@ -1,5 +1,70 @@
 import { describe, it, expect } from "vitest";
-import { planEdits, applyPlan, type ProposedEdit } from "../src/edit/diff";
+import { planEdits, applyPlan, diffToEdits, type ProposedEdit } from "../src/edit/diff";
+
+describe("diffToEdits", () => {
+  const roundTrip = (oldText: string, newText: string): string => {
+    const edits = diffToEdits(oldText, newText);
+    if (edits.length === 0) return oldText;
+    const plan = planEdits(oldText, edits);
+    return applyPlan(oldText, plan, plan.hunks.map(() => true));
+  };
+
+  it("returns no edits for identical texts", () => {
+    expect(diffToEdits("a\nb\n", "a\nb\n")).toEqual([]);
+  });
+
+  it("handles a single-line change", () => {
+    expect(roundTrip("a\nb\nc\n", "a\nB\nc\n")).toBe("a\nB\nc\n");
+  });
+
+  it("handles pure insertion with a context anchor", () => {
+    expect(roundTrip("a\nc\n", "a\nb\nc\n")).toBe("a\nb\nc\n");
+  });
+
+  it("handles insertion at the very top", () => {
+    expect(roundTrip("b\nc\n", "a\nb\nc\n")).toBe("a\nb\nc\n");
+  });
+
+  it("handles pure deletion", () => {
+    expect(roundTrip("a\nb\nc\n", "a\nc\n")).toBe("a\nc\n");
+  });
+
+  it("merges nearby changes into one non-overlapping edit", () => {
+    const oldText = "one\ntwo\nthree\nfour\n";
+    const newText = "ONE\ntwo\nthree\nFOUR\n";
+    const edits = diffToEdits(oldText, newText);
+    expect(edits).toHaveLength(1);
+    expect(roundTrip(oldText, newText)).toBe(newText);
+  });
+
+  it("keeps distant changes as separate edits", () => {
+    const oldText = "one\n" + "pad\n".repeat(10) + "ten\n";
+    const newText = "ONE\n" + "pad\n".repeat(10) + "TEN\n";
+    const edits = diffToEdits(oldText, newText);
+    expect(edits).toHaveLength(2);
+    expect(roundTrip(oldText, newText)).toBe(newText);
+  });
+
+  it("grows repeated lines until unique and still applies", () => {
+    const oldText = "same\nsame\nTARGET here\nsame\n";
+    const newText = "same\nsame\nCHANGED here\nsame\n";
+    expect(roundTrip(oldText, newText)).toBe(newText);
+  });
+
+  it("respects the edit budget by merging closest pairs", () => {
+    const oldLines: string[] = [];
+    const newLines: string[] = [];
+    for (let i = 0; i < 30; i++) {
+      oldLines.push(`line ${i} a`, "gap one", "gap two", "gap three", "gap four", "gap five");
+      newLines.push(`line ${i} b`, "gap one", "gap two", "gap three", "gap four", "gap five");
+    }
+    const edits = diffToEdits(oldLines.join("\n"), newLines.join("\n"), 20);
+    expect(edits.length).toBeLessThanOrEqual(20);
+    const plan = planEdits(oldLines.join("\n"), edits);
+    expect(applyPlan(oldLines.join("\n"), plan, plan.hunks.map(() => true))).toBe(newLines.join("\n"));
+  });
+});
+
 
 describe("applyPlan — drift safety", () => {
   it("rejects the apply when drift makes two accepted hunks resolve to overlapping ranges", () => {

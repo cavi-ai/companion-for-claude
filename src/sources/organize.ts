@@ -24,14 +24,29 @@ const FALLBACK_DOMAIN = "misc";
 export function buildOrganizePrompt(candidates: OrganizeCandidate[], existingFolders: string[]): { system: string; user: string } {
   const system =
     "You organize web clippings into a small, durable folder taxonomy. " +
+    organizeRules(existingFolders);
+  const user = `CLIPPINGS:\n\n${candidates.map((c) => `- path: ${c.path}\n  title: ${c.title}\n  summary: ${c.summary}`).join("\n")}`;
+  return { system, user };
+}
+
+/** Same batch inference for an arbitrary folder of notes (right-click organize). */
+export function buildFolderOrganizePrompt(candidates: OrganizeCandidate[], existingFolders: string[]): { system: string; user: string } {
+  const system =
+    "You organize notes into a small, durable subfolder taxonomy. " +
+    organizeRules(existingFolders);
+  const user = `NOTES:\n\n${candidates.map((c) => `- path: ${c.path}\n  title: ${c.title}\n  summary: ${c.summary}`).join("\n")}`;
+  return { system, user };
+}
+
+function organizeRules(existingFolders: string[]): string {
+  return (
     "Reply with a SINGLE JSON array and nothing else — one object per input, in the same order: " +
     `[{"path": "...", "domain": "..."}]. ` +
     "Rules: domain is 1-2 lowercase folder segments (letters, numbers, dashes; slash between segments) naming the topic or project " +
     "(e.g. \"ai-safety\", \"gardening\", \"research/continuity\"). Prefer reusing existing folders when they fit. " +
-    "Group related clippings under the same domain rather than inventing one per clip. Use \"misc\" only when nothing fits." +
-    (existingFolders.length > 0 ? `\nExisting folders to prefer when relevant:\n${existingFolders.map((f) => `- ${f}`).join("\n")}` : "");
-  const user = `CLIPPINGS:\n\n${candidates.map((c) => `- path: ${c.path}\n  title: ${c.title}\n  summary: ${c.summary}`).join("\n")}`;
-  return { system, user };
+    "Group related notes under the same domain rather than inventing one per note. Use \"misc\" only when nothing fits." +
+    (existingFolders.length > 0 ? `\nExisting folders to prefer when relevant:\n${existingFolders.map((f) => `- ${f}`).join("\n")}` : "")
+  );
 }
 
 /** Parse the batch reply into proposals, one per candidate (unmatched → misc). */

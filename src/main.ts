@@ -30,10 +30,10 @@ import { ProviderRouter, migrateUtilityBackend } from "./providers/router";
 import { DEFAULT_SETTINGS, migrateSystemPrompt, normalizeDiscoverySettings, type PluginSettings, type ArtifactOpenTarget } from "./types";
 import { DESIGN_SYSTEM_PROMPT, PLANNING_INSTRUCTION } from "./artifacts/designSystem";
 import { AGENT_INSTRUCTION, PLAN_MODE_INSTRUCTION } from "./agent/prompt";
-import { findUnlinkedMentions, type LinkCandidate } from "./links/unlinkedMentions";
+import { findUnlinkedMentions, linkMention, type LinkCandidate } from "./links/unlinkedMentions";
 import { selectDigests, buildConsolidationPrompt, parseConsolidation, renderMemoryNote, MEMORY_NOTE_BASENAME, type DigestSource } from "./memory/consolidate";
 import { mentionEdits } from "./links/suggest";
-import { planEdits, applyPlan, type EditPlan } from "./edit/diff";
+import { planEdits, applyPlan, diffToEdits, type EditPlan } from "./edit/diff";
 import { REWRITE_SYSTEM, buildRewriteUser, buildGroundedRewriteUser, rewriteMaxTokens, parseRewrite } from "./edit/rewrite";
 import { DiffModal } from "./view/DiffModal";
 import { RewriteModal } from "./view/RewriteModal";
@@ -46,7 +46,10 @@ import type { AnthropicToolDef } from "./providers/types";
 import { braveSearch, duckDuckGoSearch, formatSearchResults } from "./web/search";
 import { webFetch as webFetchPage } from "./web/fetch";
 import { parseTemplateNote, TEMPLATE_SCAFFOLD, type PromptTemplate } from "./templates/promptTemplates";
-import { buildOrganizePrompt, parseOrganizeResponse, planOrganizeMoves, type OrganizeCandidate } from "./sources/organize";
+import { buildOrganizePrompt, buildFolderOrganizePrompt, parseOrganizeResponse, planOrganizeMoves, type OrganizeCandidate } from "./sources/organize";
+import { LINT_SYSTEM, buildLintUser, lintMaxTokens, parseLintResponse } from "./enrich/noteEnrich";
+import { EnrichOptionsModal, EnrichReviewModal, type EnrichDecision, type EnrichOptions, type EnrichProposal } from "./view/EnrichModal";
+import { sanitizeFileName } from "./artifacts/parse";
 import { OrganizeReviewModal } from "./view/OrganizeReviewModal";
 import { stripFrontmatter } from "./semantic/chunk";
 import { generateToken, resolveMcpToken } from "./mcp/clientConfig";
@@ -80,7 +83,7 @@ import {
   touch,
 } from "./conversations/store";
 import type { ChatMessage } from "./types";
-import { normalizePath, TFile, type Editor } from "obsidian";
+import { normalizePath, TFile, TFolder, type Editor } from "obsidian";
 import { enrichCapture, type EnrichDeps } from "./sources/enrich";
 import { inboxItems } from "./sources/inbox";
 import { shouldEnrich } from "./sources/watcher";
@@ -308,6 +311,45 @@ export default class ClaudeCompanionPlugin extends Plugin {
             .setIcon("sparkles")
             .onClick(() => void this.runInlineRewrite(editor, view)),
         );
+      }),
+    );
+
+    this.addCommand({
+      id: "enrich-note",
+      name: "Enrich current note with Claude… (rename, tags, links, lint)",
+      checkCallback: (checking) => {
+        const file = this.app.workspace.getActiveViewOfType(MarkdownView)?.file;
+        if (checking) return file instanceof TFile && file.extension === "md";
+        if (file instanceof TFile) void this.enrichNoteFlow(file);
+        return true;
+      },
+    });
+
+    // File-explorer right-click: enrich a note, enrich a folder's notes, or
+    // organize a folder's notes into subfolders.
+    this.registerEvent(
+      this.app.workspace.on("file-menu", (menu, file) => {
+        if (file instanceof TFile && file.extension === "md") {
+          menu.addItem((item) =>
+            item
+              .setTitle("Enrich with Claude…")
+              .setIcon("sparkles")
+              .onClick(() => void this.enrichNoteFlow(file)),
+          );
+        } else if (file instanceof TFolder) {
+          menu.addItem((item) =>
+            item
+              .setTitle("Enrich notes with Claude…")
+              .setIcon("sparkles")
+              .onClick(() => void this.enrichFolderFlow(file)),
+          );
+          menu.addItem((item) =>
+            item
+              .setTitle("Organize notes into subfolders…")
+              .setIcon("folder-tree")
+              .onClick(() => void this.organizeFolderFlow(file)),
+          );
+        }
       }),
     );
 
@@ -1568,7 +1610,14 @@ export default class ClaudeCompanionPlugin extends Plugin {
       new Notice("Mentions found, but none could be linked unambiguously.");
       return;
     }
-    const plan = planEdits(content, edits);
+    // Planning validates the edits; a rejected plan is a notice, never an unhandled rejection.
+    let plan;
+    try {
+      plan = planEdits(content, edits);
+    } catch (e) {
+      new Notice(e instanceof Error ? e.message : String(e));
+      return;
+    }
     const accepted = await new Promise<boolean[] | null>((resolve) => {
       new DiffModal(this.app, { path: file.path, description: `Link ${plan.hunks.length} unlinked mention${plan.hunks.length === 1 ? "" : "s"}`, plan }, resolve).open();
     });
@@ -1578,6 +1627,217 @@ export default class ClaudeCompanionPlugin extends Plugin {
       new Notice(`Linked ${accepted.filter(Boolean).length} mention${accepted.filter(Boolean).length === 1 ? "" : "s"} in ${file.basename}.`);
     } catch (e) {
       new Notice(e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  /**
+   * Enrich one note end to end (file-explorer right-click / command): pick the
+   * steps (all on by default), then summarize → propose rename + tags/summary,
+   * wikilink unlinked mentions, and copyedit — all presented for review as
+   * per-item checkboxes + diff hunks before anything is written.
+   */
+  async enrichNoteFlow(file: TFile, presetOptions?: EnrichOptions): Promise<void> {
+    const options =
+      presetOptions ?? (await new Promise<EnrichOptions | null>((resolve) => new EnrichOptionsModal(this.app, 1, resolve).open()));
+    if (!options) return;
+
+    const progress = new Notice(`Enriching ${file.basename}…`, 0);
+    try {
+      const proposal = await this.buildEnrichProposal(file, options);
+      if (!proposal.rename && !proposal.frontmatter && !proposal.plan) {
+        new Notice(`${file.basename} is already in good shape.`);
+        return;
+      }
+      const decision = await new Promise<EnrichDecision | null>((resolve) =>
+        new EnrichReviewModal(this.app, proposal, resolve).open(),
+      );
+      if (!decision) return;
+      await this.applyEnrichDecision(file, proposal, decision);
+      new Notice(`Enriched ${file.basename}.`);
+    } catch (e) {
+      new Notice(`Enrich failed — ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      progress.hide();
+    }
+  }
+
+  /** Batch variant for a folder: one step picker, then per-note review modals. */
+  private async enrichFolderFlow(folder: TFolder): Promise<void> {
+    const files: TFile[] = [];
+    const walk = (f: TFolder): void => {
+      for (const child of f.children) {
+        if (child instanceof TFile && child.extension === "md") files.push(child);
+        else if (child instanceof TFolder) walk(child);
+      }
+    };
+    walk(folder);
+    if (files.length === 0) {
+      new Notice(`No notes found in ${folder.path}/.`);
+      return;
+    }
+    const options = await new Promise<EnrichOptions | null>((resolve) => new EnrichOptionsModal(this.app, files.length, resolve).open());
+    if (!options) return;
+    for (const file of files) {
+      await this.enrichNoteFlow(file, options);
+    }
+  }
+
+  /** Compute everything an enrich pass can propose for one note (no writes). */
+  private async buildEnrichProposal(file: TFile, options: EnrichOptions): Promise<EnrichProposal> {
+    const content = await this.app.vault.cachedRead(file);
+    const proposal: EnrichProposal = { path: file.path };
+
+    let tagResult: { title: string; tags: string[]; summary: string } | null = null;
+    if (options.rename || options.frontmatter) {
+      try {
+        tagResult = await summarizeAndTag(this.app, this.router(), content, existingVaultTags(this.app));
+      } catch {
+        // Tagging is best-effort — links/lint still run.
+      }
+    }
+
+    // Compose body transforms: links first, then lint the linked text, so the
+    // final old→new diff is one consistent set of non-overlapping hunks.
+    let body = content;
+    if (options.links) {
+      const mentions = findUnlinkedMentions(content, this.linkCandidates(), file.path);
+      for (const m of [...mentions].sort((a, b) => b.start - a.start)) {
+        body = linkMention(body, m);
+      }
+    }
+    if (options.lint && body.trim().length > 0) {
+      try {
+        const { text } = await this.router().complete("chat", {
+          system: LINT_SYSTEM,
+          user: buildLintUser(body),
+          maxTokens: lintMaxTokens(body),
+          temperature: 0.2,
+        });
+        body = parseLintResponse(text, body) ?? body;
+      } catch {
+        // Lint is best-effort — keep whatever the earlier steps produced.
+      }
+    }
+    const edits = diffToEdits(content, body);
+    if (edits.length > 0) proposal.plan = planEdits(content, edits);
+
+    if (options.rename && tagResult?.title) {
+      const stem = sanitizeFileName(tagResult.title);
+      if (stem && stem !== file.basename) {
+        const dir = file.parent && file.parent.path !== "/" ? file.parent.path : "";
+        let candidate = stem;
+        for (let n = 2; this.app.vault.getAbstractFileByPath(dir ? `${dir}/${candidate}.md` : `${candidate}.md`); n++) candidate = `${stem} ${n}`;
+        proposal.rename = { from: file.path, to: dir ? `${dir}/${candidate}.md` : `${candidate}.md` };
+      }
+    }
+
+    if (options.frontmatter && tagResult) {
+      const fm = this.app.metadataCache.getFileCache(file)?.frontmatter as Record<string, unknown> | undefined;
+      const existing: string[] = Array.isArray(fm?.tags) ? fm.tags.map(String) : typeof fm?.tags === "string" ? [fm.tags] : [];
+      const merged = normalizeTags([...existing, ...tagResult.tags]);
+      const addedTags = merged.filter((t) => !existing.includes(t));
+      const summary = typeof fm?.summary === "string" && fm.summary.trim() ? "" : tagResult.summary;
+      if (addedTags.length > 0 || summary) proposal.frontmatter = { tags: merged, summary, addedTags };
+    }
+
+    return proposal;
+  }
+
+  /** Apply the reviewed subset: content hunks, frontmatter, then the rename last. */
+  private async applyEnrichDecision(
+    file: TFile,
+    proposal: EnrichProposal,
+    decision: EnrichDecision,
+  ): Promise<void> {
+    if (proposal.plan && decision.accepted.some(Boolean)) {
+      const plan = proposal.plan;
+      await this.app.vault.process(file, (current) => applyPlan(current, plan, decision.accepted));
+    }
+    if (proposal.frontmatter && decision.frontmatter) {
+      const { tags, summary } = proposal.frontmatter;
+      await this.app.fileManager.processFrontMatter(file, (fm) => {
+        (fm as Record<string, unknown>).tags = tags;
+        if (summary) (fm as Record<string, unknown>).summary = summary;
+      });
+    }
+    if (proposal.rename && decision.rename) {
+      await this.app.fileManager.renameFile(file, proposal.rename.to);
+    }
+  }
+
+  /**
+   * Folder right-click "Organize notes into subfolders": batch-infer a
+   * subfolder per note from titles/summaries, review the proposed move plan,
+   * then execute the accepted subset.
+   */
+  private async organizeFolderFlow(folder: TFolder): Promise<void> {
+    const files = folder.children.filter((c): c is TFile => c instanceof TFile && c.extension === "md");
+    if (files.length === 0) {
+      new Notice(`No notes directly in ${folder.path}/.`);
+      return;
+    }
+    const progress = new Notice(`Proposing a layout for ${files.length} note${files.length === 1 ? "" : "s"}…`, 0);
+    try {
+      const candidates: OrganizeCandidate[] = [];
+      const titles = new Map<string, string>();
+      for (const file of files) {
+        const fm = this.app.metadataCache.getFileCache(file)?.frontmatter as Record<string, unknown> | undefined;
+        const title = typeof fm?.title === "string" && fm.title.trim() ? fm.title.trim() : file.basename;
+        let summary = typeof fm?.summary === "string" ? fm.summary.trim() : "";
+        if (!summary) {
+          const body = stripFrontmatter(await this.app.vault.cachedRead(file)).trim();
+          summary = body.slice(0, 200);
+        }
+        titles.set(file.path, title);
+        candidates.push({ path: file.path, title, summary });
+      }
+
+      const existingFolders = folder.children
+        .filter((c): c is TFolder => c instanceof TFolder)
+        .map((c) => c.name)
+        .sort();
+      let proposals = candidates.map((c) => ({ path: c.path, domain: "misc" }));
+      try {
+        const { system, user } = buildFolderOrganizePrompt(candidates, existingFolders);
+        const raw = (
+          await this.router().complete("utility", {
+            system,
+            user,
+            maxTokens: 2048,
+            responseFormat: "json",
+            thinking: { type: "disabled" },
+          })
+        ).text;
+        proposals = parseOrganizeResponse(raw, candidates);
+      } catch {
+        // Inference failed — the review modal still offers the misc move.
+      }
+
+      const moves = planOrganizeMoves(proposals, titles, {
+        baseFolder: folder.path,
+        taken: (p) => this.app.vault.getAbstractFileByPath(p) !== null,
+      });
+      if (moves.length === 0) {
+        new Notice("Everything is already named and filed.");
+        return;
+      }
+      new OrganizeReviewModal(this.app, moves, (accepted) => {
+        if (!accepted || accepted.length === 0) return;
+        void (async () => {
+          let moved = 0;
+          for (const move of accepted) {
+            const file = this.app.vault.getAbstractFileByPath(move.from);
+            if (!(file instanceof TFile)) continue;
+            const dir = move.to.slice(0, move.to.lastIndexOf("/"));
+            await this.ensureFolder(dir);
+            await this.app.fileManager.renameFile(file, move.to);
+            moved++;
+          }
+          new Notice(`Organized ${moved} note${moved === 1 ? "" : "s"} into ${folder.path}/ subfolders.`);
+        })();
+      }).open();
+    } finally {
+      progress.hide();
     }
   }
 

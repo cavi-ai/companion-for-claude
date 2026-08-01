@@ -49,28 +49,63 @@ export function buildSuggestions(
 }
 
 /**
- * Build diff-reviewable edits for a set of mentions: each edit's old_str is
- * grown line-by-line until unique in `content` (planEdits requires exact-once
- * matches). Mentions that cannot be uniquified are skipped.
+ * Build diff-reviewable edits for a set of mentions: every mention is applied
+ * to one linked copy of the note, then each covered line becomes an edit whose
+ * old_str is grown line-by-line until unique in `content` (planEdits requires
+ * exact-once matches). Line ranges that end up covering the same line are
+ * merged, so several mentions on one line — or a grown block that swallows a
+ * later mention's line — stay a single non-overlapping edit. Mentions that
+ * cannot be uniquified are skipped.
  */
 export function mentionEdits(content: string, mentions: Mention[]): ProposedEdit[] {
+  const applicable = nonOverlapping(mentions);
+  if (applicable.length === 0) return [];
+
+  // Rewrite end→start so each mention's recorded offsets are still valid when
+  // its turn comes; link text never adds a newline, so line numbers hold.
+  let linked = content;
+  for (let i = applicable.length - 1; i >= 0; i--) linked = linkMention(linked, applicable[i]!);
+
   const lines = content.split("\n");
-  const edits: ProposedEdit[] = [];
-  for (const m of mentions) {
-    const linked = linkMention(content, m);
-    // The changed region is exactly one line; grow context upward until unique.
-    const lineIdx = m.line - 1;
-    for (let up = 0; lineIdx - up >= 0; up++) {
-      const oldBlock = lines.slice(lineIdx - up, lineIdx + 1).join("\n");
-      if (countOccurrences(content, oldBlock) === 1) {
-        const newBlock = linked.split("\n").slice(lineIdx - up, lineIdx + 1).join("\n");
-        edits.push({ old_str: oldBlock, new_str: newBlock });
-        break;
-      }
-      if (lineIdx - up === 0) break; // reached file start without uniqueness — skip
-    }
+  const linkedLines = linked.split("\n");
+  const ranges: Array<{ from: number; to: number }> = [];
+  for (const to of [...new Set(applicable.map((m) => m.line - 1))].sort((a, b) => a - b)) {
+    const from = uniqueBlockStart(content, lines, to);
+    if (from !== null) ranges.push({ from, to });
   }
-  return edits;
+
+  const merged: Array<{ from: number; to: number }> = [];
+  for (const range of ranges) {
+    const last = merged[merged.length - 1];
+    // A merged block contains an already-unique block, so it stays unique.
+    if (last && range.from <= last.to) last.to = Math.max(last.to, range.to);
+    else merged.push({ ...range });
+  }
+
+  return merged.map(({ from, to }) => ({
+    old_str: lines.slice(from, to + 1).join("\n"),
+    new_str: linkedLines.slice(from, to + 1).join("\n"),
+  }));
+}
+
+/** Drop mentions whose span overlaps an earlier one; rewriting both would corrupt the text. */
+function nonOverlapping(mentions: Mention[]): Mention[] {
+  const kept: Mention[] = [];
+  let guard = -1;
+  for (const m of [...mentions].sort((a, b) => a.start - b.start)) {
+    if (m.start < guard) continue;
+    kept.push(m);
+    guard = m.end;
+  }
+  return kept;
+}
+
+/** First line of the smallest block ending at `to` that occurs exactly once; null when none does. */
+function uniqueBlockStart(content: string, lines: string[], to: number): number | null {
+  for (let from = to; from >= 0; from--) {
+    if (countOccurrences(content, lines.slice(from, to + 1).join("\n")) === 1) return from;
+  }
+  return null;
 }
 
 function countOccurrences(haystack: string, needle: string): number {

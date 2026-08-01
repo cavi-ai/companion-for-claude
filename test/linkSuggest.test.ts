@@ -57,6 +57,41 @@ describe("mentionEdits", () => {
     expect(out).toContain("[[GTD]] here on a repeated neighbor");
   });
 
+  it("emits one edit for several mentions sharing a line", () => {
+    const content = "Intro line.\nGTD and the Weekly Review both live here.\nOutro.\n";
+    const mentions = findUnlinkedMentions(content, candidates, "X.md");
+    const edits = mentionEdits(content, mentions);
+    expect(edits).toHaveLength(1);
+    const plan = planEdits(content, edits);
+    const out = applyPlan(content, plan, [true]);
+    expect(out).toContain("[[GTD]] and the [[Weekly Review]] both live here.");
+  });
+
+  it("merges edits when a grown block swallows an earlier mention's line", () => {
+    // The Weekly Review line repeats, so its block grows up over the GTD line.
+    const content = "Intro.\nGTD sits here.\nWeekly Review sits here.\nFiller.\nWeekly Review sits here.\n";
+    const mentions = findUnlinkedMentions(content, candidates, "X.md");
+    const edits = mentionEdits(content, mentions);
+    expect(edits).toHaveLength(1);
+    const plan = planEdits(content, edits);
+    const out = applyPlan(content, plan, [true]);
+    expect(out).toContain("[[GTD]] sits here.");
+    expect(out).toContain("[[Weekly Review]] sits here.\nFiller.");
+  });
+
+  it("drops a mention overlapping an earlier one instead of rewriting both", () => {
+    const content = "Intro.\nCognitive Productivity is the topic.\n";
+    const nested: LinkCandidate[] = [
+      { path: "Cognitive Productivity.md", basename: "Cognitive Productivity", aliases: [] },
+      { path: "Productivity.md", basename: "Productivity", aliases: [] },
+    ];
+    const mentions = findUnlinkedMentions(content, nested, "X.md");
+    expect(mentions).toHaveLength(2);
+    const plan = planEdits(content, mentionEdits(content, mentions));
+    const out = applyPlan(content, plan, plan.hunks.map(() => true));
+    expect(out).toContain("[[Cognitive Productivity]] is the topic.");
+  });
+
   it("skips mentions that cannot be uniquified instead of producing ambiguous edits", () => {
     const content = "GTD\nGTD\n";
     // Both lines identical and mention detection returns first occurrence only;
