@@ -373,11 +373,6 @@ export class ChatView extends ItemView {
     if (Platform.isMobile) setIcon(this.sendBtn, "arrow-up");
     this.sendBtn.addEventListener("click", () => void this.onSend());
 
-    // Mobile: tuck the attachment chips inside the top of the input box (as its
-    // first row) so they read as part of the composer instead of a loose,
-    // cramped strip floating above it.
-    if (Platform.isMobile) inputRow.prepend(this.pillsEl);
-
     this.applyChatFontSize();
     this.refreshModelLabel();
     void this.refreshBackendPill();
@@ -1221,7 +1216,9 @@ export class ChatView extends ItemView {
     const el = this.inputEl;
     if (!el) return;
     el.setCssStyles({ height: "auto" });
-    const max = 200; // px ceiling (~8 rows) before it scrolls internally
+    // Phone: ~6 rows then internal scroll, so the composer never eats the
+    // reading surface; desktop gets ~8 rows.
+    const max = Platform.isMobile ? 132 : 200;
     el.setCssStyles({ height: `${Math.min(el.scrollHeight, max)}px` });
   }
 

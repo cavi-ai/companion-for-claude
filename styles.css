@@ -1624,18 +1624,37 @@ pre.cc-has-copy:hover .cc-code-copy { opacity: 1; }
 /* The backend pill ("auto · local ready") is desktop-centric and misleading on
    a phone (no local server) — hide it; the model name carries the header. */
 .is-mobile .cc-backend-pill { display: none; }
+/* The write-grant pill must never crowd the slim header — clamp it. */
+.is-mobile .cc-write-grant-pill { max-width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-/* Messages: full-bleed, roomier. */
-.is-mobile .cc-messages { padding: 12px 14px; gap: 18px; }
+/* Messages: a one-column reading surface. Role labels go — bubble alignment
+   already says who spoke; a phone can't afford per-message chrome. */
+.is-mobile .cc-messages { padding: 14px 14px 10px; gap: 16px; }
 .is-mobile .cc-body { font-size: var(--cc-chat-font, 16px); }
+.is-mobile .cc-role { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+/* Your words are the only tinted surface on the phone: a right-aligned clay
+   bubble, its tail corner pointing at the composer. */
+.is-mobile .cc-user { align-items: flex-end; }
+.is-mobile .cc-user .cc-body {
+  max-width: 85%;
+  background: color-mix(in srgb, var(--cc-clay) 13%, var(--background-secondary));
+  border: none;
+  border-radius: 18px 18px 4px 18px;
+  padding: 9px 13px;
+}
+.is-mobile .cc-user .cc-actions { justify-content: flex-end; }
 /* Example cards stack in one column — the existing 360px media query keys on the
    viewport (wide in emulation / a docked panel), so it never fires; .is-mobile does. */
 .is-mobile .cc-empty-examples { grid-template-columns: 1fr; }
+/* Empty state: tighter, no floating-icon drift (decorative at this size). */
+.is-mobile .cc-empty { padding: 16px 18px; gap: 6px; }
+.is-mobile .cc-empty-icon { animation: none; }
 
-/* Per-message actions: touch-sized icon chips with a faint surface so they read
-   as tappable (they're icon-only and persistent). */
-.is-mobile .cc-actions { gap: 8px; margin-top: 8px; }
-.is-mobile .cc-action { width: 44px; height: 44px; background: var(--background-secondary); }
+/* Per-message actions: touch-sized but recessive until tapped — persistent
+   full-strength chips on every message read as clutter on a phone. */
+.is-mobile .cc-actions { gap: 8px; margin-top: 6px; }
+.is-mobile .cc-action { width: 40px; height: 40px; background: var(--background-secondary); opacity: 0.65; }
+.is-mobile .cc-action:active { opacity: 1; }
 /* flex:0 0 auto — without it the icon collapses to 0 width inside the flex
    button on mobile, leaving an empty box (same fix as .cc-add-context svg). */
 .is-mobile .cc-action svg { width: 18px; height: 18px; flex: 0 0 auto; }
@@ -1643,26 +1662,24 @@ pre.cc-has-copy:hover .cc-code-copy { opacity: 1; }
 /* Long code lines scroll within their block instead of pushing the layout wide. */
 .is-mobile .cc-body pre { max-width: 100%; overflow-x: auto; }
 
-/* Composer: one bordered box holding a tall textarea with [+] and [↑] pinned to
-   its bottom corners, and any attachment chips as a subtle row across the top.
-   16px input font avoids iOS zoom-on-focus. Tight outer padding so the box owns
-   the space instead of leaving a dead band at the bottom. */
+/* Composer: the messenger bar — [+] · auto-growing field · [↑] in one
+   24px-radius surface. Empty it's one line (~52px); the field grows to ~6
+   rows (autosizeInput caps it) and then scrolls internally, so the composer
+   never owns the screen. 16px input font avoids iOS zoom-on-focus.
+   No env(safe-area-inset-bottom) — Obsidian's mobile .view-content already
+   reserves the home-indicator inset. */
 .is-mobile .cc-composer {
   position: relative;
-  /* No env(safe-area-inset-bottom) here — Obsidian's mobile .view-content already
-     reserves the home-indicator inset, so adding it again left a dead band under
-     the composer. Sit flush against that inset instead. */
-  padding: 6px 8px 6px;
+  padding: 4px 10px 8px;
   gap: 0;
 }
 .is-mobile .cc-composer-input-row {
   display: flex;
-  flex-wrap: wrap;
   align-items: flex-end;
-  gap: 8px;
-  padding: 8px 8px 8px 10px;
+  gap: 6px;
+  padding: 5px 6px;
   border: 1px solid var(--background-modifier-border);
-  border-radius: 22px;
+  border-radius: 24px;
   background: var(--background-modifier-form-field);
 }
 .is-mobile .cc-composer-input-row:focus-within {
@@ -1673,17 +1690,16 @@ pre.cc-has-copy:hover .cc-code-copy { opacity: 1; }
   flex: 1 1 auto;
   min-width: 0;
   width: auto;
-  /* Large typing area — this is the thing you interact with most. */
-  min-height: 92px;
-  max-height: 40vh;
+  /* Height belongs to autosizeInput (1 → ~6 rows) — no forced minimum. */
+  min-height: 0;
+  max-height: 132px;
   font-size: 16px;
+  line-height: 1.4;
   resize: none;
   border: none;
   background: transparent;
   border-radius: 0;
-  padding: 2px 2px 4px;
-  line-height: 1.4;
-  align-self: stretch;
+  padding: 9px 6px;
   overflow-y: auto;
   scrollbar-width: none;
 }
@@ -1692,8 +1708,8 @@ pre.cc-has-copy:hover .cc-code-copy { opacity: 1; }
 /* Circular send matches .cc-add-context; lives in the input row (ChatView). */
 .is-mobile .cc-send.cc-send-icon {
   flex: 0 0 auto;
-  width: 44px;
-  height: 44px;
+  width: 40px;
+  height: 40px;
   padding: 0;
   border-radius: 50%;
   font-size: 0;
@@ -1759,10 +1775,10 @@ pre.cc-has-copy:hover .cc-code-copy { opacity: 1; }
   font-size: 13px;
 }
 
-/* The "+" context button sits at the bottom-left, inside the input box. */
+/* The "+" context button sits at the bottom-left of the bar. */
 .is-mobile .cc-add-context {
   flex: 0 0 auto;
-  width: 44px; height: 44px;
+  width: 40px; height: 40px;
   border-radius: 50%;
   border: 1px solid var(--background-modifier-border);
   background: transparent;
@@ -1774,23 +1790,31 @@ pre.cc-has-copy:hover .cc-code-copy { opacity: 1; }
 /* SVG flex children collapse to width:0 without an explicit size — pin it. */
 .is-mobile .cc-add-context svg { width: 19px; height: 19px; flex: 0 0 auto; }
 
-/* Attachment chips: full-width subtle row across the top of the input box
-   (ChatView moves .cc-attach-pills in here on mobile). Muted, not loud clay,
-   so they frame the input instead of crowding it. */
+/* The context tape: "@"-attached sources ride ONE sideways-scrolling line
+   above the bar — never a wrapped stack inside it. Any count of chips stays
+   exactly one line tall; empty = gone (is-empty). Muted gray so it reads as
+   an instrument strip, not content. */
 .is-mobile .cc-attach-pills {
-  order: -1;
-  flex-basis: 100%;
-  width: 100%;
-  margin: 0 0 2px;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  scrollbar-width: none;
   gap: 6px;
+  padding: 2px 2px 6px;
+  margin-bottom: 0;
+  -webkit-overflow-scrolling: touch;
 }
+.is-mobile .cc-attach-pills::-webkit-scrollbar { display: none; }
 .is-mobile .cc-attach-pill {
+  flex: 0 0 auto;
   background: var(--background-secondary);
   color: var(--text-muted);
   border-color: var(--background-modifier-border);
   font-size: 11px;
 }
 .is-mobile .cc-attach-pill .cc-attach-label { color: var(--text-normal); }
+/* The "attach this page?" offer: same one-line strip language as the tape. */
+.is-mobile .cc-page-offer { margin-bottom: 6px; font-size: 11.5px; }
+.is-mobile .cc-page-offer-btn { padding: 4px 12px; min-height: 32px; }
 
 /* ===== Agent mode: tool chips (spec 2026-07-05) ===== */
 
