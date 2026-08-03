@@ -12,6 +12,7 @@ import { TFile } from "obsidian";
 import { compactArtifactsInHistory, compactMessages, toApiMessages, type Conversation } from "../conversations/store";
 import { ConversationPicker } from "./ConversationPicker";
 import { modelLabel, CLAUDE_MODELS, resolveModelId } from "../claude/models";
+import { isMobileModelChoiceActive, mobileModelChoices } from "./mobileModelChoices";
 import { capabilitiesFor, effortLevels } from "../claude/capabilities";
 import { type ChatControls, defaultChatControls, shapeRequest } from "../claude/chatControls";
 import { shouldFallbackToLocal, fallbackReason } from "../providers/fallback";
@@ -872,7 +873,7 @@ export class ChatView extends ItemView {
 
   /** Append an "Local (Ollama)" optgroup of detected models to the switcher. */
   private async appendLocalModelOptions(select: HTMLSelectElement): Promise<void> {
-    let models: string[] = [];
+    let models: string[];
     try {
       models = await this.plugin.router().ollama.listModels();
     } catch {
@@ -2105,12 +2106,21 @@ export class ChatView extends ItemView {
   /** Mobile: model picker opened by tapping the model name in the header. */
   private openModelMenu(evt: MouseEvent): void {
     const menu = new Menu();
-    for (const m of CLAUDE_MODELS) {
+    const resolved = this.plugin.router().chatProvider();
+    const activeModel = resolved.provider.id === "anthropic" ? this.controls.model : resolved.model;
+    for (const choice of mobileModelChoices({
+      // Avoid a network probe on tap: the configured local model is the one
+      // mobile users need to retain/switch back to. Discovery remains in settings.
+      ollamaModels: [],
+      configuredOllamaModel: this.plugin.settings.ollamaModel,
+      openaiCompatHost: this.plugin.settings.openaiCompatHost,
+      openaiCompatModel: this.plugin.settings.openaiCompatModel,
+    })) {
       menu.addItem((i) =>
         i
-          .setTitle(m.label)
-          .setChecked(m.id === this.controls.model)
-          .onClick(() => void this.onModelSelect(m.id)),
+          .setTitle(choice.label)
+          .setChecked(isMobileModelChoiceActive(choice, resolved.provider.id, activeModel))
+          .onClick(() => void this.onModelSelect(choice.value)),
       );
     }
     menu.showAtMouseEvent(evt);

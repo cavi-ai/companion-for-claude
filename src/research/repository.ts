@@ -285,7 +285,7 @@ export class ResearchRepository {
     try {
       await this.io.createWithParents(record.path, content);
     } catch (error) {
-      if (error instanceof Error && /already exists/i.test(error.message)) throw new Error(`Research record already exists: ${record.path}`);
+      if (error instanceof Error && /already exists/i.test(error.message)) throw new Error(`Research record already exists: ${record.path}`, { cause: error });
       throw error;
     }
     return { path: record.path, content };
@@ -338,7 +338,7 @@ export class ResearchRepository {
     try {
       await this.io.createWithParents(record.path, renderResearchRecord(record));
     } catch (error) {
-      if (error instanceof Error && /already exists/i.test(error.message)) throw new Error(`Research record already exists: ${record.path}`);
+      if (error instanceof Error && /already exists/i.test(error.message)) throw new Error(`Research record already exists: ${record.path}`, { cause: error });
       throw error;
     }
   }

@@ -146,7 +146,6 @@ export async function gatherContext(
         "folder path or .md extension — so the reader can click through to the source.";
       if (budget >= citation.length) {
         blocks.push(citation);
-        budget -= citation.length;
       }
     }
   }
