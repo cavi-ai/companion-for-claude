@@ -54,6 +54,12 @@ let loading: Promise<void> | null = null;
 let generation = 0;
 /** The loaded model's config (set on load; embed uses its pooling). */
 let active: { repo: string; pooling: "cls" | "mean" } | null = null;
+/** Set when a WebGPU session dies after a successful warm-up (device lost);
+ * the warm-up probe can't catch that, so skip WebGPU from then on. */
+let webgpuBroken = false;
+/** In-flight wasm rebuild after a WebGPU device loss; concurrent embeds whose
+ * dead-session inference fails await this instead of racing a second rebuild. */
+let rebuilding: Promise<void> | null = null;
 
 function makeExtractor(device: "webgpu" | "wasm", id: number, repo: string): Promise<Extractor> {
   // Hub progress events carry {status:"progress", file, progress: 0-100};
@@ -82,7 +88,7 @@ async function doLoad(id: number, repo: string, pooling: "cls" | "mean"): Promis
   // session creation or first inference — probe the API up front, then verify
   // with a warm-up inference before committing to the backend. Weights are
   // already cached by then, so the wasm fallback re-load is offline.
-  if (typeof navigator !== "undefined" && "gpu" in navigator) {
+  if (!webgpuBroken && typeof navigator !== "undefined" && "gpu" in navigator) {
     let webgpu: Extractor | null = null;
     try {
       webgpu = await makeExtractor("webgpu", id, repo);
@@ -134,11 +140,48 @@ async function load(id: number, repo: string, pooling: "cls" | "mean"): Promise<
 }
 
 async function embed(id: number, texts: string[]): Promise<void> {
+  // A wasm rebuild after a WebGPU device loss leaves extractor null while it
+  // runs; wait it out instead of misreporting "model not loaded".
+  if (!extractor && rebuilding) await rebuilding.catch(() => {});
   if (!extractor || !active) {
     ctx.postMessage({ id, type: "error", message: "model not loaded" });
     return;
   }
-  const out = await extractor(texts, { pooling: active.pooling, normalize: true });
+  const opts = { pooling: active.pooling, normalize: true } as const;
+  try {
+    const out = await extractor(texts, opts);
+    ctx.postMessage({ id, type: "result", vectors: out.tolist() });
+    return;
+  } catch (e) {
+    if (backend !== "webgpu" && !rebuilding) throw e;
+  }
+  // WebGPU device lost after a successful warm-up (the load-time probe can't
+  // catch that): rebuild on wasm and retry this batch once.
+  webgpuBroken = true;
+  if (!rebuilding) {
+    const gen = generation;
+    const repo = active.repo;
+    const dead = extractor;
+    extractor = null;
+    loading = null; // stale: referred to the dead session; a future load must rebuild
+    void dead.dispose?.()?.catch(() => {});
+    rebuilding = makeExtractor("wasm", id, repo)
+      .then((candidate) => {
+        if (gen !== generation) {
+          // "dispose" arrived during the rebuild: don't resurrect the pipeline.
+          void candidate.dispose?.()?.catch(() => {});
+          throw new Error("disposed during load");
+        }
+        extractor = candidate;
+        backend = "wasm";
+      })
+      .finally(() => {
+        rebuilding = null;
+      });
+  }
+  await rebuilding;
+  if (!extractor || !active) throw new Error("model not loaded");
+  const out = await extractor(texts, opts);
   ctx.postMessage({ id, type: "result", vectors: out.tolist() });
 }
 

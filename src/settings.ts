@@ -39,6 +39,71 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
     const { containerEl } = this;
     containerEl.empty();
 
+    // Top-level blocks re-render in place (their own div), never the whole
+    // tab — a full re-render collapses every accordion and resets scroll.
+    const topEl = containerEl.createDiv();
+    const renderTop = (): void => {
+      topEl.empty();
+      this.renderTopSection(topEl, renderTop);
+    };
+    renderTop();
+
+    // One accordion per feature, ordered by user journey: run Claude → give
+    // it tools → teach it the vault → where files go → what it can see.
+    this.groupHeading(containerEl, "Agent");
+    this.accordion(containerEl, "Agent (act on your vault)", (c, rerender) => this.renderAgentSection(c, rerender));
+    if (!Platform.isMobile) {
+      this.accordion(containerEl, "Agent bridge — MCP server (desktop)", (c, rerender) => this.renderMcpSection(c, rerender));
+    }
+    this.accordion(containerEl, "External tools — MCP client", (c, rerender) => this.renderMcpClientSection(c, rerender));
+    this.accordion(containerEl, "Agent in the cloud (mobile-friendly)", (c, rerender) => this.renderCloudSection(c, rerender));
+    this.accordion(containerEl, "Cloud replies (pull from repo)", (c) => this.renderRepliesSection(c));
+
+    this.groupHeading(containerEl, "Vault intelligence");
+    this.accordion(containerEl, "Semantic search (local embeddings)", (c) => this.renderSemanticSection(c));
+    if (!Platform.isMobile) {
+      this.accordion(containerEl, "Local models (Ollama & endpoints)", (c, rerender) => this.renderLocalModelsSection(c, rerender));
+    }
+    this.accordion(containerEl, "Indexing & tags", (c) => this.renderIndexingSection(c));
+    // Source capture is vault-API based (no Node/fs) → works on mobile, so it
+    // stays in the shared group rather than a desktop-only block.
+    this.accordion(containerEl, "Source capture (typed clips)", (c) => this.renderSourceCaptureSection(c));
+    this.accordion(containerEl, "Vault ontology (typed notes & relations)", (c) => this.renderOntologySection(c));
+    this.accordion(containerEl, "Scholarly discovery", (c) => this.renderDiscoverySection(c));
+
+    this.groupHeading(containerEl, "Files, memory & privacy");
+    if (!Platform.isMobile) {
+      this.accordion(containerEl, "Session memory", (c) => this.renderMemorySection(c));
+    }
+    this.accordion(containerEl, "Storage", (c) => this.renderStorageSection(c));
+    this.accordion(containerEl, "What this plugin accesses (privacy)", (c) => {
+      c.createEl("p", {
+        cls: "setting-item-description",
+        text: "Your messages and vault context go only to Anthropic (and your local Ollama, if enabled) — nothing else leaves your machine. The built-in semantic-search engine downloads its model once from huggingface.co and cdn.jsdelivr.net when you click Download; afterwards it runs fully offline. On desktop, optional features touch files outside the vault: session capture reads Claude Code transcripts from your Claude projects folder, and “open artifact in browser” writes a temporary HTML file. Semantic search reads every note in your vault to build a local index. Copy buttons use the system clipboard. All filesystem access is disabled on mobile.",
+      });
+    });
+
+    if (Platform.isMobile) {
+      // Desktop-only features are hidden on a phone (they need a desktop runtime);
+      // one collapsed note explains where they went so nothing feels missing.
+      const note = containerEl.createEl("details", { cls: "cc-accordion" });
+      note.createEl("summary", { cls: "cc-accordion-summary", text: "🖥 Desktop-only features" });
+      const body = note.createDiv({ cls: "cc-accordion-body" });
+      body.createEl("p", {
+        text: "These need a desktop runtime and are available when you open this vault on a computer:",
+      });
+      const ul = body.createEl("ul");
+      for (const t of [
+        "Local models (Ollama & endpoints) — runs a localhost model server",
+        "Agent bridge — MCP server (desktop) — exposes your vault to Claude Code",
+        "Session capture — reads Claude Code transcripts from disk (browsing captured memory works here)",
+      ]) {
+        ul.createEl("li", { text: t });
+      }
+    }
+  }
+
+  private renderTopSection(containerEl: HTMLElement, rerenderTop: () => void): void {
     const s = this.plugin.settings;
 
     // The one mandatory step, called out while it's missing. Everything else
@@ -64,7 +129,7 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
         dd.setValue(s.authMode).onChange(async (v) => {
           s.authMode = v as typeof s.authMode;
           await this.plugin.saveSettings();
-          this.renderSettings(); // re-render to show the matching field
+          rerenderTop(); // re-render only this block to show the matching field
         });
       });
 
@@ -251,50 +316,6 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
           await this.plugin.saveSettings();
         }),
       );
-
-    this.accordion(containerEl, "What this plugin accesses (privacy)", (c) => {
-      c.createEl("p", {
-        cls: "setting-item-description",
-        text: "Your messages and vault context go only to Anthropic (and your local Ollama, if enabled) — nothing else leaves your machine. The built-in semantic-search engine downloads its model once from huggingface.co and cdn.jsdelivr.net when you click Download; afterwards it runs fully offline. On desktop, optional features touch files outside the vault: session capture reads Claude Code transcripts from your Claude projects folder, and “open artifact in browser” writes a temporary HTML file. Semantic search reads every note in your vault to build a local index. Copy buttons use the system clipboard. All filesystem access is disabled on mobile.",
-      });
-    });
-
-    this.accordion(containerEl, "Storage", (c) => this.renderStorageSection(c));
-    this.accordion(containerEl, "Agent (act on your vault)", (c) => this.renderAgentSection(c));
-    // On mobile, Cloud session is the primary way to cowork — promote it above
-    // the local/desktop-bound sections.
-    this.accordion(containerEl, "Agent in the cloud (mobile-friendly)", (c) => this.renderCloudSection(c));
-    this.accordion(containerEl, "Semantic search (local embeddings)", (c) => this.renderSemanticSection(c));
-    this.accordion(containerEl, "Indexing & tags", (c) => this.renderIndexingSection(c));
-    this.accordion(containerEl, "Cloud replies (pull from repo)", (c) => this.renderRepliesSection(c));
-    // Source capture is vault-API based (no Node/fs) → works on mobile, so it
-    // stays in the shared group rather than the desktop-only block below.
-    this.accordion(containerEl, "Source capture (typed clips)", (c) => this.renderSourceCaptureSection(c));
-    this.accordion(containerEl, "Vault ontology (typed notes & relations)", (c) => this.renderOntologySection(c));
-    this.accordion(containerEl, "Scholarly discovery", (c) => this.renderDiscoverySection(c));
-    this.accordion(containerEl, "External tools — MCP client", (c) => this.renderMcpClientSection(c));
-    if (!Platform.isMobile) {
-      this.accordion(containerEl, "Local models (Ollama & endpoints)", (c) => this.renderLocalModelsSection(c));
-      this.accordion(containerEl, "Agent bridge — MCP server (desktop)", (c) => this.renderMcpSection(c));
-      this.accordion(containerEl, "Session memory", (c) => this.renderMemorySection(c));
-    } else {
-      // Desktop-only features are hidden on a phone (they need a desktop runtime);
-      // one collapsed note explains where they went so nothing feels missing.
-      const note = containerEl.createEl("details", { cls: "cc-accordion" });
-      note.createEl("summary", { cls: "cc-accordion-summary", text: "🖥 Desktop-only features" });
-      const body = note.createDiv({ cls: "cc-accordion-body" });
-      body.createEl("p", {
-        text: "These need a desktop runtime and are available when you open this vault on a computer:",
-      });
-      const ul = body.createEl("ul");
-      for (const t of [
-        "Local models (Ollama & endpoints) — runs a localhost model server",
-        "Agent bridge — MCP server (desktop) — exposes your vault to Claude Code",
-        "Session capture — reads Claude Code transcripts from disk (browsing captured memory works here)",
-      ]) {
-        ul.createEl("li", { text: t });
-      }
-    }
   }
 
   private renderStorageSection(containerEl: HTMLElement): void {
@@ -385,7 +406,7 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
       );
   }
 
-  private renderLocalModelsSection(containerEl: HTMLElement): void {
+  private renderLocalModelsSection(containerEl: HTMLElement, rerender: () => void): void {
     containerEl.createEl("p", {
       cls: "setting-item-description",
       text: "Run cheap, bulk work — summarizing, tagging, ingestion — on a local model to save Anthropic tokens. Chat and plans still use Claude unless you route them here.",
@@ -460,7 +481,7 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
             }
             new Notice(`Detected ${models.length} model(s).`);
           }
-          this.renderSettings(); // re-render so the dropdown appears/updates
+          rerender(); // re-render this accordion so the dropdown appears/updates
         }),
     );
 
@@ -1020,7 +1041,7 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
       );
   }
 
-  private renderAgentSection(containerEl: HTMLElement): void {
+  private renderAgentSection(containerEl: HTMLElement, rerender: () => void): void {
     containerEl.createEl("p", {
       cls: "setting-item-description",
       text:
@@ -1069,7 +1090,7 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
         t.setValue(this.plugin.settings.webSearchEnabled).onChange(async (v) => {
           this.plugin.settings.webSearchEnabled = v;
           await this.plugin.saveSettings();
-          this.renderSettings();
+          rerender(); // show/hide the engine dropdown in place
         }),
       );
 
@@ -1083,7 +1104,7 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
           dd.setValue(this.plugin.settings.webSearchEngine).onChange(async (v) => {
             this.plugin.settings.webSearchEngine = v as "duckduckgo" | "brave";
             await this.plugin.saveSettings();
-            this.renderSettings();
+            rerender(); // show/hide the Brave key field in place
           });
         });
 
@@ -1112,7 +1133,7 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
       );
   }
 
-  private renderMcpClientSection(containerEl: HTMLElement): void {
+  private renderMcpClientSection(containerEl: HTMLElement, rerender: () => void): void {
     const s = this.plugin.settings;
     containerEl.createEl("p", {
       cls: "setting-item-description",
@@ -1130,14 +1151,14 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
           t.setValue(server.enabled).onChange(async (v) => {
             server.enabled = v;
             await this.plugin.saveSettings();
-            this.renderSettings();
+            rerender();
           }),
         )
         .addButton((b) =>
           b.setButtonText("Remove").onClick(async () => {
             s.mcpClientServers.splice(index, 1);
             await this.plugin.saveSettings();
-            this.renderSettings();
+            rerender();
           }),
         );
 
@@ -1158,7 +1179,7 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
           dd.setValue(server.transport).onChange(async (v) => {
             server.transport = v as McpServerConfig["transport"];
             await this.plugin.saveSettings();
-            this.renderSettings();
+            rerender();
           });
         });
 
@@ -1222,12 +1243,12 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
         b.setButtonText("Add MCP server").setCta().onClick(async () => {
           s.mcpClientServers.push({ name: "", enabled: true, transport: "http", url: "", command: "", args: "" });
           await this.plugin.saveSettings();
-          this.renderSettings();
+          rerender();
         }),
       );
   }
 
-  private renderCloudSection(containerEl: HTMLElement): void {
+  private renderCloudSection(containerEl: HTMLElement, rerender: () => void): void {
     const s = this.plugin.settings;
     containerEl.createEl("p", {
       cls: "setting-item-description",
@@ -1261,7 +1282,7 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
         t.setValue(s.cloudDispatchEnabled).onChange(async (v) => {
           s.cloudDispatchEnabled = v;
           await this.plugin.saveSettings();
-          this.renderSettings();
+          rerender(); // show/hide the routine fields in place
         }),
       );
 
@@ -1410,7 +1431,7 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
       );
   }
 
-  private renderMcpSection(containerEl: HTMLElement): void {
+  private renderMcpSection(containerEl: HTMLElement, rerender: () => void): void {
     const s = this.plugin.settings;
     if (Platform.isMobile) {
       containerEl.createEl("p", {
@@ -1436,7 +1457,7 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
           // Only mint a stored token when neither the env var nor a stored token exists.
           if (v && !resolvedMcp.token) s.mcpToken = generateToken();
           await this.plugin.saveSettings();
-          this.renderSettings(); // refresh status + snippets
+          rerender(); // refresh status + snippets in place
         }),
       );
 
@@ -1473,7 +1494,7 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
           btn.setButtonText("Regenerate").onClick(async () => {
             s.mcpToken = generateToken();
             await this.plugin.saveSettings();
-            this.renderSettings();
+            rerender();
           }),
         );
     }
@@ -1520,7 +1541,7 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
           .addToggle((t) =>
             t.setValue(this.revealMcpToken).onChange((v) => {
               this.revealMcpToken = v;
-              this.renderSettings();
+              rerender();
             }),
           );
       }
@@ -1536,11 +1557,25 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
     }
   }
 
-  /** A collapsed <details> accordion whose summary is the section title. */
-  private accordion(parent: HTMLElement, title: string, render: (body: HTMLElement) => void): void {
+  /** A collapsed <details> accordion whose summary is the section title.
+   * The render fn receives a `rerender` that rebuilds only this accordion's
+   * body in place — the <details> element (and its open state) and the rest
+   * of the tab stay put. */
+  private accordion(parent: HTMLElement, title: string, render: (body: HTMLElement, rerender: () => void) => void): () => void {
     const details = parent.createEl("details", { cls: "cc-accordion" });
     details.createEl("summary", { cls: "cc-accordion-summary", text: title });
-    render(details.createDiv({ cls: "cc-accordion-body" }));
+    const body = details.createDiv({ cls: "cc-accordion-body" });
+    const rerender = (): void => {
+      body.empty();
+      render(body, rerender);
+    };
+    render(body, rerender);
+    return rerender;
+  }
+
+  /** A visual divider between accordion groups. */
+  private groupHeading(parent: HTMLElement, text: string): void {
+    parent.createEl("p", { cls: "cc-settings-group", text });
   }
 
   private codeBlock(containerEl: HTMLElement, label: string, code: string, copyText: string = code): void {

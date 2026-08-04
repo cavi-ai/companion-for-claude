@@ -211,7 +211,7 @@ export class App {
 export class Notice {
   constructor(public message: string) {}
 }
-class FakeElement {
+export class FakeElement {
   tagName: string;
   children: FakeElement[] = [];
   attributes = new Map<string, string>();
@@ -219,10 +219,22 @@ class FakeElement {
   textContent = "";
   disabled = false;
   value = "";
+  type = "";
+  rows = 0;
+  style: Record<string, string> = {};
+  setCssStyles(styles: Record<string, string>): void { Object.assign(this.style, styles); }
+  setCssProperty(name: string, value: string): void { this.style[name] = value; }
   private listeners = new Map<string, Array<(event: any) => void>>();
   constructor(tag = "div") { this.tagName = tag.toUpperCase(); }
   empty(): void { this.children = []; this.textContent = ""; }
   addClass(name: string): void { this.classList.add(name); }
+  removeClass(name: string): void { this.classList.delete(name); }
+  toggleClass(name: string, force?: boolean): void {
+    const on = force ?? !this.classList.has(name);
+    if (on) this.classList.add(name); else this.classList.delete(name);
+  }
+  appendText(text: string): void { this.textContent += text; }
+  appendChild<T>(child: T): T { this.children.push(child as unknown as FakeElement); return child; }
   createEl(tag: string, options: any = {}): FakeElement {
     const child = new FakeElement(tag);
     child.textContent = options.text ?? "";
@@ -276,4 +288,110 @@ export abstract class FuzzySuggestModal<T> extends Modal {
   abstract getItems(): T[];
   abstract getItemText(item: T): string;
   abstract onChooseItem(item: T): void;
+}
+
+// Settings-tab fakes: enough of the Setting/component surface for render
+// smoke tests (labels + interactive controls present, callbacks wired).
+abstract class BaseComponent {
+  inputEl = new FakeElement("input");
+  disabled = false;
+  setDisabled(disabled: boolean): this { this.disabled = disabled; this.inputEl.disabled = disabled; return this; }
+  setTooltip(tooltip: string): this { this.inputEl.attributes.set("title", tooltip); return this; }
+}
+export class TextComponent extends BaseComponent {
+  private changeCb: ((value: string) => void) | null = null;
+  getValue(): string { return this.inputEl.value; }
+  setValue(value: string): this { this.inputEl.value = value; return this; }
+  setPlaceholder(placeholder: string): this { this.inputEl.attributes.set("placeholder", placeholder); return this; }
+  onChange(cb: (value: string) => void): this { this.changeCb = cb; return this; }
+  simulateInput(value: string): void { this.inputEl.value = value; this.changeCb?.(value); }
+}
+export class TextAreaComponent extends TextComponent {
+  override inputEl = new FakeElement("textarea");
+}
+export class DropdownComponent extends BaseComponent {
+  options = new Map<string, string>();
+  private changeCb: ((value: string) => void) | null = null;
+  addOption(value: string, display: string): this { this.options.set(value, display); return this; }
+  addOptions(options: Record<string, string>): this { for (const [v, d] of Object.entries(options)) this.options.set(v, d); return this; }
+  getValue(): string { return this.inputEl.value; }
+  setValue(value: string): this { this.inputEl.value = value; return this; }
+  onChange(cb: (value: string) => void): this { this.changeCb = cb; return this; }
+  simulateSelect(value: string): void { this.inputEl.value = value; this.changeCb?.(value); }
+}
+export class ToggleComponent extends BaseComponent {
+  private changeCb: ((value: boolean) => void) | null = null;
+  getValue(): boolean { return this.inputEl.value === "on"; }
+  setValue(value: boolean): this { this.inputEl.value = value ? "on" : "off"; return this; }
+  onChange(cb: (value: boolean) => void): this { this.changeCb = cb; return this; }
+  simulateClick(): void { this.setValue(!this.getValue()); this.changeCb?.(this.getValue()); }
+}
+export class SliderComponent extends BaseComponent {
+  private changeCb: ((value: number) => void) | null = null;
+  setLimits(min: number, max: number, step: number): this { this.inputEl.attributes.set("min", String(min)); this.inputEl.attributes.set("max", String(max)); this.inputEl.attributes.set("step", String(step)); return this; }
+  setDynamicTooltip(): this { return this; }
+  getValue(): number { return Number(this.inputEl.value); }
+  setValue(value: number): this { this.inputEl.value = String(value); return this; }
+  onChange(cb: (value: number) => void): this { this.changeCb = cb; return this; }
+}
+export class ButtonComponent extends BaseComponent {
+  buttonEl = new FakeElement("button");
+  private clickCb: (() => void) | null = null;
+  setButtonText(text: string): this { this.buttonEl.setText(text); return this; }
+  setCta(): this { this.buttonEl.addClass("mod-cta"); return this; }
+  setWarning(): this { this.buttonEl.addClass("mod-warning"); return this; }
+  setIcon(icon: string): this { this.buttonEl.attributes.set("data-icon", icon); return this; }
+  onClick(cb: () => void): this { this.clickCb = cb; return this; }
+  simulateClick(): void { this.clickCb?.(); }
+}
+export class ExtraButtonComponent extends ButtonComponent {}
+export class SearchComponent extends TextComponent {}
+
+type ComponentCtor = new () => BaseComponent;
+
+export class Setting {
+  settingEl: FakeElement;
+  infoEl: FakeElement;
+  controlEl: FakeElement;
+  descEl: FakeElement;
+  nameEl: FakeElement;
+  components: BaseComponent[] = [];
+  constructor(public containerEl: FakeElement) {
+    this.settingEl = containerEl.createDiv({ cls: "setting-item" });
+    this.infoEl = this.settingEl.createDiv({ cls: "setting-item-info" });
+    this.nameEl = this.infoEl.createDiv({ cls: "setting-item-name" });
+    this.descEl = this.infoEl.createDiv({ cls: "setting-item-description" });
+    this.controlEl = this.settingEl.createDiv({ cls: "setting-item-control" });
+  }
+  setName(name: string): this { this.nameEl.setText(name); return this; }
+  setDesc(desc: string | DocumentFragment): this { this.descEl.setText(typeof desc === "string" ? desc : ""); return this; }
+  setHeading(): this { this.settingEl.addClass("setting-item-heading"); return this; }
+  setClass(cls: string): this { this.settingEl.addClass(cls); return this; }
+  setTooltip(tooltip: string): this { this.settingEl.attributes.set("title", tooltip); return this; }
+  private add<T extends BaseComponent>(Ctor: ComponentCtor, cb: (component: never) => void): this {
+    const component = new Ctor() as T;
+    this.controlEl.appendChild(component.inputEl);
+    this.components.push(component);
+    cb(component as never);
+    return this;
+  }
+  addText(cb: (component: TextComponent) => void): this { return this.add<TextComponent>(TextComponent as unknown as ComponentCtor, cb as never); }
+  addTextArea(cb: (component: TextAreaComponent) => void): this { return this.add<TextAreaComponent>(TextAreaComponent as unknown as ComponentCtor, cb as never); }
+  addDropdown(cb: (component: DropdownComponent) => void): this { return this.add<DropdownComponent>(DropdownComponent as unknown as ComponentCtor, cb as never); }
+  addToggle(cb: (component: ToggleComponent) => void): this { return this.add<ToggleComponent>(ToggleComponent as unknown as ComponentCtor, cb as never); }
+  addSlider(cb: (component: SliderComponent) => void): this { return this.add<SliderComponent>(SliderComponent as unknown as ComponentCtor, cb as never); }
+  addButton(cb: (component: ButtonComponent) => void): this { return this.add<ButtonComponent>(ButtonComponent as unknown as ComponentCtor, cb as never); }
+  addExtraButton(cb: (component: ExtraButtonComponent) => void): this { return this.add<ExtraButtonComponent>(ExtraButtonComponent as unknown as ComponentCtor, cb as never); }
+  addSearch(cb: (component: SearchComponent) => void): this { return this.add<SearchComponent>(SearchComponent as unknown as ComponentCtor, cb as never); }
+}
+export interface SettingDefinitionItem { name: string; description?: string; aliases?: string[] }
+export class PluginSettingTab {
+  containerEl = new FakeElement() as unknown as HTMLElement;
+  constructor(
+    public app: App,
+    public plugin: Plugin,
+  ) {}
+  display(): void {}
+  hide(): void {}
+  getSettingDefinitions(): SettingDefinitionItem[] { return []; }
 }

@@ -1575,6 +1575,14 @@ pre.cc-has-copy:hover .cc-code-copy { opacity: 1; }
 .cc-accordion-body {
   padding-bottom: 8px;
 }
+.cc-settings-group {
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  margin: 18px 0 2px;
+  text-transform: uppercase;
+}
 
 /* ----- responsive (unconditional wrap) ----- */
 /* These views dock in a narrow sidebar or a wide pane. We previously used
