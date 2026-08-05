@@ -62,7 +62,12 @@ jobs:
           git fetch --force origin "refs/tags/${TAG}:refs/tags/${TAG}"
           COMMIT="$(git rev-list -n 1 "$TAG")"
           SOURCE_DATE_EPOCH="$(git show -s --format=%ct "$COMMIT")"
-          cp scripts/cavi-release.mjs "$RUNNER_TEMP/cavi-release.mjs"
+          # tools/ is mirrored from claude-obsidian; scripts/ is the pre-0.22.4 location.
+          if [ -f tools/cavi-release.mjs ]; then
+            cp tools/cavi-release.mjs "$RUNNER_TEMP/cavi-release.mjs"
+          else
+            cp scripts/cavi-release.mjs "$RUNNER_TEMP/cavi-release.mjs"
+          fi
           chmod +x "$RUNNER_TEMP/cavi-release.mjs"
           {
             echo "version=$VERSION"
