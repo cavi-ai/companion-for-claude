@@ -1,6 +1,6 @@
 import { chromium, type Browser, type Page } from "@playwright/test";
 import { createServer, type Server } from "node:http";
-import { copyFile, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn, type ChildProcess } from "node:child_process";
@@ -26,7 +26,13 @@ async function seedVault(vault: string, providerPort: number): Promise<void> {
   for (const file of ["main.js", "manifest.json", "styles.css"]) await copyFile(join(process.cwd(), file), join(plugin, file));
   await writeFile(join(obsidian, "community-plugins.json"), JSON.stringify(["claude-companion"]));
   await writeFile(join(obsidian, "app.json"), JSON.stringify({ showUnsupportedFiles: true, alwaysUpdateLinks: true }));
-  await writeFile(join(plugin, "data.json"), JSON.stringify({ settings: { apiKey: "e2e-key", authMode: "apiKey", baseUrl: `http://127.0.0.1:${providerPort}`, model: "e2e-model", customModel: "", chatBackend: "claude", discoveryEnabled: false }, researchDeskPreferences: {} }));
+  // E2E_SEED_DATA points at a real data.json so the suite can run against a
+  // lived-in config, not just the pristine one a fresh install writes.
+  const seeded = process.env.E2E_SEED_DATA ? JSON.parse(await readFile(process.env.E2E_SEED_DATA, "utf8")) as { settings?: Record<string, unknown> } : null;
+  const settings = { apiKey: "e2e-key", authMode: "apiKey", baseUrl: `http://127.0.0.1:${providerPort}`, model: "e2e-model", customModel: "", chatBackend: "claude", discoveryEnabled: false };
+  await writeFile(join(plugin, "data.json"), JSON.stringify(seeded
+    ? { ...seeded, settings: { ...seeded.settings, apiKey: "e2e-key", baseUrl: `http://127.0.0.1:${providerPort}`, discoveryEnabled: false } }
+    : { settings, researchDeskPreferences: {} }));
 
   const alpha = join(vault, "Research", "Alpha");
   for (const folder of ["Sources", "Evidence", "Claims", "Questions", "Documents"]) await mkdir(join(alpha, folder), { recursive: true });

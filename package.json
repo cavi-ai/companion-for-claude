@@ -1,6 +1,6 @@
 {
   "name": "claude-companion",
-  "version": "0.22.3",
+  "version": "0.22.4",
   "description": "Chat with Claude inside your Obsidian vault, generate beautiful interactive artifacts, and sync them back into your notes.",
   "main": "main.js",
   "type": "module",
@@ -26,7 +26,8 @@
     "audit": "pnpm dlx pnpm@11.7.0 --pm-on-fail=ignore audit --prod --audit-level high",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:e2e:research": "pnpm run build && playwright test --config=e2e/playwright.config.ts"
+    "test:e2e": "pnpm run build && playwright test --config=e2e/playwright.config.ts",
+    "test:e2e:research": "pnpm run build && playwright test --config=e2e/playwright.config.ts e2e/research-desk.spec.ts"
   },
   "pnpm": {
     "onlyBuiltDependencies": [

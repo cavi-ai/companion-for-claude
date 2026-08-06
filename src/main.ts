@@ -26,8 +26,8 @@ import { WORKFLOWS, type Workflow } from "./workflows/catalog";
 import { listSessionsForVault, type SessionMeta } from "./memory/sessions";
 import { ingestSession, ingestConversation } from "./memory/ingest";
 import { ClaudeCompanionSettingTab } from "./settings";
-import { ProviderRouter, migrateUtilityBackend } from "./providers/router";
-import { DEFAULT_SETTINGS, migrateSystemPrompt, normalizeDiscoverySettings, type PluginSettings, type ArtifactOpenTarget } from "./types";
+import { ProviderRouter } from "./providers/router";
+import { DEFAULT_SETTINGS, normalizeDiscoverySettings, type PluginSettings, type ArtifactOpenTarget } from "./types";
 import { DESIGN_SYSTEM_PROMPT, PLANNING_INSTRUCTION } from "./artifacts/designSystem";
 import { AGENT_INSTRUCTION, PLAN_MODE_INSTRUCTION } from "./agent/prompt";
 import { findUnlinkedMentions, linkMention, type LinkCandidate } from "./links/unlinkedMentions";
@@ -65,8 +65,9 @@ import { SemanticIndexer, type IndexFile } from "./semantic/indexer";
 import { extractPdfPages } from "./semantic/pdf";
 import { loadPdf } from "./semantic/pdfjs";
 import type { IndexData } from "./semantic/store";
-import { OllamaEmbedder, embedderId, migrateEmbeddingEngine, type Embedder } from "./semantic/embedder";
+import { OllamaEmbedder, embedderId, type Embedder } from "./semantic/embedder";
 import { builtinModelById } from "./semantic/transformers/model";
+import { isNamespacedData, resolveSettings } from "./settingsLoad";
 import { clearCachedModel, hasCachedModel } from "./semantic/transformers/cache";
 import { TransformersEmbedder, type WorkerLike } from "./semantic/transformers/embedder";
 import { createEmbedWorker } from "./semantic/transformers/workerSource";
@@ -1095,29 +1096,11 @@ export default class ClaudeCompanionPlugin extends Plugin {
 
   async loadSettings(): Promise<void> {
     const raw = (await this.loadData()) as PersistedData | Partial<PluginSettings> | null;
-    // Migrate the legacy shape (data.json *was* the settings object) to the
-    // namespaced { settings, conversations } shape.
-    const isNamespaced = !!raw && typeof raw === "object" && ("settings" in raw || "conversations" in raw || "researchDeskPreferences" in raw);
-    const settingsData = (isNamespaced ? (raw).settings : raw) as Partial<PluginSettings> | null;
-    // Pre-engine semantic users are working Ollama users — keep them there
-    // instead of letting the builtin default repoint their index. Persisted on
-    // the next save, like the shape migration above.
-    const migratedEngine = migrateEmbeddingEngine(settingsData);
-    const migratedUtility = migrateUtilityBackend(settingsData);
-    const migratedPrompt = migrateSystemPrompt(settingsData?.systemPrompt);
-    this.settings = {
-      ...DEFAULT_SETTINGS,
-      ...settingsData,
-      ...normalizeDiscoverySettings(settingsData ?? {}),
-      ...(migratedEngine ? { embeddingEngine: migratedEngine } : {}),
-      ...(migratedUtility ? { utilityBackend: migratedUtility } : {}),
-      ...(migratedPrompt ? { systemPrompt: migratedPrompt } : {}),
-      context: { ...DEFAULT_SETTINGS.context, ...(settingsData?.context ?? {}) },
-    };
-    this.convState = isNamespaced
+    this.settings = resolveSettings(raw);
+    this.convState = isNamespacedData(raw)
       ? fromPersisted({ conversations: (raw).conversations, activeId: (raw).activeConversationId })
       : emptyState();
-    this.researchDeskPreferences = normalizeDeskPreferenceMap(isNamespaced ? (raw).researchDeskPreferences : undefined);
+    this.researchDeskPreferences = normalizeDeskPreferenceMap(isNamespacedData(raw) ? (raw).researchDeskPreferences : undefined);
   }
 
   /** Write settings + conversation history back to data.json. */

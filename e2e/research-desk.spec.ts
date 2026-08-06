@@ -104,7 +104,7 @@ test("06 native continuity: evidence becomes a claim and an outline without leav
   await workbench.getByRole("button", { name: "Create claim", exact: true }).click();
   const claim = harness.page.locator(".modal-container").last();
   await claim.getByLabel("Claim title").fill("Workflow continuity claim");
-  await claim.getByLabel("Proposition").fill("Reviewed evidence preserves continuity across the workflow.");
+  await claim.getByLabel("Proposition", { exact: true }).fill("Reviewed evidence preserves continuity across the workflow.");
   await claim.getByLabel("Challenge supports").check();
   await verifyModalWidths(claim, "Create claim", "06b-create-claim-mobile");
   await claim.screenshot({ path: "/private/tmp/claude-companion-research-e2e-results/06b-create-claim.png" });

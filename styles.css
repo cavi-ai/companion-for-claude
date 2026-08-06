@@ -2049,7 +2049,7 @@ pre.cc-has-copy:hover .cc-code-copy { opacity: 1; }
 }
 
 .cc-research-desk { container: research-desk / inline-size; padding: clamp(12px, 2.5vw, 24px); }
-.cc-desk-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; margin-bottom: 14px; }
+.cc-desk-header { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 14px; margin-bottom: 14px; }
 .cc-desk-identity { min-width: 0; }
 .cc-desk-eyebrow,
 .cc-desk-card-label {
@@ -2061,7 +2061,7 @@ pre.cc-has-copy:hover .cc-code-copy { opacity: 1; }
 .cc-desk-header h2,
 .cc-desk-empty h2 { margin: 5px 0 4px; font-size: clamp(21px, 3vw, 30px); line-height: 1.12; letter-spacing: -.025em; }
 .cc-desk-question { max-width: 58ch; margin: 0; color: var(--text-muted); line-height: 1.45; }
-.cc-desk-header-actions { display: flex; flex: 0 1 320px; align-items: flex-end; gap: 8px; min-width: 0; }
+.cc-desk-header-actions { display: flex; flex: 0 1 320px; flex-wrap: wrap; align-items: flex-end; gap: 8px; min-width: 0; }
 .cc-desk-switcher { flex: 1 1 auto; min-width: 140px; }
 .cc-desk-switcher label { display: block; margin-bottom: 5px; color: var(--text-muted); font-size: 11px; }
 .cc-desk-switcher select { width: 100%; min-height: 40px; }
@@ -2128,7 +2128,7 @@ pre.cc-has-copy:hover .cc-code-copy { opacity: 1; }
 .cc-desk-empty-controls select { flex: 1 1 210px; min-height: 40px; }
 
 .cc-research-workbench { container: research-workbench / inline-size; padding: clamp(12px, 2.3vw, 20px); color: var(--text-normal); }
-.cc-research-header-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.cc-research-header-top { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; }
 .cc-workspace-navigation { display: grid; grid-template-columns: repeat(2, auto); justify-content: end; gap: 4px; margin: 0; }
 .cc-workspace-navigation button,
 .cc-workspace-companion-action { min-height: 34px; white-space: nowrap; box-shadow: none; }
