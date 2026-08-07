@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { App, FakeElement } from "./fakes/obsidian";
+import { App, FakeElement, openSettingTab } from "./fakes/obsidian";
 import { resolveSettings, isNamespacedData } from "../src/settingsLoad";
 import { DEFAULT_SETTINGS } from "../src/types";
 import { ClaudeCompanionSettingTab } from "../src/settings";
@@ -97,7 +97,7 @@ describe("resolveSettings with legacy configs", () => {
       loadOntologyOnStart: async () => {},
     } as unknown as ClaudeCompanionPlugin;
     const tab = new ClaudeCompanionSettingTab(new App() as never, plugin);
-    expect(() => tab.display()).not.toThrow();
+    expect(() => openSettingTab(tab)).not.toThrow();
     await new Promise((r) => setTimeout(r, 0));
     const container = tab.containerEl as unknown as FakeElement;
     expect(container.querySelectorAll(".setting-item").length).toBeGreaterThan(50);

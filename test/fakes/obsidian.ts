@@ -211,6 +211,7 @@ export class App {
 export class Notice {
   constructor(public message: string) {}
 }
+export function setIcon(parent: FakeElement, icon: string): void { parent.setAttr("data-icon", icon); }
 export class FakeElement {
   tagName: string;
   children: FakeElement[] = [];
@@ -248,6 +249,8 @@ export class FakeElement {
   addEventListener(type: string, listener: (event: any) => void): void { this.listeners.set(type, [...(this.listeners.get(type) ?? []), listener]); }
   dispatchEvent(event: any): boolean { for (const listener of this.listeners.get(event.type) ?? []) listener(event); return true; }
   focus(): void { this.attributes.set("data-focused", "true"); }
+  setAttr(name: string, value: string): void { this.attributes.set(name, String(value)); }
+  removeAttribute(name: string): void { this.attributes.delete(name); }
   setText(text: string): void { this.textContent = text; }
   getAttribute(name: string): string | null { return this.attributes.get(name) ?? null; }
   querySelectorAll(selector: string): FakeElement[] { return this.walk().filter((item) => matches(item, selector)); }
@@ -277,6 +280,7 @@ export class ItemView {
 let lastOpenedModal: Modal | undefined;
 export function getLastOpenedModal(): Modal | undefined { return lastOpenedModal; }
 export class Modal {
+  titleEl = new FakeElement("h2");
   contentEl = new FakeElement() as unknown as HTMLElement;
   constructor(public app: App) {}
   open(): void { lastOpenedModal = this; this.onOpen(); }
@@ -394,4 +398,18 @@ export class PluginSettingTab {
   display(): void {}
   hide(): void {}
   getSettingDefinitions(): SettingDefinitionItem[] { return []; }
+}
+
+/**
+ * Exercise a settings tab through the Obsidian 1.13 host contract. A subclass
+ * that opts into declarative definitions is host-rendered from those
+ * definitions; imperative tabs are opened through display().
+ */
+export function openSettingTab(tab: PluginSettingTab): void {
+  const prototype = Object.getPrototypeOf(tab) as object;
+  if (Object.prototype.hasOwnProperty.call(prototype, "getSettingDefinitions")) {
+    tab.getSettingDefinitions();
+    return;
+  }
+  tab.display();
 }

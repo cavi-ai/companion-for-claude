@@ -35,6 +35,7 @@ import { needsCredentialSetup } from "../providers/setupState";
 import { addUsage, contextGauge, EMPTY_SESSION, estimateTokens, formatCost, formatTokens, sessionCost, type SessionUsage } from "../usage/tokens";
 import { mergeUsage, type TokenUsage } from "../claude/sse";
 import type { CompanionWorkspaceCard } from "./companionWorkspace";
+import { ActionModal, type ActionModalItem } from "./ActionModal";
 
 export const CHAT_VIEW_TYPE = "claude-companion-chat";
 
@@ -67,6 +68,7 @@ interface ObsidianAppWithSettings {
     open?: () => void;
     openTabById?: (id: string) => void;
   };
+  commands?: { executeCommandById?: (id: string) => boolean };
 }
 
 export class ChatView extends ItemView {
@@ -210,10 +212,10 @@ export class ChatView extends ItemView {
       // hidden controls bar (Act on vault, Plan mode, memory ingest). Truly
       // desktop-only chrome (MCP, session capture) stays omitted.
       this.modelLabelEl.addClass("cc-model-tappable");
-      this.modelLabelEl.addEventListener("click", (e) => this.openModelMenu(e));
+      this.modelLabelEl.addEventListener("click", () => this.openModelMenu());
       const more = actions.createEl("button", { cls: "cc-icon-btn", attr: { "aria-label": "More actions" } });
       setIcon(more, "more-vertical");
-      more.addEventListener("click", (e) => this.openOverflowMenu(e));
+      more.addEventListener("click", () => this.openOverflowMenu());
     } else {
       // One-shot actions (left group). These DO something on click.
       this.iconButton(actions, "plus", "New chat", () => this.clearChat());
@@ -1186,9 +1188,15 @@ export class ChatView extends ItemView {
   }
 
   private openSettings(): void {
-    const setting = (this.app as ObsidianAppWithSettings).setting;
-    setting?.open?.();
-    setting?.openTabById?.("claude-companion");
+    const app = this.app as ObsidianAppWithSettings;
+    if (app.setting?.open) {
+      app.setting.open();
+      app.setting.openTabById?.("claude-companion");
+      return;
+    }
+    // Some mobile shells do not expose the desktop `app.setting` controller.
+    // The built-in command still opens Settings instead of making the tap a no-op.
+    app.commands?.executeCommandById?.("app:open-settings");
   }
 
   // ---------- send / stream ----------
@@ -2051,79 +2059,61 @@ export class ChatView extends ItemView {
   }
 
   /** Mobile: the single ⋯ menu that replaces the desktop header icon row. */
-  private openOverflowMenu(evt: MouseEvent): void {
-    const menu = new Menu();
-    menu.addItem((i) => i.setTitle("Source inbox").setIcon("inbox").onClick(() => void this.plugin.activateInboxView()));
-    menu.addItem((i) => i.setTitle("Related notes").setIcon("link").onClick(() => void this.plugin.activateRelatedView()));
-    menu.addItem((i) => i.setTitle("New chat").setIcon("plus").onClick(() => this.clearChat()));
-    menu.addItem((i) => i.setTitle("History").setIcon("history").onClick(() => this.openHistory()));
-    menu.addItem((i) => i.setTitle("Save chat to vault").setIcon("save").onClick(() => void this.saveChat()));
-    menu.addItem((i) => i.setTitle("Model controls…").setIcon("sliders-horizontal").onClick(() => this.openTuneModal()));
+  private openOverflowMenu(): void {
+    const items: ActionModalItem[] = [
+      { title: "Source inbox", icon: "inbox", run: () => void this.plugin.activateInboxView() },
+      { title: "Related notes", icon: "link", run: () => void this.plugin.activateRelatedView() },
+      { title: "New chat", icon: "plus", run: () => this.clearChat() },
+      { title: "History", icon: "history", run: () => this.openHistory() },
+      { title: "Save chat to vault", icon: "save", run: () => void this.saveChat() },
+      { title: "Model controls…", icon: "sliders-horizontal", run: () => this.openTuneModal() },
+    ];
     // Session toggles that live in the hidden desktop controls bar — without
     // these, phone users can't reach agent writes, Plan Mode, or memory ingest.
     const canAct = this.plugin.settings.agentModeEnabled && this.plugin.router().chatProvider().provider.id === "anthropic";
-    if (canAct || this.plugin.settings.memoryEnabled) menu.addSeparator();
     if (canAct) {
-      menu.addItem((i) =>
-        i
-          .setTitle("Act on vault")
-          .setIcon("pencil-line")
-          .setChecked(this.plugin.settings.agentAllowWrites)
-          .onClick(() => void this.toggleAgentWrites()),
-      );
-      menu.addItem((i) =>
-        i
-          .setTitle("Plan mode")
-          .setIcon("list-todo")
-          .setChecked(this.planMode)
-          .onClick(() => this.togglePlanMode()),
+      items.push(
+        { title: "Act on vault", icon: "pencil-line", checked: this.plugin.settings.agentAllowWrites, separatorBefore: true, run: () => void this.toggleAgentWrites() },
+        { title: "Plan mode", icon: "list-todo", checked: this.planMode, run: () => this.togglePlanMode() },
       );
     }
     if (this.plugin.settings.memoryEnabled) {
-      menu.addItem((i) =>
-        i
-          .setTitle("File chats into session memory")
-          .setIcon("archive")
-          .setChecked(this.plugin.settings.memoryIngestOnSave)
-          .onClick(() => {
-            this.plugin.settings.memoryIngestOnSave = !this.plugin.settings.memoryIngestOnSave;
-            void this.plugin.saveSettings();
-          }),
-      );
+      items.push({
+        title: "File chats into session memory", icon: "archive", checked: this.plugin.settings.memoryIngestOnSave,
+        separatorBefore: !canAct,
+        run: () => {
+          this.plugin.settings.memoryIngestOnSave = !this.plugin.settings.memoryIngestOnSave;
+          void this.plugin.saveSettings();
+        },
+      });
     }
     // Cloud actions only when actually configured — a menu item that just
     // bounces a "feature is off" notice is noise.
     const cloudDispatch = this.plugin.settings.cloudDispatchEnabled;
     const cloudReplies = this.plugin.settings.cloudReplyRepo.trim().length > 0;
-    if (cloudDispatch || cloudReplies) menu.addSeparator();
-    if (cloudDispatch) menu.addItem((i) => i.setTitle("Send to cloud session").setIcon("cloud").onClick(() => void this.plugin.dispatchCloudSession()));
-    if (cloudReplies) menu.addItem((i) => i.setTitle("Pull cloud replies").setIcon("cloud-download").onClick(() => void this.plugin.pullCloudReplies()));
-    menu.addSeparator();
-    menu.addItem((i) => i.setTitle("Settings").setIcon("settings").onClick(() => this.openSettings()));
-    menu.showAtMouseEvent(evt);
+    if (cloudDispatch) items.push({ title: "Send to cloud session", icon: "cloud", separatorBefore: true, run: () => void this.plugin.dispatchCloudSession() });
+    if (cloudReplies) items.push({ title: "Pull cloud replies", icon: "cloud-download", separatorBefore: !cloudDispatch, run: () => void this.plugin.pullCloudReplies() });
+    items.push({ title: "Settings", icon: "settings", separatorBefore: true, run: () => this.openSettings() });
+    new ActionModal(this.app, "Companion actions", items).open();
   }
 
   /** Mobile: model picker opened by tapping the model name in the header. */
-  private openModelMenu(evt: MouseEvent): void {
-    const menu = new Menu();
+  private openModelMenu(): void {
     const resolved = this.plugin.router().chatProvider();
     const activeModel = resolved.provider.id === "anthropic" ? this.controls.model : resolved.model;
-    for (const choice of mobileModelChoices({
+    const items = mobileModelChoices({
       // Avoid a network probe on tap: the configured local model is the one
       // mobile users need to retain/switch back to. Discovery remains in settings.
       ollamaModels: [],
       configuredOllamaModel: this.plugin.settings.ollamaModel,
       openaiCompatHost: this.plugin.settings.openaiCompatHost,
       openaiCompatModel: this.plugin.settings.openaiCompatModel,
-    })) {
-      menu.addItem((i) =>
-        i
-          .setTitle(choice.label)
-          .setChecked(isMobileModelChoiceActive(choice, resolved.provider.id, activeModel))
-          .onClick(() => void this.onModelSelect(choice.value)),
-      );
-    }
-    menu.showAtMouseEvent(evt);
+    }).map((choice): ActionModalItem => ({
+      title: choice.label,
+      checked: isMobileModelChoiceActive(choice, resolved.provider.id, activeModel),
+      run: () => void this.onModelSelect(choice.value),
+    }));
+    new ActionModal(this.app, "Choose model", items).open();
   }
 
   /** Note in the assistant bubble that we fell back to the local model. */

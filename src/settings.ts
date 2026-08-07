@@ -1,4 +1,4 @@
-import { App, Notice, Platform, PluginSettingTab, Setting, type ButtonComponent, type SettingDefinitionItem } from "obsidian";
+import { App, Notice, Platform, PluginSettingTab, Setting, type ButtonComponent } from "obsidian";
 import type ClaudeCompanionPlugin from "./main";
 import { CLAUDE_MODELS } from "./claude/models";
 import type { ProviderStatus } from "./providers/types";
@@ -8,7 +8,6 @@ import { dispatchSetupSteps, repliesSetupSteps } from "./cloud/setup";
 import { BUILTIN_EMBEDDING_MODELS, builtinModelById } from "./semantic/transformers/model";
 import { ChoiceModal } from "./view/ChoiceModal";
 import { normalizeDiscoverySettings, type McpServerConfig, type PluginSettings } from "./types";
-import { settingDefinitions } from "./settingsDefinitions";
 
 export class ClaudeCompanionSettingTab extends PluginSettingTab {
   /** Cached list of Ollama models from the last Detect, for the dropdown. */
@@ -25,14 +24,6 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
 
   override display(): void {
     this.renderSettings();
-  }
-
-  /**
-   * Obsidian 1.13+ settings search. Search-metadata only (no controls), so
-   * search hits point into this tab without duplicating its imperative UI.
-   */
-  override getSettingDefinitions(): SettingDefinitionItem[] {
-    return settingDefinitions();
   }
 
   private renderSettings(): void {
@@ -86,20 +77,19 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
     if (Platform.isMobile) {
       // Desktop-only features are hidden on a phone (they need a desktop runtime);
       // one collapsed note explains where they went so nothing feels missing.
-      const note = containerEl.createEl("details", { cls: "cc-accordion" });
-      note.createEl("summary", { cls: "cc-accordion-summary", text: "🖥 Desktop-only features" });
-      const body = note.createDiv({ cls: "cc-accordion-body" });
-      body.createEl("p", {
-        text: "These need a desktop runtime and are available when you open this vault on a computer:",
+      this.accordion(containerEl, "🖥 Desktop-only features", (body) => {
+        body.createEl("p", {
+          text: "These need a desktop runtime and are available when you open this vault on a computer:",
+        });
+        const ul = body.createEl("ul");
+        for (const t of [
+          "Local models (Ollama & endpoints) — runs a localhost model server",
+          "Agent bridge — MCP server (desktop) — exposes your vault to Claude Code",
+          "Session capture — reads Claude Code transcripts from disk (browsing captured memory works here)",
+        ]) {
+          ul.createEl("li", { text: t });
+        }
       });
-      const ul = body.createEl("ul");
-      for (const t of [
-        "Local models (Ollama & endpoints) — runs a localhost model server",
-        "Agent bridge — MCP server (desktop) — exposes your vault to Claude Code",
-        "Session capture — reads Claude Code transcripts from disk (browsing captured memory works here)",
-      ]) {
-        ul.createEl("li", { text: t });
-      }
     }
   }
 
@@ -1562,9 +1552,23 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
    * body in place — the <details> element (and its open state) and the rest
    * of the tab stay put. */
   private accordion(parent: HTMLElement, title: string, render: (body: HTMLElement, rerender: () => void) => void): () => void {
-    const details = parent.createEl("details", { cls: "cc-accordion" });
-    details.createEl("summary", { cls: "cc-accordion-summary", text: title });
+    const details = parent.createEl(Platform.isMobile ? "section" : "details", { cls: "cc-accordion" });
+    const summary = details.createEl(Platform.isMobile ? "button" : "summary", {
+      cls: "cc-accordion-summary",
+      text: title,
+      ...(Platform.isMobile ? { attr: { type: "button", "aria-expanded": "false" } } : {}),
+    });
     const body = details.createDiv({ cls: "cc-accordion-body" });
+    if (Platform.isMobile) {
+      body.setAttr("hidden", "");
+      summary.addEventListener("click", () => {
+        const expanded = summary.getAttribute("aria-expanded") === "true";
+        summary.setAttr("aria-expanded", String(!expanded));
+        details.toggleClass("is-open", !expanded);
+        if (expanded) body.setAttr("hidden", "");
+        else body.removeAttribute("hidden");
+      });
+    }
     const rerender = (): void => {
       body.empty();
       render(body, rerender);
