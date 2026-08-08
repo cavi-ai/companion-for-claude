@@ -14,9 +14,10 @@ function fromSourceSchema(sourceType: SourceType): TypeDef {
     name: sourceType,
     version: s.version,
     extendsType: "source",
-    // title/summary are universal base keys — the ontology doesn't redeclare them.
+    // Title is a universal base key. Summary is redeclared so source-derived
+    // types retain the source schema's documented quality constraint.
     properties: s.fields
-      .filter((f) => f.key !== "title" && f.key !== "summary")
+      .filter((f) => f.key !== "title")
       .map((f) => {
         const p: TypeDef["properties"][number] = { key: f.key, type: f.type, required: f.required };
         if (f.description) p.description = f.description;

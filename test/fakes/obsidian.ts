@@ -7,8 +7,9 @@
 // new dependency on the Obsidian API appears, add it here.
 
 import { buildFrontmatter, type FrontmatterData } from "../../src/indexing/frontmatter";
-import { parse as parseYamlImpl } from "yaml";
+import { parse as parseYamlImpl, stringify as stringifyYamlImpl } from "yaml";
 export const parseYaml = (value: string): unknown => parseYamlImpl(value);
+export const stringifyYaml = (value: unknown): string => stringifyYamlImpl(value);
 
 export function normalizePath(p: string): string {
   return p
@@ -46,6 +47,21 @@ export class TFolder {
   constructor(public path: string) {}
 }
 
+type EventCallback = (...args: unknown[]) => void;
+
+class FakeEventSource {
+  private listeners = new Map<string, EventCallback[]>();
+
+  on(name: string, callback: EventCallback): EventCallback {
+    this.listeners.set(name, [...(this.listeners.get(name) ?? []), callback]);
+    return callback;
+  }
+
+  trigger(name: string, ...args: unknown[]): void {
+    for (const callback of this.listeners.get(name) ?? []) callback(...args);
+  }
+}
+
 interface FileCache {
   tags?: Array<{ tag: string }>;
   frontmatter?: Record<string, unknown>;
@@ -61,7 +77,7 @@ export function getAllTags(cache: FileCache | null): string[] | null {
   return out;
 }
 
-class FakeVault {
+class FakeVault extends FakeEventSource {
   private files = new Map<string, TFile>();
   private folders = new Set<string>();
   /** path -> tag strings (without #), used to build the metadata cache */
@@ -127,6 +143,13 @@ class FakeVault {
     return Promise.resolve();
   }
 
+  process(file: TFile, fn: (content: string) => string): Promise<string> {
+    const next = fn(file._content);
+    file._content = next;
+    file.stat.size = next.length;
+    return Promise.resolve(next);
+  }
+
   /** Test helper used by FakeFileManager.renameFile. */
   _moveFile(file: TFile, newPath: string): void {
     this.files.delete(file.path);
@@ -140,9 +163,9 @@ class FakeVault {
   }
 }
 
-class FakeMetadataCache {
+class FakeMetadataCache extends FakeEventSource {
   resolvedLinks: Record<string, Record<string, number>> = {};
-  constructor(private vault: FakeVault) {}
+  constructor(private vault: FakeVault) { super(); }
   getFileCache(file: TFile): FileCache | null {
     const tags = this.vault.tags.get(file.path);
     const frontmatter = this.vault.frontmatters.get(file.path);
@@ -208,8 +231,19 @@ export class App {
 }
 
 // Value stubs for modules that import these names (not exercised in tests).
+const noticeHistory: Notice[] = [];
+export function clearNotices(): void { noticeHistory.length = 0; }
+export function getNoticeMessages(): string[] { return noticeHistory.map((notice) => notice.message); }
+export function getNotices(): readonly Notice[] { return noticeHistory; }
 export class Notice {
-  constructor(public message: string) {}
+  hidden = false;
+  constructor(public message: string, public timeout?: number) { noticeHistory.push(this); }
+  hide(): void { this.hidden = true; }
+  setMessage(message: string): void { this.message = message; }
+}
+export class FileSystemAdapter {
+  constructor(private readonly basePath = "") {}
+  getBasePath(): string { return this.basePath; }
 }
 export function setIcon(parent: FakeElement, icon: string): void { parent.setAttr("data-icon", icon); }
 export class FakeElement {
@@ -272,6 +306,7 @@ export class ItemView {
   app: App;
   contentEl = new FakeElement() as unknown as HTMLElement;
   constructor(public leaf: WorkspaceLeaf) { this.app = leaf.app; }
+  registerEvent(_event: unknown): void {}
   getViewType(): string { return ""; }
   getDisplayText(): string { return ""; }
   getIcon(): string { return ""; }
@@ -282,9 +317,10 @@ export function getLastOpenedModal(): Modal | undefined { return lastOpenedModal
 export class Modal {
   titleEl = new FakeElement("h2");
   contentEl = new FakeElement() as unknown as HTMLElement;
+  closed = false;
   constructor(public app: App) {}
   open(): void { lastOpenedModal = this; this.onOpen(); }
-  close(): void { this.onClose(); }
+  close(): void { this.closed = true; this.onClose(); }
   onOpen(): void {}
   onClose(): void {}
 }

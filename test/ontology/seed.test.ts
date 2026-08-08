@@ -27,6 +27,18 @@ describe("SEED_TYPES", () => {
     expect(article.extendsType).toBe("source");
     expect(article.properties.map((p) => p.key)).toContain("site");
   });
+  it("retains the 200-character summary constraint on every source-derived type without changing versions", () => {
+    for (const name of ["article", "video", "dataset"]) {
+      const type = SEED_TYPES.find((candidate) => candidate.name === name)!;
+      expect(type.version, name).toBe(1);
+      expect(type.properties, name).toContainEqual({
+        key: "summary",
+        type: "string",
+        required: true,
+        description: "concise summary, maximum 200 characters",
+      });
+    }
+  });
   it("ships the research evidence relation contracts", () => {
     const relations = (name: string) => SEED_TYPES.find((t) => t.name === name)?.relations;
     expect(relations("research-source")).toContainEqual(expect.objectContaining({ key: "project", targets: ["research-project"] }));

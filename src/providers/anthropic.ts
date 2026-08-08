@@ -4,7 +4,17 @@ import { parseSseChunk, extractApiError, type SseBlockState, type SseParseResult
 import { withCacheControl } from "../claude/cache";
 import { PING_MODEL } from "../claude/models";
 import { type CompletionRequest, type Provider, type ProviderStatus, ProviderError, isAbort } from "./types";
-import { type AuthInputs, type ResolvedAuth, resolveAuth, authHeaders, messagesUrl, buildSystem } from "./auth";
+import { type AuthInputs, type AuthMode, type ResolvedAuth, resolveAuth, resolveAuthBaseUrl, authHeaders, messagesUrl, buildSystem } from "./auth";
+
+export interface AnthropicConsentIdentity {
+  /** Auth mode and credential shape affect which external account receives the request. */
+  authMode: AuthMode;
+  credentialAvailable: boolean;
+  credentialScheme?: ResolvedAuth["scheme"];
+  isOAuth: boolean;
+  /** Exact normalized base URL snapshot that this provider would call. */
+  endpoint: string;
+}
 
 /**
  * Serialize a request for the Messages API. Exported (pure) so the wire shape —
@@ -53,6 +63,23 @@ export class AnthropicProvider implements Provider {
 
   hasCredentials(): boolean {
     return this.auth() !== null;
+  }
+
+  /** Exact base URL snapshot used by this provider's resolved auth mode. */
+  resolvedEndpoint(): string {
+    return resolveAuthBaseUrl(this.authInputs);
+  }
+
+  /** Non-secret identity fields used to scope one-session fallback consent. */
+  consentIdentity(): AnthropicConsentIdentity {
+    const auth = this.auth();
+    return {
+      authMode: this.authInputs.mode,
+      credentialAvailable: auth !== null,
+      ...(auth ? { credentialScheme: auth.scheme } : {}),
+      isOAuth: auth?.isOAuth ?? false,
+      endpoint: this.resolvedEndpoint(),
+    };
   }
 
   /** True when the active credential is a subscription OAuth token (metered usage). */

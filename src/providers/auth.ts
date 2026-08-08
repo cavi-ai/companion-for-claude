@@ -89,6 +89,14 @@ export function normalizeBaseUrl(url: string): string {
   return trimmed.replace(/\/+$/, "");
 }
 
+/** Resolve the exact Anthropic base URL for this auth mode, independent of credential presence. */
+export function resolveAuthBaseUrl(inputs: AuthInputs): string {
+  if (inputs.mode === "environment") {
+    return normalizeBaseUrl(inputs.baseUrl || inputs.env?.ANTHROPIC_BASE_URL || "");
+  }
+  return normalizeBaseUrl(inputs.baseUrl);
+}
+
 /**
  * Resolve which credential, header scheme, and base URL to use. Returns null
  * when the selected mode has no usable credential (caller surfaces a friendly
@@ -101,7 +109,7 @@ export function resolveAuth(inputs: AuthInputs): ResolvedAuth | null {
     // Mirror the SDK precedence: explicit key, then auth token.
     const envKey = (env.ANTHROPIC_API_KEY ?? "").trim();
     const envToken = (env.ANTHROPIC_AUTH_TOKEN ?? "").trim();
-    const baseUrl = normalizeBaseUrl(inputs.baseUrl || env.ANTHROPIC_BASE_URL || "");
+    const baseUrl = resolveAuthBaseUrl(inputs);
     if (envKey) {
       return { credential: envKey, scheme: schemeFor(envKey), baseUrl, isOAuth: isOAuthToken(envKey) };
     }
@@ -114,7 +122,7 @@ export function resolveAuth(inputs: AuthInputs): ResolvedAuth | null {
     return null;
   }
 
-  const baseUrl = normalizeBaseUrl(inputs.baseUrl);
+  const baseUrl = resolveAuthBaseUrl(inputs);
 
   if (inputs.mode === "oauthToken") {
     const tok = inputs.oauthToken.trim();

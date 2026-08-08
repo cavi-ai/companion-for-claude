@@ -17,7 +17,7 @@ const ARTICLE: SourceTypeSchema = {
     { key: "reading_time", type: "string", required: false, source: "model", description: "approx reading time, e.g. '8 min'" },
     { key: "topics", type: "string[]", required: false, source: "model", description: "3-6 short topic tags" },
     { key: "key_claims", type: "string[]", required: false, source: "model", description: "up to 3 key claims, one short sentence each" },
-    { key: "summary", type: "string", required: true, source: "model", description: "one-sentence summary, max 25 words" },
+    { key: "summary", type: "string", required: true, source: "model", description: "concise summary, maximum 200 characters" },
   ],
 };
 
@@ -29,7 +29,7 @@ const VIDEO: SourceTypeSchema = {
     { key: "channel", type: "string", required: true, source: "model", description: "channel or creator name" },
     { key: "duration", type: "duration", required: false, source: "model", description: "length as mm:ss or hh:mm:ss" },
     { key: "published", type: "date", required: false, source: "model", description: "publish date as YYYY-MM-DD" },
-    { key: "summary", type: "string", required: true, source: "model", description: "one-sentence summary, max 25 words" },
+    { key: "summary", type: "string", required: true, source: "model", description: "concise summary, maximum 200 characters" },
     { key: "chapters", type: "number", required: false, source: "derived", description: "chapter count (filled by Living Sources)" },
     { key: "key_moments", type: "string[]", required: false, source: "derived", description: "key timestamped moments (filled by Living Sources)" },
     { key: "transcript_summary", type: "string", required: false, source: "derived", description: "transcript summary (filled by Living Sources)" },
@@ -47,7 +47,7 @@ const DATASET: SourceTypeSchema = {
     { key: "period", type: "string", required: false, source: "model", description: "time period the data covers, if evident" },
     { key: "units", type: "string", required: false, source: "model", description: "the unit of the values, if evident" },
     { key: "license", type: "string", required: false, source: "model", description: "license or usage terms, if evident" },
-    { key: "summary", type: "string", required: true, source: "model", description: "one-sentence summary of what the dataset contains" },
+    { key: "summary", type: "string", required: true, source: "model", description: "concise summary, maximum 200 characters" },
   ],
 };
 

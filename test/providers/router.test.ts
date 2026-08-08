@@ -1,9 +1,28 @@
 import { describe, it, expect, vi } from "vitest";
 import { ProviderRouter, migrateUtilityBackend } from "../../src/providers/router";
 import { DEFAULT_SETTINGS, type PluginSettings } from "../../src/types";
+import type { Provider } from "../../src/providers/types";
 
 function settings(overrides: Partial<PluginSettings>): PluginSettings {
   return { ...DEFAULT_SETTINGS, apiKey: "sk-ant-api-test", ...overrides };
+}
+
+function routerWithAnthropicEnv(overrides: Partial<PluginSettings>, env: Record<string, string>): ProviderRouter {
+  const target = window as typeof window & { process?: { env?: Record<string, string | undefined> } };
+  const previous = target.process;
+  target.process = { env };
+  try {
+    return new ProviderRouter(settings({
+      authMode: "environment",
+      apiKey: "",
+      oauthToken: "",
+      baseUrl: "",
+      utilityBackend: "claude",
+      ...overrides,
+    }));
+  } finally {
+    target.process = previous;
+  }
 }
 
 describe("ProviderRouter.resolve", () => {
@@ -35,9 +54,9 @@ describe("ProviderRouter.resolve", () => {
     expect(res.model).toBe("mlx-3b");
   });
 
-  it("falls back to claude for a custom utility backend with no host", () => {
+  it("keeps the configured custom utility backend when its host is missing", () => {
     const r = new ProviderRouter(settings({ utilityBackend: "custom", openaiCompatHost: "" }));
-    expect(r.resolve("utility").provider.id).toBe("anthropic");
+    expect(r.resolve("utility").provider.id).toBe("openai-compat");
   });
 
   it("routes chat to the custom endpoint when the backend is custom", () => {
@@ -57,6 +76,205 @@ describe("ProviderRouter.resolve", () => {
     expect(r.get("anthropic").id).toBe("anthropic");
     expect(r.get("ollama").id).toBe("ollama");
     expect(r.get("openai-compat").id).toBe("openai-compat");
+  });
+});
+
+describe("ProviderRouter.resolveUtilityForRuntime", () => {
+  it("does not return a callable provider for a mobile loopback endpoint before consent", () => {
+    const configured = settings({ utilityBackend: "ollama", ollamaHost: "http://localhost:11434" });
+    const r = new ProviderRouter(configured);
+
+    expect(r.resolveUtilityForRuntime({ isMobile: true })).toEqual({
+      state: "unavailable-loopback",
+      backend: "ollama",
+      endpoint: "http://localhost:11434",
+    });
+    expect(configured.utilityBackend).toBe("ollama");
+  });
+
+  it("selects a non-loopback configured endpoint on mobile", () => {
+    const r = new ProviderRouter(settings({
+      utilityBackend: "custom",
+      openaiCompatHost: "http://192.168.1.24:1234",
+      openaiCompatModel: "mlx-3b",
+    }));
+
+    const result = r.resolveUtilityForRuntime({ isMobile: true });
+    expect(result.state).toBe("configured-provider");
+    if (result.state !== "configured-provider") throw new Error("expected a configured provider");
+    expect(result.provider.id).toBe("openai-compat");
+    expect(result.model).toBe("mlx-3b");
+  });
+
+  it("selects Claude only when the session approved mobile loopback fallback", () => {
+    const r = new ProviderRouter(settings({
+      utilityBackend: "ollama",
+      ollamaHost: "http://127.0.0.1:11434",
+      model: "claude-sonnet-5-20260203",
+    }));
+
+    const result = r.resolveUtilityForRuntime({ isMobile: true, fallbackApproval: "allow" });
+    expect(result.state).toBe("approved-Claude-fallback");
+    if (result.state !== "approved-Claude-fallback") throw new Error("expected an approved fallback");
+    expect(result.provider.id).toBe("anthropic");
+    expect(result.model).toBe("claude-sonnet-5-20260203");
+  });
+
+  it("uses the environment auth gateway as the Claude policy and attribution endpoint", () => {
+    const r = routerWithAnthropicEnv({}, {
+      ANTHROPIC_API_KEY: "sk-ant-api-env",
+      ANTHROPIC_BASE_URL: "https://gateway.example.com/anthropic",
+    });
+
+    const result = r.resolveUtilityForRuntime({ isMobile: true });
+
+    expect(result.state).toBe("configured-provider");
+    if (result.state !== "configured-provider") throw new Error("expected configured provider");
+    expect(result.provider).toBe(r.anthropic);
+    expect(result.endpoint).toBe("https://gateway.example.com/anthropic");
+  });
+
+  it.each([
+    ["http://127.0.0.1:8787", "http://127.0.0.1:8787"],
+    ["ftp://gateway.example.com/v1", "(invalid endpoint)"],
+    ["https://alice:supersecret@gateway.example.com/v1", "https://gateway.example.com/v1"],
+    ["https://gateway.example.com/v1?token=private", "https://gateway.example.com/v1"],
+    ["https://gateway.example.com/v1#private", "https://gateway.example.com/v1"],
+  ])("rejects and redacts an unusable mobile environment gateway %s", (baseUrl, displayed) => {
+    const r = routerWithAnthropicEnv({}, {
+      ANTHROPIC_API_KEY: "sk-ant-api-env",
+      ANTHROPIC_BASE_URL: baseUrl,
+    });
+
+    const result = r.resolveUtilityForRuntime({ isMobile: true });
+
+    expect(result.state).toBe("unavailable-without-Claude");
+    if (result.state !== "unavailable-without-Claude") throw new Error("expected unavailable provider");
+    expect(result.endpoint).toBe(displayed);
+    expect("provider" in result).toBe(false);
+    expect(JSON.stringify(result)).not.toMatch(/alice|supersecret|token=private/i);
+  });
+
+  it("attributes environment-mode Anthropic failures to the sanitized resolved gateway", async () => {
+    const r = routerWithAnthropicEnv({}, {
+      ANTHROPIC_API_KEY: "sk-ant-api-env",
+      ANTHROPIC_BASE_URL: "https://gateway.example.com/anthropic",
+    });
+    const selection = r.resolveUtilityForRuntime({ isMobile: true });
+    if (selection.state !== "configured-provider") throw new Error("expected configured provider");
+    vi.spyOn(r.anthropic, "complete").mockRejectedValue(new Error("failed to fetch"));
+
+    await expect(r.completeResolved(selection, { system: "sys", user: "private" })).rejects.toThrow(
+      /Anthropic at https:\/\/gateway\.example\.com\/anthropic/i,
+    );
+  });
+
+  it("does not offer a local utility fallback through an invalid environment-mode Claude gateway", () => {
+    const r = routerWithAnthropicEnv({
+      utilityBackend: "ollama",
+      ollamaHost: "http://localhost:11434",
+    }, {
+      ANTHROPIC_API_KEY: "sk-ant-api-env",
+      ANTHROPIC_BASE_URL: "https://alice:supersecret@gateway.example.com/v1?token=private",
+    });
+
+    const result = r.resolveUtilityForRuntime({ isMobile: true });
+
+    expect(result).toEqual({
+      state: "unavailable-without-Claude",
+      backend: "claude",
+      endpoint: "https://gateway.example.com/v1",
+      reason: "invalid-endpoint",
+    });
+    expect("provider" in result).toBe(false);
+    expect(JSON.stringify(result)).not.toMatch(/alice|supersecret|token=private/i);
+  });
+});
+
+describe("ProviderRouter.completeResolved", () => {
+  it("completes with the provider and model selected before enrichment", async () => {
+    const r = new ProviderRouter(settings({ utilityBackend: "ollama", ollamaUtilityModel: "qwen3:1.7b" }));
+    const selected = r.resolve("utility");
+    const complete = vi.spyOn(selected.provider, "complete").mockResolvedValue("{}");
+
+    const result = await r.completeResolved(selected, { system: "sys", user: "note" });
+
+    expect(result.provider).toBe(selected.provider);
+    expect(complete).toHaveBeenCalledWith(expect.objectContaining({ model: "qwen3:1.7b" }));
+  });
+
+  it("attributes provider failures to the pinned sanitized endpoint", async () => {
+    const r = new ProviderRouter(settings({ utilityBackend: "custom" }));
+    const selected = {
+      provider: r.openaiCompat,
+      model: "remote-model",
+      endpoint: "https://alice:supersecret@models.example.com/v1",
+    };
+    vi.spyOn(r.openaiCompat, "complete").mockRejectedValue(
+      new Error("gateway exploded at https://alice:supersecret@models.example.com/v1"),
+    );
+
+    await expect(r.completeResolved(selected, { system: "sys", user: "private note" }))
+      .rejects.toThrow(/OpenAI-compatible endpoint at https:\/\/models\.example\.com\/v1.*gateway exploded/i);
+    await expect(r.completeResolved(selected, { system: "sys", user: "private note" }))
+      .rejects.not.toThrow(/alice|supersecret/i);
+  });
+
+  it("identifies a pinned Anthropic gateway on network failure", async () => {
+    const r = new ProviderRouter(settings({ utilityBackend: "claude" }));
+    vi.spyOn(r.anthropic, "complete").mockRejectedValue(new Error("failed to fetch"));
+
+    await expect(r.completeResolved({
+      provider: r.anthropic,
+      model: "claude-test",
+      endpoint: "https://gateway.example.com/v1",
+    }, { system: "sys", user: "private note" })).rejects.toThrow(
+      /Anthropic at https:\/\/gateway\.example\.com\/v1/i,
+    );
+  });
+
+  it("preserves the original provider failure as the attributed error cause", async () => {
+    const r = new ProviderRouter(settings({ utilityBackend: "claude" }));
+    const original = new Error("failed to fetch");
+    vi.spyOn(r.anthropic, "complete").mockRejectedValue(original);
+
+    await expect(r.completeResolved({
+      provider: r.anthropic,
+      model: "claude-test",
+      endpoint: "https://gateway.example.com/v1",
+    }, { system: "sys", user: "private note" })).rejects.toMatchObject({ cause: original });
+  });
+});
+
+describe("ProviderRouter.complete utility privacy boundary", () => {
+  it("rejects utility completion before provider I/O when no runtime resolver is installed", async () => {
+    const r = new ProviderRouter(settings({ utilityBackend: "claude" }));
+    const complete = vi.spyOn(r.anthropic, "complete").mockResolvedValue("unsafe");
+
+    await expect(r.complete("utility", { system: "sys", user: "private note" }))
+      .rejects.toThrow(/runtime resolver/i);
+    expect(complete).not.toHaveBeenCalled();
+  });
+
+  it("uses the runtime resolver's pinned provider and model for utility completion", async () => {
+    let requestModel = "";
+    const provider: Provider = {
+      id: "ollama",
+      label: "Approved utility",
+      hasCredentials: () => true,
+      stream: async () => undefined,
+      complete: async (request) => { requestModel = request.model; return "safe"; },
+      test: async () => ({ ok: true, detail: "ready" }),
+    };
+    const r = new ProviderRouter(
+      settings({ utilityBackend: "claude" }),
+      async () => ({ provider, model: "approved-model", endpoint: "http://192.168.1.24:11434" }),
+    );
+
+    const result = await r.complete("utility", { system: "sys", user: "private note" });
+
+    expect(result).toEqual({ text: "safe", provider });
+    expect(requestModel).toBe("approved-model");
   });
 });
 

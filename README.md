@@ -243,14 +243,19 @@ same vault, same confirm-before-write guardrails, wherever you are.
   inbox (default `Clippings/`) and enrich new clips with typed frontmatter
   (article, video, dataset) from per-type schemas. Auto-enrichment asks for
   one-time consent first (it sends each new inbox file to your utility model);
-  the *Enrich note as source* command works manually either way.
+  the *Enrich note as source* command works manually either way. Enrichment
+  preserves the Markdown body and existing metadata, unions tags, and validates
+  the final title, summary, schema fields, and source provenance before the
+  atomic vault write.
 - **Clipper schema sync** — export Web Clipper templates generated from those
   schemas (command or *Source capture* settings). Imported into the official
   Web Clipper, clips arrive already typed with everything the page knows;
   enrichment only fills what it couldn't.
 - **Source inbox** — a touch-first triage view of everything in the inbox that
-  isn't typed yet, with one-tap enrich and *Enrich all*. Built for clipping
-  from your phone.
+  isn't typed yet, with one-tap enrich and *Enrich all*. Enriched notes with
+  unlinked mentions can be reviewed together through *Review all links*: one
+  collapsed accordion per note, selectable by note or hunk, with conflicts and
+  failures isolated. Built for clipping from your phone.
 - **Organize clippings** — one command takes the existing pile: every clip is
   enriched (meaningful title, tags, summary), a batch model call infers a
   domain/project folder per clip (preferring your existing folders), and a

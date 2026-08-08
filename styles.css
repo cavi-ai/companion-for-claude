@@ -1463,8 +1463,45 @@ pre.cc-has-copy:hover .cc-code-copy { opacity: 1; }
 .cc-inbox-wireup {
   margin-top: 18px;
 }
+.cc-inbox-wireup-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+}
 .cc-inbox-wireup .cc-eyebrow {
   margin-bottom: 8px;
+}
+.cc-inbox-wireup-header .cc-eyebrow {
+  margin-bottom: 0;
+}
+.cc-inbox-wireup-count {
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+}
+.cc-inbox-review-all {
+  min-height: 32px;
+  margin-inline-start: auto;
+}
+.cc-inbox-link-summary {
+  margin: 8px 0 0;
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+}
+.cc-inbox-link-result-details {
+  margin-top: 6px;
+  padding: 6px 8px;
+  border-inline-start: 2px solid var(--text-warning);
+  background: var(--background-secondary);
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+}
+.cc-inbox-link-result-label {
+  font-weight: 600;
+}
+.cc-inbox-link-result-list {
+  margin: 2px 0 0;
+  padding-inline-start: 16px;
 }
 .cc-inbox-mentions {
   flex: 0 0 auto;
@@ -2044,6 +2081,129 @@ pre.cc-has-copy:hover .cc-code-copy { opacity: 1; }
   justify-content: flex-end;
   margin-top: 12px;
   flex-wrap: wrap;
+}
+
+/* ===== Batch link review ===== */
+
+.cc-batch-diff-modal {
+  max-block-size: min(70vh, 720px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.cc-batch-diff-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 8px 0;
+  background: var(--background-primary);
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.cc-batch-diff-count,
+.cc-batch-diff-file-count {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  font-size: var(--font-ui-smaller);
+  font-variant-numeric: tabular-nums;
+}
+
+.cc-batch-diff-count {
+  padding: 3px 8px;
+  color: var(--text-muted);
+  background: var(--background-secondary);
+}
+
+.cc-batch-diff-file {
+  margin-top: 8px;
+  overflow: hidden;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+}
+
+.cc-batch-diff-file-header {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  min-height: 44px;
+  padding: 4px 10px;
+  background: var(--background-secondary);
+}
+
+.cc-batch-diff-file-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  inline-size: 44px;
+  block-size: 44px;
+  margin: -4px 0;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.cc-batch-diff-file-checkbox {
+  inline-size: 18px;
+  block-size: 18px;
+  margin: 0;
+  accent-color: var(--interactive-accent);
+}
+
+.cc-batch-diff-file-checkbox:indeterminate,
+.cc-batch-diff-file-checkbox[aria-checked="mixed"] {
+  accent-color: var(--interactive-accent);
+}
+
+.cc-batch-diff-file-path {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-monospace);
+  font-size: var(--font-ui-smaller);
+}
+
+.cc-batch-diff-file-count {
+  padding: 2px 6px;
+  color: var(--text-muted);
+  background: var(--background-modifier-hover);
+}
+
+.cc-batch-diff-summary {
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 4px 10px;
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+}
+
+.cc-batch-diff-body {
+  max-block-size: 50vh;
+  overflow: auto;
+  overscroll-behavior: contain;
+  border-top: 1px solid var(--background-modifier-border);
+}
+
+.cc-batch-diff-body .cc-diff-hunk {
+  margin: 8px;
+}
+
+.cc-batch-diff-body .cc-diff-hunk-header {
+  min-height: 44px;
+}
+
+@media (max-width: 480px) {
+  .cc-batch-diff-file-header {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .cc-batch-diff-file-count {
+    grid-column: 2;
+    justify-self: start;
+  }
 }
 
 /* ===== Link intelligence: suggestions in the Related view (spec 2026-07-05) ===== */
