@@ -257,11 +257,12 @@ export class FakeElement {
   type = "";
   rows = 0;
   style: Record<string, string> = {};
+  parent: FakeElement | null = null;
   setCssStyles(styles: Record<string, string>): void { Object.assign(this.style, styles); }
   setCssProperty(name: string, value: string): void { this.style[name] = value; }
   private listeners = new Map<string, Array<(event: any) => void>>();
   constructor(tag = "div") { this.tagName = tag.toUpperCase(); }
-  empty(): void { this.children = []; this.textContent = ""; }
+  empty(): void { for (const child of this.children) child.parent = null; this.children = []; this.textContent = ""; }
   addClass(name: string): void { this.classList.add(name); }
   removeClass(name: string): void { this.classList.delete(name); }
   toggleClass(name: string, force?: boolean): void {
@@ -269,12 +270,13 @@ export class FakeElement {
     if (on) this.classList.add(name); else this.classList.delete(name);
   }
   appendText(text: string): void { this.textContent += text; }
-  appendChild<T>(child: T): T { this.children.push(child as unknown as FakeElement); return child; }
+  appendChild<T>(child: T): T { const element = child as unknown as FakeElement; element.parent = this; this.children.push(element); return child; }
   createEl(tag: string, options: any = {}): FakeElement {
     const child = new FakeElement(tag);
     child.textContent = options.text ?? "";
     for (const name of String(options.cls ?? "").split(/\s+/).filter(Boolean)) child.classList.add(name);
     for (const [key, value] of Object.entries(options.attr ?? {})) child.attributes.set(key, String(value));
+    child.parent = this;
     this.children.push(child);
     return child;
   }
@@ -285,6 +287,11 @@ export class FakeElement {
   focus(): void { this.attributes.set("data-focused", "true"); }
   setAttr(name: string, value: string): void { this.attributes.set(name, String(value)); }
   removeAttribute(name: string): void { this.attributes.delete(name); }
+  remove(): void {
+    if (!this.parent) return;
+    this.parent.children = this.parent.children.filter((child) => child !== this);
+    this.parent = null;
+  }
   setText(text: string): void { this.textContent = text; }
   getAttribute(name: string): string | null { return this.attributes.get(name) ?? null; }
   querySelectorAll(selector: string): FakeElement[] { return this.walk().filter((item) => matches(item, selector)); }

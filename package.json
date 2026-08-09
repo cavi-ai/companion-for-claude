@@ -1,6 +1,6 @@
 {
   "name": "claude-companion",
-  "version": "0.23.0",
+  "version": "0.24.0",
   "description": "Chat with Claude inside your Obsidian vault, generate beautiful interactive artifacts, and sync them back into your notes.",
   "main": "main.js",
   "type": "module",
@@ -20,6 +20,7 @@
   "scripts": {
     "dev": "node esbuild.config.mjs",
     "build": "tsc --noEmit --skipLibCheck && node esbuild.config.mjs production",
+    "verify:build-output": "git diff --exit-code -- main.js manifest.json",
     "typecheck": "tsc --noEmit --skipLibCheck",
     "verify:version": "node tools/verifyVersion.mjs",
     "lint": "eslint src",

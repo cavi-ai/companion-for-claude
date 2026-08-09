@@ -15,6 +15,7 @@ import type { RevisionCoordinator } from "../research/revisionCoordinator";
 import type { DraftSectionParseResult } from "../research/draftSections";
 import type { ClaimRecord, EvidenceRecord, ResearchDocumentRecord } from "../research/types";
 import { ResearchDraftPanel } from "./ResearchDraftPanel";
+import { renderCompanionChrome, type CompanionChromeDependencies } from "./companionChrome";
 
 export const RESEARCH_WORKBENCH_VIEW_TYPE = "claude-research-workbench";
 export type ResearchWorkbenchTab = "Overview" | "Sources" | "Evidence" | "Claims" | "Outline" | "Draft" | "Audit" | "Intelligence" | "Discover";
@@ -46,6 +47,7 @@ const EMPTY_META: Partial<Record<Tab, { title: string; copy: string; example?: s
 };
 
 export interface ResearchWorkbenchDependencies {
+  chrome?: CompanionChromeDependencies;
   coordinator: IntelligenceCoordinator;
   narratorMode: () => IntelligenceNarratorMode;
   retainIntelligenceCoordinator?: () => void;
@@ -68,6 +70,7 @@ export interface ResearchWorkbenchDependencies {
 }
 
 export class ResearchWorkbenchView extends ItemView {
+  private disposeChrome: ((remove?: boolean) => void) | null = null;
   private projectPath: string | undefined;
   private activeTab: Tab = "Overview";
   private renderSequence = 0;
@@ -119,6 +122,8 @@ export class ResearchWorkbenchView extends ItemView {
     await this.render();
   }
   override async onClose(): Promise<void> {
+    this.disposeChrome?.(false);
+    this.disposeChrome = null;
     this.renderSequence += 1;
     if (this.intelligencePanel) {
       this.intelligencePanel.dispose();
@@ -160,8 +165,21 @@ export class ResearchWorkbenchView extends ItemView {
     const findings = snapshot ? auditProject(snapshot) : [];
     const vm = buildWorkbenchViewModel(snapshot, findings);
     const root = this.contentEl;
+    this.disposeChrome?.();
+    this.disposeChrome = null;
     root.empty();
     root.addClass("cc-research-workbench");
+    if (this.dependencies?.chrome) {
+      const chrome = this.dependencies.chrome;
+      this.disposeChrome = renderCompanionChrome(root, "research-workbench", "Research Workbench", {
+        ...chrome,
+        snapshot: () => ({
+          ...chrome.snapshot(),
+          ...(snapshot ? { activeProject: snapshot.project.title } : {}),
+          activeResearchTab: this.activeTab,
+        }),
+      });
+    }
 
     const header = root.createEl("header", { cls: "cc-research-header" });
     const headerTop = header.createDiv({ cls: "cc-research-header-top" });

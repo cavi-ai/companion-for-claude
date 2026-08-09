@@ -4,10 +4,12 @@ import { dismissDeskAction, pinDeskAction } from "../research/deskPreferences";
 import { buildResearchDeskViewModel, type ResearchDeskPreferences, type ResearchDeskTarget } from "../research/deskViewModel";
 import type { ProjectSnapshot } from "../research/graph";
 import type { ResearchRepository } from "../research/repository";
+import { renderCompanionChrome, type CompanionChromeDependencies } from "./companionChrome";
 
 export const RESEARCH_DESK_VIEW_TYPE = "claude-research-desk";
 
 export interface ResearchDeskDependencies {
+  chrome?: CompanionChromeDependencies;
   preferencesFor(projectPath: string): ResearchDeskPreferences;
   updatePreferences(projectPath: string, update: (current: ResearchDeskPreferences) => ResearchDeskPreferences): void | Promise<void>;
   openWorkbench(projectPath: string, target: ResearchDeskTarget, path?: string): void | Promise<void>;
@@ -24,6 +26,7 @@ function errorMessage(error: unknown): string {
 }
 
 export class ResearchDeskView extends ItemView {
+  private disposeChrome: ((remove?: boolean) => void) | null = null;
   private projectPath: string | undefined;
   private renderSequence = 0;
 
@@ -36,6 +39,7 @@ export class ResearchDeskView extends ItemView {
 
   async setProjectPath(path?: string): Promise<void> { this.projectPath = path; await this.render(); }
   override async onOpen(): Promise<void> { await this.render(); }
+  override async onClose(): Promise<void> { this.disposeChrome?.(false); this.disposeChrome = null; }
 
   async render(): Promise<void> {
     const sequence = ++this.renderSequence;
@@ -62,7 +66,17 @@ export class ResearchDeskView extends ItemView {
     }
     if (sequence !== this.renderSequence) return;
 
-    const root = this.contentEl; root.empty(); root.addClass("cc-research-desk");
+    const root = this.contentEl;
+    this.disposeChrome?.();
+    this.disposeChrome = null;
+    root.empty(); root.addClass("cc-research-desk");
+    if (this.deps.chrome) {
+      const chrome = this.deps.chrome;
+      this.disposeChrome = renderCompanionChrome(root, "research-desk", "Research Desk", {
+        ...chrome,
+        snapshot: () => ({ ...chrome.snapshot(), ...(snapshot ? { activeProject: snapshot.project.title } : {}) }),
+      });
+    }
     if (!snapshot) { this.renderEmpty(root, projects, loadError); return; }
     const vm = buildResearchDeskViewModel(snapshot, auditProject(snapshot), this.deps.preferencesFor(snapshot.project.path), documentProgress);
 

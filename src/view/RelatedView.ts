@@ -3,6 +3,7 @@ import type ClaudeCompanionPlugin from "../main";
 import { findUnlinkedMentions, linkMention, type Mention } from "../links/unlinkedMentions";
 import { buildSuggestions } from "../links/suggest";
 import { neighborhood } from "../links/neighborhood";
+import { renderCompanionChrome } from "./companionChrome";
 
 export const RELATED_VIEW_TYPE = "claude-related-view";
 
@@ -12,6 +13,7 @@ export const RELATED_VIEW_TYPE = "claude-related-view";
  * a wikilink into the current note.
  */
 export class RelatedView extends ItemView {
+  private disposeChrome: ((remove?: boolean) => void) | null = null;
   /** Avoids redundant re-renders when the active leaf changes but the file doesn't. */
   private shownPath: string | null = null;
   private renderSeq = 0;
@@ -43,6 +45,11 @@ export class RelatedView extends ItemView {
     await this.render();
   }
 
+  override async onClose(): Promise<void> {
+    this.disposeChrome?.(false);
+    this.disposeChrome = null;
+  }
+
   /** Re-render only when the active markdown file actually changed. */
   private async maybeRender(): Promise<void> {
     const path = this.app.workspace.getActiveFile()?.path ?? null;
@@ -52,8 +59,11 @@ export class RelatedView extends ItemView {
   async render(): Promise<void> {
     const seq = ++this.renderSeq;
     const root = this.contentEl;
+    this.disposeChrome?.();
+    this.disposeChrome = null;
     root.empty();
     root.addClass("cc-related-view");
+    this.disposeChrome = renderCompanionChrome(root, "related", "Related Notes", this.plugin.companionChrome());
 
     const file = this.app.workspace.getActiveFile();
     this.shownPath = file?.path ?? null;
@@ -85,13 +95,32 @@ export class RelatedView extends ItemView {
     let hits: { path: string; score: number }[];
     try {
       hits = await this.plugin.relatedNotes(file.path, 8);
-    } catch {
+    } catch (error) {
       if (seq === this.renderSeq) {
-        loading.setText(
-          this.plugin.settings.embeddingEngine === "builtin"
-            ? "Couldn’t compute related notes — download the built-in model in settings."
-            : "Couldn’t compute related notes — is Ollama running?",
-        );
+        loading.remove();
+        const recovery = this.plugin.embeddingRecovery(error);
+        const activityId = this.plugin.activity.start({
+          id: `semantic-related:${file.path}`,
+          kind: "semantic-index",
+          title: "Related Notes unavailable",
+        });
+        this.plugin.activity.fail(activityId, {
+          failed: 1,
+          technicalDetails: recovery.technicalDetails,
+          recovery: recovery.actions,
+          details: [{ label: file.path, message: recovery.message, state: "error" }],
+        });
+        const card = root.createEl("section", {
+          cls: "cc-embedding-recovery",
+          attr: { role: "alert", "aria-label": "Embedding recovery" },
+        });
+        card.createEl("h3", { text: "Related Notes needs attention" });
+        card.createEl("p", { cls: "cc-embedding-recovery-message", text: recovery.message });
+        const actions = card.createDiv({ cls: "cc-embedding-recovery-actions" });
+        for (const action of recovery.actions.filter(({ kind }) => kind !== "copy-details")) {
+          const button = actions.createEl("button", { text: action.label });
+          button.addEventListener("click", () => void this.plugin.runActivityRecovery(activityId, action.id));
+        }
       }
       return;
     }

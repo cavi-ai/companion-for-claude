@@ -34,6 +34,8 @@ export interface BuildResult {
   indexed: number;
   skipped: number;
   removed: number;
+  failureCount: number;
+  failures: Array<{ path: string; message: string }>;
 }
 
 export class SemanticIndexer {
@@ -65,6 +67,8 @@ export class SemanticIndexer {
     const live = new Set(files.map((f) => f.path));
     let indexed = 0;
     let skipped = 0;
+    let failureCount = 0;
+    const failures: Array<{ path: string; message: string }> = [];
 
     for (let i = 0; i < files.length; i++) {
       const f = files[i];
@@ -79,16 +83,23 @@ export class SemanticIndexer {
           await this.embedInto(store, f.path, f.mtime, prepared.chunks, prepared.hash);
           indexed++;
         }
-      } catch {
+      } catch (error) {
         // Unreadable / embed failure for one file shouldn't abort the whole build.
         skipped++;
+        failureCount++;
+        if (failures.length < 20) {
+          failures.push({
+            path: f.path,
+            message: (error instanceof Error ? error.message : String(error)).replace(/[\r\n\t]+/g, " ").slice(0, 500),
+          });
+        }
       }
       opts.onProgress?.(i + 1, files.length);
     }
 
     const removed = store.pruneTo(live);
     await this.deps.save(store.toJSON());
-    return { indexed, skipped, removed };
+    return { indexed, skipped, removed, failureCount, failures };
   }
 
   /** Re-embed a single note (on modify). No-op if semantic store can't load. */

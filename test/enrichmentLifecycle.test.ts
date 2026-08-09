@@ -38,9 +38,45 @@ function inboxPlugin(
   return plugin;
 }
 
+function deferred<T>(): { promise: Promise<T>; resolve(value: T): void } {
+  let resolve!: (value: T) => void;
+  return { promise: new Promise<T>((done) => { resolve = done; }), resolve };
+}
+
 afterEach(() => vi.useRealTimers());
 
 describe("enrichment lifecycle", () => {
+  it("publishes honest per-file batch percentage and retains partial failures", async () => {
+    const app = new App();
+    app.vault.seed("Clippings/first.md", "First clip");
+    app.vault.seed("Clippings/second.md", "Second clip");
+    const first = deferred<EnrichRunOutcome>();
+    const second = deferred<EnrichRunOutcome>();
+    let call = 0;
+    const plugin = inboxPlugin(app, async () => (++call === 1 ? first.promise : second.promise));
+    const view = new InboxView(new WorkspaceLeaf(app), plugin);
+    await view.render();
+
+    (view.contentEl as unknown as FakeElement).querySelector(".cc-inbox-enrich-all")?.dispatchEvent({ type: "click" });
+    expect(plugin.activity.snapshot().records[0]).toMatchObject({
+      id: "source-enrichment:inbox-batch", completed: 0, total: 2, percent: 0, state: "running",
+    });
+
+    first.resolve({ status: "enriched" });
+    await settle();
+    expect(plugin.activity.snapshot().records[0]).toMatchObject({ completed: 1, total: 2, percent: 50, succeeded: 1, failed: 0 });
+
+    second.resolve({ status: "failed", error: new Error("Ollama refused connection") });
+    await settle(24);
+    expect(plugin.activity.snapshot().records[0]).toMatchObject({
+      completed: 2, total: 2, percent: 100, succeeded: 1, failed: 1, state: "needs-attention",
+    });
+    expect(plugin.activity.snapshot().records[0]?.details).toEqual(expect.arrayContaining([
+      expect.objectContaining({ label: "Clippings/first.md", state: "success" }),
+      expect.objectContaining({ label: "Clippings/second.md", message: "Ollama refused connection", state: "error" }),
+    ]));
+  });
+
   it("catches a regression that rescans the full Inbox for every item in enrich-all", async () => {
     vi.useFakeTimers();
     const app = new App();

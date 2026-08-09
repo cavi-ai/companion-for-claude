@@ -1,10 +1,12 @@
 import { ItemView, WorkspaceLeaf, TFile, normalizePath, setIcon, Platform } from "obsidian";
 import type ClaudeCompanionPlugin from "../main";
+import { renderCompanionChrome } from "./companionChrome";
 
 export const MEMORY_VIEW_TYPE = "claude-memory-view";
 
 /** Sidebar list of captured session digest notes, with open / re-ingest. */
 export class MemoryView extends ItemView {
+  private disposeChrome: ((remove?: boolean) => void) | null = null;
   constructor(leaf: WorkspaceLeaf, private plugin: ClaudeCompanionPlugin) {
     super(leaf);
   }
@@ -30,6 +32,11 @@ export class MemoryView extends ItemView {
     await this.render();
   }
 
+  override async onClose(): Promise<void> {
+    this.disposeChrome?.(false);
+    this.disposeChrome = null;
+  }
+
   /** Notes in the memory folder that carry a `session_id` frontmatter key. */
   private capturedNotes(): TFile[] {
     const dir = normalizePath(this.plugin.settings.memoryFolder);
@@ -45,8 +52,11 @@ export class MemoryView extends ItemView {
 
   async render(): Promise<void> {
     const root = this.contentEl;
+    this.disposeChrome?.();
+    this.disposeChrome = null;
     root.empty();
     root.addClass("cc-memory-view");
+    this.disposeChrome = renderCompanionChrome(root, "memory", "Session Memory", this.plugin.companionChrome());
     root.createEl("div", { cls: "cc-eyebrow", text: "SESSION MEMORY" });
 
     const notes = this.capturedNotes();

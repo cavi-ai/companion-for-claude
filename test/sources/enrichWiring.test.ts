@@ -98,6 +98,13 @@ async function saveHarnessSettings(plugin: ClaudeCompanionPlugin): Promise<void>
   await plugin.saveSettings();
 }
 
+function latestEnrichmentActivityMessage(plugin: ClaudeCompanionPlugin): string {
+  const record = plugin.activity.snapshot().records.find(({ kind }) => kind === "source-enrichment");
+  return [record?.technicalDetails, ...(record?.details.map(({ message }) => message) ?? [])]
+    .filter(Boolean)
+    .join("\n");
+}
+
 afterEach(() => {
   Platform.isMobile = false;
   Platform.isDesktop = true;
@@ -156,7 +163,7 @@ describe("source enrichment wiring", () => {
     expect(opened).toHaveBeenCalledTimes(1);
   });
 
-  it("keeps Inbox enrichment Notices inline while manual enrichment emits a finite Notice", async () => {
+  it("keeps all source-ingestion progress in the in-app activity surface", async () => {
     Platform.isMobile = true;
     Platform.isDesktop = false;
     const { app, file, plugin, router } = mobilePlugin({
@@ -175,9 +182,15 @@ describe("source enrichment wiring", () => {
 
     const manual = app.vault.seed("Clippings/manual.md", "Manual clip");
     await plugin.enrichInboxItem(manual);
-    const notice = getNotices().at(-1);
-    expect(notice?.message).toContain("Typed source note");
-    expect(notice?.timeout).toBe(5000);
+    expect(getNotices()).toEqual([]);
+    expect(plugin.activity.snapshot().records[0]).toMatchObject({
+      id: "source-enrichment:Clippings/manual.md",
+      state: "succeeded",
+      completed: 1,
+      total: 1,
+      percent: 100,
+      succeeded: 1,
+    });
   });
 
   it("keeps a successful public Inbox enrichment successful when one registered Inbox view cannot refresh", async () => {
@@ -227,8 +240,9 @@ describe("source enrichment wiring", () => {
 
     expect(complete).not.toHaveBeenCalled();
     expect(await app.vault.cachedRead(file)).toBe(before);
-    expect(getNoticeMessages().at(-1)).toMatch(/not approved.*LAN or remote endpoint/i);
-    expect(getNoticeMessages().at(-1)).not.toMatch(/see console/i);
+    expect(getNotices()).toEqual([]);
+    expect(latestEnrichmentActivityMessage(plugin)).toMatch(/not approved.*LAN or remote endpoint/i);
+    expect(latestEnrichmentActivityMessage(plugin)).not.toMatch(/see console/i);
     await expect((plugin as unknown as PrivateEnrich).resolvedEnrichDeps()).rejects.toThrow(/not approved.*LAN or remote endpoint/i);
     expect(opened).toHaveBeenCalledTimes(1);
     expect(plugin.settings.utilityBackend).toBe("ollama");
@@ -323,7 +337,7 @@ describe("source enrichment wiring", () => {
     expect(claudeComplete).not.toHaveBeenCalled();
   });
 
-  it("shows an actionable Notice and performs no I/O for configured Claude without credentials", async () => {
+  it("shows actionable in-app activity and performs no I/O for configured Claude without credentials", async () => {
     Platform.isMobile = true;
     Platform.isDesktop = false;
     const { app, file, plugin, router } = mobilePlugin({ utilityBackend: "claude", apiKey: "", oauthToken: "" });
@@ -334,8 +348,9 @@ describe("source enrichment wiring", () => {
 
     expect(complete).not.toHaveBeenCalled();
     expect(await app.vault.cachedRead(file)).toBe(before);
-    expect(getNoticeMessages().at(-1)).toMatch(/no Anthropic credential.*add a credential/i);
-    expect(getNoticeMessages().at(-1)).not.toMatch(/see console/i);
+    expect(getNotices()).toEqual([]);
+    expect(latestEnrichmentActivityMessage(plugin)).toMatch(/no Anthropic credential.*add a credential/i);
+    expect(latestEnrichmentActivityMessage(plugin)).not.toMatch(/see console/i);
   });
 
   it("attributes a provider failure to the pinned endpoint even if settings change in flight", async () => {
@@ -357,11 +372,12 @@ describe("source enrichment wiring", () => {
     fail(new Error("failed to fetch"));
     await pending;
 
-    expect(getNoticeMessages().at(-1)).toContain(`OpenAI-compatible endpoint at ${original}`);
-    expect(getNoticeMessages().at(-1)).not.toContain("changed.example.com");
+    expect(getNotices()).toEqual([]);
+    expect(latestEnrichmentActivityMessage(plugin)).toContain(`OpenAI-compatible endpoint at ${original}`);
+    expect(latestEnrichmentActivityMessage(plugin)).not.toContain("changed.example.com");
   });
 
-  it("redacts invalid endpoint credentials from the actionable Notice", async () => {
+  it("redacts invalid endpoint credentials from the actionable activity", async () => {
     Platform.isMobile = true;
     Platform.isDesktop = false;
     const { file, plugin, router } = mobilePlugin({
@@ -374,9 +390,10 @@ describe("source enrichment wiring", () => {
     await plugin.enrichInboxItem(file);
 
     expect(complete).not.toHaveBeenCalled();
-    expect(getNoticeMessages().at(-1)).toContain("http://models.example.com/v1");
-    expect(getNoticeMessages().at(-1)).toMatch(/invalid/i);
-    expect(getNoticeMessages().join("\n")).not.toMatch(/alice|supersecret/i);
+    expect(getNotices()).toEqual([]);
+    expect(latestEnrichmentActivityMessage(plugin)).toContain("http://models.example.com/v1");
+    expect(latestEnrichmentActivityMessage(plugin)).toMatch(/invalid/i);
+    expect(latestEnrichmentActivityMessage(plugin)).not.toMatch(/alice|supersecret/i);
   });
 
   it("aborts clipping organization when enrichment fallback is denied instead of proposing default moves", async () => {
@@ -523,7 +540,7 @@ describe("source enrichment wiring", () => {
     expect(staleComplete).not.toHaveBeenCalled();
     expect(currentComplete).not.toHaveBeenCalled();
     expect(await app.vault.cachedRead(file)).toBe(before);
-    expect(getNoticeMessages().at(-1)).toMatch(/no Anthropic credential.*add a credential/i);
+    expect(latestEnrichmentActivityMessage(plugin)).toMatch(/no Anthropic credential.*add a credential/i);
   });
 
   it("aborts deferred consent when the configured backend changes instead of calling either router", async () => {
@@ -552,7 +569,7 @@ describe("source enrichment wiring", () => {
     expect(staleComplete).not.toHaveBeenCalled();
     expect(currentComplete).not.toHaveBeenCalled();
     expect(await app.vault.cachedRead(file)).toBe(before);
-    expect(getNoticeMessages().at(-1)).toMatch(/settings changed.*current.*custom.*retry/i);
+    expect(latestEnrichmentActivityMessage(plugin)).toMatch(/settings changed.*current.*custom.*retry/i);
 
     plugin.settings.utilityBackend = "ollama";
     plugin.settings.ollamaHost = "http://localhost:11434";
@@ -587,7 +604,7 @@ describe("source enrichment wiring", () => {
 
     expect(complete).not.toHaveBeenCalled();
     expect(await app.vault.cachedRead(file)).toBe(before);
-    expect(getNoticeMessages().at(-1)).toMatch(/gateway-b\.example\.com\/v1.*changed.*retry|changed.*gateway-b\.example\.com\/v1.*retry/i);
+    expect(latestEnrichmentActivityMessage(plugin)).toMatch(/gateway-b\.example\.com\/v1.*changed.*retry|changed.*gateway-b\.example\.com\/v1.*retry/i);
   });
 
   it("invalidates cached Allow and asks again after the fallback gateway and credential change", async () => {
@@ -679,7 +696,7 @@ describe("source enrichment wiring", () => {
 
     expect(complete).not.toHaveBeenCalled();
     expect(await app.vault.cachedRead(file)).toBe(before);
-    expect(getNoticeMessages().at(-1)).toMatch(/changed.*retry/i);
+    expect(latestEnrichmentActivityMessage(plugin)).toMatch(/changed.*retry/i);
   });
 
   it("invalidates cached Allow after a live environment key-only rotation", async () => {
@@ -737,7 +754,7 @@ describe("source enrichment wiring", () => {
 
     expect(complete).not.toHaveBeenCalled();
     expect(await app.vault.cachedRead(file)).toBe(before);
-    expect(getNoticeMessages().at(-1)).toMatch(/changed.*retry/i);
+    expect(latestEnrichmentActivityMessage(plugin)).toMatch(/changed.*retry/i);
   });
 
   it("scopes cached Deny to the fallback auth context instead of the whole session", async () => {

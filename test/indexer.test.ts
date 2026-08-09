@@ -31,6 +31,18 @@ function makeDeps(files: Record<string, string>) {
 }
 
 describe("SemanticIndexer", () => {
+  it("isolates per-file embedding failures and reports them for recovery", async () => {
+    const ctx = makeDeps({ "broken.md": "cat", "healthy.md": "fish" });
+    ctx.deps.embed = async (input) => {
+      if (input.some((text) => text.includes("cat"))) throw new Error("Ollama refused connection");
+      return input.map(() => [0, 1, 0, 0, 0, 0]);
+    };
+    const result = await new SemanticIndexer(ctx.deps).build({ force: true });
+
+    expect(result).toMatchObject({ indexed: 1, skipped: 1, failureCount: 1 });
+    expect(result.failures).toEqual([{ path: "broken.md", message: "Ollama refused connection" }]);
+  });
+
   it("builds, persists, and finds the semantically closest note", async () => {
     const ctx = makeDeps({
       "cats.md": "# Cats\nThe feline cat is a small mammal.",

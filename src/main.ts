@@ -108,6 +108,13 @@ import { summarizeAndTag } from "./indexing/autoTagger";
 import { resolveCompanionWorkspace, type CompanionWorkspaceCard } from "./view/companionWorkspace";
 import type { BatchLinkApplyResult } from "./links/batch";
 import { reviewInboxBatchLinks } from "./links/inboxBatchReview";
+import { ActivityStore } from "./activity/store";
+import type { CompanionChromeDependencies } from "./view/companionChrome";
+import type { QuickOptionAction, QuickOptionChange, QuickOptionsState } from "./view/quickOptions";
+import { classifyEmbeddingFailure, type EmbeddingRecovery } from "./semantic/recovery";
+import { clipperSetupFor, type ClipperSetupViewModel } from "./sources/clipperSetup";
+import { verifyClipperNote } from "./sources/clipperVerification";
+import { ClipperSetupModal } from "./view/ClipperSetupModal";
 
 /** Output-token ceiling for artifact-producing flows (plans, artifacts, workflows),
  *  which routinely run past the chat default. A ceiling, not a target — you only
@@ -138,8 +145,21 @@ function sameUtilityFallbackConsentContext(
   return !!right && left.identity === right.identity && left.destinationFingerprint === right.destinationFingerprint;
 }
 
+function sourceActivityDetail(value: string): string {
+  return value
+    .replace(/\b([a-z][a-z0-9+.-]*:\/\/)[^/\s?#]*@/gi, "$1")
+    .replace(/\bBearer\s+\S+/gi, "[redacted]")
+    .replace(/\b(?:api[_-]?key|token|password)\s*[=:]\s*\S+/gi, "[redacted]")
+    .replace(/[\r\n\t]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 500);
+}
+
 export default class ClaudeCompanionPlugin extends Plugin {
   override settings: PluginSettings = DEFAULT_SETTINGS;
+  private _activity?: ActivityStore;
+  get activity(): ActivityStore { return this._activity ??= new ActivityStore(); }
   private convState: ConversationState = emptyState();
   private convSeq = 0;
   private researchDeskPreferences: ResearchDeskPreferenceMap = {};
@@ -174,6 +194,7 @@ export default class ClaudeCompanionPlugin extends Plugin {
   private enrichTimers = new Map<string, number>();
   private enrichRecentlyWritten = new Set<string>();
   private enrichRecentlyWrittenExpiryTimers = new Map<string, number>();
+  private clipperVerificationTimers = new Map<string, number>();
   private utilityLifecycleEnded = false;
   private utilityLifecycleGeneration = 0;
   /** Mobile loopback → Claude consent, scoped to one exact source/destination context. */
@@ -206,6 +227,7 @@ export default class ClaudeCompanionPlugin extends Plugin {
     this.registerView(INBOX_VIEW_TYPE, (leaf: WorkspaceLeaf) => new InboxView(leaf, this));
     this.registerView(RELATED_VIEW_TYPE, (leaf: WorkspaceLeaf) => new RelatedView(leaf, this));
     this.registerView(RESEARCH_DESK_VIEW_TYPE, (leaf: WorkspaceLeaf) => new ResearchDeskView(leaf, this.researchRepository(), {
+      chrome: this.companionChrome(),
       preferencesFor: (projectPath) => this.researchDeskPreferences[projectPath] ?? { dismissedActionIds: [] },
       updatePreferences: async (projectPath, update) => { this.researchDeskPreferences[projectPath] = update(this.researchDeskPreferences[projectPath] ?? { dismissedActionIds: [] }); await this.persist(); },
       openWorkbench: (projectPath, target, path) => this.activateResearchWorkbench(projectPath, target, path),
@@ -221,6 +243,7 @@ export default class ClaudeCompanionPlugin extends Plugin {
         const discoveryCoordinator = this.createDiscoveryCoordinator();
         const coordinator = this.createIntelligenceCoordinator();
         return {
+          chrome: this.companionChrome(),
           coordinator,
           narratorMode: () => this.settings.intelligenceNarrator,
           retainIntelligenceCoordinator: () => this.retainIntelligenceCoordinator(coordinator),
@@ -605,6 +628,9 @@ export default class ClaudeCompanionPlugin extends Plugin {
       this.registerEvent(this.app.vault.on("create", (f) => {
         if (f instanceof TFile && (f.extension === "md" || f.extension === "csv") && this.settings.sourceCaptureEnabled && this.settings.sourceEnrichOnCreate) this.queueEnrich(f);
       }));
+      this.registerEvent(this.app.vault.on("create", (f) => {
+        if (f instanceof TFile && f.extension === "md") this.queueClipperVerification(f);
+      }));
       this.registerEvent(this.app.vault.on("delete", (f) => { if (f instanceof TFile && (f.extension === "md" || f.extension === "pdf")) void this.indexer()?.removeNote(f.path); }));
       this.registerEvent(this.app.vault.on("rename", (f, oldPath) => { if (f instanceof TFile && (f.extension === "md" || f.extension === "pdf")) void this.indexer()?.renameNote(oldPath, f.path); }));
       this.registerEvent(this.app.vault.on("create", (f) => { if (f.path.endsWith(".md")) this.scheduleResearchRefresh(f.path); }));
@@ -886,6 +912,119 @@ export default class ClaudeCompanionPlugin extends Plugin {
     return { folder, count: types.length };
   }
 
+  private clipperSetups(): ClipperSetupViewModel[] {
+    const schemas = (["article", "video", "dataset"] as SourceType[]).map((type) => getSchema(type, this.settings.sourceSchemaOverrides));
+    return (["article", "video", "dataset"] as SourceType[]).map((type) => clipperSetupFor(type, schemas, {
+      inboxFolder: this.settings.sourceInboxFolder,
+      baseTags: this.settings.sourceBaseTags,
+      savedFingerprint: this.settings.clipperVerification[type]?.fingerprint ?? this.settings.clipperTemplateFingerprint,
+    }));
+  }
+
+  openClipperSetup(): void {
+    new ClipperSetupModal(this.app, {
+      setups: () => this.clipperSetups(),
+      copyText: async (text) => {
+        if (!navigator.clipboard?.writeText) throw new Error("Clipboard access is unavailable on this device.");
+        await navigator.clipboard.writeText(text);
+      },
+      onCopied: async (type, fingerprint) => {
+        this.settings.clipperVerification[type] = {
+          fingerprint,
+          state: "waiting",
+          startedAt: Date.now(),
+          mismatches: [],
+        };
+        await this.persist();
+        this.activity.start({
+          id: `clipper-verification:${type}`,
+          kind: "clipper-verification",
+          title: `Waiting for a ${type} test clip`,
+        });
+      },
+      saveJson: async (setup) => {
+        const folder = "Claude/Clipper templates";
+        await this.ensureFolder(folder);
+        await this.writeOrReplace(normalizePath(`${folder}/companion-${setup.type}-clipper.json`), setup.json);
+        new Notice(`Saved ${setup.templateName} JSON to ${folder}.`, 4000);
+      },
+    }).open();
+  }
+
+  private queueClipperVerification(file: TFile, attempt = 0): void {
+    const waiting = Object.entries(this.settings.clipperVerification)
+      .filter((entry): entry is [SourceType, NonNullable<typeof entry[1]>] => entry[1]?.state === "waiting")
+      .sort((left, right) => right[1].startedAt - left[1].startedAt)[0];
+    if (!waiting) return;
+    const previous = this.clipperVerificationTimers.get(file.path);
+    if (previous !== undefined) window.clearTimeout(previous);
+    const timer = window.setTimeout(() => {
+      this.clipperVerificationTimers.delete(file.path);
+      const frontmatter = this.app.metadataCache.getFileCache(file)?.frontmatter as Record<string, unknown> | undefined;
+      if (!frontmatter && attempt < 4) {
+        this.queueClipperVerification(file, attempt + 1);
+        return;
+      }
+      if (!frontmatter) return;
+      const observedType = frontmatter.type;
+      const typedWaiting = (observedType === "article" || observedType === "video" || observedType === "dataset")
+        && this.settings.clipperVerification[observedType]?.state === "waiting"
+        ? observedType
+        : undefined;
+      const resemblesClip = frontmatter.source !== undefined || frontmatter.url !== undefined || frontmatter.schema_version !== undefined;
+      const expectedType = typedWaiting ?? (resemblesClip ? waiting[0] : undefined);
+      if (!expectedType) return;
+      void this.verifyArrivingClip(file, expectedType, frontmatter);
+    }, 600);
+    this.clipperVerificationTimers.set(file.path, timer);
+  }
+
+  private async verifyArrivingClip(file: TFile, type: SourceType, frontmatter: Record<string, unknown>): Promise<void> {
+    const metadata = this.settings.clipperVerification[type];
+    if (!metadata || metadata.state !== "waiting") return;
+    const schema = getSchema(type, this.settings.sourceSchemaOverrides);
+    const result = verifyClipperNote({ path: file.path, frontmatter }, {
+      type,
+      schemaVersion: schema.version,
+      destination: this.settings.sourceInboxFolder,
+      fingerprint: metadata.fingerprint,
+      baseTags: this.settings.sourceBaseTags,
+    });
+    this.settings.clipperVerification[type] = {
+      fingerprint: metadata.fingerprint,
+      state: result.state,
+      startedAt: metadata.startedAt,
+      ...(result.state === "verified" ? { verifiedAt: Date.now() } : {}),
+      path: result.path,
+      mismatches: result.mismatches.slice(0, 12),
+    };
+    await this.persist();
+    const activityId = `clipper-verification:${type}`;
+    if (!this.activity.snapshot().records.some(({ id }) => id === activityId)) {
+      this.activity.start({ id: activityId, kind: "clipper-verification", title: `Verifying ${type} Web Clipper template`, total: 1 });
+    }
+    if (result.state === "verified") {
+      this.activity.finish(activityId, {
+        completed: 1,
+        total: 1,
+        succeeded: 1,
+        details: [{ label: result.path, message: "Template verified from an arriving clip", state: "success" }],
+      });
+    } else {
+      this.activity.fail(activityId, {
+        completed: 1,
+        total: 1,
+        failed: 1,
+        details: result.mismatches.map(({ field, expected, observed }) => ({
+          label: field,
+          message: `Expected ${expected}; observed ${observed}`,
+          state: "error" as const,
+        })),
+        recovery: [{ id: "clipper-schemas", label: "Copy updated JSON", kind: "retry" }],
+      });
+    }
+  }
+
   /** True when schemas/inbox/tags moved on since the last template export. */
   clipperTemplatesStale(): boolean {
     const saved = this.settings.clipperTemplateFingerprint;
@@ -953,6 +1092,14 @@ export default class ClaudeCompanionPlugin extends Plugin {
   private async runEnrich(file: TFile, notify = true): Promise<EnrichRunOutcome> {
     let selection: ProviderSelection | undefined;
     const lifecycleGeneration = this.utilityLifecycleGeneration ?? 0;
+    const activityId = notify
+      ? this.activity.start({
+          id: `source-enrichment:${file.path}`,
+          kind: "source-enrichment",
+          title: `Enriching ${file.basename}`,
+          total: 1,
+        })
+      : undefined;
     try {
       const raw = await this.app.vault.cachedRead(file);
       const capture =
@@ -963,7 +1110,14 @@ export default class ClaudeCompanionPlugin extends Plugin {
       const res = await enrichCapture(this.enrichDeps(selection, lifecycleGeneration), capture);
       this.assertUtilityLifecycleActive(lifecycleGeneration);
       this.markEnrichRecentlyWritten(res.file.path, lifecycleGeneration);
-      if (notify) new Notice(`Typed source note (${res.type}): ${res.file.basename}`, 5000);
+      if (activityId) {
+        this.activity.finish(activityId, {
+          completed: 1,
+          total: 1,
+          succeeded: 1,
+          details: [{ label: res.file.path, message: `Typed as ${res.type}`, state: "success" }],
+        });
+      }
       return { status: "enriched" };
     } catch (e) {
       if (!this.isUtilityLifecycleActive(lifecycleGeneration)) {
@@ -976,7 +1130,20 @@ export default class ClaudeCompanionPlugin extends Plugin {
         : selection
           ? errorHint(message, selection.provider.id, selection.endpoint) ?? message
           : message;
-      if (notify) new Notice(`Couldn't enrich ${file.basename} — ${detail}`, 7000);
+      if (activityId) {
+        const safeDetail = sourceActivityDetail(detail);
+        this.activity.fail(activityId, {
+          completed: 1,
+          total: 1,
+          failed: 1,
+          technicalDetails: safeDetail,
+          details: [{ label: file.path, message: safeDetail, state: "error" }],
+          recovery: [
+            { id: "review-inbox-failures", label: "Open Source Inbox", kind: "retry" },
+            { id: "utility-settings", label: "Open utility settings", kind: "settings" },
+          ],
+        });
+      }
       return { status: "failed", error: e instanceof Error ? e : new Error(String(e)) };
     }
   }
@@ -1333,6 +1500,7 @@ export default class ClaudeCompanionPlugin extends Plugin {
   }
 
   override onunload(): void {
+    this._activity?.dispose();
     this.utilityLifecycleEnded = true;
     this.utilityLifecycleGeneration = (this.utilityLifecycleGeneration ?? 0) + 1;
     this.mobileUtilityFallbackApproval = undefined;
@@ -1344,6 +1512,8 @@ export default class ClaudeCompanionPlugin extends Plugin {
     for (const timer of this.enrichRecentlyWrittenExpiryTimers?.values() ?? []) window.clearTimeout(timer);
     this.enrichRecentlyWrittenExpiryTimers?.clear();
     this.enrichRecentlyWritten?.clear();
+    for (const timer of this.clipperVerificationTimers?.values() ?? []) window.clearTimeout(timer);
+    this.clipperVerificationTimers?.clear();
     this._intelligenceCoordinator?.cancel();
     this._intelligenceCoordinator = null;
     this._discoveryCoordinator?.cancel();
@@ -1383,6 +1553,158 @@ export default class ClaudeCompanionPlugin extends Plugin {
   }
 
   // ---------- settings ----------
+
+  companionChrome(): CompanionChromeDependencies {
+    return {
+      app: this.app,
+      activity: this.activity,
+      snapshot: () => this.quickOptionsSnapshot(),
+      save: (change) => this.saveQuickOption(change),
+      run: (action) => this.runQuickOption(action),
+      openAllSettings: () => this.openCompanionSettings(),
+      runActivityRecovery: (activityId, actionId) => this.runActivityRecovery(activityId, actionId),
+      dismissActivity: (activityId) => this.activity.dismiss(activityId),
+    };
+  }
+
+  private quickOptionsSnapshot(): QuickOptionsState {
+    const clipperStatuses = this.clipperSetups().map(({ status }) => status);
+    const clipperStatus = clipperStatuses.includes("update-available")
+      ? "update-available" as const
+      : clipperStatuses.every((status) => status === "current")
+        ? "current" as const
+        : "not-set-up" as const;
+    const embeddingModel = this.settings.embeddingEngine === "builtin"
+      ? builtinModelById(this.settings.builtinEmbeddingModel).hfRepo.split("/").at(-1) ?? "Built-in model"
+      : this.settings.embeddingEngine === "ollama"
+        ? this.settings.embeddingModel
+        : this.settings.openaiCompatEmbeddingModel;
+    const utilityEndpoint = this.settings.utilityBackend === "ollama"
+      ? sanitizeEndpointForDisplay(this.settings.ollamaHost)
+      : this.settings.utilityBackend === "custom"
+        ? sanitizeEndpointForDisplay(this.settings.openaiCompatHost)
+        : undefined;
+    return {
+      chatBackend: this.settings.chatBackend,
+      chatModel: resolveModelId(this.settings.model, this.settings.customModel),
+      agentModeEnabled: this.settings.agentModeEnabled,
+      vaultContextEnabled: this.settings.context.searchVault,
+      memoryIngestOnSave: this.settings.memoryIngestOnSave,
+      utilityBackend: this.settings.utilityBackend,
+      ...(utilityEndpoint ? { utilityEndpoint } : {}),
+      sourceEnrichOnCreate: this.settings.sourceEnrichOnCreate,
+      sourceInboxFolder: this.settings.sourceInboxFolder,
+      sourceCaptureEnabled: this.settings.sourceCaptureEnabled,
+      clipperStatus,
+      semanticEnabled: this.settings.semanticEnabled,
+      embeddingEngine: this.settings.embeddingEngine,
+      embeddingModel,
+      embeddingHealth: this.settings.semanticEnabled ? (this._indexer ? "Ready" : "Index not built yet") : "Disabled",
+      indexHealth: this._indexer ? "Ready" : "Not built yet",
+      memoryEnabled: this.settings.memoryEnabled,
+      memoryFolder: this.settings.memoryFolder,
+      memoryAutoConsolidate: this.settings.memoryAutoConsolidate,
+      discoveryEnabled: this.settings.discoveryEnabled,
+      discoveryReranker: this.settings.discoveryReranker,
+    };
+  }
+
+  private async saveQuickOption(change: QuickOptionChange): Promise<void> {
+    const value = change.value;
+    switch (change.id) {
+      case "chat-backend":
+        if (value === "claude" || value === "local" || value === "auto" || value === "custom") this.settings.chatBackend = value;
+        else throw new Error("Choose a valid chat backend.");
+        break;
+      case "agent-mode": this.settings.agentModeEnabled = value === true; break;
+      case "vault-context": this.settings.context.searchVault = value === true; break;
+      case "memory-capture": this.settings.memoryIngestOnSave = value === true; break;
+      case "utility-backend":
+        if (value === "claude" || value === "ollama" || value === "custom") this.settings.utilityBackend = value;
+        else throw new Error("Choose a valid utility backend.");
+        break;
+      case "auto-enrich":
+        this.settings.sourceEnrichOnCreate = value === true;
+        if (value === true) this.settings.sourceCaptureConsent = "allow";
+        break;
+      case "inbox-folder": this.settings.sourceInboxFolder = String(value).trim() || "Clippings"; break;
+      case "source-capture": this.settings.sourceCaptureEnabled = value === true; break;
+      case "semantic-search": this.settings.semanticEnabled = value === true; break;
+      case "embedding-engine":
+        if (value === "builtin" || value === "ollama" || value === "custom") this.settings.embeddingEngine = value;
+        else throw new Error("Choose a valid embedding engine.");
+        break;
+      case "memory-enabled": this.settings.memoryEnabled = value === true; break;
+      case "memory-folder": this.settings.memoryFolder = String(value).trim() || "Claude/Memory"; break;
+      case "discovery-enabled": this.settings.discoveryEnabled = value === true; break;
+      case "discovery-reranker":
+        if (value === "current" || value === "claude" || value === "local" || value === "disabled") this.settings.discoveryReranker = value;
+        else throw new Error("Choose a valid discovery reranker.");
+        break;
+      default: throw new Error("That quick setting is not available.");
+    }
+    await this.saveSettings();
+  }
+
+  private async runQuickOption(action: QuickOptionAction): Promise<void> {
+    switch (action.id) {
+      case "clipper-schemas": this.openClipperSetup(); return;
+      case "embedding-health":
+      case "embedding-settings": this.openCompanionSettings(); return;
+      case "rebuild-index":
+      case "retry-index": await this.rebuildSemanticIndex(); return;
+      case "consolidate-memory": await this.consolidateMemory(); return;
+      case "clippings-inbox": await this.activateInboxView(); return;
+      case "review-inbox-failures": await this.activateInboxView(); return;
+      case "utility-settings": this.openCompanionSettings(); return;
+      case "download-builtin": await this.downloadBuiltinModelAndIndex(); return;
+      case "use-builtin-embeddings":
+        this.settings.embeddingEngine = "builtin";
+        await this.saveSettings();
+        if (!(await this.canEmbedWithoutDownload())) await this.downloadBuiltinModelAndIndex();
+        else await this.rebuildSemanticIndex();
+        return;
+      case "all-settings": this.openCompanionSettings(); return;
+      default: throw new Error("That quick action is not available yet.");
+    }
+  }
+
+  openCompanionSettings(): void {
+    const app = this.app as App & {
+      setting?: { open?: () => void; openTabById?: (id: string) => void };
+      commands?: { executeCommandById?: (id: string) => boolean };
+    };
+    if (app.setting?.open) {
+      app.setting.open();
+      app.setting.openTabById?.("claude-companion");
+      return;
+    }
+    app.commands?.executeCommandById?.("app:open-settings");
+  }
+
+  embeddingRecovery(error: unknown): EmbeddingRecovery {
+    const endpoint = this.settings.embeddingEngine === "ollama"
+      ? this.settings.ollamaHost
+      : this.settings.embeddingEngine === "custom"
+        ? this.settings.openaiCompatHost
+        : undefined;
+    return classifyEmbeddingFailure(error, {
+      engine: this.settings.embeddingEngine,
+      isMobile: Platform.isMobile,
+      ...(endpoint ? { endpoint } : {}),
+    });
+  }
+
+  async runActivityRecovery(activityId: string, actionId: string): Promise<void> {
+    if (actionId === "copy-details") {
+      const details = this.activity.snapshot().records.find(({ id }) => id === activityId)?.technicalDetails;
+      if (!details) throw new Error("No technical details are available for this activity.");
+      if (!navigator.clipboard?.writeText) throw new Error("Clipboard access is unavailable on this device.");
+      await navigator.clipboard.writeText(details);
+      return;
+    }
+    await this.runQuickOption({ id: actionId, page: "related", activityId });
+  }
 
   async loadSettings(): Promise<void> {
     const raw = (await this.loadData()) as PersistedData | Partial<PluginSettings> | null;
@@ -2371,14 +2693,29 @@ export default class ClaudeCompanionPlugin extends Plugin {
 
   /** Download the built-in embedding model with progress, then build the index. */
   private async downloadBuiltinModelAndIndex(): Promise<void> {
-    const progress = new Notice("Downloading embedding model…", 0);
+    const model = builtinModelById(this.settings.builtinEmbeddingModel);
+    const activityId = this.activity.start({
+      id: `embedding-download:${model.id}`,
+      kind: "embedding-download",
+      title: "Downloading embedding model",
+      total: 100,
+    });
     try {
-      await this.builtinEmbedder().download((p) => progress.setMessage(`Downloading embedding model… ${p.percent}% (${p.file})`));
-      progress.hide();
+      await this.builtinEmbedder().download((progress) => this.activity.update(activityId, {
+        completed: progress.percent,
+        total: 100,
+        currentItem: progress.file,
+      }));
+      this.activity.finish(activityId, { completed: 100, succeeded: 1 });
       await this.rebuildSemanticIndex();
-    } catch (e) {
-      progress.hide();
-      new Notice(`Embedding model download failed: ${e instanceof Error ? e.message : String(e)} — retry from Companion settings.`, 9000);
+    } catch (error) {
+      const recovery = this.embeddingRecovery(error);
+      this.activity.fail(activityId, {
+        failed: 1,
+        technicalDetails: recovery.technicalDetails,
+        recovery: recovery.actions,
+        details: [{ label: model.hfRepo, message: recovery.message, state: "error" }],
+      });
     }
   }
 
@@ -2422,35 +2759,89 @@ export default class ClaudeCompanionPlugin extends Plugin {
 
   /** Full (re)build of the semantic index, with a progress toast. */
   async rebuildSemanticIndex(): Promise<void> {
+    const modelId = embedderId(this.settings.embeddingEngine, this.settings.embeddingModel, this.settings.builtinEmbeddingModel, this.settings.openaiCompatEmbeddingModel);
+    const activityId = this.activity.start({
+      id: `semantic-index:${modelId}`,
+      kind: "semantic-index",
+      title: "Building semantic index",
+    });
     if (!this.settings.semanticEnabled) {
-      new Notice("Turn on semantic search in Companion settings first.");
+      this.activity.fail(activityId, {
+        failed: 1,
+        details: [{ label: "Semantic search", message: "Semantic search is turned off.", state: "error" }],
+        recovery: [{ id: "embedding-settings", label: "Open embedding settings", kind: "settings" }],
+      });
       return;
     }
     if (this.settings.embeddingEngine === "ollama") {
       if (!this.router().ollama.hasCredentials()) {
-        new Notice("Semantic search needs Ollama. Start it (`ollama serve`) or set the host in settings.");
+        const recovery = this.embeddingRecovery(new Error("Ollama connection unavailable"));
+        this.activity.fail(activityId, {
+          failed: 1,
+          technicalDetails: recovery.technicalDetails,
+          recovery: recovery.actions,
+          details: [{ label: "Ollama", message: recovery.message, state: "error" }],
+        });
         return;
       }
     } else if (!(await this.canEmbedWithoutDownload())) {
       // Consent gate: embedding with no downloaded model would fetch weights
       // implicitly. Cached weights pass — they load offline.
-      new Notice("Download the built-in model in settings first.");
+      const recovery = this.embeddingRecovery(new Error("Built-in embedding model not downloaded"));
+      this.activity.fail(activityId, {
+        failed: 1,
+        technicalDetails: recovery.technicalDetails,
+        recovery: recovery.actions,
+        details: [{ label: "Built-in model", message: recovery.message, state: "error" }],
+      });
       return;
     }
     const ix = this.indexer();
     if (!ix) return;
-    const progress = new Notice(`Building semantic index with “${this.embeddingLabel()}”…`, 0);
+    let completed = 0;
+    let total: number | undefined;
     try {
       const res = await ix.build({
         force: true,
-        onProgress: (done, total) => progress.setMessage(`Semantic index: ${done}/${total} notes…`),
+        onProgress: (done, nextTotal) => {
+          completed = done;
+          total = nextTotal;
+          this.activity.update(activityId, { completed: done, total: nextTotal });
+        },
       });
-      progress.hide();
-      new Notice(`Semantic index ready — ${res.indexed} embedded, ${res.skipped} skipped, ${res.removed} pruned.`, 6000);
-    } catch (e) {
-      progress.hide();
-      console.error("[Claude Companion] semantic index build failed", e);
-      new Notice(`Semantic index failed: ${e instanceof Error ? e.message : String(e)}`, 9000);
+      const summary = `${res.indexed} embedded, ${res.skipped} skipped, ${res.removed} pruned`;
+      if (res.failureCount > 0) {
+        const recovery = this.embeddingRecovery(new Error(res.failures[0]?.message ?? "Embedding failed"));
+        this.activity.fail(activityId, {
+          completed: total ?? completed,
+          ...(total === undefined ? {} : { total }),
+          succeeded: res.indexed,
+          failed: res.failureCount,
+          details: res.failures.map(({ path, message }) => ({ path, message })).map(({ path, message }) => ({ label: path, message: classifyEmbeddingFailure(new Error(message), {
+            engine: this.settings.embeddingEngine,
+            isMobile: Platform.isMobile,
+            ...(this.settings.embeddingEngine === "ollama" ? { endpoint: this.settings.ollamaHost } : this.settings.embeddingEngine === "custom" ? { endpoint: this.settings.openaiCompatHost } : {}),
+          }).technicalDetails, state: "error" as const })),
+          technicalDetails: recovery.technicalDetails,
+          recovery: recovery.actions,
+        });
+      } else {
+        this.activity.finish(activityId, {
+          completed: total ?? completed,
+          ...(total === undefined ? {} : { total }),
+          succeeded: res.indexed,
+          details: [{ label: "Index ready", message: summary, state: "success" }],
+        });
+      }
+    } catch (error) {
+      console.error("[Claude Companion] semantic index build failed", error);
+      const recovery = this.embeddingRecovery(error);
+      this.activity.fail(activityId, {
+        failed: 1,
+        technicalDetails: recovery.technicalDetails,
+        recovery: recovery.actions,
+        details: [{ label: this.embeddingLabel(), message: recovery.message, state: "error" }],
+      });
     }
   }
 

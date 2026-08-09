@@ -48,6 +48,15 @@ export type AuthMode = "apiKey" | "oauthToken" | "environment";
 /** Where the "Open" button on an artifact sends it. "obsidian" = in-app fullscreen. */
 export type ArtifactOpenTarget = "obsidian" | "default" | "chrome" | "safari" | "brave" | "firefox";
 
+export interface ClipperVerificationMetadata {
+  fingerprint: string;
+  state: "waiting" | "verified" | "template-out-of-date" | "needs-attention" | "wrong-destination";
+  startedAt: number;
+  verifiedAt?: number;
+  path?: string;
+  mismatches: Array<{ field: string; expected: string; observed: string }>;
+}
+
 /** One external MCP server the in-chat agent may consume (roadmap: two-way MCP hub). */
 export interface McpServerConfig {
   name: string;
@@ -235,6 +244,8 @@ export interface PluginSettings {
   /** Fingerprint of the schemas/inbox/tags at the last clipper-template export
    *  ("" = never exported). Drift means the user's clipper templates are stale. */
   clipperTemplateFingerprint: string;
+  /** Small first-clip proof state only; never stores note bodies or provider data. */
+  clipperVerification: Partial<Record<"article" | "video" | "dataset", ClipperVerificationMetadata>>;
 
   // ----- vault ontology (typed notes & relations) -----
   /** Master switch: seed/validate typed frontmatter and relations. */
@@ -351,6 +362,7 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   sourceBaseTags: ["source"],
   sourceSchemaOverrides: {},
   clipperTemplateFingerprint: "",
+  clipperVerification: {},
 
   ontologyEnabled: true,
   ontologyFolder: "Ontology",

@@ -4,6 +4,7 @@ import { inboxItems, type InboxFileEntry, type InboxItem } from "../sources/inbo
 import { wireUpItems, type WireUpEntry } from "../links/wireUp";
 import type { BatchLinkApplyResult } from "../links/batch";
 import { createInboxRefreshController, type InboxRefreshController } from "./inboxRefresh";
+import { renderCompanionChrome } from "./companionChrome";
 
 export const INBOX_VIEW_TYPE = "claude-inbox-view";
 const INBOX_REFRESH_DEBOUNCE_MS = 100;
@@ -15,6 +16,18 @@ interface InboxFeedback {
   message: string;
 }
 
+type InboxEnrichOutcome = Awaited<ReturnType<ClaudeCompanionPlugin["enrichInboxItem"]>>;
+
+function safeActivityDetail(value: string): string {
+  return value
+    .replace(/\bBearer\s+\S+/gi, "[redacted]")
+    .replace(/\b(?:api[_-]?key|token)\s*[=:]\s*\S+/gi, "[redacted]")
+    .replace(/[\r\n\t]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 240);
+}
+
 /**
  * Source-inbox triage: everything the clipper dropped that isn't typed yet,
  * with one-tap enrich — plus a "wire up" section for enriched notes that
@@ -22,6 +35,7 @@ interface InboxFeedback {
  * Built touch-first — on a phone this is the home base.
  */
 export class InboxView extends ItemView {
+  private disposeChrome: ((remove?: boolean) => void) | null = null;
   private enriching = new Set<string>();
   private readonly refresh: InboxRefreshController;
   /** A bulk enrichment or link review is active; do not start another batch. */
@@ -65,6 +79,8 @@ export class InboxView extends ItemView {
   }
 
   override async onClose(): Promise<void> {
+    this.disposeChrome?.(false);
+    this.disposeChrome = null;
     this.refresh.dispose();
   }
 
@@ -88,8 +104,11 @@ export class InboxView extends ItemView {
     const generation = this.refresh.nextGeneration();
     if (!this.refresh.isCurrent(generation)) return;
     const root = this.contentEl;
+    this.disposeChrome?.();
+    this.disposeChrome = null;
     root.empty();
     root.addClass("cc-inbox-view");
+    this.disposeChrome = renderCompanionChrome(root, "inbox", "Source Inbox", this.plugin.companionChrome());
     root.createEl("div", { cls: "cc-eyebrow", text: "SOURCE INBOX" });
 
     if (!this.plugin.settings.sourceCaptureEnabled) {
@@ -108,6 +127,8 @@ export class InboxView extends ItemView {
         cls: "setting-item-description",
         text: `Inbox zero — nothing in “${this.plugin.settings.sourceInboxFolder}” needs typing. Clip something and it'll show up here.`,
       });
+      const clipper = root.createEl("button", { cls: "cc-inbox-clipper-setup", text: "Set up Web Clipper" });
+      clipper.addEventListener("click", () => this.plugin.openClipperSetup());
     } else {
       const bar = root.createDiv({ cls: "cc-inbox-bar" });
       bar.createSpan({
@@ -273,10 +294,12 @@ export class InboxView extends ItemView {
     }
   }
 
-  private async enrichOne(item: InboxItem, fromBatch = false): Promise<boolean> {
-    if ((!fromBatch && this.batchOperation !== null) || this.enriching.has(item.path)) return false;
+  private async enrichOne(item: InboxItem, fromBatch = false): Promise<InboxEnrichOutcome> {
+    if ((!fromBatch && this.batchOperation !== null) || this.enriching.has(item.path)) {
+      return { status: "skipped", reason: `${item.basename} is already being enriched.` };
+    }
     const f = this.app.vault.getAbstractFileByPath(item.path);
-    if (!(f instanceof TFile)) return false;
+    if (!(f instanceof TFile)) return { status: "skipped", reason: `${item.basename} is no longer in the Inbox.` };
     this.enriching.add(item.path);
     this.enrichmentFeedback.set(item.path, { state: "running", message: "Enriching…" });
     if (!fromBatch) this.setOperationFeedback("running", `Enriching ${item.basename}…`);
@@ -286,17 +309,17 @@ export class InboxView extends ItemView {
       if (outcome.status === "enriched") {
         this.enrichmentFeedback.delete(item.path);
         if (!fromBatch) this.setOperationFeedback("success", `Typed source note: ${item.basename}.`);
-        return true;
+        return outcome;
       }
       const detail = outcome.status === "failed" ? outcome.error.message : outcome.reason;
       this.enrichmentFeedback.set(item.path, { state: "error", message: `Couldn't enrich — ${detail}` });
       if (!fromBatch) this.setOperationFeedback("error", `Couldn't enrich ${item.basename} — ${detail}`);
-      return false;
+      return outcome;
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
       this.enrichmentFeedback.set(item.path, { state: "error", message: `Couldn't enrich — ${detail}` });
       if (!fromBatch) this.setOperationFeedback("error", `Couldn't enrich ${item.basename} — ${detail}`);
-      return false;
+      return { status: "failed", error: error instanceof Error ? error : new Error(detail) };
     } finally {
       this.enriching.delete(item.path);
       if (!fromBatch) await this.renderSafely();
@@ -307,19 +330,69 @@ export class InboxView extends ItemView {
     if (this.batchOperation !== null) return;
     this.batchOperation = "enrich";
     this.setOperationFeedback("running", `Enriching ${items.length} note${items.length === 1 ? "" : "s"}…`);
+    const activityId = this.plugin.activity.start({
+      id: "source-enrichment:inbox-batch",
+      kind: "source-enrichment",
+      title: "Enriching Inbox",
+      total: items.length,
+    });
+    let enriched = 0;
+    let failed = 0;
+    let completed = 0;
     try {
       await this.renderSafely();
-      let enriched = 0;
       for (const item of items) {
-        if (await this.enrichOne(item, true)) enriched++;
+        this.plugin.activity.update(activityId, { currentItem: item.path });
+        const outcome = await this.enrichOne(item, true);
+        completed++;
+        if (outcome.status === "enriched") {
+          enriched++;
+          this.plugin.activity.update(activityId, {
+            completed,
+            succeeded: enriched,
+            failed,
+            details: [{ label: item.path, message: "Enriched", state: "success" }],
+          });
+        } else {
+          failed++;
+          const detail = safeActivityDetail(outcome.status === "failed" ? outcome.error.message : outcome.reason);
+          this.plugin.activity.update(activityId, {
+            completed,
+            succeeded: enriched,
+            failed,
+            details: [{ label: item.path, message: detail, state: "error" }],
+          });
+        }
       }
-      const failed = items.length - enriched;
       this.setOperationFeedback(
         failed === 0 ? "success" : "error",
         failed === 0
           ? `Typed ${enriched} source note${enriched === 1 ? "" : "s"}.`
           : `Typed ${enriched} of ${items.length} source notes; ${failed} failed.`,
       );
+      if (failed === 0) {
+        this.plugin.activity.finish(activityId, { completed, succeeded: enriched, failed });
+      } else {
+        this.plugin.activity.fail(activityId, {
+          completed,
+          succeeded: enriched,
+          failed,
+          recovery: [
+            { id: "review-inbox-failures", label: "Review failed notes", kind: "retry" },
+            { id: "utility-settings", label: "Open utility settings", kind: "settings" },
+          ],
+        });
+      }
+    } catch (error) {
+      const detail = safeActivityDetail(error instanceof Error ? error.message : String(error));
+      this.plugin.activity.fail(activityId, {
+        completed,
+        succeeded: enriched,
+        failed: Math.max(failed, 1),
+        technicalDetails: detail,
+        recovery: [{ id: "review-inbox-failures", label: "Review failed notes", kind: "retry" }],
+      });
+      this.setOperationFeedback("error", `Inbox enrichment stopped — ${detail}`);
     } finally {
       this.batchOperation = null;
       await this.renderSafely();

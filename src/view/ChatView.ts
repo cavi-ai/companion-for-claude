@@ -36,6 +36,7 @@ import { addUsage, contextGauge, EMPTY_SESSION, estimateTokens, formatCost, form
 import { mergeUsage, type TokenUsage } from "../claude/sse";
 import type { CompanionWorkspaceCard } from "./companionWorkspace";
 import { ActionModal, type ActionModalItem } from "./ActionModal";
+import { renderCompanionChrome } from "./companionChrome";
 
 export const CHAT_VIEW_TYPE = "claude-companion-chat";
 
@@ -72,6 +73,7 @@ interface ObsidianAppWithSettings {
 }
 
 export class ChatView extends ItemView {
+  private disposeChrome: ((remove?: boolean) => void) | null = null;
   private messages: ChatMessage[] = [];
   private messagesEl!: HTMLElement;
   private inputEl!: HTMLTextAreaElement;
@@ -179,9 +181,12 @@ export class ChatView extends ItemView {
 
   override async onOpen(): Promise<void> {
     const root = this.contentEl;
+    this.disposeChrome?.();
+    this.disposeChrome = null;
     root.empty();
     root.addClass("cc-chat-root"); // establishes the container-query context (see styles.css)
     root.addClass("cc-root");
+    this.disposeChrome = renderCompanionChrome(root, "chat", "Chat", this.plugin.companionChrome(), { hideTitle: true });
 
     // Initialize per-session controls from the settings default model.
     if (!this.controls) {
@@ -518,6 +523,8 @@ export class ChatView extends ItemView {
   }
 
   override async onClose(): Promise<void> {
+    this.disposeChrome?.(false);
+    this.disposeChrome = null;
     this.abort?.abort();
     this.clearThinkingStatus();
     if (this.contextStatusInterval !== null) {
