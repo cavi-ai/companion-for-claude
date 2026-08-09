@@ -69,6 +69,11 @@ jobs:
             cp scripts/cavi-release.mjs "$RUNNER_TEMP/cavi-release.mjs"
           fi
           chmod +x "$RUNNER_TEMP/cavi-release.mjs"
+          # Docs come from the current checkout, like the generator: a tag cut
+          # before guides/ was mirrored has none, and backfills still need them.
+          rm -rf "$RUNNER_TEMP/guides"
+          cp -R guides "$RUNNER_TEMP/guides"
+          cp README.md "$RUNNER_TEMP/guides-index.md"
           {
             echo "version=$VERSION"
             echo "tag=$TAG"
@@ -121,8 +126,8 @@ jobs:
           # under the path its artifactPathTemplate names.
           DOCS_ROOT="$(node "$RUNNER_TEMP/cavi-release.mjs" docs-root --version "$VERSION")"
           mkdir -p "$STAGING/$DOCS_ROOT"
-          cp guides/*.md "$STAGING/$DOCS_ROOT/"
-          cp README.md "$STAGING/$DOCS_ROOT/index.md"
+          cp "$RUNNER_TEMP"/guides/*.md "$STAGING/$DOCS_ROOT/"
+          cp "$RUNNER_TEMP/guides-index.md" "$STAGING/$DOCS_ROOT/index.md"
           test -n "$(ls -A "$STAGING/$DOCS_ROOT")"
           tar --sort=name --mtime="@${SOURCE_DATE_EPOCH}" --owner=0 --group=0 \
             --numeric-owner -czf "$ARTIFACT" -C "$STAGING" cavi-release.json docs
