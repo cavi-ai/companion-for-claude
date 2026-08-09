@@ -40,12 +40,12 @@ describe("CAVI release facts", () => {
     expect(manifest.status, manifest.stderr).toBe(0);
     expect(JSON.parse(manifest.stdout)).toEqual({
       schemaVersion: 1,
-      product: { slug: "companion-for-claude", version: "0.22.2" },
-      source: {
-        repository: "cavi-ai/companion-for-claude",
-        tag: "0.22.2",
-        commit: COMMIT,
-      },
+      slug: "companion-for-claude",
+      kind: "product-docs",
+      version: "0.22.2",
+      tag: "0.22.2",
+      repository: "cavi-ai/companion-for-claude",
+      commit: COMMIT,
       assets: [
         { name: "main.js", sha256: sha256(assets["main.js"]) },
         { name: "manifest.json", sha256: sha256(assets["manifest.json"]) },
@@ -69,7 +69,7 @@ describe("CAVI release facts", () => {
     expect(JSON.parse(envelope.stdout)).toEqual({
       schemaVersion: 1,
       slug: "companion-for-claude",
-      kind: "release-facts",
+      kind: "product-docs",
       version: "0.22.2",
       tag: "0.22.2",
       repository: "cavi-ai/companion-for-claude",
@@ -82,4 +82,45 @@ describe("CAVI release facts", () => {
     });
   });
 
+  // 2026-08-09: every release since 0.23.0 published fine and cavi-home's ingest
+  // rejected all of them — "Envelope kind release-facts does not match package
+  // product-docs" — so the site never picked up a Companion release. These are
+  // the registry facts for this slug in cavi-ai/cavi-home content/releases/packages.json.
+  it("matches the package cavi-home registers for this slug", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "companion-cavi-contract-"));
+    for (const [name, contents] of Object.entries({ "main.js": "x\n", "manifest.json": "{}\n", "styles.css": "y\n" })) {
+      await writeFile(path.join(root, name), contents);
+    }
+    const run = (command: string, extra: string[]) => spawnSync(process.execPath, [
+      SCRIPT, command,
+      "--version", "0.24.1",
+      "--tag", "0.24.1",
+      "--repository", "cavi-ai/companion-for-claude",
+      "--commit", COMMIT,
+      ...extra,
+    ], { cwd: root, encoding: "utf8" });
+
+    const manifest = run("manifest", ["--source-date-epoch", "1785778130", "--asset", "main.js"]);
+    const envelope = run("envelope", [
+      "--artifact-url", "https://github.com/cavi-ai/companion-for-claude/releases/download/0.24.1/companion-for-claude-cavi-release-0.24.1.tar.gz",
+      "--artifact-sha256", "d".repeat(64),
+    ]);
+    expect(manifest.status, manifest.stderr).toBe(0);
+    expect(envelope.status, envelope.stderr).toBe(0);
+    const manifestBody = JSON.parse(manifest.stdout) as Record<string, unknown>;
+    const envelopeBody = JSON.parse(envelope.stdout) as Record<string, unknown>;
+
+    // The registered kind. A rename on either side breaks ingestion.
+    expect(envelopeBody.kind).toBe("product-docs");
+    // tagPrefix is "" for this package, so the tag is the bare version.
+    expect(envelopeBody.tag).toBe(envelopeBody.version);
+    // assertReleaseIdentity compares these key by key against the envelope.
+    for (const key of ["schemaVersion", "slug", "kind", "version", "tag", "repository", "commit"]) {
+      expect(manifestBody[key], `cavi-release.json ${key}`).toEqual(envelopeBody[key]);
+    }
+    // artifactPathTemplate: docs/companion-for-claude/v{version}.
+    const docsRoot = spawnSync(process.execPath, [SCRIPT, "docs-root", "--version", "0.24.1"], { encoding: "utf8" });
+    expect(docsRoot.status, docsRoot.stderr).toBe(0);
+    expect(docsRoot.stdout.trim()).toBe("docs/companion-for-claude/v0.24.1");
+  });
 });
