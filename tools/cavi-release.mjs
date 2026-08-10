@@ -6,6 +6,11 @@ import path from "node:path";
 
 const PRODUCT_SLUG = "companion-for-claude";
 const PRODUCT_REPOSITORY = "cavi-ai/companion-for-claude";
+// cavi-home registers this slug as product-docs; envelope, manifest, and the
+// registry entry must agree or its release ingest rejects the dispatch.
+const PRODUCT_KIND = "product-docs";
+// Registry artifactPathTemplate: docs/companion-for-claude/v{version}.
+const DOCS_ROOT = (version) => `docs/${PRODUCT_SLUG}/v${version}`;
 const VERSION_RE = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 const COMMIT_RE = /^[0-9a-f]{40}$/;
 const SHA256_RE = /^[0-9a-f]{64}$/;
@@ -16,8 +21,8 @@ function fail(message) {
 
 function parseArgs(argv) {
   const [command, ...rest] = argv;
-  if (!command || !["manifest", "envelope"].includes(command)) {
-    fail("usage: cavi-release.mjs <manifest|envelope> [options]");
+  if (!command || !["manifest", "envelope", "docs-root"].includes(command)) {
+    fail("usage: cavi-release.mjs <manifest|envelope|docs-root> [options]");
   }
 
   const values = new Map();
@@ -91,14 +96,17 @@ async function buildManifest(values) {
   for (const name of [...names].sort()) {
     assets.push({ name, sha256: await digestFile(path.resolve(name)) });
   }
+  // Identity keys are flat and must equal the envelope: cavi-home's
+  // assertReleaseIdentity compares schemaVersion, slug, kind, version, tag,
+  // repository, and commit key by key for every kind except package-docs.
   return {
     schemaVersion: 1,
-    product: { slug: PRODUCT_SLUG, version: source.version },
-    source: {
-      repository: source.repository,
-      tag: source.tag,
-      commit: source.commit,
-    },
+    slug: PRODUCT_SLUG,
+    kind: PRODUCT_KIND,
+    version: source.version,
+    tag: source.tag,
+    repository: source.repository,
+    commit: source.commit,
     assets,
     generatedAt: new Date(Number(epoch) * 1000).toISOString(),
   };
@@ -118,7 +126,7 @@ function buildEnvelope(values) {
   return {
     schemaVersion: 1,
     slug: PRODUCT_SLUG,
-    kind: "release-facts",
+    kind: PRODUCT_KIND,
     version: source.version,
     tag: source.tag,
     repository: source.repository,
@@ -127,10 +135,19 @@ function buildEnvelope(values) {
   };
 }
 
+export { PRODUCT_KIND, DOCS_ROOT };
+
 try {
   const { command, values } = parseArgs(process.argv.slice(2));
-  const result = command === "manifest" ? await buildManifest(values) : buildEnvelope(values);
-  process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+  if (command === "docs-root") {
+    exactOptions(values, ["version"]);
+    const version = values.get("version");
+    if (!VERSION_RE.test(version)) fail(`invalid stable version: ${version}`);
+    process.stdout.write(`${DOCS_ROOT(version)}\n`);
+  } else {
+    const result = command === "manifest" ? await buildManifest(values) : buildEnvelope(values);
+    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+  }
 } catch (error) {
   process.stderr.write(`cavi-release: ${error.message}\n`);
   process.exitCode = 1;
