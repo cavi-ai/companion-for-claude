@@ -10,10 +10,29 @@ const SLUG = "companion-for-claude";
 const VERSION_RE = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 const COMMIT_RE = /^[0-9a-f]{40}$/;
 
-// Section order is the reading order of the guides; anything unlisted lands in Reference.
-const SECTIONS = [
-  { title: "Introduction", pages: ["index", "getting-started"] },
-  { title: "Guides", pages: ["agent-mode", "artifacts", "research-workbench", "local-models", "auth", "claude-code-bridge"] },
+// Layout mirrors the other CAVI docs products: introduction/ then guides/.
+// Left side is the artifact path, right side the source guide file.
+const LAYOUT = [
+  {
+    title: "Introduction",
+    pages: [
+      { path: "introduction/overview.md", source: "index" },
+      { path: "introduction/installation.md", source: "getting-started" },
+    ],
+  },
+  {
+    title: "Guides",
+    pages: [
+      { path: "guides/agent-mode.md", source: "agent-mode" },
+      { path: "guides/artifacts.md", source: "artifacts" },
+      { path: "guides/research-workbench.md", source: "research-workbench" },
+      { path: "guides/local-models.md", source: "local-models" },
+      { path: "guides/auth.md", source: "auth" },
+      { path: "guides/claude-code-bridge.md", source: "claude-code-bridge" },
+      { path: "guides/architecture.md", source: "architecture" },
+      { path: "guides/faq.md", source: "faq" },
+    ],
+  },
 ];
 
 function fail(message) {
@@ -45,16 +64,28 @@ if (!/^\d+$/.test(epoch ?? "")) fail(`invalid source date epoch: ${epoch}`);
 const destination = path.join(outRoot, "docs", SLUG, `v${version}`);
 await mkdir(destination, { recursive: true });
 
-// index.md is the README; every guide keeps its own filename.
+// Source name -> artifact path, from the layout above; anything not laid out
+// lands under guides/ so a new guide still ships.
+const available = new Map([["index", readme]]);
+for (const entry of (await readdir(guidesDir)).sort()) {
+  if (entry.endsWith(".md")) available.set(entry.replace(/\.md$/, ""), path.join(guidesDir, entry));
+}
+const placement = new Map();
+for (const section of LAYOUT) {
+  for (const page of section.pages) {
+    if (available.has(page.source)) placement.set(page.source, page.path);
+  }
+}
+for (const name of available.keys()) {
+  if (!placement.has(name)) placement.set(name, `guides/${name}.md`);
+}
+
 const pages = new Map();
 const sources = new Map();
-pages.set("index.md", await readFile(readme, "utf8"));
-sources.set("index.md", readme);
-for (const entry of (await readdir(guidesDir)).sort()) {
-  if (entry.endsWith(".md")) {
-    pages.set(entry, await readFile(path.join(guidesDir, entry), "utf8"));
-    sources.set(entry, path.join(guidesDir, entry));
-  }
+for (const [name, file] of available) {
+  const target = placement.get(name);
+  pages.set(target, await readFile(file, "utf8"));
+  sources.set(target, file);
 }
 
 // The artifact must be self-contained: a relative target that isn't a shipped
@@ -68,32 +99,35 @@ for (const [file, body] of pages) {
     const [pathPart, hash = ""] = target.split(/(?=#)/);
     if (pathPart === "") return whole;
     const resolved = path.resolve(from, pathPart);
-    const shipped = path.basename(resolved);
-    if (pages.has(shipped) && path.dirname(resolved) === path.resolve(guidesDir)) {
-      return `${open}${shipped}${hash}${close}`;
+    const name = path.basename(resolved).replace(/\.md$/, "");
+    if (placement.has(name) && path.dirname(resolved) === path.resolve(guidesDir)) {
+      // Rewrite to the artifact-relative path of the target page.
+      return `${open}${path.relative(path.dirname(file), placement.get(name))}${hash}${close}`;
     }
     return `${open}${blobBase}/${path.relative(repoRoot, resolved)}${hash}${close}`;
   }));
 }
 
-const listed = new Set(SECTIONS.flatMap((section) => section.pages.map((name) => `${name}.md`)));
-const sections = SECTIONS.map((section) => ({
+const listed = new Set(LAYOUT.flatMap((section) => section.pages.map((page) => page.path)));
+const sections = LAYOUT.map((section) => ({
   title: section.title,
   pages: section.pages
-    .map((name) => `${name}.md`)
-    .filter((file) => pages.has(file))
-    .map((file) => ({ title: titleOf(file.replace(/\.md$/, ""), pages.get(file)), path: file })),
+    .filter((page) => pages.has(page.path))
+    .map((page) => ({ title: titleOf(path.basename(page.path, ".md"), pages.get(page.path)), path: page.path })),
 })).filter((section) => section.pages.length > 0);
 const rest = [...pages.keys()].filter((file) => !listed.has(file)).sort();
-if (rest.length > 0) {
-  sections.push({
-    title: "Reference",
-    pages: rest.map((file) => ({ title: titleOf(file.replace(/\.md$/, ""), pages.get(file)), path: file })),
-  });
+for (const file of rest) {
+  const guides = sections.find((section) => section.title === "Guides");
+  const entry = { title: titleOf(path.basename(file, ".md"), pages.get(file)), path: file };
+  if (guides) guides.pages.push(entry);
+  else sections.push({ title: "Guides", pages: [entry] });
 }
 
 const navigation = { title: "Companion for Claude", version, sections };
-for (const [file, body] of pages) await writeFile(path.join(destination, file), body);
+for (const [file, body] of pages) {
+  await mkdir(path.dirname(path.join(destination, file)), { recursive: true });
+  await writeFile(path.join(destination, file), body);
+}
 await writeFile(path.join(destination, "navigation.json"), `${JSON.stringify(navigation, null, 2)}\n`);
 
 // contentSha256 hashes every artifact file except manifest.json, in lexical
