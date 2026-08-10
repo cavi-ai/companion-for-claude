@@ -74,6 +74,7 @@ jobs:
           rm -rf "$RUNNER_TEMP/guides"
           cp -R guides "$RUNNER_TEMP/guides"
           cp README.md "$RUNNER_TEMP/guides-index.md"
+          cp tools/build-docs-artifact.mjs tools/verify-docs-artifact.mjs "$RUNNER_TEMP/"
           {
             echo "version=$VERSION"
             echo "tag=$TAG"
@@ -124,11 +125,12 @@ jobs:
             --asset styles.css > "$STAGING/cavi-release.json"
           # cavi-home's registry requires a docs member beside cavi-release.json,
           # under the path its artifactPathTemplate names.
-          DOCS_ROOT="$(node "$RUNNER_TEMP/cavi-release.mjs" docs-root --version "$VERSION")"
-          mkdir -p "$STAGING/$DOCS_ROOT"
-          cp "$RUNNER_TEMP"/guides/*.md "$STAGING/$DOCS_ROOT/"
-          cp "$RUNNER_TEMP/guides-index.md" "$STAGING/$DOCS_ROOT/index.md"
-          test -n "$(ls -A "$STAGING/$DOCS_ROOT")"
+          # One builder for the docs artifact, shared with the source repo's gate.
+          DOCS_ROOT="$(node "$RUNNER_TEMP/build-docs-artifact.mjs" \
+            --version "$VERSION" --tag "$TAG" --commit "$COMMIT" \
+            --guides "$RUNNER_TEMP/guides" --readme "$RUNNER_TEMP/guides-index.md" \
+            --out "$STAGING" --source-date-epoch "$SOURCE_DATE_EPOCH")"
+          node "$RUNNER_TEMP/verify-docs-artifact.mjs" "$STAGING/$DOCS_ROOT"
           tar --sort=name --mtime="@${SOURCE_DATE_EPOCH}" --owner=0 --group=0 \
             --numeric-owner -czf "$ARTIFACT" -C "$STAGING" cavi-release.json docs
           SHA256="$(sha256sum "$ARTIFACT" | cut -d' ' -f1)"
