@@ -14,6 +14,12 @@ describe("estimateTokens", () => {
 describe("limitsFor", () => {
   it("matches exact known model ids", () => {
     expect(limitsFor("claude-sonnet-4-6").contextWindow).toBe(1_000_000);
+    expect(limitsFor("claude-opus-5")).toEqual({
+      contextWindow: 1_000_000,
+      maxOutput: 128_000,
+      inputCostPerM: 5,
+      outputCostPerM: 25,
+    });
   });
   it("matches dated snapshots by family prefix", () => {
     expect(limitsFor("claude-sonnet-4-6-20250930").outputCostPerM).toBe(15);

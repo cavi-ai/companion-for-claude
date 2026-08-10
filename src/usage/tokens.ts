@@ -16,9 +16,10 @@ export interface ModelLimits {
   outputCostPerM: number;
 }
 
-// Approximate public values (verified against Anthropic docs 2026-07-05);
+// Approximate public values (verified against Anthropic docs 2026-08-09);
 // a custom/unknown model falls back to DEFAULT_LIMITS.
 const LIMITS: Record<string, ModelLimits> = {
+  "claude-opus-5": { contextWindow: 1_000_000, maxOutput: 128_000, inputCostPerM: 5, outputCostPerM: 25 },
   "claude-opus-4-8": { contextWindow: 1_000_000, maxOutput: 128_000, inputCostPerM: 5, outputCostPerM: 25 },
   "claude-sonnet-5": { contextWindow: 1_000_000, maxOutput: 128_000, inputCostPerM: 3, outputCostPerM: 15 },
   "claude-sonnet-4-6": { contextWindow: 1_000_000, maxOutput: 128_000, inputCostPerM: 3, outputCostPerM: 15 },

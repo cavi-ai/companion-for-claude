@@ -16,6 +16,9 @@ describe("resolveModelId", () => {
 });
 
 describe("modelLabel", () => {
+  it("offers the current Opus 5 API model", () => {
+    expect(CLAUDE_MODELS).toContainEqual(expect.objectContaining({ id: "claude-opus-5", label: "Claude Opus 5" }));
+  });
   it("returns the friendly label for known ids", () => {
     expect(modelLabel("claude-sonnet-5")).toBe("Claude Sonnet 5");
   });

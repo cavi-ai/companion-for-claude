@@ -69,7 +69,10 @@ export function shapeRequest(
 
   // ---- effort ----
   if (caps.effort) {
-    const eff = clampEffort(caps, controls.effort);
+    let eff = clampEffort(caps, controls.effort);
+    if (!controls.thinking && caps.maxEffortWithoutThinking && (eff === "xhigh" || eff === "max")) {
+      eff = caps.maxEffortWithoutThinking;
+    }
     if (eff) shape.outputConfig = { effort: eff };
   }
 

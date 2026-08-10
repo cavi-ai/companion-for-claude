@@ -3,10 +3,12 @@
 // would 400 on the active model is simply hidden instead of erroring.
 //
 // Grounded in the Anthropic Messages API behavior (verified against the
-// claude-api skill, 2026-06):
-//   - Opus 4.8 / 4.7: `temperature`/`top_p`/`top_k` removed (400);
+// Anthropic Platform docs, 2026-08-09):
+//   - Opus 5 / 4.8 / 4.7 and Sonnet 5: non-default sampling parameters
+//     (`temperature`/`top_p`/`top_k`) return 400;
 //     `thinking:{type:"enabled",budget_tokens}` removed (400). Thinking is
 //     adaptive-only; `effort` (low|medium|high|xhigh|max) is supported.
+//   - Opus 5 also returns 400 when thinking is disabled with xhigh/max effort.
 //   - Opus 4.6 / 4.5, Sonnet 4.6: adaptive thinking + `effort`. (Opus tier also
 //     allows effort "max"/"xhigh".) `temperature` still accepted on these.
 //   - Sonnet 4.5 and older: classic `temperature`; thinking via
@@ -18,7 +20,7 @@
 export type ThinkingMode = "adaptive" | "budget" | "none";
 
 export interface ModelCapabilities {
-  /** `temperature` accepted by this model (removed on Opus 4.7/4.8). */
+  /** `temperature` accepted by this model. */
   temperature: boolean;
   /** How thinking is requested: adaptive (4.6+), budget_tokens (older), or unsupported. */
   thinking: ThinkingMode;
@@ -26,6 +28,8 @@ export interface ModelCapabilities {
   effort: boolean;
   /** `effort:"max"`/`"xhigh"` accepted (Opus tier only). */
   effortMax: boolean;
+  /** Highest effort accepted while adaptive thinking is explicitly disabled. */
+  maxEffortWithoutThinking?: "high";
 }
 
 const CONSERVATIVE: ModelCapabilities = { temperature: true, thinking: "none", effort: false, effortMax: false };
@@ -38,6 +42,10 @@ function family(modelId: string): string {
 export function capabilitiesFor(modelId: string): ModelCapabilities {
   const f = family(modelId);
 
+  // Opus 5 — full effort requires thinking at xhigh/max.
+  if (f === "claude-opus-5") {
+    return { temperature: false, thinking: "adaptive", effort: true, effortMax: true, maxEffortWithoutThinking: "high" };
+  }
   // Opus 4.7 / 4.8 — no sampling params, adaptive thinking, full effort incl. max.
   if (f === "claude-opus-4-8" || f === "claude-opus-4-7") {
     return { temperature: false, thinking: "adaptive", effort: true, effortMax: true };
@@ -46,9 +54,18 @@ export function capabilitiesFor(modelId: string): ModelCapabilities {
   if (f === "claude-opus-4-6" || f === "claude-opus-4-5") {
     return { temperature: true, thinking: "adaptive", effort: true, effortMax: true };
   }
-  // Sonnet 5 / 4.6 — adaptive thinking + effort (no "max": Opus-tier only).
-  if (f === "claude-sonnet-5" || f === "claude-sonnet-4-6") {
+  // Sonnet 5 — sampling params removed; adaptive thinking + effort.
+  if (f === "claude-sonnet-5") {
+    return { temperature: false, thinking: "adaptive", effort: true, effortMax: false };
+  }
+  // Sonnet 4.6 — adaptive thinking + effort (no "max": Opus-tier only).
+  if (f === "claude-sonnet-4-6") {
     return { temperature: true, thinking: "adaptive", effort: true, effortMax: false };
+  }
+  // Fable/Mythos always reason server-side; their sampling controls are also
+  // rejected. Preserve the existing no-manual-thinking control shape here.
+  if (f === "claude-fable-5" || f === "claude-mythos-5" || f === "claude-mythos-preview") {
+    return { ...CONSERVATIVE, temperature: false };
   }
   // Haiku 4.5 — adaptive thinking, no effort.
   if (f === "claude-haiku-4-5") {

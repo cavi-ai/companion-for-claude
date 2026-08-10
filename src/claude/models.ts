@@ -5,9 +5,14 @@ import type { ClaudeModel } from "../types";
 // Anthropic Messages API model identifiers.
 export const CLAUDE_MODELS: ClaudeModel[] = [
   {
+    id: "claude-opus-5",
+    label: "Claude Opus 5",
+    hint: "Most capable — deep reasoning and agentic work",
+  },
+  {
     id: "claude-opus-4-8",
     label: "Claude Opus 4.8",
-    hint: "Most capable — deep reasoning, best artifacts",
+    hint: "Previous Opus generation — deep reasoning, best artifacts",
   },
   {
     id: "claude-sonnet-5",

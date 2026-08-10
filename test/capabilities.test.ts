@@ -11,6 +11,13 @@ describe("capabilitiesFor", () => {
       expect(c.effortMax).toBe(true);
     }
   });
+  it("Opus 5 — no temperature, adaptive thinking, effort incl. max", () => {
+    const c = capabilitiesFor("claude-opus-5");
+    expect(c.temperature).toBe(false);
+    expect(c.thinking).toBe("adaptive");
+    expect(c.effort).toBe(true);
+    expect(c.effortMax).toBe(true);
+  });
   it("Opus 4.6 / 4.5 — temperature ok, adaptive thinking, effort incl. max", () => {
     for (const id of ["claude-opus-4-6", "claude-opus-4-5"]) {
       const c = capabilitiesFor(id);
@@ -19,11 +26,19 @@ describe("capabilitiesFor", () => {
       expect(c.effortMax).toBe(true);
     }
   });
-  it("Sonnet 4.6 — adaptive thinking + effort, no max", () => {
-    const c = capabilitiesFor("claude-sonnet-4-6");
-    expect(c.thinking).toBe("adaptive");
-    expect(c.effort).toBe(true);
-    expect(c.effortMax).toBe(false);
+  it("Sonnet 5 drops temperature while Sonnet 4.6 still accepts it", () => {
+    expect(capabilitiesFor("claude-sonnet-5")).toMatchObject({
+      temperature: false,
+      thinking: "adaptive",
+      effort: true,
+      effortMax: false,
+    });
+    expect(capabilitiesFor("claude-sonnet-4-6").temperature).toBe(true);
+  });
+  it("Fable and Mythos reject temperature", () => {
+    for (const id of ["claude-fable-5", "claude-mythos-5", "claude-mythos-preview"]) {
+      expect(capabilitiesFor(id).temperature).toBe(false);
+    }
   });
   it("Haiku 4.5 — adaptive thinking, no effort (incl. dated snapshot)", () => {
     for (const id of ["claude-haiku-4-5", "claude-haiku-4-5-20251001"]) {

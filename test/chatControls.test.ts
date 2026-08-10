@@ -43,6 +43,10 @@ describe("shapeRequest — effort", () => {
     // sonnet has no "max" → clamps to high
     expect(shapeRequest(ctl({ model: "claude-sonnet-4-6", effort: "max" }), 4096).outputConfig).toEqual({ effort: "high" });
   });
+  it("clamps Opus 5 to high when thinking is disabled", () => {
+    expect(shapeRequest(ctl({ model: "claude-opus-5", thinking: false, effort: "max" }), 4096).outputConfig).toEqual({ effort: "high" });
+    expect(shapeRequest(ctl({ model: "claude-opus-5", thinking: true, effort: "max" }), 4096).outputConfig).toEqual({ effort: "max" });
+  });
   it("omits effort for models that don't support it", () => {
     expect(shapeRequest(ctl({ model: "claude-haiku-4-5", effort: "high" }), 4096).outputConfig).toBeUndefined();
   });
@@ -54,6 +58,9 @@ describe("shapeRequest — temperature gating", () => {
   });
   it("drops temperature on models that reject it (Opus 4.8)", () => {
     expect(shapeRequest(ctl({ model: "claude-opus-4-8", temperature: 0.3, thinking: false }), 4096).temperature).toBeUndefined();
+  });
+  it("drops temperature on Sonnet 5", () => {
+    expect(shapeRequest(ctl({ model: "claude-sonnet-5", temperature: 0.3, thinking: false }), 4096).temperature).toBeUndefined();
   });
   it("drops temperature when thinking is on", () => {
     expect(shapeRequest(ctl({ model: "claude-sonnet-4-6", temperature: 0.3, thinking: true }), 4096).temperature).toBeUndefined();
