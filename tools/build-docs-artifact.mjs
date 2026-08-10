@@ -23,12 +23,14 @@ const LAYOUT = [
   {
     title: "Guides",
     pages: [
-      { path: "guides/agent-mode.md", source: "agent-mode" },
+      // agent-bridge and vault-context-and-review are the page names the site
+      // already publishes for this product; renaming them breaks its routes.
+      { path: "guides/agent-bridge.md", source: "claude-code-bridge" },
+      { path: "guides/vault-context-and-review.md", source: "agent-mode" },
       { path: "guides/artifacts.md", source: "artifacts" },
       { path: "guides/research-workbench.md", source: "research-workbench" },
       { path: "guides/local-models.md", source: "local-models" },
       { path: "guides/auth.md", source: "auth" },
-      { path: "guides/claude-code-bridge.md", source: "claude-code-bridge" },
       { path: "guides/architecture.md", source: "architecture" },
       { path: "guides/faq.md", source: "faq" },
     ],
