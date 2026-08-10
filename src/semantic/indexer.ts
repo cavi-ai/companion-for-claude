@@ -40,12 +40,20 @@ export interface BuildResult {
 
 export class SemanticIndexer {
   private store: SemanticStore | null = null;
+  private mutationChain: Promise<void> = Promise.resolve();
 
   constructor(private deps: IndexerDeps) {}
 
   /** Drop the in-memory store (e.g. after the embedding model changes). */
   invalidate(): void {
     this.store = null;
+  }
+
+  /** Store mutations share one persisted blob and therefore must commit in order. */
+  private runMutation<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.mutationChain.catch(() => {}).then(operation);
+    this.mutationChain = result.then(() => undefined, () => undefined);
+    return result;
   }
 
   private async ensureLoaded(): Promise<SemanticStore> {
@@ -62,6 +70,10 @@ export class SemanticIndexer {
    * unchanged unless `force`. Prunes notes that left the vault, then persists.
    */
   async build(opts: { force?: boolean; onProgress?: (done: number, total: number) => void } = {}): Promise<BuildResult> {
+    return this.runMutation(() => this.buildUnlocked(opts));
+  }
+
+  private async buildUnlocked(opts: { force?: boolean; onProgress?: (done: number, total: number) => void }): Promise<BuildResult> {
     const store = await this.ensureLoaded();
     const files = [...this.deps.listMarkdown(), ...(this.deps.listPdf?.() ?? [])];
     const live = new Set(files.map((f) => f.path));
@@ -104,6 +116,10 @@ export class SemanticIndexer {
 
   /** Re-embed a single note (on modify). No-op if semantic store can't load. */
   async updateNote(path: string, mtime: number): Promise<void> {
+    return this.runMutation(() => this.updateNoteUnlocked(path, mtime));
+  }
+
+  private async updateNoteUnlocked(path: string, mtime: number): Promise<void> {
     const store = await this.ensureLoaded();
     const prepared = await this.prepare(path);
     if (!prepared) return;
@@ -113,17 +129,21 @@ export class SemanticIndexer {
   }
 
   async removeNote(path: string): Promise<void> {
-    const store = await this.ensureLoaded();
-    if (!store.hasNote(path)) return;
-    store.removeNote(path);
-    await this.deps.save(store.toJSON());
+    return this.runMutation(async () => {
+      const store = await this.ensureLoaded();
+      if (!store.hasNote(path)) return;
+      store.removeNote(path);
+      await this.deps.save(store.toJSON());
+    });
   }
 
   async renameNote(oldPath: string, newPath: string): Promise<void> {
-    const store = await this.ensureLoaded();
-    if (!store.hasNote(oldPath)) return;
-    store.renameNote(oldPath, newPath);
-    await this.deps.save(store.toJSON());
+    return this.runMutation(async () => {
+      const store = await this.ensureLoaded();
+      if (!store.hasNote(oldPath)) return;
+      store.renameNote(oldPath, newPath);
+      await this.deps.save(store.toJSON());
+    });
   }
 
   /** Semantic search: embed the query, return best chunk per note (top k). */

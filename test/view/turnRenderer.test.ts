@@ -111,6 +111,25 @@ describe("TurnRenderer", () => {
     expect(h.c.rendered.at(-1)).not.toBe("completelate");
   });
 
+  it("observes a rejected streaming frame and still completes the authoritative render", async () => {
+    const h = host();
+    let attempts = 0;
+    h.renderMarkdownInto = async (_el, md) => {
+      attempts++;
+      if (attempts === 1) throw new Error("transient frame failure");
+      h.c.rendered.push(md);
+    };
+    const r = new TurnRenderer(h, fakeEl(), fakeEl(), false);
+
+    r.onText("partial");
+    pumpFrames();
+    await Promise.resolve();
+    await r.finalize("complete");
+
+    expect(attempts).toBe(2);
+    expect(h.c.rendered).toEqual(["complete"]);
+  });
+
   it("forwards usage and truncation to the host", () => {
     const h = host();
     const r = new TurnRenderer(h, fakeEl(), fakeEl(), false);

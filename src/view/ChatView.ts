@@ -117,6 +117,7 @@ export class ChatView extends ItemView {
   private slashMenu!: SlashMenu;
   /** User-defined prompt templates (notes in the templates folder). */
   private templateCommands: SlashCommand[] = [];
+  private templateReloadGeneration = 0;
   /** Per-turn overrides from a prompt template; reset at the start of each run. */
   private turnModelOverride: string | null = null;
   private turnContextOverride: Partial<ContextToggles> | null = null;
@@ -434,7 +435,12 @@ export class ChatView extends ItemView {
     bubble.createDiv({ cls: "cc-role", text: m.role === "user" ? "You" : "Claude" });
     const body = bubble.createDiv({ cls: "cc-body" });
     if (m.role === "assistant" && m.toolTrace && m.toolTrace.length > 0) this.renderTraceChips(bubble, body, m.toolTrace);
-    void this.renderMarkdownInto(body, m.display ?? m.content);
+    const rendered = m.display ?? m.content;
+    void this.renderMarkdownInto(body, rendered).catch(() => {
+      // A broken Markdown extension must not make persisted conversation text
+      // disappear or reject the fire-and-forget conversation replay.
+      body.setText(rendered);
+    });
     if (m.role === "assistant" && m.content.trim().length > 0) this.addAssistantActions(bubble, m.content);
   }
 
@@ -523,6 +529,7 @@ export class ChatView extends ItemView {
   }
 
   override async onClose(): Promise<void> {
+    this.templateReloadGeneration++;
     this.disposeChrome?.(false);
     this.disposeChrome = null;
     this.abort?.abort();
@@ -1247,7 +1254,10 @@ export class ChatView extends ItemView {
 
   /** Re-read the templates folder and rebuild the slash catalog (templates last). */
   private async reloadTemplates(): Promise<void> {
-    this.templateCommands = (await this.plugin.promptTemplates()).map(templateSlashCommand);
+    const generation = ++this.templateReloadGeneration;
+    const templates = await this.plugin.promptTemplates();
+    if (generation !== this.templateReloadGeneration) return;
+    this.templateCommands = templates.map(templateSlashCommand);
     this.slashMenu.setCommands([...SLASH_COMMANDS, ...workflowSlashCommands(WORKFLOWS), ...this.templateCommands]);
     this.syncSlashMenu();
   }
@@ -1559,6 +1569,8 @@ export class ChatView extends ItemView {
             void renderer.finalize(full).then(() => {
               this.finishAssistant(full, bubble);
               resolve(null);
+            }).catch((error: unknown) => {
+              resolve({ message: error instanceof Error ? error.message : String(error) });
             });
           },
         },
@@ -1568,6 +1580,12 @@ export class ChatView extends ItemView {
           settled = true;
           resolve(null);
         }
+      }).catch((error: unknown) => {
+        if (settled) return;
+        settled = true;
+        const status = (error as { status?: number } | null)?.status;
+        const message = error instanceof Error ? error.message : String(error);
+        resolve(status !== undefined ? { message, status } : { message });
       });
     });
   }
@@ -1644,7 +1662,13 @@ export class ChatView extends ItemView {
     }
 
     if (result.error) this.annotateAgentNotice(bubble, `Turn ended early: ${result.error.message}`);
-    await renderer.finalize(result.text);
+    try {
+      await renderer.finalize(result.text);
+    } catch (error) {
+      const status = (error as { status?: number } | null)?.status;
+      const message = error instanceof Error ? error.message : String(error);
+      return { message, ...(status !== undefined ? { status } : {}) };
+    }
     this.finishAssistant(result.text.trim().length > 0 ? result.text : null, bubble, result.trace);
     return null;
   }

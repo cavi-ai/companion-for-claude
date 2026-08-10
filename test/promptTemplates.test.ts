@@ -1,5 +1,8 @@
+import { App } from "obsidian";
 import { describe, it, expect } from "vitest";
+import ClaudeCompanionPlugin from "../src/main";
 import { parseTemplateNote, slugifyTemplateName, substitutePlaceholders } from "../src/templates/promptTemplates";
+import { DEFAULT_SETTINGS } from "../src/types";
 
 describe("slugifyTemplateName", () => {
   it("lowercases, dashes, and strips punctuation", () => {
@@ -76,5 +79,29 @@ describe("substitutePlaceholders", () => {
 
   it("substitutes repeated occurrences", () => {
     expect(substitutePlaceholders("{selection} vs {selection}", { selection: "x" })).toBe("x vs x");
+  });
+});
+
+describe("prompt template vault loading", () => {
+  it("keeps readable templates available when one sibling cannot be read", async () => {
+    const app = new App();
+    const broken = app.vault.seed("Claude/Templates/Broken.md", "unreadable");
+    app.vault.seed("Claude/Templates/Weekly.md", "Summarize the week.", {
+      frontmatter: { name: "Weekly review" },
+    });
+    const read = app.vault.cachedRead.bind(app.vault);
+    app.vault.cachedRead = async (file) => {
+      if (file.path === broken.path) throw new Error("permission denied");
+      return read(file);
+    };
+    const plugin = Object.create(ClaudeCompanionPlugin.prototype) as ClaudeCompanionPlugin;
+    Object.assign(plugin as unknown as Record<string, unknown>, {
+      app,
+      settings: { ...structuredClone(DEFAULT_SETTINGS), templatesFolder: "Claude/Templates" },
+    });
+
+    await expect(plugin.promptTemplates()).resolves.toEqual([
+      expect.objectContaining({ name: "weekly-review", prompt: "Summarize the week." }),
+    ]);
   });
 });

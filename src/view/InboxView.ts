@@ -37,6 +37,7 @@ function safeActivityDetail(value: string): string {
 export class InboxView extends ItemView {
   private disposeChrome: ((remove?: boolean) => void) | null = null;
   private enriching = new Set<string>();
+  private linking = new Set<string>();
   private readonly refresh: InboxRefreshController;
   /** A bulk enrichment or link review is active; do not start another batch. */
   private batchOperation: "enrich" | "link" | null = null;
@@ -285,12 +286,28 @@ export class InboxView extends ItemView {
         cls: "cc-inbox-enrich",
         attr: { "aria-label": `Review link suggestions for ${item.basename}` },
       });
-      setIcon(btn, "link");
-      btn.disabled = this.batchOperation !== null;
-      btn.addEventListener("click", () => {
-        const f = this.app.vault.getAbstractFileByPath(item.path);
-        if (f instanceof TFile) void this.plugin.reviewLinkSuggestions(f).then(() => this.render());
-      });
+      setIcon(btn, this.linking.has(item.path) ? "loader" : "link");
+      btn.disabled = this.batchOperation !== null || this.linking.has(item.path);
+      btn.addEventListener("click", () => void this.reviewOneLinks(item.path, item.basename));
+    }
+  }
+
+  private async reviewOneLinks(path: string, basename: string): Promise<void> {
+    if (this.batchOperation !== null || this.linking.has(path)) return;
+    const file = this.app.vault.getAbstractFileByPath(path);
+    if (!(file instanceof TFile)) return;
+    this.linking.add(path);
+    this.setOperationFeedback("running", `Reviewing links for ${basename}…`);
+    try {
+      await this.renderSafely();
+      await this.plugin.reviewLinkSuggestions(file);
+      this.setOperationFeedback("success", `Reviewed links for ${basename}.`);
+    } catch (error) {
+      const detail = safeActivityDetail(error instanceof Error ? error.message : String(error));
+      this.setOperationFeedback("error", `Couldn't review links for ${basename} — ${detail}`);
+    } finally {
+      this.linking.delete(path);
+      await this.renderSafely();
     }
   }
 

@@ -31,6 +31,32 @@ function makeDeps(files: Record<string, string>) {
 }
 
 describe("SemanticIndexer", () => {
+  it("does not prune a note incrementally indexed while a full rebuild is in flight", async () => {
+    const ctx = makeDeps({ "existing.md": "cat" });
+    let releaseExisting!: () => void;
+    const existingBlocked = new Promise<void>((resolve) => { releaseExisting = resolve; });
+    let existingStarted!: () => void;
+    const started = new Promise<void>((resolve) => { existingStarted = resolve; });
+    ctx.deps.embed = async (input) => {
+      if (input.some((text) => text.includes("cat"))) {
+        existingStarted();
+        await existingBlocked;
+      }
+      return input.map(() => [1, 0, 0, 0, 0, 0]);
+    };
+    const ix = new SemanticIndexer(ctx.deps);
+
+    const rebuilding = ix.build({ force: true });
+    await started;
+    ctx.files["new.md"] = "dog";
+    const updating = ix.updateNote("new.md", 2);
+    await Promise.resolve();
+    releaseExisting();
+    await Promise.all([rebuilding, updating]);
+
+    expect((await ix.stats()).notes).toBe(2);
+  });
+
   it("isolates per-file embedding failures and reports them for recovery", async () => {
     const ctx = makeDeps({ "broken.md": "cat", "healthy.md": "fish" });
     ctx.deps.embed = async (input) => {

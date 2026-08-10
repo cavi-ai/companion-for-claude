@@ -19,7 +19,9 @@ interface Connected {
 
 export class ExternalMcpManager {
   private connected = new Map<string, Connected>();
+  private inFlight = new Map<string, { generation: number; promise: Promise<Connected | null> }>();
   private errors = new Map<string, string>();
+  private generation = 0;
 
   constructor(private configs: () => McpServerConfig[]) {}
 
@@ -53,15 +55,33 @@ export class ExternalMcpManager {
     const key = config.name.trim();
     const cached = this.connected.get(key);
     if (cached) return cached;
-    try {
-      const conn = await this.connect(config);
-      this.connected.set(key, conn);
-      this.errors.delete(key);
-      return conn;
-    } catch (e) {
-      this.errors.set(key, e instanceof Error ? e.message : String(e));
-      return null;
-    }
+    const existing = this.inFlight.get(key);
+    if (existing) return existing.promise;
+
+    const generation = this.generation;
+    const entry: { generation: number; promise: Promise<Connected | null> } = {
+      generation,
+      promise: Promise.resolve(null),
+    };
+    entry.promise = (async () => {
+      try {
+        const conn = await this.connect(config);
+        if (generation !== this.generation) {
+          await conn.session.close().catch(() => {});
+          return null;
+        }
+        this.connected.set(key, conn);
+        this.errors.delete(key);
+        return conn;
+      } catch (e) {
+        if (generation === this.generation) this.errors.set(key, e instanceof Error ? e.message : String(e));
+        return null;
+      } finally {
+        if (this.inFlight.get(key) === entry) this.inFlight.delete(key);
+      }
+    })();
+    this.inFlight.set(key, entry);
+    return entry.promise;
   }
 
   /** Every enabled server's tools (connecting lazily); unreachable servers are skipped. */
@@ -91,12 +111,19 @@ export class ExternalMcpManager {
 
   /** One-shot settings test: connect (fresh) and report the tool count. */
   async test(config: McpServerConfig): Promise<{ ok: boolean; message: string }> {
+    // A manual test is an explicit fresh connection and supersedes any lazy
+    // discovery still in flight for the previous configuration.
+    const generation = ++this.generation;
     try {
       const key = config.name.trim();
       const existing = this.connected.get(key);
       if (existing) await existing.session.close().catch(() => {});
       this.connected.delete(key);
       const conn = await this.connect(config);
+      if (generation !== this.generation) {
+        await conn.session.close().catch(() => {});
+        return { ok: false, message: "Connection test was cancelled." };
+      }
       this.connected.set(key, conn);
       this.errors.delete(key);
       return { ok: true, message: `Connected — ${conn.tools.length} tool${conn.tools.length === 1 ? "" : "s"} exposed.` };
@@ -109,7 +136,14 @@ export class ExternalMcpManager {
 
   /** Drop every session (settings changed servers / plugin unload). */
   async close(): Promise<void> {
-    for (const conn of this.connected.values()) await conn.session.close().catch(() => {});
+    this.generation++;
+    const connected = Array.from(this.connected.values());
+    const pending = Array.from(this.inFlight.values(), ({ promise }) => promise);
     this.connected.clear();
+    this.inFlight.clear();
+    await Promise.all([
+      ...connected.map((conn) => conn.session.close().catch(() => {})),
+      ...pending,
+    ]);
   }
 }

@@ -91,7 +91,10 @@ export class TurnRenderer {
       const now = performance.now();
       if (now - this.lastMd < MD_THROTTLE_MS) return; // skip; next delta reschedules
       this.lastMd = now;
-      void this.host.renderMarkdownInto(this.body, this.buffer);
+      // Streaming frames are opportunistic. The authoritative final render
+      // below retries the complete buffer, so observe a transient frame
+      // rejection without turning it into an unhandled promise.
+      void this.host.renderMarkdownInto(this.body, this.buffer).catch(() => {});
     } else if (!this.artifactPainted) {
       this.artifactPainted = true; // paint the "building" chip once; the fence is streaming
       this.host.renderStreamingArtifactInto(this.body, this.buffer);

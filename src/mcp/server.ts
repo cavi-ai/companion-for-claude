@@ -27,6 +27,8 @@ export type LogFn = (level: "info" | "error", message: string) => void;
  */
 export class McpHttpServer {
   private server: Server | null = null;
+  private starting: Promise<void> | null = null;
+  private stopRequested = false;
   private activeRequests = 0;
   private handledRequests = 0;
 
@@ -56,10 +58,12 @@ export class McpHttpServer {
 
   async start(): Promise<void> {
     if (this.server) return;
+    if (this.starting) return this.starting;
     if (!this.config.token.trim()) {
       throw new Error("MCP server requires a non-empty bearer token.");
     }
-    await new Promise<void>((resolve, reject) => {
+    this.stopRequested = false;
+    const starting = new Promise<void>((resolve, reject) => {
       const http = (window as { require: (m: string) => typeof import("http") }).require("http");
       const server = http.createServer((req, res) => void this.onRequest(req, res));
       server.on("error", (e) => {
@@ -68,18 +72,37 @@ export class McpHttpServer {
       });
       // Bind to loopback only — never expose the vault on the network.
       server.listen(this.config.port, "127.0.0.1", () => {
+        if (this.stopRequested) {
+          server.close(() => {
+            this.log("info", "MCP server stopped");
+            resolve();
+          });
+          return;
+        }
         this.server = server;
         this.log("info", `MCP server listening on http://127.0.0.1:${this.config.port}/mcp`);
         resolve();
       });
     });
+    this.starting = starting;
+    try {
+      await starting;
+    } finally {
+      if (this.starting === starting) this.starting = null;
+    }
   }
 
   async stop(): Promise<void> {
+    this.stopRequested = true;
+    if (this.starting) await this.starting.catch(() => {});
     const s = this.server;
-    if (!s) return;
+    if (!s) {
+      this.stopRequested = false;
+      return;
+    }
     this.server = null;
     await new Promise<void>((resolve) => s.close(() => resolve()));
+    this.stopRequested = false;
     this.log("info", "MCP server stopped");
   }
 

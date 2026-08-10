@@ -163,6 +163,8 @@ export default class ClaudeCompanionPlugin extends Plugin {
   private convState: ConversationState = emptyState();
   private convSeq = 0;
   private researchDeskPreferences: ResearchDeskPreferenceMap = {};
+  /** data.json contains several domains; serialize snapshots so an older write cannot land last. */
+  private persistChain: Promise<void> = Promise.resolve();
   private _router: ProviderRouter | null = null;
   private _intelligenceCoordinator: IntelligenceCoordinator | null = null;
   private _discoveryCoordinator: DiscoveryCoordinator | null = null;
@@ -176,6 +178,9 @@ export default class ClaudeCompanionPlugin extends Plugin {
   private agentVaultTools: VaultTools | null = null;
   /** Serializes overlapping syncMcpServer() calls (settings fire it per keystroke). */
   private mcpSyncChain: Promise<void> = Promise.resolve();
+  /** Invalidates an MCP bridge that finishes starting after plugin shutdown. */
+  private mcpLifecycleGeneration = 0;
+  private mcpLifecycleEnded = false;
   /** Signature of the currently-running MCP server, to skip needless restarts. */
   private mcpSignature: string | null = null;
   /** Lazily-built semantic index (local embeddings); null until first use. */
@@ -215,6 +220,8 @@ export default class ClaudeCompanionPlugin extends Plugin {
   private researchRefreshChanges: Array<{ path: string; oldPath?: string }> = [];
 
   override async onload(): Promise<void> {
+    this.mcpLifecycleGeneration = (this.mcpLifecycleGeneration ?? 0) + 1;
+    this.mcpLifecycleEnded = false;
     this.utilityLifecycleGeneration = (this.utilityLifecycleGeneration ?? 0) + 1;
     this.utilityLifecycleEnded = false;
     this.mobileUtilityFallbackApproval = undefined;
@@ -1523,6 +1530,8 @@ export default class ClaudeCompanionPlugin extends Plugin {
     this._viewIntelligenceCoordinators?.clear();
     for (const coordinator of this._viewDiscoveryCoordinators ?? []) { coordinator.cancel(); coordinator.clearCache(); }
     this._viewDiscoveryCoordinators?.clear();
+    this.mcpLifecycleEnded = true;
+    this.mcpLifecycleGeneration = (this.mcpLifecycleGeneration ?? 0) + 1;
     void this.mcpServer?.stop();
     this.mcpServer = null;
     void this._externalMcp?.close();
@@ -1717,13 +1726,15 @@ export default class ClaudeCompanionPlugin extends Plugin {
 
   /** Write settings + conversation history back to data.json. */
   private async persist(): Promise<void> {
-    const data: PersistedData = {
+    const data = JSON.parse(JSON.stringify({
       settings: this.settings,
       conversations: this.convState.conversations,
       activeConversationId: this.convState.activeId,
       researchDeskPreferences: this.researchDeskPreferences,
-    };
-    await this.saveData(data);
+    })) as PersistedData;
+    const result = (this.persistChain ?? Promise.resolve()).catch(() => {}).then(() => this.saveData(data));
+    this.persistChain = result.catch(() => {});
+    await result;
   }
 
   async saveSettings(): Promise<void> {
@@ -1847,6 +1858,7 @@ export default class ClaudeCompanionPlugin extends Plugin {
   }
 
   private async applyMcpServer(): Promise<void> {
+    const lifecycleGeneration = this.mcpLifecycleGeneration ?? 0;
     const desired = this.mcpDesiredSignature();
     // Already running with the same config → nothing to do (avoids churning the
     // port on unrelated settings changes).
@@ -1885,6 +1897,14 @@ export default class ClaudeCompanionPlugin extends Plugin {
     );
     try {
       await server.start();
+      if (
+        this.mcpLifecycleEnded
+        || (this.mcpLifecycleGeneration ?? 0) !== lifecycleGeneration
+        || this.mcpDesiredSignature() !== desired
+      ) {
+        await server.stop();
+        return;
+      }
       this.mcpServer = server;
       this.mcpSignature = desired;
     } catch (e) {
@@ -2554,10 +2574,15 @@ export default class ClaudeCompanionPlugin extends Plugin {
     const out: PromptTemplate[] = [];
     for (const f of this.app.vault.getMarkdownFiles()) {
       if (!f.path.startsWith(prefix)) continue;
-      const fm = (this.app.metadataCache.getFileCache(f)?.frontmatter as Record<string, unknown> | undefined) ?? {};
-      const body = stripFrontmatter(await this.app.vault.cachedRead(f));
-      const template = parseTemplateNote(f.path, f.basename, fm, body);
-      if (template) out.push(template);
+      try {
+        const fm = (this.app.metadataCache.getFileCache(f)?.frontmatter as Record<string, unknown> | undefined) ?? {};
+        const body = stripFrontmatter(await this.app.vault.cachedRead(f));
+        const template = parseTemplateNote(f.path, f.basename, fm, body);
+        if (template) out.push(template);
+      } catch {
+        // A transiently unreadable or vanished template must not remove every
+        // other slash command from the catalog.
+      }
     }
     out.sort((a, b) => a.name.localeCompare(b.name));
     return out;

@@ -287,6 +287,35 @@ describe("Inbox batch link review", () => {
     getLastOpenedModal()?.close();
   });
 
+  it("catches a regression that leaves an individual link-review failure unhandled and unactionable", async () => {
+    const { plugin, view } = createHarness();
+    Object.assign(plugin, {
+      reviewLinkSuggestions: async () => { throw new Error("model unavailable"); },
+    });
+    await view.render();
+    await settle();
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => { unhandled.push(reason); };
+    process.on("unhandledRejection", onUnhandled);
+
+    try {
+      const individual = (view.contentEl as unknown as FakeElement)
+        .querySelectorAll(".cc-inbox-enrich")
+        .find((button) => button.getAttribute("aria-label") === "Review link suggestions for alpha");
+      individual?.dispatchEvent({ type: "click" });
+      await settle(48);
+
+      expect(unhandled).toEqual([]);
+      expect(text(view.contentEl as unknown as FakeElement)).toContain("Couldn't review links for alpha — model unavailable");
+      const retry = (view.contentEl as unknown as FakeElement)
+        .querySelectorAll(".cc-inbox-enrich")
+        .find((button) => button.getAttribute("aria-label") === "Review link suggestions for alpha");
+      expect(retry?.disabled).toBe(false);
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
+  });
+
   it("catches a regression that renders once for every vault event through InboxView", async () => {
     vi.useFakeTimers();
     const { app, view } = createHarness();
