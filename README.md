@@ -286,7 +286,7 @@ Browse* → search **Companion for Claude** → Install → Enable, or use
 For active development use `pnpm run dev` (esbuild watch) and symlink the plugin
 folder into a test vault.
 
-## Agent bridge (MCP server, desktop)
+## Agent bridge (MCP server)
 
 Companion can optionally expose your vault as a local **MCP server**, so **Claude Code** and
 **Claude Desktop** work against the *same* knowledge base you chat with here.
@@ -382,7 +382,7 @@ You can author these by hand too:
 ```
 ````
 
-## Development & testing
+## Development and testing
 
 The Obsidian-free logic (SSE parsing, artifact extraction, search scoring) is
 factored into pure modules so it can be unit-tested without a running app.

@@ -50,16 +50,35 @@ check(Array.isArray(navigation.sections) && navigation.sections.length > 0, "nav
 const targets = (navigation.sections ?? []).flatMap((section) => (section.pages ?? []).map((page) => page.path));
 for (const target of targets) check(files.includes(target), `navigation target missing from the artifact: ${target}`);
 
-// Relative links stay inside the artifact root.
+// GitHub-style heading slug, which is what the renderer anchors on.
+const slugOf = (heading) => heading
+  .trim()
+  .toLowerCase()
+  .replace(/[^\w\s-]/g, "")
+  .replace(/\s+/g, "-");
+
+// Heading anchors per page, so a link to #section can be resolved.
+const anchors = new Map();
+for (const file of files.filter((name) => name.endsWith(".md"))) {
+  const body = await readFile(path.join(root, file), "utf8");
+  anchors.set(file, new Set([...body.matchAll(/^#{1,6}\s+(.+?)\s*$/gm)].map(([, heading]) => slugOf(heading))));
+}
+
+// Relative links stay inside the artifact root, resolve to a shipped page, and
+// any fragment resolves to a heading on that page.
 for (const file of files.filter((name) => name.endsWith(".md"))) {
   const body = await readFile(path.join(root, file), "utf8");
   for (const [, target] of body.matchAll(/!?\[[^\]]*\]\(([^)\s]+)\)/g)) {
-    if (/^(https?:|mailto:|#|obsidian:)/.test(target)) continue;
-    const [pathPart] = target.split("#");
-    if (pathPart === "") continue;
-    const resolved = path.resolve(path.dirname(path.join(root, file)), pathPart);
-    check(resolved.startsWith(path.resolve(root)), `${file} links outside the artifact: ${target}`);
-    check(files.includes(path.relative(root, resolved)), `${file} links to a missing page: ${target}`);
+    if (/^(https?:|mailto:|obsidian:)/.test(target)) continue;
+    const [pathPart, fragment] = target.split("#");
+    const page = pathPart === "" ? file : path.relative(root, path.resolve(path.dirname(path.join(root, file)), pathPart));
+    if (pathPart !== "") {
+      check(!page.startsWith(".."), `${file} links outside the artifact: ${target}`);
+      check(files.includes(page), `${file} links to a missing page: ${target}`);
+    }
+    if (fragment) {
+      check(anchors.get(page)?.has(fragment) ?? false, `${file} links to a missing heading: ${target}`);
+    }
   }
 }
 
