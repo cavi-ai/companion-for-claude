@@ -1,6 +1,6 @@
 {
   "name": "claude-companion",
-  "version": "0.24.4",
+  "version": "0.24.5",
   "description": "Chat with Claude inside your Obsidian vault, generate beautiful interactive artifacts, and sync them back into your notes.",
   "main": "main.js",
   "type": "module",
@@ -57,12 +57,12 @@
     "esbuild": "0.28.1",
     "eslint": "^10.8.0",
     "eslint-plugin-obsidianmd": "^0.4.1",
-    "globals": "^17.8.0",
+    "globals": "^17.9.0",
     "linkedom": "^0.18.13",
     "obsidian": "^1.13.0",
     "tslib": "^2.6.3",
     "typescript": "npm:@typescript/typescript6@^6.0.2",
-    "typescript-eslint": "^8.65.0",
+    "typescript-eslint": "^8.66.0",
     "vitest": "^4.1.10",
     "yaml": "^2.9.0"
   },

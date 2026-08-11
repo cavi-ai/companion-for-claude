@@ -46,6 +46,7 @@ describe("quickOptionsFor", () => {
       "source-capture",
       "clipper-schemas",
       "embedding-health",
+      "desktop-integrations",
       "all-settings",
     ]);
   });
@@ -56,6 +57,7 @@ describe("quickOptionsFor", () => {
       const options = quickOptionsFor(page, state());
       expect(options.length).toBeGreaterThan(1);
       expect(options.at(-1)?.id).toBe("all-settings");
+      expect(options.slice(-2).map(({ id }) => id)).toEqual(["desktop-integrations", "all-settings"]);
       expect(new Set(options.map(({ id }) => id)).size).toBe(options.length);
     }
   });
@@ -74,6 +76,7 @@ describe("QuickOptionsModal", () => {
       save: vi.fn(),
       run: vi.fn(),
       openAllSettings: vi.fn(),
+      openDesktopIntegrations: vi.fn(),
     };
     const first = new QuickOptionsModal(new App(), "inbox", deps);
     first.onOpen();
@@ -96,6 +99,7 @@ describe("QuickOptionsModal", () => {
       save,
       run: vi.fn(),
       openAllSettings,
+      openDesktopIntegrations: vi.fn(),
     });
     modal.onOpen();
     const root = modal.contentEl as unknown as FakeElement;
@@ -109,5 +113,24 @@ describe("QuickOptionsModal", () => {
     expect(buttons.at(-1)?.textContent).toBe("Open all settings");
     buttons.at(-1)?.dispatchEvent({ type: "click" });
     expect(openAllSettings).toHaveBeenCalledTimes(1);
+  });
+
+  it("closes quick options before opening desktop integrations", () => {
+    const openDesktopIntegrations = vi.fn();
+    const modal = new QuickOptionsModal(new App(), "chat", {
+      snapshot: () => state(),
+      save: vi.fn(),
+      run: vi.fn(),
+      openAllSettings: vi.fn(),
+      openDesktopIntegrations,
+    });
+    const close = vi.spyOn(modal, "close");
+    modal.onOpen();
+    const button = (modal.contentEl as unknown as FakeElement).querySelectorAll("button")
+      .find((candidate) => candidate.textContent === "Desktop integrations");
+    button?.dispatchEvent({ type: "click" });
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(openDesktopIntegrations).toHaveBeenCalledTimes(1);
+    expect(close.mock.invocationCallOrder[0]).toBeLessThan(openDesktopIntegrations.mock.invocationCallOrder[0]!);
   });
 });

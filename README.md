@@ -2,7 +2,8 @@
 
 Chat with Claude inside your [Obsidian](https://obsidian.md) vault — notes as
 context, interactive `claude-html` artifacts, agent mode with reviewable
-writes, and a local MCP bridge so Claude Code works on the same notes. Your
+writes, CLI-first Claude Code workflows, and an optional local MCP bridge for
+Claude Desktop and advanced live-vault tools. Your
 vault stays the single source of truth.
 
 [![CI](https://github.com/cavi-ai/claude-obsidian/actions/workflows/obsidian-plugin-ci.yml/badge.svg)](https://github.com/cavi-ai/claude-obsidian/actions/workflows/obsidian-plugin-ci.yml)
@@ -108,7 +109,7 @@ attribution.
   and builds a native **Obsidian Canvas** — file nodes wired to your real
   notes, labeled edges, labeled **groups** that cluster related nodes,
   auto-layout. A write like any other: gated and confirmed before the .canvas
-  file is created. Also available to Claude Code over the MCP bridge.
+  file is created. Also available to advanced MCP clients.
 - **Bases from your frontmatter** — ask for "a reading tracker" or "a project
   dashboard" and Claude builds a native **Obsidian Base** (.base database
   view) with table, cards, list, or map views, nested and/or/not filters, and
@@ -226,7 +227,7 @@ same vault, same confirm-before-write guardrails, wherever you are.
   own smaller model if you like. Any **OpenAI-compatible endpoint** (LM Studio,
   mlx-lm, vLLM) can serve chat, utility work, or embeddings instead.
 - **Agent bridge** — optionally expose the vault as a local MCP server so Claude
-  Code and Claude Desktop operate on the same notes ([details below](#agent-bridge-mcp-server)).
+  Code and Claude Desktop operate on the same notes ([details below](#desktop-agents-cli-first-mcp-when-needed)).
 - **Cloud sessions (mobile-friendly)** — dispatch a Claude Code **cloud
   session** that works your vault's Git repo and writes replies back as notes
   pulled over HTTPS — the agent path that works from a phone, where the local
@@ -286,13 +287,23 @@ Browse* → search **Companion for Claude** → Install → Enable, or use
 For active development use `pnpm run dev` (esbuild watch) and symlink the plugin
 folder into a test vault.
 
-## Agent bridge (MCP server)
+## Desktop agents: CLI first, MCP when needed
 
-Companion can optionally expose your vault as a local **MCP server**, so **Claude Code** and
-**Claude Desktop** work against the *same* knowledge base you chat with here.
-The bridge is off by default — chat, agent mode, and the build handoff all work
-without it (the handoff uses the official `obsidian` CLI when the bridge is
-disabled).
+Companion, its in-app agent, and ordinary Claude Code workflows do not require
+MCP. From **Options → Desktop integrations** on any Companion page:
+
+- **Set up Claude Code** verifies the `claude` and official `obsidian` CLIs,
+  then can add `cavi-ai/plugins` and install `obsidian-agent@cavi` at user
+  scope after explicit confirmation. Claude Code uses the official Obsidian CLI
+  by default.
+- **Connect Claude Desktop** enables the read-only loopback MCP bridge, backs up
+  and atomically merges Claude Desktop's local configuration, and verifies the
+  bridge. Restart Claude Desktop afterward.
+
+MCP remains optional for Claude Desktop and advanced clients that need
+Companion-specific live research, semantic-search, ontology, or controlled-write
+tools. It is off by default; the build handoff uses the official `obsidian` CLI
+whenever the bridge is disabled.
 
 Enable it in *Settings → Companion for Claude → Agent bridge — MCP server (desktop)*.
 The server binds to **127.0.0.1 only** (never the network), requires a
@@ -332,7 +343,7 @@ bearer token.
 With *Vault ontology* enabled, `note_create` also accepts `type` / `properties`
 for schema-conformant typed notes.
 
-**Claude Code:**
+**Advanced Claude Code MCP connection:**
 
 ```bash
 claude mcp add --transport http obsidian-vault \

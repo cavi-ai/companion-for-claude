@@ -43,6 +43,7 @@ describe("settings tab render", () => {
 
     const toggles = container.querySelectorAll("input");
     expect(toggles.length).toBeGreaterThan(0);
+    expect(container.querySelectorAll("button").some((button) => button.textContent === "Desktop integrations")).toBe(true);
   });
 
   it("opens a settings section from an explicit mobile tap", () => {

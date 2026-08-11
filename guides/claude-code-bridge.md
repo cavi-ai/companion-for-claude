@@ -1,53 +1,52 @@
-# The Claude Code bridge
+# Desktop agents: CLI first, MCP when needed
 
-Companion can expose your **live, running vault** as a local MCP server. Claude
-Code connects to it and works the same notes you're looking at — no export, no
-file sync, no second copy of the truth.
+Companion itself does not require MCP. Its in-app agent already works directly
+with the open vault.
 
-Desktop only: it needs a local HTTP server. On mobile, use the cloud-session
-features instead.
+On desktop, use the integration that matches the client:
 
-## 1. Enable the bridge
+- **Claude Code and other terminal agents:** use the official Obsidian CLI and
+  the portable `obsidian-agent` workflows by default.
+- **Claude Desktop:** use Companion's read-only loopback MCP bridge because
+  Claude Desktop is not a general shell agent.
+- **Advanced live-vault API:** MCP remains available when a client needs
+  Companion-specific research, semantic-search, ontology, or controlled-write
+  tools.
 
-*Settings → Companion for Claude → Agent bridge — MCP server (desktop)*
+## 1. Set up Claude Code without MCP
 
-<!-- screenshot: ../assets/mcp-bridge-settings.png — pending capture -->
-
-| Setting | Default | Notes |
-|---|---|---|
-| **Enable MCP server** | Off | Starts the loopback server. Turning it on mints an access token if you don't have one. |
-| **Port** | `22360` | Loopback only. Any port 1–65535. |
-| **Access token** | generated | Required by clients as a bearer token. Stored as a password field, with a **Regenerate** button. |
-| **Allow writes** | Off | Lets connected clients mutate the vault. Reads and search are always allowed. |
-| **Write folder** | `Claude/Inbox` | Default folder for notes created over MCP. |
-
-A live status line shows `✓ Running at http://127.0.0.1:<port>/mcp`, or tells you
-the port is in use.
-
-### Keeping the token out of your vault
-
-Set `OBSIDIAN_COMPANION_MCP_TOKEN` in your environment and Companion uses that
-instead of the stored value — useful when the vault is synced, since `data.json`
-would otherwise carry the secret. The settings tab shows which source is active.
-
-Connection snippets are **masked by default** so the settings tab is safe to
-screen-share; *Show token in snippets* reveals them, and **Copy** always copies
-the real, working command. When the token comes from the environment, the snippet
-shows `${OBSIDIAN_COMPANION_MCP_TOKEN}` — which expands in your own shell, so the
-snippet itself carries no secret.
-
-## 2. Connect Claude Code
-
-The settings tab generates both snippets for you. Copy the one you need.
-
-**Claude Code** — run in a terminal:
+Open **Options → Desktop integrations** from any Companion page and choose
+**Set up Claude Code**. Companion verifies both CLIs, explains the external
+changes, and—only after confirmation—installs or re-enables the user-scoped
+plugin with the equivalent of:
 
 ```bash
-claude mcp add --transport http obsidian-vault http://127.0.0.1:22360/mcp --header "Authorization: Bearer <token>"
+claude plugin marketplace add cavi-ai/plugins
+claude plugin install obsidian-agent@cavi --scope user
 ```
 
-**Claude Desktop** — add to `claude_desktop_config.json` (it needs `mcp-remote`
-to bridge HTTP→stdio):
+The commands use fixed argument arrays rather than a shell. Companion does not
+install Claude Code or Obsidian itself. Once ready, **Open terminal at vault**
+opens the external terminal at this vault; run `claude` there and use an
+`obsidian-agent` workflow.
+
+Manual prerequisite: enable the official Obsidian CLI in Obsidian 1.12.7 or
+newer and verify that `obsidian` is on `PATH`.
+
+## 2. Connect Claude Desktop
+
+Open **Desktop integrations → Connect Claude Desktop**. The confirmation names
+the local configuration change and read-only bridge. Companion then:
+
+1. enables its token-required loopback server with writes off;
+2. backs up an existing Claude Desktop configuration;
+3. atomically merges the `obsidian-vault` server without removing other keys;
+4. verifies that the bridge started.
+
+Restart Claude Desktop after the configuration changes. Obsidian must remain
+open while Claude Desktop uses the bridge.
+
+Manual recovery (`claude_desktop_config.json`, via `mcp-remote`):
 
 ```json
 {
@@ -62,11 +61,37 @@ to bridge HTTP→stdio):
 
 Obsidian has to be open — the bridge only runs while the app does.
 
-## 3. Choose the integration you need
+## 3. Advanced bridge settings
 
-The Companion MCP bridge described above is a specialized, optional live-vault
-integration. Configure it explicitly in the MCP client that will connect to it;
-no universal plugin installs or enables that connection for you.
+*Settings → Companion for Claude → Agent bridge — MCP server (desktop)*
+
+<!-- screenshot: ../assets/mcp-bridge-settings.png — pending capture -->
+
+| Setting | Default | Notes |
+|---|---|---|
+| **Enable MCP server** | Off | Starts the loopback server. Claude Desktop one-click setup enables it explicitly. |
+| **Port** | `22360` | Loopback only. Any port 1–65535. |
+| **Access token** | generated | Required by clients as a bearer token. Stored as a password field, with a **Regenerate** button. |
+| **Allow writes** | Off | Lets connected clients mutate the vault. One-click setup never enables this. |
+| **Write folder** | `Claude/Inbox` | Default folder for notes created over MCP. |
+
+A live status line shows `✓ Running at http://127.0.0.1:<port>/mcp`, or tells you
+the port is in use.
+
+Set `OBSIDIAN_COMPANION_MCP_TOKEN` in your environment to keep the bridge token
+outside synced vault plugin data. Connection snippets are masked by default;
+copy buttons still copy the working value.
+
+For an advanced Claude Code MCP connection instead of the default CLI path:
+
+```bash
+claude mcp add --transport http obsidian-vault http://127.0.0.1:22360/mcp --header "Authorization: Bearer <token>"
+```
+
+## 4. Portable workflow boundary
+
+The Companion MCP bridge is a specialized, optional live-vault integration. It
+is not a dependency of portable workflows.
 
 For portable vault workflows, install the separate `obsidian-agent` plugin. It
 uses the official Obsidian CLI, does not read Companion's MCP settings, and works
@@ -74,7 +99,7 @@ without Companion:
 
 ```text
 /plugin marketplace add cavi-ai/plugins
-/plugin install obsidian-agent@plugins
+/plugin install obsidian-agent@cavi
 ```
 
 Enable the official CLI in Obsidian 1.12.7 or newer and verify that `obsidian`

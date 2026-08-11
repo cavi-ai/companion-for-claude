@@ -2923,6 +2923,49 @@ pre.cc-has-copy:hover .cc-code-copy { opacity: 1; }
   min-height: 44px;
   margin-top: 8px;
 }
+.cc-quick-options-desktop-integrations {
+  width: 100%;
+  min-height: 44px;
+  margin-top: 8px;
+}
+.cc-settings-desktop-integrations {
+  min-height: 40px;
+  margin-bottom: 12px;
+}
+
+/* ---- CLI-first desktop integrations ---- */
+.cc-desktop-integrations-modal {
+  display: grid;
+  gap: 10px;
+}
+.cc-desktop-integration-card {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 9px;
+  background: var(--background-secondary);
+}
+.cc-desktop-integration-card h3,
+.cc-desktop-integration-card p { margin: 0; }
+.cc-desktop-integration-card > button { min-height: 40px; justify-self: start; }
+.cc-desktop-integration-disclosure,
+.cc-desktop-integration-state { color: var(--text-muted); font-size: var(--font-ui-small); line-height: 1.45; }
+.cc-desktop-integration-state.is-ready { color: var(--text-success); }
+.cc-desktop-integration-state.is-needed { color: var(--text-warning); }
+.cc-desktop-integration-status,
+.cc-desktop-integration-error {
+  padding: 10px 12px;
+  border-radius: 8px;
+}
+.cc-desktop-integration-status { background: var(--background-secondary-alt); }
+.cc-desktop-integration-error { border: 1px solid var(--text-error); color: var(--text-error); }
+.cc-desktop-integration-error p { margin: 0 0 8px; }
+
+@media (max-width: 520px) {
+  .cc-settings-desktop-integrations,
+  .cc-desktop-integration-card > button { width: 100%; min-height: 44px; }
+}
 
 @media (max-width: 520px) {
   .cc-companion-chrome { align-items: stretch; flex-wrap: wrap; }

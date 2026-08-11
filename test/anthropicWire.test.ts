@@ -56,6 +56,39 @@ describe("buildRequestBody", () => {
     expect(body.messages[2].content[0]).toMatchObject({ type: "tool_result", tool_use_id: "t1", cache_control: { type: "ephemeral" } });
   });
 
+  it("removes Anthropic-rejected top-level schema unions without changing nested property schemas", () => {
+    const unionSchema = {
+      type: "object",
+      properties: {
+        source: {
+          anyOf: [{ type: "string" }, { type: "number" }],
+        },
+      },
+      required: ["source"],
+      oneOf: [{ required: ["source"] }],
+      anyOf: [{ required: ["source"] }],
+      allOf: [{ properties: { source: { type: "string" } } }],
+    };
+
+    const body = JSON.parse(buildRequestBody({
+      ...baseReq,
+      tools: [{ name: "research_source_import", description: "Import a source.", input_schema: unionSchema }],
+    }, true, apiKeyAuth));
+
+    expect(body.tools[0].input_schema).toEqual({
+      type: "object",
+      properties: {
+        source: {
+          anyOf: [{ type: "string" }, { type: "number" }],
+        },
+      },
+      required: ["source"],
+    });
+    expect(unionSchema).toHaveProperty("oneOf");
+    expect(unionSchema).toHaveProperty("anyOf");
+    expect(unionSchema).toHaveProperty("allOf");
+  });
+
   it("keeps supported model-aware fields (temperature/thinking) working", () => {
     const body = JSON.parse(buildRequestBody({ ...baseReq, temperature: 0.2, thinking: { type: "adaptive" }, thinkingDisplay: "summarized" }, true, apiKeyAuth));
     expect(body.temperature).toBe(0.2);

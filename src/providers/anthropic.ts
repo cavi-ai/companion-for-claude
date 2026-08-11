@@ -17,6 +17,11 @@ export interface AnthropicConsentIdentity {
   endpoint: string;
 }
 
+function compatibleToolSchema(inputSchema: Record<string, unknown>): Record<string, unknown> {
+  const { oneOf: _oneOf, allOf: _allOf, anyOf: _anyOf, ...compatible } = inputSchema;
+  return compatible;
+}
+
 /**
  * Serialize a request for the Messages API. Exported (pure) so the wire shape —
  * tools, content blocks, cache_control placement — is unit-testable.
@@ -26,7 +31,14 @@ export function buildRequestBody(req: CompletionRequest, stream: boolean, auth: 
   const cached = withCacheControl({
     // OAuth tokens require the Claude Code identity as the first system block.
     system: buildSystem(auth, req.system),
-    ...(req.tools ? { tools: req.tools } : {}),
+    ...(req.tools
+      ? {
+          tools: req.tools.map((tool) => ({
+            ...tool,
+            input_schema: compatibleToolSchema(tool.input_schema),
+          })),
+        }
+      : {}),
     messages: req.messages,
   });
   const payload: Record<string, unknown> = {

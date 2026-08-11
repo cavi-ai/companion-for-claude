@@ -115,12 +115,32 @@ indicator** lights up whenever the active backend thinks before answering.
 
 Full detail in [agent-mode.md](agent-mode.md).
 
+## 6. Desktop integrations
+
+Companion and its built-in agent do **not** require MCP. On desktop, open
+**Options → Desktop integrations** from any Companion page (or use the button at
+the top of Companion settings) for two optional connections:
+
+- **Claude Code** — Companion checks for the `claude` and official `obsidian`
+  CLIs, then can add `cavi-ai/plugins` and install `obsidian-agent@cavi` at
+  user scope with one confirmed action. Claude Code uses the official Obsidian
+  CLI by default; no background MCP server is needed.
+- **Claude Desktop** — the confirmed setup enables Companion's read-only
+  loopback MCP bridge and merges an `obsidian-vault` entry into Claude
+  Desktop's local configuration. Restart Claude Desktop after setup and keep
+  Obsidian open while using it.
+
+Companion never installs Claude Code or Obsidian itself, silently edits external
+configuration, or enables MCP writes. See
+[claude-code-bridge.md](claude-code-bridge.md) for manual recovery and the
+advanced live-vault API.
+
 ## Next steps
 
 - [agent-mode.md](agent-mode.md) — the loop, the tools, the guardrails.
 - [artifacts.md](artifacts.md) — `claude-html` blocks and the sandbox.
 - [research-workbench.md](research-workbench.md) — evidence-backed writing.
-- [claude-code-bridge.md](claude-code-bridge.md) — drive this vault from Claude Code.
+- [claude-code-bridge.md](claude-code-bridge.md) — CLI-first Claude Code and optional Claude Desktop/live-vault MCP.
 - [local-models.md](local-models.md) — Ollama fallback and on-device semantic search.
 - [auth.md](auth.md) — API key vs subscription token vs environment.
 - [faq.md](faq.md) — cost, privacy, mobile, troubleshooting.

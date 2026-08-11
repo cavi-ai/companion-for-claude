@@ -13,6 +13,7 @@ export interface QuickOptionsModalDependencies {
   save(change: QuickOptionChange): void | Promise<void>;
   run(action: QuickOptionAction): void | Promise<void>;
   openAllSettings(): void;
+  openDesktopIntegrations(): void;
 }
 
 const pageLabel = (page: CompanionPage): string => ({
@@ -50,6 +51,17 @@ export class QuickOptionsModal extends Modal {
   }
 
   private renderOption(option: QuickOptionDefinition, error: HTMLElement): void {
+    if (option.id === "desktop-integrations") {
+      const button = this.contentEl.createEl("button", {
+        cls: "cc-quick-options-desktop-integrations",
+        text: option.label,
+      });
+      button.addEventListener("click", () => {
+        this.close();
+        this.deps.openDesktopIntegrations();
+      });
+      return;
+    }
     if (option.id === "all-settings") {
       const button = this.contentEl.createEl("button", {
         cls: "cc-quick-options-all-settings",

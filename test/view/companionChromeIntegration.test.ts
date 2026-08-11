@@ -27,6 +27,7 @@ const chrome = (app: App): CompanionChromeDependencies => ({
   save: vi.fn(),
   run: vi.fn(),
   openAllSettings: vi.fn(),
+  openDesktopIntegrations: vi.fn(),
 });
 
 const optionLabel = (root: HTMLElement): string | null => {

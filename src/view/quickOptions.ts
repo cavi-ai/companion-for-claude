@@ -88,6 +88,7 @@ const rerankers: QuickOptionChoice[] = [
 ];
 
 const allSettings = (): QuickOptionDefinition => ({ id: "all-settings", label: "Open all settings", kind: "action" });
+const desktopIntegrations = (): QuickOptionDefinition => ({ id: "desktop-integrations", label: "Desktop integrations", kind: "action" });
 
 const utilityBackend = (state: QuickOptionsState): QuickOptionDefinition => ({
   id: "utility-backend",
@@ -113,6 +114,7 @@ export function quickOptionsFor(page: CompanionPage, state: QuickOptionsState): 
         { id: "agent-mode", label: "Agent mode", kind: "toggle", value: state.agentModeEnabled },
         { id: "vault-context", label: "Vault context", kind: "toggle", value: state.vaultContextEnabled },
         { id: "memory-capture", label: "Capture sessions on save", kind: "toggle", value: state.memoryIngestOnSave },
+        desktopIntegrations(),
         allSettings(),
       ];
     case "inbox": {
@@ -125,6 +127,7 @@ export function quickOptionsFor(page: CompanionPage, state: QuickOptionsState): 
         { id: "source-capture", label: "Source capture", kind: "toggle", value: state.sourceCaptureEnabled },
         { id: "clipper-schemas", label: "Clipper schemas", kind: "status", value: clipperValue, actionLabel: clipperLabel },
         { id: "embedding-health", label: "Embedding health", kind: "status", value: state.embeddingHealth, actionLabel: "Review" },
+        desktopIntegrations(),
         allSettings(),
       ];
     }
@@ -135,6 +138,7 @@ export function quickOptionsFor(page: CompanionPage, state: QuickOptionsState): 
         { id: "embedding-model", label: "Embedding model", kind: "status", value: state.embeddingModel },
         { id: "index-health", label: "Index health", kind: "status", value: state.indexHealth },
         { id: "rebuild-index", label: "Build or rebuild index", kind: "action" },
+        desktopIntegrations(),
         allSettings(),
       ];
     case "memory":
@@ -143,6 +147,7 @@ export function quickOptionsFor(page: CompanionPage, state: QuickOptionsState): 
         { id: "memory-folder", label: "Memory folder", kind: "text", value: state.memoryFolder },
         { id: "memory-capture", label: "Capture sessions on save", kind: "toggle", value: state.memoryIngestOnSave },
         { id: "consolidate-memory", label: state.memoryAutoConsolidate ? "Consolidate memory now" : "Build memory summary", kind: "action" },
+        desktopIntegrations(),
         allSettings(),
       ];
     case "research-desk":
@@ -151,6 +156,7 @@ export function quickOptionsFor(page: CompanionPage, state: QuickOptionsState): 
         utilityBackend(state),
         { id: "discovery-enabled", label: "Scholarly discovery", kind: "toggle", value: state.discoveryEnabled },
         { id: "clippings-inbox", label: "Open clippings inbox", kind: "action" },
+        desktopIntegrations(),
         allSettings(),
       ];
     case "research-workbench":
@@ -160,6 +166,7 @@ export function quickOptionsFor(page: CompanionPage, state: QuickOptionsState): 
         utilityBackend(state),
         { id: "discovery-reranker", label: "Discovery reranker", kind: "select", value: state.discoveryReranker, choices: rerankers },
         { id: "discovery-enabled", label: "Scholarly discovery", kind: "toggle", value: state.discoveryEnabled },
+        desktopIntegrations(),
         allSettings(),
       ];
   }

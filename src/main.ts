@@ -115,6 +115,9 @@ import { classifyEmbeddingFailure, type EmbeddingRecovery } from "./semantic/rec
 import { clipperSetupFor, type ClipperSetupViewModel } from "./sources/clipperSetup";
 import { verifyClipperNote } from "./sources/clipperVerification";
 import { ClipperSetupModal } from "./view/ClipperSetupModal";
+import { DesktopIntegrationCoordinator, type DesktopIntegrationRuntime } from "./integrations/desktopCoordinator";
+import { DesktopIntegrationsModal, type DesktopIntegrationsController } from "./view/DesktopIntegrationsModal";
+import { claudeDesktopConfigPath, type DesktopPlatform } from "./integrations/desktop";
 
 /** Output-token ceiling for artifact-producing flows (plans, artifacts, workflows),
  *  which routinely run past the chat default. A ceiling, not a target — you only
@@ -171,6 +174,10 @@ export default class ClaudeCompanionPlugin extends Plugin {
   private _viewIntelligenceCoordinators?: Set<IntelligenceCoordinator>;
   private _viewDiscoveryCoordinators?: Set<DiscoveryCoordinator>;
   private mcpServer: McpHttpServer | null = null;
+  private _desktopIntegrationModals?: Set<DesktopIntegrationsModal>;
+  private _desktopRuntimeLoader: () => Promise<{
+    createNodeDesktopRuntime(platform: DesktopPlatform, homeDir: string, env: Record<string, string | undefined>): Promise<DesktopIntegrationRuntime>;
+  }> = () => import("./integrations/desktopRuntime");
   private _externalMcp: ExternalMcpManager | null = null;
   private _mcpServersSnapshot = "[]";
   private vaultTools: VaultTools | null = null;
@@ -1526,6 +1533,8 @@ export default class ClaudeCompanionPlugin extends Plugin {
     this._discoveryCoordinator?.cancel();
     this._discoveryCoordinator?.clearCache();
     this._discoveryCoordinator = null;
+    for (const modal of this._desktopIntegrationModals ?? []) modal.close();
+    this._desktopIntegrationModals?.clear();
     for (const coordinator of this._viewIntelligenceCoordinators ?? []) coordinator.cancel();
     this._viewIntelligenceCoordinators?.clear();
     for (const coordinator of this._viewDiscoveryCoordinators ?? []) { coordinator.cancel(); coordinator.clearCache(); }
@@ -1571,6 +1580,7 @@ export default class ClaudeCompanionPlugin extends Plugin {
       save: (change) => this.saveQuickOption(change),
       run: (action) => this.runQuickOption(action),
       openAllSettings: () => this.openCompanionSettings(),
+      openDesktopIntegrations: () => this.openDesktopIntegrations(),
       runActivityRecovery: (activityId, actionId) => this.runActivityRecovery(activityId, actionId),
       dismissActivity: (activityId) => this.activity.dismiss(activityId),
     };
@@ -1689,6 +1699,108 @@ export default class ClaudeCompanionPlugin extends Plugin {
       return;
     }
     app.commands?.executeCommandById?.("app:open-settings");
+  }
+
+  openDesktopIntegrations(): void {
+    if (Platform.isMobile) {
+      this.openDesktopIntegrationsModal(this.mobileDesktopIntegrationsController());
+      return;
+    }
+    void this.createDesktopIntegrationController()
+      .then((controller) => this.openDesktopIntegrationsModal(controller))
+      .catch((cause: unknown) => {
+        new Notice(`Desktop integrations could not open: ${sourceActivityDetail(cause instanceof Error ? cause.message : String(cause))}`);
+      });
+  }
+
+  async configureClaudeDesktopBridge(): Promise<{ port: number; token: string }> {
+    this.settings.mcpAllowWrites = false;
+    this.settings.mcpEnabled = true;
+    if (!this.resolvedMcpToken()) this.settings.mcpToken = generateToken();
+    await this.saveSettings();
+    if (!this.mcpRunning()) throw new Error(`The read-only MCP bridge could not start on port ${this.settings.mcpPort}.`);
+    const token = this.resolvedMcpToken();
+    if (!token) throw new Error("The MCP bridge did not produce an access token.");
+    return { port: this.settings.mcpPort, token };
+  }
+
+  private async createDesktopIntegrationController(): Promise<DesktopIntegrationCoordinator> {
+    const adapter = this.app.vault.adapter;
+    if (!(adapter instanceof FileSystemAdapter)) throw new Error("This vault does not expose a desktop filesystem path.");
+    const processLike = (window as { process?: { platform?: string; env?: Record<string, string | undefined> } }).process;
+    const platform: DesktopPlatform = processLike?.platform === "darwin" || processLike?.platform === "win32" || processLike?.platform === "linux"
+      ? processLike.platform
+      : "unsupported";
+    const env = processLike?.env ?? {};
+    const homeDir = env.HOME || env.USERPROFILE || "";
+    if (!homeDir) throw new Error("The desktop home directory is unavailable.");
+    const module = await this._desktopRuntimeLoader();
+    const runtime = await module.createNodeDesktopRuntime(platform, homeDir, { APPDATA: env.APPDATA });
+    return new DesktopIntegrationCoordinator({
+      runtime,
+      providerReady: () => this.router().anthropic.hasCredentials() || this.settings.chatBackend !== "claude",
+      vaultPath: adapter.getBasePath(),
+      prepareClaudeDesktopBridge: () => this.configureClaudeDesktopBridge(),
+      copy: async (text) => {
+        if (!navigator.clipboard?.writeText) throw new Error("Clipboard access is unavailable.");
+        await navigator.clipboard.writeText(text);
+      },
+    });
+  }
+
+  private openDesktopIntegrationsModal(controller: DesktopIntegrationsController): void {
+    const processLike = (window as { process?: { platform?: string; env?: Record<string, string | undefined> } }).process;
+    const env = processLike?.env ?? {};
+    const platform = processLike?.platform === "darwin" || processLike?.platform === "win32" || processLike?.platform === "linux"
+      ? processLike.platform
+      : "unsupported";
+    let configPath: string | undefined;
+    if (!Platform.isMobile) {
+      try {
+        configPath = claudeDesktopConfigPath(platform, env.HOME || env.USERPROFILE || "", { APPDATA: env.APPDATA });
+      } catch {
+        configPath = undefined;
+      }
+    }
+    const modal = new DesktopIntegrationsModal(this.app, {
+      controller,
+      mobile: Platform.isMobile,
+      openConnectionSettings: () => this.openCompanionSettings(),
+      openBridgeSettings: () => this.openCompanionSettings(),
+      confirm: (target, message) => this.confirmDesktopIntegration(target, message),
+      ...(configPath ? { claudeDesktopConfigPath: configPath } : {}),
+      closed: () => this._desktopIntegrationModals?.delete(modal),
+    });
+    (this._desktopIntegrationModals ??= new Set()).add(modal);
+    modal.open();
+  }
+
+  private mobileDesktopIntegrationsController(): DesktopIntegrationsController {
+    const state = { status: "idle" as const, providerReady: this.router().anthropic.hasCredentials() || this.settings.chatBackend !== "claude" };
+    return {
+      snapshot: () => state,
+      subscribe: () => () => undefined,
+      refresh: async () => undefined,
+      setupClaudeCode: async () => undefined,
+      connectClaudeDesktop: async () => undefined,
+      openTerminal: async () => undefined,
+      dispose: () => undefined,
+    };
+  }
+
+  private confirmDesktopIntegration(target: "claude-code" | "claude-desktop", message: string): Promise<boolean> {
+    return new Promise((resolve) => {
+      new ChoiceModal(this.app, {
+        title: target === "claude-code" ? "Set up Claude Code?" : "Connect Claude Desktop?",
+        message,
+        buttons: [
+          { label: "Cancel", value: "cancel" as const },
+          { label: target === "claude-code" ? "Set up" : "Connect read-only", value: "confirm" as const, cta: true },
+        ],
+        fallback: "cancel" as const,
+        onChoice: (choice) => resolve(choice === "confirm"),
+      }).open();
+    });
   }
 
   embeddingRecovery(error: unknown): EmbeddingRecovery {

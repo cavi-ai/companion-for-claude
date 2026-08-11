@@ -84,7 +84,7 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
         const ul = body.createEl("ul");
         for (const t of [
           "Local models (Ollama & endpoints) — runs a localhost model server",
-          "Agent bridge — MCP server (desktop) — exposes your vault to Claude Code",
+          "Claude Desktop / advanced bridge — token-protected live-vault MCP",
           "Session capture — reads Claude Code transcripts from disk (browsing captured memory works here)",
         ]) {
           ul.createEl("li", { text: t });
@@ -95,6 +95,13 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
 
   private renderTopSection(containerEl: HTMLElement, rerenderTop: () => void): void {
     const s = this.plugin.settings;
+
+    const desktopIntegrations = containerEl.createEl("button", {
+      cls: "cc-settings-desktop-integrations",
+      text: "Desktop integrations",
+      attr: { type: "button" },
+    });
+    desktopIntegrations.addEventListener("click", () => this.plugin.openDesktopIntegrations());
 
     // The one mandatory step, called out while it's missing. Everything else
     // in this tab is optional.
@@ -1036,7 +1043,7 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
       cls: "setting-item-description",
       text:
         "One agent, three surfaces. In chat (here): Claude searches, reads, and — with writes on — edits your vault, asking before every write. " +
-        "On desktop, the Agent bridge (MCP server, below) gives Claude Code the same vault tools. " +
+        "On desktop, Claude Code uses the official Obsidian CLI by default; the optional bridge below serves Claude Desktop and advanced live-vault clients. " +
         "On mobile, a Cloud session (next section) works your vault's Git repo and writes replies back. Same vault, same guardrails, wherever you are.",
     });
 
@@ -1128,7 +1135,7 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
     containerEl.createEl("p", {
       cls: "setting-item-description",
       text:
-        "Let the in-chat agent use tools from external MCP servers — Companion is the two-way hub: it serves your vault to Claude Code (Agent bridge) and consumes other servers here. " +
+        "Let the in-chat agent use tools from external MCP servers — Companion can serve its vault through the optional desktop bridge and consume other servers here. " +
         "Every external tool call asks for your confirmation. HTTP servers work on mobile; stdio commands run on desktop only.",
     });
 
@@ -1432,7 +1439,7 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
     }
     containerEl.createEl("p", {
       cls: "setting-item-description",
-      text: "Expose this vault as a local MCP server so Claude Code and Claude Desktop can search, read, and (optionally) write your notes — unifying all three on one knowledge base. Bound to 127.0.0.1 and protected by a token.",
+      text: "Optional advanced bridge for Claude Desktop and live-vault API clients. Claude Code uses the official Obsidian CLI by default and does not need this server. Bound to 127.0.0.1 and protected by a token.",
     });
 
     const mcpEnv = (window as { process?: { env?: Record<string, string | undefined> } }).process?.env ?? {};
@@ -1537,7 +1544,7 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
       }
       // env-sourced: copy the env-ref command (no secret, works in their shell). stored: copy the real command.
       const copyInfo = resolvedMcp.source === "env" ? display : real;
-      this.codeBlock(containerEl, "Claude Code (run in a terminal):", claudeCodeCommand(display), claudeCodeCommand(copyInfo));
+      this.codeBlock(containerEl, "Advanced Claude Code MCP connection (ordinary use is CLI-first):", claudeCodeCommand(display), claudeCodeCommand(copyInfo));
       this.codeBlock(containerEl, "Claude Desktop (add to claude_desktop_config.json):", claudeDesktopConfig(display), claudeDesktopConfig(copyInfo));
     } else if (s.mcpEnabled) {
       containerEl.createEl("p", {
