@@ -156,7 +156,13 @@ test("08 Companion continuity: active research becomes context, not a new home",
   await expect(workspace).toContainText("Continue Continuity research");
   await expect(workspace.getByRole("button", { name: "Open Research Desk" })).toBeVisible();
   await workspace.getByRole("button", { name: "Ask Companion" }).click();
-  await expect(chat.locator(".cc-attach-pill").filter({ hasText: "Project" })).toHaveCount(1);
+  const contextTrigger = chat.locator(".cc-context-trigger");
+  await expect(contextTrigger).toHaveAttribute("aria-label", /Manage context, \d+ items active/);
+  await contextTrigger.click();
+  const contextManager = chat.getByRole("dialog", { name: "Message context" });
+  await expect(contextManager.getByLabel("This note")).toBeChecked();
+  await expect(contextManager.getByText("Research/Alpha/Project.md", { exact: true })).toBeVisible();
+  await chat.getByRole("button", { name: "Close message context" }).click();
   await expect(chat.locator("textarea")).toHaveValue(/Help me continue Continuity research/);
   await harness.page.locator(".workspace-split.mod-right-split").evaluate((element) => { (element as HTMLElement).style.width = "390px"; });
   await expect.poll(async () => await chat.evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1);

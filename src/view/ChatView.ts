@@ -37,6 +37,9 @@ import { mergeUsage, type TokenUsage } from "../claude/sse";
 import type { CompanionWorkspaceCard } from "./companionWorkspace";
 import { ActionModal, type ActionModalItem } from "./ActionModal";
 import { renderCompanionChrome } from "./companionChrome";
+import { quickNotice } from "../notice";
+import { ComposerContextManager } from "./ComposerContextManager";
+import { buildContextManagerModel, type AutomaticContextKey } from "./contextManagerModel";
 
 export const CHAT_VIEW_TYPE = "claude-companion-chat";
 
@@ -95,7 +98,7 @@ export class ChatView extends ItemView {
   private knobsEl!: HTMLElement;
   private mcpStatusEl!: HTMLButtonElement;
   private atMenu!: AtMenu;
-  private pillsEl!: HTMLElement;
+  private contextManager!: ComposerContextManager;
   /** Notes/folders explicitly attached via "@" (session-scoped). */
   private attachedPaths: AttachedPath[] = [];
   /** PDFs/images attached via "@" or paste — cleared after the next send. */
@@ -108,8 +111,8 @@ export class ChatView extends ItemView {
   /** Per-turn max-output override (artifact/plan/workflow flows need headroom). */
   private maxTokensOverride: number | null = null;
   private contextStatusInterval: number | null = null;
-  /** Last rendered pill-row state; skip DOM rebuilds when nothing changed. */
-  private lastPillsSignature = "";
+  /** Last visible context-manager state; skip DOM rebuilds when nothing changed. */
+  private lastContextManagerSignature = "";
   private lastMarkdownView: MarkdownView | null = null;
   private lastMarkdownFilePath: string | null = null;
   /** The last user message text, for the Regenerate action. */
@@ -208,7 +211,7 @@ export class ChatView extends ItemView {
     this.writeGrantPillEl.addEventListener("click", () => {
       this.agentWriteAlways = false;
       this.updateWriteGrantPill();
-      new Notice("Session write grant revoked — writes will ask again.");
+      quickNotice("Session write grant revoked — writes will ask again.");
     });
     this.updateWriteGrantPill();
     const actions = header.createDiv({ cls: "cc-header-actions" });
@@ -254,9 +257,13 @@ export class ChatView extends ItemView {
     // ---- composer ----
     const composer = root.createDiv({ cls: "cc-composer" });
 
-    // Attached-context pills (what "@" added). Lives above the input.
-    this.pillsEl = composer.createDiv({ cls: "cc-attach-pills" });
-    this.renderAttachPills();
+    this.contextManager = new ComposerContextManager(composer, {
+      toggleAutomatic: (key, enabled) => this.toggleAutomaticContext(key, enabled),
+      removeSource: (id) => this.removeContextSource(id),
+      retrySource: (id) => this.retryContextSource(id),
+      addContext: () => this.openContextPicker(),
+    });
+    this.renderContextManager();
     // The "attach this page?" offer for URLs in the composer.
     this.pageOfferEl = composer.createDiv({ cls: "cc-page-offer" });
     this.pageOfferEl.setCssStyles({ display: "none" });
@@ -282,23 +289,9 @@ export class ChatView extends ItemView {
       if (templateTouched(file) || templateTouched({ path: oldPath })) void this.reloadTemplates();
     }));
 
-    // On mobile the input shares a row with a thumb-friendly "+" that opens the
-    // "@" context picker (the desktop affordance is typing "@"). On desktop the
-    // textarea is a direct child of the composer as before.
+    // Mobile keeps the compact input row; the context manager above is the one
+    // button-driven source entry point on every platform.
     const inputRow = Platform.isMobile ? composer.createDiv({ cls: "cc-composer-input-row" }) : composer;
-    if (Platform.isMobile) {
-      const add = inputRow.createEl("button", { cls: "cc-add-context", attr: { "aria-label": "Add context" } });
-      setIcon(add, "plus");
-      add.addEventListener("click", () => {
-        this.inputEl.focus();
-        const v = this.inputEl.value;
-        const needsSpace = v.length > 0 && !v.endsWith(" ");
-        this.inputEl.value = `${v}${needsSpace ? " " : ""}@`;
-        const end = this.inputEl.value.length;
-        this.inputEl.setSelectionRange(end, end);
-        this.inputEl.dispatchEvent(new Event("input"));
-      });
-    }
     this.inputEl = inputRow.createEl("textarea", {
       cls: "cc-input",
       // Start compact on mobile (1 row, grows via autosizeInput) so the composer
@@ -476,7 +469,7 @@ export class ChatView extends ItemView {
             await this.plugin.deleteActiveConversation(); // resets the view + notices
           } else {
             await this.plugin.deleteConversation(doomed.id);
-            new Notice(`Deleted “${doomed.title}”.`);
+            quickNotice(`Deleted “${doomed.title}”.`);
           }
           this.openHistory(); // reopen with the refreshed list
         })();
@@ -525,7 +518,7 @@ export class ChatView extends ItemView {
 
   private anyContextEnabled(): boolean {
     const c = this.plugin.settings.context;
-    return c.activeNote || c.selection || c.linkedNotes || c.searchVault || this.attachedPaths.length > 0 || this.attachedPages.length > 0;
+    return c.activeNote || c.selection || c.linkedNotes || c.searchVault || this.attachedPaths.length > 0 || this.attachedMedia.length > 0 || this.attachedPages.length > 0;
   }
 
   override async onClose(): Promise<void> {
@@ -538,6 +531,7 @@ export class ChatView extends ItemView {
       window.clearInterval(this.contextStatusInterval);
       this.contextStatusInterval = null;
     }
+    this.contextManager?.destroy();
   }
 
   refreshModelLabel(): void {
@@ -642,8 +636,8 @@ export class ChatView extends ItemView {
     const data = arrayBufferToBase64(buf);
     const n = this.attachedMedia.filter((m) => !m.path).length + 1;
     this.attachedMedia.push({ label: file.name || `Pasted image ${n}`, kind: "image", mime: sniffMime(buf) ?? (file.type || "image/png"), data });
-    this.renderAttachPills();
-    new Notice("Image attached to your next message.");
+    this.renderContextManager();
+    quickNotice("Image attached to your next message.");
   }
 
   /** Open/refresh/close the "@" picker based on the cursor's @-token. */
@@ -683,11 +677,19 @@ export class ChatView extends ItemView {
     if (!capture) return;
     this.pageOfferEl.setCssStyles({ display: "none" });
     if (this.attachedPages.some((p) => p.url === url)) return;
-    const page: AttachedPage = { url, markdown: "", pending: true };
+    const page: AttachedPage = { url, markdown: "" };
     this.attachedPages.push(page);
-    this.renderAttachPills();
+    await this.captureAttachedPage(page);
+  }
+
+  private async captureAttachedPage(page: AttachedPage): Promise<void> {
+    const capture = this.plugin.captureWebPage();
+    if (!capture) return;
+    page.pending = true;
+    delete page.error;
+    this.renderContextManager();
     try {
-      const result = await capture(url);
+      const result = await capture(page.url);
       if (!result) {
         page.error = "No readable content on that page.";
       } else {
@@ -698,7 +700,7 @@ export class ChatView extends ItemView {
       page.error = e instanceof Error ? e.message : String(e);
     } finally {
       page.pending = false;
-      this.renderAttachPills();
+      this.renderContextManager();
       this.updateUsageBar();
     }
   }
@@ -731,72 +733,64 @@ export class ChatView extends ItemView {
       }
     }
     await this.plugin.saveSettings();
-    this.renderAttachPills();
+    this.renderContextManager();
     this.updateUsageBar();
   }
 
-  /** Render the attached-context pills (enabled flags + @-attached paths). */
-  private renderAttachPills(): void {
-    if (!this.pillsEl) return;
-    const c = this.plugin.settings.context;
+  private renderContextManager(): void {
+    if (!this.contextManager) return;
     const active = this.resolveMarkdownContextView()?.file ?? this.app.workspace.getActiveFile();
-    // Rebuild only when the pill set actually changes — the 2s status tick
-    // otherwise wipes+rebuilds the row mid-click, yanking the "×" out from under it.
-    const signature = JSON.stringify([
-      active?.path ?? null,
-      c.activeNote, c.selection, c.linkedNotes, c.searchVault,
-      this.attachedPaths.map((a) => `${a.kind}:${a.path}`),
-      this.attachedMedia.map((m) => `${m.kind}:${m.path ?? m.label}`),
-      this.attachedPages.map((p) => `${p.url}:${p.pending ? "…" : (p.error ?? p.title ?? "ok")}`),
-    ]);
-    if (signature === this.lastPillsSignature) return;
-    this.lastPillsSignature = signature;
-    this.pillsEl.empty();
+    const model = buildContextManagerModel({
+      toggles: this.plugin.settings.context,
+      activeNotePath: active?.path ?? null,
+      paths: this.attachedPaths,
+      media: this.attachedMedia,
+      pages: this.attachedPages,
+    });
+    if (model.signature === this.lastContextManagerSignature) return;
+    this.lastContextManagerSignature = model.signature;
+    this.contextManager.render(model);
+  }
 
-    const pill = (label: string, onRemove: () => void, cls = "", title?: string) => {
-      const el = this.pillsEl.createDiv({ cls: `cc-attach-pill${cls}` });
-      if (title) el.setAttr("title", title);
-      el.createSpan({ cls: "cc-attach-label", text: label });
-      const x = el.createEl("button", { cls: "cc-attach-x", attr: { "aria-label": `Remove ${label}` }, text: "×" });
-      x.addEventListener("click", () => {
-        onRemove();
-        void this.plugin.saveSettings();
-        this.renderAttachPills();
-        this.updateUsageBar();
-      });
-    };
+  private toggleAutomaticContext(key: AutomaticContextKey, enabled: boolean): void {
+    this.plugin.settings.context[key] = enabled;
+    void this.plugin.saveSettings();
+    this.renderContextManager();
+    this.updateUsageBar();
+  }
 
-    if (c.activeNote) pill(active ? `📄 ${active.basename}` : "📄 This note", () => (c.activeNote = false));
-    if (c.selection) pill("✂️ Selection", () => (c.selection = false));
-    if (c.linkedNotes) pill("🔗 Linked notes", () => (c.linkedNotes = false));
-    if (c.searchVault) pill("🔍 Entire vault", () => (c.searchVault = false));
-    for (const a of this.attachedPaths) {
-      const base = a.path.replace(/\.md$/i, "").split("/").pop() ?? a.path;
-      pill(`${a.kind === "folder" ? "📁" : "📄"} ${base}`, () => {
-        this.attachedPaths = this.attachedPaths.filter((x) => !(x.path === a.path && x.kind === a.kind));
-      });
-    }
-    for (const m of this.attachedMedia) {
-      pill(`${m.kind === "pdf" ? "📕" : "🖼️"} ${m.label}`, () => {
-        this.attachedMedia = this.attachedMedia.filter((x) => x !== m);
-      });
-    }
-    for (const p of this.attachedPages) {
-      const label = p.pending
-        ? `🌐 ${pageLabel(p.url)} …`
-        : p.error
-          ? `🌐 ${pageLabel(p.url)} (failed)`
-          : `🌐 ${p.title ?? pageLabel(p.url)}`;
-      pill(
-        label,
-        () => {
-          this.attachedPages = this.attachedPages.filter((x) => x !== p);
-        },
-        p.pending ? " is-pending" : p.error ? " is-error" : "",
-        p.error ?? p.url,
-      );
-    }
-    this.pillsEl.toggleClass("is-empty", this.pillsEl.childElementCount === 0);
+  private removeContextSource(id: string): void {
+    const active = this.resolveMarkdownContextView()?.file ?? this.app.workspace.getActiveFile();
+    const model = buildContextManagerModel({
+      toggles: this.plugin.settings.context,
+      activeNotePath: active?.path ?? null,
+      paths: this.attachedPaths,
+      media: this.attachedMedia,
+      pages: this.attachedPages,
+    });
+    const index = model.sources.findIndex((source) => source.id === id);
+    if (index < 0) return;
+    if (index < this.attachedPaths.length) this.attachedPaths.splice(index, 1);
+    else if (index < this.attachedPaths.length + this.attachedMedia.length) this.attachedMedia.splice(index - this.attachedPaths.length, 1);
+    else this.attachedPages.splice(index - this.attachedPaths.length - this.attachedMedia.length, 1);
+    this.renderContextManager();
+    this.updateUsageBar();
+  }
+
+  private retryContextSource(id: string): void {
+    const page = this.attachedPages.find((candidate) => `page:${candidate.url}` === id);
+    if (page) void this.captureAttachedPage(page);
+  }
+
+  private openContextPicker(): void {
+    this.contextManager.close({ restoreFocus: false });
+    this.inputEl.focus();
+    const value = this.inputEl.value;
+    const needsSpace = value.length > 0 && !value.endsWith(" ");
+    this.inputEl.value = `${value}${needsSpace ? " " : ""}@`;
+    const end = this.inputEl.value.length;
+    this.inputEl.setSelectionRange(end, end);
+    this.inputEl.dispatchEvent(new Event("input"));
   }
 
   /**
@@ -1118,7 +1112,7 @@ export class ChatView extends ItemView {
       this.plugin.settings.authMode = "apiKey";
       this.plugin.settings.apiKey = key;
       await this.plugin.saveSettings(); // rebuilds the provider router
-      new Notice("API key saved — you’re connected.");
+      quickNotice("API key saved — you’re connected.");
       if (this.messages.length === 0) {
         this.messagesEl.empty();
         this.renderEmptyState();
@@ -1173,7 +1167,7 @@ export class ChatView extends ItemView {
     this.inputEl.value = workspace.kind === "research"
       ? `Help me continue ${workspace.title.replace(/^Continue /, "")}. `
       : `Help me continue working with ${workspace.title.replace(/^Continue with /, "")}. `;
-    this.renderAttachPills();
+    this.renderContextManager();
     this.autosizeInput();
     this.updateUsageBar();
     this.inputEl.focus();
@@ -1194,7 +1188,7 @@ export class ChatView extends ItemView {
     this.attachedPages = [];
     this.dismissedPageUrl = null;
     this.pageOfferEl?.setCssStyles({ display: "none" });
-    this.renderAttachPills();
+    this.renderContextManager();
     this.messagesEl.empty();
     this.renderEmptyState();
     this.setSending(false);
@@ -1345,7 +1339,7 @@ export class ChatView extends ItemView {
         this.inputEl.value = "";
         this.inputEl.setAttr("placeholder", "Vault search on — ask your question…");
         this.inputEl.focus();
-        new Notice("Vault search enabled for your next message.");
+        quickNotice("Vault search enabled for your next message.");
         break;
       case "artifact":
         await this.plugin.generateArtifactFromContext();
@@ -1442,7 +1436,7 @@ export class ChatView extends ItemView {
       // Media is per-turn, but keep a handle for failure-restore and Regenerate.
       this.lastUserMedia = this.attachedMedia;
       this.attachedMedia = [];
-      this.renderAttachPills();
+      this.renderContextManager();
     } else {
       this.lastUserMedia = [];
     }
@@ -1769,7 +1763,7 @@ export class ChatView extends ItemView {
     this.plugin.settings.agentAllowWrites = on;
     await this.plugin.saveSettings();
     this.updateWritesToggle();
-    new Notice(on ? "Act on vault: on — I'll create and edit notes (each change asks first)." : "Act on vault: off — chat only, I won't change your vault.");
+    quickNotice(on ? "Act on vault: on — I'll create and edit notes (each change asks first)." : "Act on vault: off — chat only, I won't change your vault.");
   }
 
   /**
@@ -1788,7 +1782,7 @@ export class ChatView extends ItemView {
   private togglePlanMode(): void {
     this.planMode = !this.planMode;
     this.updatePlanToggle();
-    new Notice(this.planMode ? "Plan Mode: on — I'll explore read-only and propose a plan, no writes." : "Plan Mode: off.");
+    quickNotice(this.planMode ? "Plan Mode: on — I'll explore read-only and propose a plan, no writes." : "Plan Mode: off.");
   }
 
   /** Live tool chips for the in-flight agent turn, inserted above the answer body. */
@@ -1964,7 +1958,7 @@ export class ChatView extends ItemView {
   private restoreMediaAfterFailure(): void {
     if (this.lastUserMedia.length > 0 && this.attachedMedia.length === 0) {
       this.attachedMedia = this.lastUserMedia;
-      this.renderAttachPills();
+      this.renderContextManager();
     }
   }
 
@@ -2023,8 +2017,8 @@ export class ChatView extends ItemView {
   }
 
   async refreshContextStatus(): Promise<void> {
-    // Refresh the "This note" pill label as you navigate, and the MCP header icon.
-    this.renderAttachPills();
+    // Refresh active-note detail as navigation changes, and the MCP header icon.
+    this.renderContextManager();
     if (!this.mcpStatusEl) return;
     const mcp = this.plugin.mcpStats();
     const title = mcp.running
@@ -2202,7 +2196,7 @@ export class ChatView extends ItemView {
     const bar = bubble.createDiv({ cls: "cc-actions" });
     this.actionBtn(bar, "Copy", "copy", () => {
       void navigator.clipboard.writeText(full);
-      new Notice("Copied to clipboard");
+      quickNotice("Copied to clipboard");
     });
     this.actionBtn(bar, "Insert", "text-cursor-input", () => this.insertIntoNote(full));
     // One Save button that adapts to the content: an artifact saves as an inline
@@ -2397,7 +2391,7 @@ export class ChatView extends ItemView {
       return;
     }
     view.editor.replaceSelection(text);
-    new Notice("Inserted into note");
+    quickNotice("Inserted into note");
   }
 
   private async saveChat(): Promise<void> {

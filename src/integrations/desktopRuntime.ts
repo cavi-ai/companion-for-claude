@@ -211,11 +211,14 @@ export async function createNodeDesktopRuntime(
   homeDir: string,
   env: Record<string, string | undefined>,
 ): Promise<DesktopRuntime> {
-  const [{ execFile }, fs, path] = await Promise.all([
-    import("node:child_process"),
-    import("node:fs/promises"),
-    import("node:path"),
-  ]);
+  // Obsidian's renderer exposes Node through Electron's require boundary.
+  // Leaving dynamic `import("node:…")` in the CJS bundle delegates it to
+  // Chromium, which cannot fetch Node builtins and prevents the modal opening.
+  const nodeRequire = (window as { require: (module: string) => unknown }).require;
+  const { execFile } = nodeRequire("node:child_process") as typeof import("node:child_process");
+  const fs = nodeRequire("node:fs/promises") as typeof import("node:fs/promises");
+  const path = nodeRequire("node:path") as typeof import("node:path");
+  const nodeProcess = nodeRequire("node:process") as typeof import("node:process");
 
   const errorCode = (cause: unknown): string | undefined =>
     typeof cause === "object" && cause !== null && "code" in cause && typeof cause.code === "string"
@@ -260,7 +263,7 @@ export async function createNodeDesktopRuntime(
     },
     async atomicWrite(target, body) {
       await fs.mkdir(path.dirname(target), { recursive: true });
-      const temporary = `${target}.tmp-${process.pid}-${Date.now()}`;
+      const temporary = `${target}.tmp-${nodeProcess.pid}-${Date.now()}`;
       try {
         const handle = await fs.open(temporary, "wx", 0o600);
         try {

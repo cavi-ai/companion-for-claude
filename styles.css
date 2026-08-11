@@ -1207,53 +1207,113 @@ pre.cc-has-copy:hover .cc-code-copy { opacity: 1; }
 }
 .cc-at-item .cc-slash-name { color: var(--text-normal); }
 
-/* Attached-context pills above the input ("@"-added sources). */
-.cc-attach-pills {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-bottom: 6px;
-}
-.cc-attach-pills.is-empty { display: none; }
-.cc-attach-pill {
+/* Composer context manager: one quiet trigger, expandable detail on demand. */
+.cc-context-manager { position: relative; min-width: 0; margin-bottom: 6px; }
+.cc-context-trigger {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  font-size: 11px;
-  padding: 2px 4px 2px 9px;
-  border-radius: 999px;
-  background: var(--cc-clay-soft, #f3e2da);
-  color: var(--cc-clay, #d97757);
-  border: 1px solid color-mix(in srgb, var(--cc-clay) 30%, transparent);
+  gap: 6px;
+  max-width: 100%;
+  min-height: 36px;
+  padding: 5px 10px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
 }
-.cc-attach-x {
+.cc-context-trigger:hover,
+.cc-context-trigger[aria-expanded="true"] { background: var(--background-modifier-hover); color: var(--text-normal); }
+.cc-context-trigger-icon,
+.cc-context-source-icon,
+.cc-context-add-icon { display: inline-flex; flex: 0 0 auto; }
+.cc-context-trigger-icon svg,
+.cc-context-source-icon svg,
+.cc-context-add-icon svg { width: 16px; height: 16px; }
+.cc-context-trigger-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cc-context-layer { display: none; }
+.cc-context-layer.is-open { display: block; }
+.cc-context-backdrop { display: none; }
+.cc-context-surface {
+  position: absolute;
+  z-index: var(--layer-popover, 30);
+  inset-inline-start: 0;
+  bottom: calc(100% + 6px);
+  width: min(360px, 100%);
+  max-width: 100%;
+  max-height: min(60vh, 420px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 12px;
+  background: var(--background-primary);
+  box-shadow: var(--shadow-s);
+}
+.cc-context-header,
+.cc-context-footer { display: flex; align-items: center; flex: 0 0 auto; padding: 10px 12px; }
+.cc-context-header { justify-content: space-between; border-bottom: 1px solid var(--background-modifier-border); }
+.cc-context-heading { margin: 0; font-size: var(--font-ui-small); color: var(--text-normal); }
+.cc-context-close,
+.cc-context-source-action {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 16px;
-  height: 16px;
-  border: none;
-  border-radius: 50%;
+  min-width: 36px;
+  min-height: 36px;
+  padding: 6px 9px;
+  border: 0;
+  border-radius: 8px;
   background: transparent;
-  color: inherit;
+  color: var(--text-muted);
   cursor: pointer;
-  font-size: 13px;
-  line-height: 1;
-  padding: 0;
 }
-.cc-attach-x:hover { background: color-mix(in srgb, var(--cc-clay) 22%, transparent); }
-/* Touch: a 16px × is unhittable — grow the chip's remove button on mobile. */
-.is-mobile .cc-attach-x { width: 28px; height: 28px; font-size: 16px; }
-
-/* Attached web page states: pending while the capture runs, error when it
-   failed (the pill carries the message — chat itself never errors on it). */
-.cc-attach-pill.is-pending { opacity: 0.65; }
-.cc-attach-pill.is-error {
-  background: color-mix(in srgb, var(--text-error, #c94f4f) 12%, transparent);
-  color: var(--text-error, #c94f4f);
-  border-color: color-mix(in srgb, var(--text-error, #c94f4f) 35%, transparent);
+.cc-context-close:hover,
+.cc-context-source-action:hover { background: var(--background-modifier-hover); color: var(--text-normal); }
+.cc-context-scroll { min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 6px 0; }
+.cc-context-section + .cc-context-section { border-top: 1px solid var(--background-modifier-border); margin-top: 6px; padding-top: 6px; }
+.cc-context-section-heading { margin: 0; padding: 6px 12px; color: var(--text-faint); font-size: var(--font-ui-smaller); font-weight: var(--font-semibold); text-transform: uppercase; letter-spacing: 0.04em; }
+.cc-context-row { min-height: 40px; display: flex; align-items: center; gap: 9px; padding: 5px 10px 5px 12px; }
+.cc-context-automatic { cursor: pointer; }
+.cc-context-automatic:hover,
+.cc-context-source:hover { background: var(--background-modifier-hover); }
+.cc-context-checkbox { flex: 0 0 auto; }
+.cc-context-copy { min-width: 0; display: flex; flex: 1 1 auto; flex-direction: column; gap: 1px; }
+.cc-context-source-name,
+.cc-context-source-detail,
+.cc-context-source-status,
+.cc-context-source-error { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cc-context-source-name { color: var(--text-normal); font-size: var(--font-ui-small); }
+.cc-context-source-detail { color: var(--text-faint); font-size: var(--font-ui-smaller); }
+.cc-context-source-status { color: var(--text-muted); font-size: var(--font-ui-smaller); }
+.cc-context-source-error { color: var(--text-error); font-size: var(--font-ui-smaller); }
+.cc-context-source-error {
+  display: -webkit-box;
+  white-space: normal;
+  line-height: 1.35;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
-.cc-attach-pill.is-error .cc-attach-x:hover { background: color-mix(in srgb, var(--text-error, #c94f4f) 22%, transparent); }
+.cc-context-source-icon { color: var(--text-muted); }
+.cc-context-source-actions { display: inline-flex; align-items: center; gap: 2px; flex: 0 0 auto; }
+.cc-context-source-action { min-width: 36px; font-size: var(--font-ui-smaller); }
+.cc-context-source-action.is-remove svg { width: 15px; height: 15px; }
+.cc-context-empty { padding: 8px 12px 12px; color: var(--text-faint); font-size: var(--font-ui-small); }
+.cc-context-footer { border-top: 1px solid var(--background-modifier-border); }
+.cc-context-add {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 36px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  background: var(--background-secondary);
+  color: var(--text-normal);
+  cursor: pointer;
+}
+.cc-context-add:hover { background: var(--background-modifier-hover); }
 
 /* The "attach this page?" offer, shown when the composer holds a URL. */
 .cc-page-offer {
@@ -1725,14 +1785,13 @@ pre.cc-has-copy:hover .cc-code-copy { opacity: 1; }
 .is-mobile .cc-actions { gap: 8px; margin-top: 6px; }
 .is-mobile .cc-action { width: 40px; height: 40px; background: var(--background-secondary); opacity: 0.65; }
 .is-mobile .cc-action:active { opacity: 1; }
-/* flex:0 0 auto — without it the icon collapses to 0 width inside the flex
-   button on mobile, leaving an empty box (same fix as .cc-add-context svg). */
+/* flex:0 0 auto prevents action icons collapsing inside mobile flex buttons. */
 .is-mobile .cc-action svg { width: 18px; height: 18px; flex: 0 0 auto; }
 
 /* Long code lines scroll within their block instead of pushing the layout wide. */
 .is-mobile .cc-body pre { max-width: 100%; overflow-x: auto; }
 
-/* Composer: the messenger bar — [+] · auto-growing field · [↑] in one
+/* Composer: the messenger bar — auto-growing field · [↑] in one
    24px-radius surface. Empty it's one line (~52px); the field grows to ~6
    rows (autosizeInput caps it) and then scrolls internally, so the composer
    never owns the screen. 16px input font avoids iOS zoom-on-focus.
@@ -1775,7 +1834,7 @@ pre.cc-has-copy:hover .cc-code-copy { opacity: 1; }
 }
 .is-mobile .cc-composer-input-row .cc-input:focus { border: none; box-shadow: none; }
 .is-mobile .cc-composer-input-row .cc-input::-webkit-scrollbar { display: none; }
-/* Circular send matches .cc-add-context; lives in the input row (ChatView). */
+/* Circular send lives in the compact mobile input row. */
 .is-mobile .cc-send.cc-send-icon {
   flex: 0 0 auto;
   width: 40px;
@@ -1845,43 +1904,27 @@ pre.cc-has-copy:hover .cc-code-copy { opacity: 1; }
   font-size: 13px;
 }
 
-/* The "+" context button sits at the bottom-left of the bar. */
-.is-mobile .cc-add-context {
-  flex: 0 0 auto;
-  width: 40px; height: 40px;
-  border-radius: 50%;
-  border: 1px solid var(--background-modifier-border);
-  background: transparent;
-  color: var(--text-muted);
-  display: inline-flex; align-items: center; justify-content: center;
-  cursor: pointer;
+.is-mobile .cc-context-trigger,
+.is-mobile .cc-context-row,
+.is-mobile .cc-context-close,
+.is-mobile .cc-context-source-action,
+.is-mobile .cc-context-add { min-height: 44px; }
+.is-mobile .cc-context-backdrop {
+  display: block;
+  position: fixed;
+  inset: 0;
+  z-index: var(--layer-modal, 40);
+  background: rgb(0 0 0 / 0.28);
 }
-.is-mobile .cc-add-context:active { background: var(--background-modifier-hover); }
-/* SVG flex children collapse to width:0 without an explicit size — pin it. */
-.is-mobile .cc-add-context svg { width: 19px; height: 19px; flex: 0 0 auto; }
-
-/* The context tape: "@"-attached sources ride ONE sideways-scrolling line
-   above the bar — never a wrapped stack inside it. Any count of chips stays
-   exactly one line tall; empty = gone (is-empty). Muted gray so it reads as
-   an instrument strip, not content. */
-.is-mobile .cc-attach-pills {
-  flex-wrap: nowrap;
-  overflow-x: auto;
-  scrollbar-width: none;
-  gap: 6px;
-  padding: 2px 2px 6px;
-  margin-bottom: 0;
-  -webkit-overflow-scrolling: touch;
+.is-mobile .cc-context-surface {
+  position: fixed;
+  z-index: calc(var(--layer-modal, 40) + 1);
+  inset: auto 8px max(8px, env(safe-area-inset-bottom)) 8px;
+  width: auto;
+  max-width: none;
+  max-height: min(72vh, 640px);
+  border-radius: 16px;
 }
-.is-mobile .cc-attach-pills::-webkit-scrollbar { display: none; }
-.is-mobile .cc-attach-pill {
-  flex: 0 0 auto;
-  background: var(--background-secondary);
-  color: var(--text-muted);
-  border-color: var(--background-modifier-border);
-  font-size: 11px;
-}
-.is-mobile .cc-attach-pill .cc-attach-label { color: var(--text-normal); }
 /* The "attach this page?" offer: same one-line strip language as the tape. */
 .is-mobile .cc-page-offer { margin-bottom: 6px; font-size: 11.5px; }
 .is-mobile .cc-page-offer-btn { padding: 4px 12px; min-height: 32px; }
