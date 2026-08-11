@@ -10,6 +10,7 @@ export interface DesktopIntegrationRuntime {
   setupClaudeCode(): Promise<ClaudeCodeInspection>;
   installClaudeDesktop(input: ClaudeDesktopInstallInput): Promise<ClaudeDesktopInstallResult>;
   openTerminalAtVault(path: string): Promise<TerminalLaunchResult>;
+  resolveClaudeCodeExecutable?(): Promise<string>;
 }
 
 export type DesktopIntegrationStatus = "idle" | "loading" | "ready" | "error";

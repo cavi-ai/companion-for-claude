@@ -1,7 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { spawn } from "node:child_process";
 import {
   DesktopRuntime,
   claudeDesktopConfigPath,
+  managedProcessPortFromSpawn,
   type DesktopFsPort,
   type ExecFileOptions,
   type ExecFilePort,
@@ -60,6 +62,72 @@ const readyResponses = (): Map<string, ExecResult | Error | ExecResult[]> => new
 ]);
 
 describe("DesktopRuntime", () => {
+  it("streams a managed child process and terminates it on abort without retaining listeners", async () => {
+    const listeners = new Map<string, Set<(...args: unknown[]) => void>>();
+    const on = (name: string, listener: (...args: unknown[]) => void) => { const set = listeners.get(name) ?? new Set(); set.add(listener); listeners.set(name, set); };
+    const off = (name: string, listener: (...args: unknown[]) => void) => { listeners.get(name)?.delete(listener); };
+    let killed = false;
+    const child = {
+      stdout: { on: (name: string, listener: (...args: unknown[]) => void) => on(`out:${name}`, listener), off: (name: string, listener: (...args: unknown[]) => void) => off(`out:${name}`, listener) },
+      stderr: { on: (name: string, listener: (...args: unknown[]) => void) => on(`err:${name}`, listener), off: (name: string, listener: (...args: unknown[]) => void) => off(`err:${name}`, listener) },
+      once: on,
+      off,
+      kill: () => { killed = true; queueMicrotask(() => { for (const listener of listeners.get("close") ?? []) listener(null, "SIGTERM"); }); return true; },
+    };
+    const port = managedProcessPortFromSpawn(() => child, { setTimeout, clearTimeout });
+    const controller = new AbortController();
+    const pending = port.run("claude", ["-p", "safe"], { cwd: "/vault", signal: controller.signal, onStdout: () => {}, onStderr: () => {} });
+    controller.abort();
+    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+    expect(killed).toBe(true);
+    expect([...listeners.values()].every((set) => set.size === 0)).toBe(true);
+  });
+
+  it("escalates cancellation to SIGKILL when a child ignores SIGTERM and clears the timer", async () => {
+    vi.useFakeTimers();
+    const listeners = new Map<string, Set<(...args: unknown[]) => void>>();
+    const on = (name: string, listener: (...args: unknown[]) => void) => { const set = listeners.get(name) ?? new Set(); set.add(listener); listeners.set(name, set); };
+    const off = (name: string, listener: (...args: unknown[]) => void) => { listeners.get(name)?.delete(listener); };
+    const signals: string[] = [];
+    const child = {
+      stdout: { on: (name: string, listener: (...args: unknown[]) => void) => on(`out:${name}`, listener), off: (name: string, listener: (...args: unknown[]) => void) => off(`out:${name}`, listener) },
+      stderr: { on: (name: string, listener: (...args: unknown[]) => void) => on(`err:${name}`, listener), off: (name: string, listener: (...args: unknown[]) => void) => off(`err:${name}`, listener) },
+      once: on,
+      off,
+      kill: (signal?: string) => {
+        signals.push(signal ?? "");
+        if (signal === "SIGKILL") queueMicrotask(() => { for (const listener of listeners.get("close") ?? []) listener(null, signal); });
+        return true;
+      },
+    };
+    const port = managedProcessPortFromSpawn(() => child, { setTimeout, clearTimeout });
+    const controller = new AbortController();
+    const pending = port.run("claude", ["-p", "safe"], { cwd: "/vault", signal: controller.signal, onStdout: () => {}, onStderr: () => {} });
+    const rejection = expect(pending).rejects.toMatchObject({ name: "AbortError" });
+    controller.abort();
+    await vi.advanceTimersByTimeAsync(2_100);
+    await rejection;
+    expect(signals).toEqual(["SIGTERM", "SIGKILL"]);
+    expect(vi.getTimerCount()).toBe(0);
+    expect([...listeners.values()].every((set) => set.size === 0)).toBe(true);
+    vi.useRealTimers();
+  });
+
+  it("streams and exits a real child process through the managed boundary", async () => {
+    const stdout: string[] = [];
+    const stderr: string[] = [];
+    const port = managedProcessPortFromSpawn(spawn as never, { setTimeout, clearTimeout });
+    const result = await port.run(process.execPath, ["-e", "process.stdout.write('one\\n'); process.stderr.write('warn\\n');"], {
+      cwd: process.cwd(),
+      signal: new AbortController().signal,
+      onStdout: (chunk) => stdout.push(chunk),
+      onStderr: (chunk) => stderr.push(chunk),
+    });
+    expect(result.code).toBe(0);
+    expect(stdout.join("")).toBe("one\n");
+    expect(stderr.join("")).toBe("warn\n");
+  });
+
   it("inspects Claude Code and Obsidian through bounded fixed commands", async () => {
     const exec = new FakeExec(readyResponses());
     const runtime = new DesktopRuntime({ exec, fs: new MemoryFs(), platform: "darwin", homeDir: "/Users/test" });

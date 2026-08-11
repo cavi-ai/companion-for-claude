@@ -5,6 +5,7 @@ import { InboxView, INBOX_VIEW_TYPE } from "./view/InboxView";
 import { RelatedView, RELATED_VIEW_TYPE } from "./view/RelatedView";
 import { ResearchWorkbenchView, RESEARCH_WORKBENCH_VIEW_TYPE, ProjectCreateModal, QUESTION_INSTRUCTION, type ResearchWorkbenchTab } from "./view/ResearchWorkbenchView";
 import { ResearchDeskView, RESEARCH_DESK_VIEW_TYPE } from "./view/ResearchDeskView";
+import { BuildView, BUILD_VIEW_TYPE, type BuildViewDependencies } from "./view/BuildView";
 import { normalizeDeskPreferenceMap, type ResearchDeskPreferenceMap } from "./research/deskPreferences";
 import { ResearchRepository } from "./research/repository";
 import { createResearchRepository } from "./research/repositoryFactory";
@@ -56,8 +57,11 @@ import { sanitizeFileName } from "./artifacts/parse";
 import { OrganizeReviewModal } from "./view/OrganizeReviewModal";
 import { stripFrontmatter } from "./semantic/chunk";
 import { generateToken, resolveMcpToken } from "./mcp/clientConfig";
-import { extractTasks, specBody, claudeCodeBuildCommand, type SpecInput } from "./build/spec";
-import { trackerArtifact } from "./build/tracker";
+import { extractTasks, specBody, type SpecInput } from "./build/spec";
+import { trackerNoteBody } from "./build/tracker";
+import { BuildRunCoordinator, createBuildRun, restoreBuildRuns, type BuildRun, type BuildTaskExecutor } from "./build/run";
+import { DesktopBuildExecutor } from "./build/desktopExecutor";
+import { CloudBuildExecutor, type CloudBuildHttpRequest } from "./build/cloudExecutor";
 import { type CloudDispatchConfig, buildFireRequest, parseFireResponse, composeDispatchText, configError } from "./cloud/routines";
 import { type RepliesConfig, buildContentsRequest, parseDirListing, parseFileResponse, isMarkdown, configError as repliesConfigError } from "./cloud/replies";
 import { buildFrontmatter, normalizeTags } from "./indexing/frontmatter";
@@ -132,6 +136,8 @@ interface PersistedData {
   conversations?: Conversation[];
   activeConversationId?: string | null;
   researchDeskPreferences?: ResearchDeskPreferenceMap;
+  buildRuns?: BuildRun[];
+  activeBuildRunId?: string | null;
 }
 
 type EnrichRunOutcome =
@@ -166,6 +172,11 @@ export default class ClaudeCompanionPlugin extends Plugin {
   private convState: ConversationState = emptyState();
   private convSeq = 0;
   private researchDeskPreferences: ResearchDeskPreferenceMap = {};
+  private buildRuns: Record<string, BuildRun> = {};
+  private activeBuildRunId: string | null = null;
+  private buildCoordinators = new Map<string, BuildRunCoordinator>();
+  private buildRunListeners = new Set<(run: BuildRun) => void>();
+  private buildTrackerWriteChains = new Map<string, Promise<void>>();
   /** data.json contains several domains; serialize snapshots so an older write cannot land last. */
   private persistChain: Promise<void> = Promise.resolve();
   private _router: ProviderRouter | null = null;
@@ -177,6 +188,7 @@ export default class ClaudeCompanionPlugin extends Plugin {
   private _desktopIntegrationModals?: Set<DesktopIntegrationsModal>;
   private _desktopRuntimeLoader: () => Promise<{
     createNodeDesktopRuntime(platform: DesktopPlatform, homeDir: string, env: Record<string, string | undefined>): Promise<DesktopIntegrationRuntime>;
+    createNodeManagedProcessPort(): import("./build/desktopExecutor").ManagedProcessPort;
   }> = () => import("./integrations/desktopRuntime");
   private _externalMcp: ExternalMcpManager | null = null;
   private _mcpServersSnapshot = "[]";
@@ -240,6 +252,7 @@ export default class ClaudeCompanionPlugin extends Plugin {
     this.registerView(MEMORY_VIEW_TYPE, (leaf: WorkspaceLeaf) => new MemoryView(leaf, this));
     this.registerView(INBOX_VIEW_TYPE, (leaf: WorkspaceLeaf) => new InboxView(leaf, this));
     this.registerView(RELATED_VIEW_TYPE, (leaf: WorkspaceLeaf) => new RelatedView(leaf, this));
+    this.registerView(BUILD_VIEW_TYPE, (leaf: WorkspaceLeaf) => new BuildView(leaf, this.buildViewDependencies()));
     this.registerView(RESEARCH_DESK_VIEW_TYPE, (leaf: WorkspaceLeaf) => new ResearchDeskView(leaf, this.researchRepository(), {
       chrome: this.companionChrome(),
       preferencesFor: (projectPath) => this.researchDeskPreferences[projectPath] ?? { dismissedActionIds: [] },
@@ -503,7 +516,7 @@ export default class ClaudeCompanionPlugin extends Plugin {
 
     this.addCommand({
       id: "build-from-plan",
-      name: "Hand off current note to Claude Code (build)",
+      name: "Build current plan with Claude",
       checkCallback: (checking) => {
         const file = this.app.workspace.getActiveViewOfType(MarkdownView)?.file;
         if (checking) return !!file;
@@ -1296,7 +1309,7 @@ export default class ClaudeCompanionPlugin extends Plugin {
       const existing = this.planBuildActions.get(view);
       if (isPlan && !existing) {
         const file = view.file;
-        const action = view.addAction("hammer", "Build this plan with Claude Code", () => void this.handoffToBuild(file ?? undefined));
+        const action = view.addAction("hammer", "Build this plan with Claude", () => void this.handoffToBuild(file ?? undefined));
         this.planBuildActions.set(view, action);
       } else if (!isPlan && existing) {
         existing.remove();
@@ -1539,6 +1552,9 @@ export default class ClaudeCompanionPlugin extends Plugin {
     this._viewIntelligenceCoordinators?.clear();
     for (const coordinator of this._viewDiscoveryCoordinators ?? []) { coordinator.cancel(); coordinator.clearCache(); }
     this._viewDiscoveryCoordinators?.clear();
+    for (const coordinator of this.buildCoordinators?.values() ?? []) void coordinator.dispose();
+    this.buildCoordinators?.clear();
+    this.buildRunListeners?.clear();
     this.mcpLifecycleEnded = true;
     this.mcpLifecycleGeneration = (this.mcpLifecycleGeneration ?? 0) + 1;
     void this.mcpServer?.stop();
@@ -1834,6 +1850,10 @@ export default class ClaudeCompanionPlugin extends Plugin {
       ? fromPersisted({ conversations: (raw).conversations, activeId: (raw).activeConversationId })
       : emptyState();
     this.researchDeskPreferences = normalizeDeskPreferenceMap(isNamespacedData(raw) ? (raw).researchDeskPreferences : undefined);
+    const runs = restoreBuildRuns(isNamespacedData(raw) ? raw.buildRuns : undefined);
+    this.buildRuns = Object.fromEntries(runs.map((run) => [run.id, run]));
+    const savedActive = isNamespacedData(raw) ? raw.activeBuildRunId : null;
+    this.activeBuildRunId = typeof savedActive === "string" && this.buildRuns[savedActive] ? savedActive : runs.at(-1)?.id ?? null;
   }
 
   /** Write settings + conversation history back to data.json. */
@@ -1843,6 +1863,8 @@ export default class ClaudeCompanionPlugin extends Plugin {
       conversations: this.convState.conversations,
       activeConversationId: this.convState.activeId,
       researchDeskPreferences: this.researchDeskPreferences,
+      buildRuns: Object.values(this.buildRuns ?? {}),
+      activeBuildRunId: this.activeBuildRunId,
     })) as PersistedData;
     const result = (this.persistChain ?? Promise.resolve()).catch(() => {}).then(() => this.saveData(data));
     this.persistChain = result.catch(() => {});
@@ -3490,11 +3512,7 @@ export default class ClaudeCompanionPlugin extends Plugin {
     }
   }
 
-  /**
-   * Turn the active note (an implementation plan) into a build spec + a live
-   * tracker note, then hand it to Claude Code. Claude Code reaches the vault
-   * through the MCP bridge and updates the tracker as it builds.
-   */
+  /** Turn a plan into durable build documents and a native, user-controlled run. */
   async handoffToBuild(planFile?: TFile): Promise<void> {
     const file = planFile ?? this.app.workspace.getActiveViewOfType(MarkdownView)?.file ?? null;
     if (!(file instanceof TFile)) {
@@ -3515,16 +3533,16 @@ export default class ClaudeCompanionPlugin extends Plugin {
     }
 
     const title = file.basename;
-    const folder = this.settings.mcpWriteFolder || "Claude/Builds";
+    const folder = "Claude/Builds";
 
-    // Confirm before dispatch — this writes notes and copies a command to run.
+    // Confirm note creation only. Execution never starts until Start is pressed.
     const confirmed = await new Promise<boolean>((resolve) => {
       new ConfirmModal(this.app, {
         title: "Build from this plan?",
         body:
           `Detected ${tasks.length} task${tasks.length === 1 ? "" : "s"} in “${file.basename}”.\n\n` +
-          `This creates a build spec + a live tracker in “${folder}” and copies a Claude Code command for you to run in a terminal.`,
-        cta: "Create spec + tracker",
+          `This creates a build spec and tracker in “${folder}”, then opens Build Runner. Nothing runs until you press Start.`,
+        cta: "Create build",
         onResolve: resolve,
       }).open();
     });
@@ -3534,31 +3552,170 @@ export default class ClaudeCompanionPlugin extends Plugin {
     const specPath = normalizePath(`${folder}/${title} — spec.md`);
     const trackerPath = normalizePath(`${folder}/${title} — tracker.md`);
 
-    const input: SpecInput = { title, plan, specPath, trackerPath, tasks, vault: this.app.vault.getName() };
+    const input: SpecInput = { title, plan, specPath, trackerPath, tasks };
 
     // Spec note.
     const specFm = buildFrontmatter({ title: `${title} — spec`, created: new Date().toISOString().slice(0, 10), source: "claude-companion", type: "build-spec", tags: normalizeTags(["claude", "build", "spec"]) });
     await this.writeOrReplace(specPath, `${specFm}\n\n${specBody(input)}`);
 
-    // Tracker note (an updating claude-html artifact + a checklist Claude Code appends to).
+    const run = createBuildRun({
+      id: `build-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+      title,
+      specPath,
+      trackerPath,
+      transport: Platform.isMobile ? "cloud" : "desktop",
+      tasks,
+      now: Date.now(),
+    });
+
+    // Tracker note is durable Markdown; the native view owns interactive controls.
     const trackerFm = buildFrontmatter({ title: `${title} — tracker`, created: new Date().toISOString().slice(0, 10), source: "claude-companion", type: "build-tracker", tags: normalizeTags(["claude", "build", "tracker"]) });
-    const trackerBody = [trackerFm, "", `# ${title} — build tracker`, "", "```claude-html height=520", trackerArtifact(title, tasks), "```", "", "## Progress log", "", "<!-- Claude Code appends progress here -->", ""].join("\n");
-    const trackerFile = await this.writeOrReplace(trackerPath, trackerBody);
+    await this.writeOrReplace(trackerPath, `${trackerFm}\n\n${trackerNoteBody(run)}`);
+    this.buildRuns ??= {};
+    this.buildRuns[run.id] = run;
+    this.activeBuildRunId = run.id;
+    await this.persist();
+    await this.activateBuildView(run.id);
+  }
 
-    // Hand off: copy the ready-to-run command, open the tracker. The MCP
-    // transport only works when the bridge is up with writes allowed;
-    // otherwise fall back to the official `obsidian` CLI (no bridge needed).
-    const transport = !Platform.isMobile && this.settings.mcpEnabled && this.settings.mcpAllowWrites ? "mcp" : "cli";
-    const command = claudeCodeBuildCommand(input, transport);
-    await navigator.clipboard.writeText(command).catch(() => {});
-    await this.app.workspace.getLeaf(true).openFile(trackerFile);
+  activeBuildRun(): BuildRun | null {
+    if (!this.activeBuildRunId) return null;
+    return this.buildRuns?.[this.activeBuildRunId] ?? null;
+  }
 
-    new Notice(
-      transport === "mcp"
-        ? "Build spec + tracker created. Claude Code command copied — run it in a terminal (drives the tracker over the MCP bridge)."
-        : "Build spec + tracker created. Claude Code command copied — run it in a terminal (drives the tracker with the official obsidian CLI).",
-      8000,
-    );
+  async activateBuildView(runId?: string): Promise<BuildView | null> {
+    if (runId && this.buildRuns?.[runId]) this.activeBuildRunId = runId;
+    const { workspace } = this.app;
+    let leaf: WorkspaceLeaf | null = workspace.getLeavesOfType(BUILD_VIEW_TYPE)[0] ?? null;
+    if (!leaf) {
+      leaf = workspace.getRightLeaf(false);
+      if (leaf) await leaf.setViewState({ type: BUILD_VIEW_TYPE, active: true });
+    }
+    if (leaf) {
+      await workspace.revealLeaf(leaf);
+      const run = this.activeBuildRun();
+      if (run && leaf.view instanceof BuildView) leaf.view.setRun(run);
+      return leaf.view instanceof BuildView ? leaf.view : null;
+    }
+    return null;
+  }
+
+  private buildViewDependencies(): BuildViewDependencies {
+    return {
+      getRun: () => this.activeBuildRun(),
+      subscribe: (listener) => {
+        this.buildRunListeners ??= new Set();
+        this.buildRunListeners.add(listener);
+        return () => this.buildRunListeners.delete(listener);
+      },
+      start: () => this.runActiveBuild("start"),
+      pause: () => this.runActiveBuild("pause"),
+      resume: () => this.runActiveBuild("resume"),
+      cancel: () => this.runActiveBuild("cancel"),
+      openSpec: () => this.openActiveBuildFile("specPath"),
+      openTracker: () => this.openActiveBuildFile("trackerPath"),
+      openSession: () => {
+        const url = this.activeBuildRun()?.sessionUrl;
+        if (url) window.open(url, "_blank", "noopener,noreferrer");
+      },
+    };
+  }
+
+  private async openActiveBuildFile(field: "specPath" | "trackerPath"): Promise<void> {
+    const path = this.activeBuildRun()?.[field];
+    if (!path) return;
+    const file = this.app.vault.getAbstractFileByPath(path);
+    if (file instanceof TFile) await this.app.workspace.getLeaf(false).openFile(file);
+  }
+
+  private runActiveBuild(action: "start" | "pause" | "resume" | "cancel"): Promise<void> {
+    const run = this.activeBuildRun();
+    if (!run) return Promise.resolve();
+    const coordinator = this.buildCoordinatorFor(run);
+    return coordinator[action]();
+  }
+
+  private buildCoordinatorFor(run: BuildRun): BuildRunCoordinator {
+    this.buildCoordinators ??= new Map();
+    const existing = this.buildCoordinators.get(run.id);
+    if (existing) return existing;
+    const coordinator = new BuildRunCoordinator(run, {
+      executor: this.buildExecutor(run.transport),
+      persist: (snapshot) => this.persistBuildRun(snapshot),
+      onChange: (snapshot) => {
+        this.buildRunListeners ??= new Set();
+        for (const listener of this.buildRunListeners) listener(snapshot);
+      },
+    });
+    this.buildCoordinators.set(run.id, coordinator);
+    return coordinator;
+  }
+
+  private buildExecutor(transport: BuildRun["transport"]): BuildTaskExecutor {
+    if (transport === "cloud") {
+      let executor: CloudBuildExecutor | null = null;
+      return {
+        cancelMode: "after-current",
+        execute: async (input, signal, emit) => {
+          if (!this.settings.cloudDispatchEnabled) throw new Error("Cloud builds are off. Open Companion settings → Cloud session, enable dispatch, then Retry.");
+          const routineError = configError(this.cloudConfig());
+          if (routineError) throw new Error(`Cloud build setup is incomplete: ${routineError}`);
+          const replyError = repliesConfigError(this.replyConfig());
+          if (replyError) throw new Error(`Cloud build tracking is incomplete: ${replyError}`);
+          executor ??= new CloudBuildExecutor({
+            routine: this.cloudConfig(),
+            replies: this.replyConfig(),
+            http: { request: (request: CloudBuildHttpRequest) => this.buildHttpRequest(request) },
+          });
+          return executor.execute(input, signal, emit);
+        },
+      };
+    }
+
+    let executor: DesktopBuildExecutor | null = null;
+    return {
+      cancelMode: "immediate",
+      execute: async (input, signal, emit) => {
+        if (!executor) {
+          const vaultPath = this.vaultBasePath();
+          if (!vaultPath) throw new Error("This vault does not expose a desktop filesystem path. Move it to a local filesystem vault, then Retry.");
+          const processLike = (window as { process?: { platform?: string; env?: Record<string, string | undefined> } }).process;
+          const platform: DesktopPlatform = processLike?.platform === "darwin" || processLike?.platform === "win32" || processLike?.platform === "linux" ? processLike.platform : "unsupported";
+          const env = processLike?.env ?? {};
+          const homeDir = env.HOME || env.USERPROFILE || "";
+          if (!homeDir) throw new Error("The desktop home directory is unavailable. Open Desktop integrations for setup help.");
+          const module = await this._desktopRuntimeLoader();
+          const runtime = await module.createNodeDesktopRuntime(platform, homeDir, { APPDATA: env.APPDATA });
+          if (!runtime.resolveClaudeCodeExecutable) throw new Error("This Companion build cannot manage Claude Code. Update Companion, then Retry.");
+          const executable = await runtime.resolveClaudeCodeExecutable();
+          executor = new DesktopBuildExecutor({ process: module.createNodeManagedProcessPort(), executable, cwd: vaultPath });
+        }
+        return executor.execute(input, signal, emit);
+      },
+    };
+  }
+
+  private async buildHttpRequest(request: CloudBuildHttpRequest): Promise<{ status: number; text: string }> {
+    const response = await requestUrl({ url: request.url, method: request.method, headers: request.headers, ...(request.body ? { body: request.body } : {}), throw: false });
+    return { status: response.status, text: response.text };
+  }
+
+  private async persistBuildRun(run: BuildRun): Promise<void> {
+    this.buildRuns ??= {};
+    this.buildRuns[run.id] = run;
+    this.activeBuildRunId = run.id;
+    await this.persist();
+    this.buildTrackerWriteChains ??= new Map();
+    const previous = this.buildTrackerWriteChains.get(run.id) ?? Promise.resolve();
+    const write = previous.catch(() => {}).then(async () => {
+      const file = this.app.vault.getAbstractFileByPath(run.trackerPath);
+      if (!(file instanceof TFile)) return;
+      const trackerFm = buildFrontmatter({ title: `${run.title} — tracker`, created: new Date(run.createdAt).toISOString().slice(0, 10), source: "claude-companion", type: "build-tracker", tags: normalizeTags(["claude", "build", "tracker"]) });
+      await this.app.vault.process(file, () => `${trackerFm}\n\n${trackerNoteBody(run)}`);
+    });
+    this.buildTrackerWriteChains.set(run.id, write);
+    await write;
+    if (this.buildTrackerWriteChains.get(run.id) === write) this.buildTrackerWriteChains.delete(run.id);
   }
 
   private async ensureFolder(folder: string): Promise<void> {

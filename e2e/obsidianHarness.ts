@@ -1,6 +1,6 @@
 import { chromium, type Browser, type Page } from "@playwright/test";
 import { createServer, type Server } from "node:http";
-import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn, type ChildProcess } from "node:child_process";
@@ -10,6 +10,8 @@ export interface ObsidianHarness {
   providerRequests(): number;
   close(): Promise<void>;
 }
+
+export interface ObsidianHarnessOptions { fakeClaudeCode?: boolean }
 
 function note(frontmatter: string, body: string): string { return `---\n${frontmatter}\n---\n\n${body}\n`; }
 
@@ -53,6 +55,7 @@ async function seedVault(vault: string, providerPort: number): Promise<void> {
   await writeFile(join(longReference, "A very long note title that must truncate without widening the composer.md"), "# Long fixture\n");
   await writeFile(join(longReference, "Study.pdf"), Buffer.from("%PDF-1.4\n%e2e\n"));
   await writeFile(join(longReference, "Figure.png"), Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+  await writeFile(join(vault, "Build plan.md"), "# Build plan\n\n- [ ] Create the parser\n- [ ] Wire the interface\n");
 }
 
 async function waitForCdp(port: number): Promise<void> {
@@ -61,17 +64,33 @@ async function waitForCdp(port: number): Promise<void> {
   throw new Error("Obsidian did not expose its debugging endpoint");
 }
 
-export async function launchObsidianHarness(): Promise<ObsidianHarness> {
+export async function launchObsidianHarness(options: ObsidianHarnessOptions = {}): Promise<ObsidianHarness> {
   const root = await mkdtemp(join(tmpdir(), "claude-companion-e2e-")); const vault = join(root, "vault"); const profile = join(root, "profile"); await mkdir(vault, { recursive: true }); await mkdir(profile, { recursive: true });
   let requests = 0;
   const provider = createServer((request, response) => { requests += 1; request.resume(); response.writeHead(200, { "content-type": "application/json" }); response.end(JSON.stringify({ content: [{ type: "text", text: JSON.stringify({ markdown: "Grounded prose [@study].", support: [], claimPreservation: [], changes: [], gaps: [] }) }] })); });
   await new Promise<void>((resolve, reject) => { provider.once("error", reject); provider.listen(0, "127.0.0.1", () => resolve()); });
   const address = provider.address(); if (!address || typeof address === "string") throw new Error("Provider stub did not bind");
   await seedVault(vault, address.port);
+  let executablePath = process.env.PATH ?? "";
+  if (options.fakeClaudeCode) {
+    const bin = join(root, "bin");
+    await mkdir(bin, { recursive: true });
+    const claude = join(bin, "claude");
+    await writeFile(claude, `#!/bin/sh
+case "$*" in
+  *--version*) printf '2.1.226 (Claude Code)\\n' ;;
+  *"plugin marketplace list --json"*) printf '[{"name":"plugins","repo":"cavi-ai/plugins"}]\\n' ;;
+  *"plugin list --json"*) printf '[{"id":"obsidian-agent@cavi","enabled":true}]\\n' ;;
+  *) sleep 0.4; printf '{"type":"result","result":"Fixture task completed"}\\n' ;;
+esac
+`);
+    await chmod(claude, 0o755);
+    executablePath = `${bin}:${executablePath}`;
+  }
   await writeFile(join(profile, "obsidian.json"), JSON.stringify({ vaults: { e2e: { path: vault, ts: Date.now(), open: true } } }));
   const debuggingPort = await freePort();
   const executable = process.env.OBSIDIAN_APP_PATH ?? "/Applications/Obsidian.app/Contents/MacOS/Obsidian";
-  const processHandle = spawn(executable, [vault, `--user-data-dir=${profile}`, `--remote-debugging-port=${debuggingPort}`, "--disable-gpu", "--no-sandbox"], { stdio: ["ignore", "pipe", "pipe"] });
+  const processHandle = spawn(executable, [vault, `--user-data-dir=${profile}`, `--remote-debugging-port=${debuggingPort}`, "--disable-gpu", "--no-sandbox"], { stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, PATH: executablePath } });
   let processOutput = ""; processHandle.stdout?.on("data", (chunk) => { processOutput += String(chunk); }); processHandle.stderr?.on("data", (chunk) => { processOutput += String(chunk); });
   await waitForCdp(debuggingPort);
   const browser = await chromium.connectOverCDP(`http://127.0.0.1:${debuggingPort}`);

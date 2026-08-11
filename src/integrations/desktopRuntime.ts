@@ -11,6 +11,7 @@ import {
   type DesktopPlatform,
   type ProbeResult,
 } from "./desktop";
+import type { ManagedProcessPort } from "../build/desktopExecutor";
 
 export interface ExecResult {
   stdout: string;
@@ -39,6 +40,100 @@ export interface DesktopRuntimeOptions {
   platform: DesktopPlatform;
   homeDir: string;
   env?: Record<string, string | undefined>;
+}
+
+interface ProcessStreamLike {
+  on(event: "data", listener: (chunk: unknown) => void): unknown;
+  off(event: "data", listener: (chunk: unknown) => void): unknown;
+}
+
+interface ManagedChildLike {
+  stdout?: ProcessStreamLike | null;
+  stderr?: ProcessStreamLike | null;
+  once(event: "error" | "close", listener: (...args: unknown[]) => void): unknown;
+  off(event: "error" | "close", listener: (...args: unknown[]) => void): unknown;
+  kill(signal?: string): boolean;
+}
+
+export type SpawnPort = (executable: string, args: string[], options: { cwd: string; windowsHide: boolean; stdio: ["ignore", "pipe", "pipe"] }) => ManagedChildLike;
+
+export interface ProcessTimerPort {
+  setTimeout(callback: () => void, delayMs: number): ReturnType<typeof setTimeout>;
+  clearTimeout(handle: ReturnType<typeof setTimeout>): void;
+}
+
+export function managedProcessPortFromSpawn(spawn: SpawnPort, timers: ProcessTimerPort): ManagedProcessPort {
+  return {
+    run(executable, args, options) {
+      return new Promise((resolve, reject) => {
+        if (options.signal.aborted) {
+          reject(new DOMException("aborted", "AbortError"));
+          return;
+        }
+        let child: ManagedChildLike;
+        try {
+          child = spawn(executable, args, { cwd: options.cwd, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
+        } catch (cause) {
+          reject(cause instanceof Error ? cause : new Error(String(cause)));
+          return;
+        }
+        let stderr = "";
+        let settled = false;
+        let abortRequested = false;
+        let killTimer: ReturnType<typeof setTimeout> | null = null;
+        const onStdout = (chunk: unknown): void => options.onStdout(String(chunk));
+        const onStderr = (chunk: unknown): void => { const text = String(chunk); stderr = `${stderr}${text}`.slice(-8_000); options.onStderr(text); };
+        const cleanup = (): void => {
+          if (killTimer !== null) {
+            timers.clearTimeout(killTimer);
+            killTimer = null;
+          }
+          child.stdout?.off("data", onStdout);
+          child.stderr?.off("data", onStderr);
+          child.off("error", onError);
+          child.off("close", onClose);
+          options.signal.removeEventListener("abort", onAbort);
+        };
+        const finish = (fn: () => void): void => {
+          if (settled) return;
+          settled = true;
+          cleanup();
+          fn();
+        };
+        const abortError = (): DOMException => new DOMException("aborted", "AbortError");
+        const onError = (cause: unknown): void => finish(() => reject(abortRequested ? abortError() : cause instanceof Error ? cause : new Error(String(cause))));
+        const onClose = (code: unknown): void => finish(() => {
+          if (abortRequested) reject(abortError());
+          else resolve({ code: typeof code === "number" ? code : 1, stderr });
+        });
+        const onAbort = (): void => {
+          if (abortRequested || settled) return;
+          abortRequested = true;
+          try {
+            if (!child.kill("SIGTERM")) {
+              finish(() => reject(abortError()));
+              return;
+            }
+            killTimer = timers.setTimeout(() => {
+              killTimer = null;
+              try {
+                if (!child.kill("SIGKILL")) finish(() => reject(abortError()));
+              } catch {
+                finish(() => reject(abortError()));
+              }
+            }, 2_000);
+          } catch {
+            finish(() => reject(abortError()));
+          }
+        };
+        child.stdout?.on("data", onStdout);
+        child.stderr?.on("data", onStderr);
+        child.once("error", onError);
+        child.once("close", onClose);
+        options.signal.addEventListener("abort", onAbort, { once: true });
+      });
+    },
+  };
 }
 
 export interface ClaudeDesktopInstallInput {
@@ -136,6 +231,12 @@ export class DesktopRuntime {
     } catch (cause) {
       throw commandError("Check Claude Code integration", cause);
     }
+  }
+
+  async resolveClaudeCodeExecutable(): Promise<string> {
+    const inspection = await this.inspectClaudeCode();
+    if (!inspection.claude.available) throw new DesktopIntegrationError("Start build", "Claude Code was not found. Open Desktop integrations to install it.");
+    return this.claudeExecutable;
   }
 
   async setupClaudeCode(): Promise<ClaudeCodeInspection> {
@@ -281,4 +382,10 @@ export async function createNodeDesktopRuntime(
   };
 
   return new DesktopRuntime({ exec, fs: desktopFs, platform, homeDir, env });
+}
+
+export function createNodeManagedProcessPort(): ManagedProcessPort {
+  const nodeRequire = (window as { require: (module: string) => unknown }).require;
+  const { spawn } = nodeRequire("node:child_process") as typeof import("node:child_process");
+  return managedProcessPortFromSpawn(spawn as unknown as SpawnPort, window);
 }
