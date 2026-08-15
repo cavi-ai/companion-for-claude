@@ -61,10 +61,20 @@ export class MemoryView extends ItemView {
 
     const notes = this.capturedNotes();
     if (notes.length === 0) {
-      root.createEl("p", {
-        cls: "setting-item-description",
-        text: "No captured sessions yet. Use “Capture session memory…” to ingest a Claude Code session.",
+      const empty = root.createEl("section", {
+        cls: "cc-view-empty",
+        attr: { role: "status", "aria-label": "Session Memory empty state" },
       });
+      empty.createEl("h3", { text: "Bring past work into Companion" });
+      empty.createEl("p", {
+        text: Platform.isMobile
+          ? "Captured session digests will appear here after you add them from Companion on desktop."
+          : "Capture a Claude Code session to turn its transcript into a reusable memory note.",
+      });
+      if (!Platform.isMobile) {
+        const capture = empty.createEl("button", { text: "Capture a session" });
+        capture.addEventListener("click", () => void this.plugin.openSessionPicker());
+      }
       return;
     }
 

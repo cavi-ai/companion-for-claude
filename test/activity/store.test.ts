@@ -2,6 +2,64 @@ import { describe, expect, it, vi } from "vitest";
 import { ActivityStore } from "../../src/activity/store";
 
 describe("ActivityStore", () => {
+  it("removes successful activity after a readable confirmation window", () => {
+    vi.useFakeTimers();
+    try {
+      const store = new ActivityStore();
+      const id = store.start({ id: "index", kind: "semantic-index", title: "Building semantic index", total: 2 });
+
+      store.finish(id, { completed: 2, succeeded: 2 });
+      vi.advanceTimersByTime(3_999);
+      expect(store.snapshot().records).toHaveLength(1);
+
+      vi.advanceTimersByTime(1);
+      expect(store.snapshot().records).toHaveLength(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps failures visible and cancels stale success cleanup when an id is reused", () => {
+    vi.useFakeTimers();
+    try {
+      const store = new ActivityStore();
+      const id = store.start({ id: "index", kind: "semantic-index", title: "Building semantic index", total: 1 });
+      store.finish(id, { completed: 1, succeeded: 1 });
+
+      store.start({ id, kind: "semantic-index", title: "Rebuilding semantic index", total: 2 });
+      vi.advanceTimersByTime(4_000);
+      expect(store.snapshot().records[0]).toMatchObject({ id, state: "running", title: "Rebuilding semantic index" });
+
+      store.finish(id, { completed: 2, succeeded: 2 });
+      vi.advanceTimersByTime(3_999);
+      store.fail(id, {
+        failed: 1,
+        recovery: [{ id: "retry", label: "Retry indexing", kind: "retry" }],
+      });
+      vi.advanceTimersByTime(40_001);
+      expect(store.snapshot().records[0]).toMatchObject({ id, state: "needs-attention", failed: 1 });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("cancels pending success cleanup when the store is disposed", () => {
+    vi.useFakeTimers();
+    try {
+      const store = new ActivityStore();
+      const id = store.start({ id: "index", kind: "semantic-index", title: "Building semantic index" });
+      store.finish(id);
+      expect(vi.getTimerCount()).toBe(1);
+
+      store.dispose();
+      expect(vi.getTimerCount()).toBe(0);
+      vi.runAllTimers();
+      expect(store.snapshot()).toEqual({ records: [], disposed: true });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("catches a regression that appends progress events instead of updating one activity", () => {
     let now = 100;
     const store = new ActivityStore({ now: () => now });

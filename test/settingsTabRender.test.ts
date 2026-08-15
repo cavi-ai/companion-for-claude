@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { App, FakeElement, openSettingTab, Platform } from "./fakes/obsidian";
 import { ClaudeCompanionSettingTab } from "../src/settings";
 import { DEFAULT_SETTINGS } from "../src/types";
+import { unavailableStore } from "../src/secrets/store";
 import type ClaudeCompanionPlugin from "../src/main";
 
 function stubPlugin(): ClaudeCompanionPlugin & { settings: Record<string, unknown> } {
@@ -9,6 +10,7 @@ function stubPlugin(): ClaudeCompanionPlugin & { settings: Record<string, unknow
     settings: structuredClone(DEFAULT_SETTINGS),
     saveSettings: async () => {},
     router: () => ({ anthropic: { hasCredentials: () => true } }),
+    secrets: () => unavailableStore(),
     externalMcp: () => ({ errorFor: () => null, test: async () => ({ ok: true }) }),
     mcpRunning: () => false,
     builtinModelCached: async () => true,

@@ -57,8 +57,8 @@ const key = (executable: string, ...args: string[]): string => [executable, ...a
 const readyResponses = (): Map<string, ExecResult | Error | ExecResult[]> => new Map([
   [key("claude", "--version"), ok("2.1.226 (Claude Code)\n")],
   [key("obsidian", "version"), ok("1.12.7\n")],
-  [key("claude", "plugin", "marketplace", "list", "--json"), ok('[{"name":"plugins","repo":"cavi-ai/plugins"}]')],
-  [key("claude", "plugin", "list", "--json"), ok('[{"id":"obsidian-agent@cavi","enabled":true}]')],
+  [key("claude", "plugin", "marketplace", "list", "--json"), ok('[{"name":"cavi-ai","repo":"cavi-ai/plugins"}]')],
+  [key("claude", "plugin", "list", "--json"), ok('[{"id":"obsidian-agent@cavi-ai","enabled":true}]')],
 ]);
 
 describe("DesktopRuntime", () => {
@@ -148,6 +148,33 @@ describe("DesktopRuntime", () => {
     expect(exec.calls.every(({ options }) => options.timeoutMs === 5_000 && options.maxBytes === 256_000)).toBe(true);
   });
 
+  it("ignores a same-prefix local marketplace and a plugin from another marketplace", async () => {
+    const responses = readyResponses();
+    // A local directory marketplace named `cavi` is not the published catalog:
+    // counting it skips `marketplace add`, and the install that follows fails.
+    responses.set(key("claude", "plugin", "marketplace", "list", "--json"), ok('[{"name":"cavi"},{"name":"claude-plugins-official","repo":"anthropics/claude-plugins-official"}]'));
+    responses.set(key("claude", "plugin", "list", "--json"), ok('[{"id":"obsidian-agent@cavi","enabled":true}]'));
+    const runtime = new DesktopRuntime({ exec: new FakeExec(responses), fs: new MemoryFs(), platform: "darwin", homeDir: "/Users/test" });
+
+    await expect(runtime.inspectClaudeCode()).resolves.toMatchObject({
+      marketplaceInstalled: false,
+      pluginInstalled: false,
+      pluginEnabled: false,
+    });
+  });
+
+  it("re-adds the catalog when it is registered under a pre-rename name", async () => {
+    // Anyone who added cavi-ai/plugins before the rename has it as `plugins`.
+    // `plugin install <id>@cavi-ai` resolves by name, so the repo matching is
+    // not enough — the marketplace still has to be added under its new name.
+    const responses = readyResponses();
+    responses.set(key("claude", "plugin", "marketplace", "list", "--json"), ok('[{"name":"plugins","repo":"cavi-ai/plugins"}]'));
+    responses.set(key("claude", "plugin", "list", "--json"), ok("[]"));
+    const runtime = new DesktopRuntime({ exec: new FakeExec(responses), fs: new MemoryFs(), platform: "darwin", homeDir: "/Users/test" });
+
+    await expect(runtime.inspectClaudeCode()).resolves.toMatchObject({ marketplaceInstalled: false });
+  });
+
   it("keeps Companion usable when Claude Code is absent and skips plugin probes", async () => {
     const responses = readyResponses();
     responses.set(key("claude", "--version"), new Error("ENOENT"));
@@ -170,7 +197,7 @@ describe("DesktopRuntime", () => {
     responses.set(key("obsidian", "version"), new Error("ENOENT"));
     responses.set(key("/usr/local/bin/obsidian", "version"), ok("1.12.7\n"));
     responses.set(key("/Users/test/.local/bin/claude", "plugin", "marketplace", "list", "--json"), ok('[{"name":"cavi","repo":"cavi-ai/plugins"}]'));
-    responses.set(key("/Users/test/.local/bin/claude", "plugin", "list", "--json"), ok('[{"id":"obsidian-agent@cavi","enabled":true}]'));
+    responses.set(key("/Users/test/.local/bin/claude", "plugin", "list", "--json"), ok('[{"id":"obsidian-agent@cavi-ai","enabled":true}]'));
     const exec = new FakeExec(responses);
     const runtime = new DesktopRuntime({ exec, fs: new MemoryFs(), platform: "darwin", homeDir: "/Users/test" });
 
@@ -186,31 +213,31 @@ describe("DesktopRuntime", () => {
   it("enables an installed but disabled obsidian-agent before reporting ready", async () => {
     const responses = readyResponses();
     responses.set(key("claude", "plugin", "list", "--json"), [
-      ok('[{"id":"obsidian-agent@cavi","enabled":false}]'),
-      ok('[{"id":"obsidian-agent@cavi","enabled":true}]'),
+      ok('[{"id":"obsidian-agent@cavi-ai","enabled":false}]'),
+      ok('[{"id":"obsidian-agent@cavi-ai","enabled":true}]'),
     ]);
-    responses.set(key("claude", "plugin", "enable", "obsidian-agent@cavi", "--scope", "user"), ok("enabled"));
+    responses.set(key("claude", "plugin", "enable", "obsidian-agent@cavi-ai", "--scope", "user"), ok("enabled"));
     const exec = new FakeExec(responses);
     const runtime = new DesktopRuntime({ exec, fs: new MemoryFs(), platform: "darwin", homeDir: "/Users/test" });
 
     const result = await runtime.setupClaudeCode();
-    expect(exec.calls.some(({ args }) => args.join(" ") === "plugin enable obsidian-agent@cavi --scope user")).toBe(true);
+    expect(exec.calls.some(({ args }) => args.join(" ") === "plugin enable obsidian-agent@cavi-ai --scope user")).toBe(true);
     expect(result.pluginEnabled).toBe(true);
   });
 
   it("executes missing setup stages in order and re-inspects the result", async () => {
     const responses = readyResponses();
-    responses.set(key("claude", "plugin", "marketplace", "list", "--json"), [ok("[]"), ok('[{"name":"plugins","repo":"cavi-ai/plugins"}]')]);
-    responses.set(key("claude", "plugin", "list", "--json"), [ok("[]"), ok('[{"id":"obsidian-agent@cavi","enabled":true}]')]);
+    responses.set(key("claude", "plugin", "marketplace", "list", "--json"), [ok("[]"), ok('[{"name":"cavi-ai","repo":"cavi-ai/plugins"}]')]);
+    responses.set(key("claude", "plugin", "list", "--json"), [ok("[]"), ok('[{"id":"obsidian-agent@cavi-ai","enabled":true}]')]);
     responses.set(key("claude", "plugin", "marketplace", "add", "cavi-ai/plugins"), ok("added"));
-    responses.set(key("claude", "plugin", "install", "obsidian-agent@cavi", "--scope", "user"), ok("installed"));
+    responses.set(key("claude", "plugin", "install", "obsidian-agent@cavi-ai", "--scope", "user"), ok("installed"));
     const exec = new FakeExec(responses);
     const runtime = new DesktopRuntime({ exec, fs: new MemoryFs(), platform: "darwin", homeDir: "/Users/test" });
 
     const result = await runtime.setupClaudeCode();
     expect(exec.calls.slice(4, 6).map(({ executable, args }) => [executable, args])).toEqual([
       ["claude", ["plugin", "marketplace", "add", "cavi-ai/plugins"]],
-      ["claude", ["plugin", "install", "obsidian-agent@cavi", "--scope", "user"]],
+      ["claude", ["plugin", "install", "obsidian-agent@cavi-ai", "--scope", "user"]],
     ]);
     expect(result.claude.available).toBe(true);
   });
@@ -224,7 +251,7 @@ describe("DesktopRuntime", () => {
     const runtime = new DesktopRuntime({ exec, fs: new MemoryFs(), platform: "darwin", homeDir: "/Users/test" });
 
     await expect(runtime.setupClaudeCode()).rejects.toThrow("Add the CAVI marketplace");
-    expect(exec.calls.some(({ args }) => args.includes("obsidian-agent@cavi"))).toBe(false);
+    expect(exec.calls.some(({ args }) => args.includes("obsidian-agent@cavi-ai"))).toBe(false);
   });
 
   it("backs up and atomically merges Claude Desktop configuration", async () => {

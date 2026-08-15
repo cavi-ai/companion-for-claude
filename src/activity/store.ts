@@ -59,6 +59,7 @@ interface ActivityStoreOptions {
   maxRecords?: number;
   maxDetails?: number;
   maxMessageLength?: number;
+  successRetentionMs?: number;
   now?: () => number;
 }
 
@@ -78,7 +79,9 @@ export class ActivityStore {
   private readonly maxRecords: number;
   private readonly maxDetails: number;
   private readonly maxMessageLength: number;
+  private readonly successRetentionMs: number;
   private readonly now: () => number;
+  private readonly successTimers = new Map<string, number>();
   private nextId = 1;
   private order = 0;
   private disposed = false;
@@ -87,12 +90,14 @@ export class ActivityStore {
     this.maxRecords = positiveInteger(options.maxRecords ?? 20, 20);
     this.maxDetails = positiveInteger(options.maxDetails ?? 20, 20);
     this.maxMessageLength = positiveInteger(options.maxMessageLength ?? 500, 500);
+    this.successRetentionMs = positiveInteger(options.successRetentionMs ?? 4_000, 4_000);
     this.now = options.now ?? Date.now;
   }
 
   start(input: { id?: string; kind: ActivityKind; title: string; total?: number }): string {
     const id = input.id ?? `activity-${this.nextId++}`;
     if (this.disposed) return id;
+    this.cancelSuccessCleanup(id);
     const timestamp = this.now();
     const total = input.total !== undefined && input.total > 0 ? count(input.total) : undefined;
     const record: InternalRecord = {
@@ -120,6 +125,7 @@ export class ActivityStore {
     if (this.disposed) return;
     const current = this.records.get(id);
     if (!current) return;
+    this.cancelSuccessCleanup(id);
     const total = update.total === undefined
       ? current.total
       : update.total > 0
@@ -158,6 +164,7 @@ export class ActivityStore {
       next.percent = Math.max(0, Math.min(100, Math.round((completed / total) * 100)));
     }
     this.records.set(id, next);
+    if (next.state === "succeeded") this.scheduleSuccessCleanup(next);
     this.notify();
   }
 
@@ -170,7 +177,9 @@ export class ActivityStore {
   }
 
   dismiss(id: string): void {
-    if (this.disposed || !this.records.delete(id)) return;
+    if (this.disposed) return;
+    this.cancelSuccessCleanup(id);
+    if (!this.records.delete(id)) return;
     this.notify();
   }
 
@@ -204,6 +213,8 @@ export class ActivityStore {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    for (const timer of this.successTimers.values()) window.clearTimeout(timer);
+    this.successTimers.clear();
     this.records.clear();
     this.listeners.clear();
   }
@@ -211,7 +222,30 @@ export class ActivityStore {
   private trimRecords(): void {
     if (this.records.size <= this.maxRecords) return;
     const oldest = [...this.records.values()].sort((left, right) => left.order - right.order);
-    for (const record of oldest.slice(0, this.records.size - this.maxRecords)) this.records.delete(record.id);
+    for (const record of oldest.slice(0, this.records.size - this.maxRecords)) {
+      this.cancelSuccessCleanup(record.id);
+      this.records.delete(record.id);
+    }
+  }
+
+  private scheduleSuccessCleanup(record: InternalRecord): void {
+    const expectedOrder = record.order;
+    const timer = window.setTimeout(() => {
+      if (this.successTimers.get(record.id) !== timer) return;
+      this.successTimers.delete(record.id);
+      const current = this.records.get(record.id);
+      if (!current || current.order !== expectedOrder || current.state !== "succeeded") return;
+      this.records.delete(record.id);
+      this.notify();
+    }, this.successRetentionMs);
+    this.successTimers.set(record.id, timer);
+  }
+
+  private cancelSuccessCleanup(id: string): void {
+    const timer = this.successTimers.get(id);
+    if (timer === undefined) return;
+    window.clearTimeout(timer);
+    this.successTimers.delete(id);
   }
 
   private text(value: string): string {

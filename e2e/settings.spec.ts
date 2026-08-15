@@ -6,7 +6,7 @@ import { launchObsidianHarness } from "./obsidianHarness";
 // structural change re-renders the whole tab, collapsing every accordion and
 // resetting scroll.
 
-const TAB = ".vertical-tab-content";
+const TAB = ".vertical-tab-content.cc-settings-root";
 
 async function openSettingsTab(page: Page): Promise<Locator> {
   await page.evaluate(() => {
@@ -15,6 +15,7 @@ async function openSettingsTab(page: Page): Promise<Locator> {
     app.setting.openTabById("claude-companion");
   });
   const tab = page.locator(TAB);
+  await expect(tab).toBeVisible();
   await expect(tab.locator(".setting-item").first()).toBeVisible();
   return tab;
 }

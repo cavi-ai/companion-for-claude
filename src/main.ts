@@ -75,6 +75,10 @@ import type { IndexData } from "./semantic/store";
 import { OllamaEmbedder, embedderId, type Embedder } from "./semantic/embedder";
 import { builtinModelById } from "./semantic/transformers/model";
 import { isNamespacedData, resolveSettings } from "./settingsLoad";
+import { createSecretStore, hydrate, stripSecrets, syncSecrets, type SecretStore } from "./secrets/store";
+import { migrateSecrets, migrationNotice } from "./secrets/migrate";
+import { needsCredentialSetup } from "./providers/setupState";
+import { pendingFirstRunPrompts, type FirstRunState } from "./onboarding/firstRun";
 import { clearCachedModel, hasCachedModel } from "./semantic/transformers/cache";
 import { TransformersEmbedder, type WorkerLike } from "./semantic/transformers/embedder";
 import { createEmbedWorker } from "./semantic/transformers/workerSource";
@@ -179,6 +183,8 @@ export default class ClaudeCompanionPlugin extends Plugin {
   private buildTrackerWriteChains = new Map<string, Promise<void>>();
   /** data.json contains several domains; serialize snapshots so an older write cannot land last. */
   private persistChain: Promise<void> = Promise.resolve();
+  /** Credentials live here, not in data.json. Lazy so tests can construct the plugin. */
+  private _secrets: SecretStore | null = null;
   private _router: ProviderRouter | null = null;
   private _intelligenceCoordinator: IntelligenceCoordinator | null = null;
   private _discoveryCoordinator: DiscoveryCoordinator | null = null;
@@ -638,8 +644,7 @@ export default class ClaudeCompanionPlugin extends Plugin {
     this.app.workspace.onLayoutReady(() => {
       void this.syncMcpServer();
       this.syncPlanBuildActions();
-      if (this.settings.ontologyEnabled) void this.loadOntologyOnStart();
-      if (this.settings.semanticEnabled) void this.promptSemanticModelIfNeeded();
+      void this.runFirstRun();
       // Schemas/inbox changed since the clipper templates were exported →
       // the clipper is clipping against a stale schema. Offer once per session.
       if (this.settings.sourceCaptureEnabled && this.clipperTemplatesStale()) {
@@ -1843,9 +1848,15 @@ export default class ClaudeCompanionPlugin extends Plugin {
     await this.runQuickOption({ id: actionId, page: "related", activityId });
   }
 
+  /** Obsidian's OS-encrypted secret store, or an unavailable one below 1.11.5. */
+  secrets(): SecretStore {
+    this._secrets ??= createSecretStore(this.app);
+    return this._secrets;
+  }
+
   async loadSettings(): Promise<void> {
     const raw = (await this.loadData()) as PersistedData | Partial<PluginSettings> | null;
-    this.settings = resolveSettings(raw);
+    const loaded = resolveSettings(raw);
     this.convState = isNamespacedData(raw)
       ? fromPersisted({ conversations: (raw).conversations, activeId: (raw).activeConversationId })
       : emptyState();
@@ -1854,12 +1865,24 @@ export default class ClaudeCompanionPlugin extends Plugin {
     this.buildRuns = Object.fromEntries(runs.map((run) => [run.id, run]));
     const savedActive = isNamespacedData(raw) ? raw.activeBuildRunId : null;
     this.activeBuildRunId = typeof savedActive === "string" && this.buildRuns[savedActive] ? savedActive : runs.at(-1)?.id ?? null;
+
+    // Any plaintext credential still in data.json moves to the secret store now,
+    // then the file is rewritten without it. Must run after buildRuns is restored:
+    // the persist below serializes them, and empty state here would wipe them.
+    const store = this.secrets();
+    const { moved, settings } = migrateSecrets(loaded, store);
+    this.settings = hydrate(settings, store);
+    if (moved.length > 0) {
+      await this.persist();
+      new Notice(migrationNotice(moved), 15000);
+    }
   }
 
-  /** Write settings + conversation history back to data.json. */
+  /** Write settings + conversation history back to data.json, minus credentials. */
   private async persist(): Promise<void> {
+    const store = this.secrets();
     const data = JSON.parse(JSON.stringify({
-      settings: this.settings,
+      settings: store.available() ? stripSecrets(this.settings) : this.settings,
       conversations: this.convState.conversations,
       activeConversationId: this.convState.activeId,
       researchDeskPreferences: this.researchDeskPreferences,
@@ -1872,6 +1895,8 @@ export default class ClaudeCompanionPlugin extends Plugin {
   }
 
   async saveSettings(): Promise<void> {
+    // Credentials go to the secret store first; persist() then strips them.
+    syncSecrets(this.settings, this.secrets());
     await this.persist();
     // Rebuild providers if any credentials/hosts changed.
     this._router = null;
@@ -2273,10 +2298,40 @@ export default class ClaudeCompanionPlugin extends Plugin {
     }
   }
 
+  // ---------- first run ----------
+
+  /** Settings-level view of what a fresh install still owes the user. */
+  private firstRunState(): FirstRunState {
+    const router = this.router();
+    return {
+      needsCredential: needsCredentialSetup({
+        backend: router.chatBackend,
+        hasAnthropicCredential: router.anthropic.hasCredentials(),
+      }),
+      ontologyPending: this.settings.ontologyEnabled && !this.settings.ontologySeedPrompted,
+      semanticPending: this.settings.semanticEnabled && !this.settings.semanticModelPrompted,
+    };
+  }
+
+  /** Layout-ready first run: load the ontology, then the ordered consent prompts. */
+  private async runFirstRun(): Promise<void> {
+    if (this.settings.ontologyEnabled) await this.loadOntologyOnStart();
+    await this.runFirstRunPrompts();
+  }
+
   /**
-   * Startup ontology load: surface schema errors instead of dropping them, and
-   * offer the one-time seed prompt when the registry is empty.
+   * Open the optional consent prompts one at a time, in order, skipping them
+   * entirely while no credential exists. Each prompt keeps its own deeper
+   * preconditions (registry already populated, model already cached).
    */
+  async runFirstRunPrompts(): Promise<void> {
+    for (const prompt of pendingFirstRunPrompts(this.firstRunState())) {
+      if (prompt === "ontology") await this.offerOntologySeed();
+      else await this.promptSemanticModelIfNeeded();
+    }
+  }
+
+  /** Startup ontology load: surface schema errors instead of dropping them. */
   async loadOntologyOnStart(): Promise<void> {
     const registry = this.ontology();
     if (!registry) return;
@@ -2285,23 +2340,32 @@ export default class ClaudeCompanionPlugin extends Plugin {
       new Notice(`Ontology has ${errors.length} schema error${errors.length === 1 ? "" : "s"} — check the console.`);
       console.warn("[Claude Companion] ontology schema errors:", errors);
     }
+  }
+
+  /** One-time offer to write the default type schemas. Resolves when dismissed. */
+  async offerOntologySeed(): Promise<void> {
+    const registry = this.ontology();
+    if (!registry) return;
     if (registry.resolved().size > 0 || this.settings.ontologySeedPrompted) return;
     this.settings.ontologySeedPrompted = true;
     await this.saveSettings();
-    new ChoiceModal<"seed" | "skip">(this.app, {
-      title: "Set up the vault ontology",
-      message:
-        `The ontology lets Claude write typed notes (person, project, source…) that conform to schema notes in your vault. ` +
-        `Create the default schemas in ${this.settings.ontologyFolder}/ now? You can edit or delete them afterwards, or re-run “Seed ontology” any time.`,
-      buttons: [
-        { label: "Create default schemas", value: "seed", cta: true },
-        { label: "Not now", value: "skip" },
-      ],
-      fallback: "skip",
-      onChoice: (c) => {
-        if (c === "seed") void this.seedOntology();
-      },
-    }).open();
+    await new Promise<void>((resolve) => {
+      new ChoiceModal<"seed" | "skip">(this.app, {
+        title: "Set up the vault ontology",
+        message:
+          `The ontology lets Claude write typed notes (person, project, source…) that conform to schema notes in your vault. ` +
+          `Create the default schemas in ${this.settings.ontologyFolder}/ now? You can edit or delete them afterwards, or re-run “Seed ontology” any time.`,
+        buttons: [
+          { label: "Create default schemas", value: "seed", cta: true },
+          { label: "Not now", value: "skip" },
+        ],
+        fallback: "skip",
+        onChoice: (c) => {
+          if (c === "seed") void this.seedOntology();
+          resolve();
+        },
+      }).open();
+    });
   }
 
   /** Queue an ontology reload after schema-note changes (debounced ~500ms). */
@@ -2833,21 +2897,24 @@ export default class ClaudeCompanionPlugin extends Plugin {
     this.settings.semanticModelPrompted = true;
     await this.saveSettings();
     const model = builtinModelById(this.settings.builtinEmbeddingModel);
-    new ChoiceModal<"download" | "skip">(this.app, {
-      title: "Set up semantic search",
-      message:
-        "Companion can index your vault on-device so vault search and related notes work by meaning, not just keywords. " +
-        `This needs a one-time download (~${model.approxDownloadMB} MB from huggingface.co + ~23 MB ONNX runtime from cdn.jsdelivr.net; cached and fully offline afterwards). ` +
-        "Until then, search stays keyword-only.",
-      buttons: [
-        { label: `Download (~${model.approxDownloadMB} MB)`, value: "download", cta: true },
-        { label: "Not now", value: "skip" },
-      ],
-      fallback: "skip",
-      onChoice: (c) => {
-        if (c === "download") void this.downloadBuiltinModelAndIndex();
-      },
-    }).open();
+    await new Promise<void>((resolve) => {
+      new ChoiceModal<"download" | "skip">(this.app, {
+        title: "Set up semantic search",
+        message:
+          "Companion can index your vault on-device so vault search and related notes work by meaning, not just keywords. " +
+          `This needs a one-time download (~${model.approxDownloadMB} MB from huggingface.co + ~23 MB ONNX runtime from cdn.jsdelivr.net; cached and fully offline afterwards). ` +
+          "Until then, search stays keyword-only.",
+        buttons: [
+          { label: `Download (~${model.approxDownloadMB} MB)`, value: "download", cta: true },
+          { label: "Not now", value: "skip" },
+        ],
+        fallback: "skip",
+        onChoice: (c) => {
+          if (c === "download") void this.downloadBuiltinModelAndIndex();
+          resolve();
+        },
+      }).open();
+    });
   }
 
   /** Download the built-in embedding model with progress, then build the index. */

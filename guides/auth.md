@@ -1,8 +1,8 @@
 # Authentication & cost
 
 Companion talks directly to Anthropic. There is no service in between, no account
-with us, and no key of ours involved. You bring a credential; it's stored in this
-vault's plugin data and used only for requests you trigger.
+with us, and no key of ours involved. You bring a credential; it's stored on your
+device and used only for requests you trigger.
 
 *Settings → Companion for Claude → Connection → Authentication*
 
@@ -104,12 +104,29 @@ pricing every token as fresh input.
 Other levers: route bulk work to a local model, or let the Auto backend keep you
 running when usage runs out — see [local-models.md](local-models.md).
 
+## Where credentials are stored
+
+On **Obsidian 1.11.5 and later**, every credential Companion holds — the API key,
+the OAuth token, the custom-endpoint key, the Zotero and Brave Search keys, the
+MCP bridge token, and the two cloud tokens — goes into your device's encrypted
+secret storage. None of them is written to the vault, so none of them rides vault
+sync. On Linux that storage needs kwallet or gnome-libsecret installed.
+
+On **earlier versions** there is no encrypted store, so credentials stay in this
+vault's plugin data (`data.json`) and sync wherever the vault syncs. Companion
+says so in a callout at the top of the settings tab rather than implying safety
+it doesn't have.
+
+Updating to 1.11.5 or later moves any credential already sitting in `data.json` into
+secret storage and blanks it there. That move does not un-leak a copy that
+already synced or was committed — **rotate anything that was in a synced vault**.
+Companion says the same thing once, after the migration runs.
+
 ## Key safety
 
-- The credential is stored in this vault's plugin data (`data.json`) and is never logged.
-- It leaves your device only in requests to Anthropic, or to the gateway you configured.
+- Credentials are never logged.
+- They leave your device only in requests to Anthropic, or to the gateway you configured.
 - The API-key and token fields render as password inputs, so the settings tab is safe to screen-share.
-- If you sync your vault, `data.json` syncs with it.
-- The [MCP bridge](claude-code-bridge.md) has a separate token with its own environment-variable escape hatch for exactly that reason.
+- The [MCP bridge](claude-code-bridge.md) token also honours `OBSIDIAN_COMPANION_MCP_TOKEN`, which keeps it out of plugin data on any Obsidian version.
 
 See [faq.md](faq.md) for what else does and doesn't leave your machine.

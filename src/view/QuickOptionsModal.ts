@@ -35,6 +35,7 @@ export class QuickOptionsModal extends Modal {
   }
 
   override onOpen(): void {
+    this.modalEl.addClass("cc-quick-options-shell");
     this.titleEl.setText(`Quick options · ${pageLabel(this.page)}`);
     this.contentEl.empty();
     this.contentEl.addClass("cc-quick-options-modal");
@@ -47,6 +48,7 @@ export class QuickOptionsModal extends Modal {
   }
 
   override onClose(): void {
+    this.modalEl.removeClass("cc-quick-options-shell");
     this.contentEl.empty();
   }
 

@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   DesktopIntegrationError,
+  MARKETPLACE_NAME,
+  MARKETPLACE_REPO,
+  OBSIDIAN_AGENT_PLUGIN_ID,
   claudeCodeSetupPlan,
   mergeClaudeDesktopConfig,
   parseClaudeVersion,
@@ -37,10 +40,10 @@ describe("desktop integration contracts", () => {
 
   it("parses current plugin JSON with enabled state", () => {
     expect(parsePluginList(JSON.stringify([
-      { id: "obsidian-agent@cavi", version: "0.1.0", scope: "user", enabled: true, future: "ok" },
+      { id: "obsidian-agent@cavi-ai", version: "0.1.0", scope: "user", enabled: true, future: "ok" },
       { id: "remember@claude-plugins-official", enabled: false },
     ]))).toEqual([
-      { id: "obsidian-agent@cavi", enabled: true },
+      { id: "obsidian-agent@cavi-ai", enabled: true },
       { id: "remember@claude-plugins-official", enabled: false },
     ]);
   });
@@ -56,15 +59,24 @@ describe("desktop integration contracts", () => {
   it("plans only the missing Claude Code setup steps", () => {
     expect(claudeCodeSetupPlan(inspection())).toEqual([
       { executable: "claude", args: ["plugin", "marketplace", "add", "cavi-ai/plugins"], stage: "Add the CAVI marketplace" },
-      { executable: "claude", args: ["plugin", "install", "obsidian-agent@cavi", "--scope", "user"], stage: "Install obsidian-agent" },
+      { executable: "claude", args: ["plugin", "install", "obsidian-agent@cavi-ai", "--scope", "user"], stage: "Install obsidian-agent" },
     ]);
     expect(claudeCodeSetupPlan(inspection({ marketplaceInstalled: true }))).toEqual([
-      { executable: "claude", args: ["plugin", "install", "obsidian-agent@cavi", "--scope", "user"], stage: "Install obsidian-agent" },
+      { executable: "claude", args: ["plugin", "install", "obsidian-agent@cavi-ai", "--scope", "user"], stage: "Install obsidian-agent" },
     ]);
     expect(claudeCodeSetupPlan(inspection({ marketplaceInstalled: true, pluginInstalled: true }))).toEqual([
-      { executable: "claude", args: ["plugin", "enable", "obsidian-agent@cavi", "--scope", "user"], stage: "Enable obsidian-agent" },
+      { executable: "claude", args: ["plugin", "enable", "obsidian-agent@cavi-ai", "--scope", "user"], stage: "Enable obsidian-agent" },
     ]);
     expect(claudeCodeSetupPlan(inspection({ marketplaceInstalled: true, pluginInstalled: true, pluginEnabled: true }))).toEqual([]);
+  });
+
+  it("installs from the marketplace name the published catalog declares", () => {
+    expect(MARKETPLACE_REPO).toBe("cavi-ai/plugins");
+    expect(MARKETPLACE_NAME).toBe("cavi-ai");
+    expect(OBSIDIAN_AGENT_PLUGIN_ID).toBe(`obsidian-agent@${MARKETPLACE_NAME}`);
+    const [add, install] = claudeCodeSetupPlan(inspection());
+    expect(add?.args).toContain(MARKETPLACE_REPO);
+    expect(install?.args).toContain(OBSIDIAN_AGENT_PLUGIN_ID);
   });
 
   it("refuses setup plans until both desktop CLIs are callable", () => {

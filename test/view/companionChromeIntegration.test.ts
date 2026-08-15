@@ -79,6 +79,32 @@ describe("Companion chrome view integration", () => {
     expect(optionLabel(memory.contentEl)).toBe("Quick options for Session Memory");
   });
 
+  it("gives empty Related Notes and Session Memory intentional next actions", async () => {
+    const app = new App();
+    (app.workspace as unknown as { getActiveFile(): null }).getActiveFile = () => null;
+    const deps = chrome(app);
+    const openSessionPicker = vi.fn().mockResolvedValue(undefined);
+    const plugin = {
+      settings: structuredClone(DEFAULT_SETTINGS),
+      companionChrome: () => deps,
+      openSessionPicker,
+    } as unknown as ClaudeCompanionPlugin;
+
+    const related = new RelatedView(new WorkspaceLeaf(app), plugin);
+    const memory = new MemoryView(new WorkspaceLeaf(app), plugin);
+    await related.render();
+    await memory.render();
+
+    const relatedRoot = related.contentEl as unknown as FakeElement;
+    const memoryRoot = memory.contentEl as unknown as FakeElement;
+    expect(relatedRoot.querySelector(".cc-view-empty")?.querySelector("h3")?.textContent).toBe("Open a note to explore connections");
+    expect(memoryRoot.querySelector(".cc-view-empty")?.querySelector("h3")?.textContent).toBe("Bring past work into Companion");
+    const capture = memoryRoot.querySelectorAll("button").find(({ textContent }) => textContent === "Capture a session");
+    expect(capture).toBeDefined();
+    capture?.dispatchEvent({ type: "click" });
+    expect(openSessionPicker).toHaveBeenCalledTimes(1);
+  });
+
   it("puts contextual options on both research pages and refreshes their context", async () => {
     const app = new App();
     const deps = chrome(app);

@@ -75,7 +75,7 @@ describe("DesktopIntegrationsModal", () => {
       confirm: vi.fn(async () => true),
     });
     modal.onOpen();
-    expect(visibleText(modal)).toContain("obsidian-agent@cavi");
+    expect(visibleText(modal)).toContain("obsidian-agent@cavi-ai");
     expect(visibleText(modal)).toContain("user scope");
     expect(button(modal, "Open terminal at vault")).toBeDefined();
   });

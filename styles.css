@@ -1026,6 +1026,19 @@
 .cc-context-workspace-meta { margin-top: 8px; color: var(--text-faint); font-family: var(--cc-mono); font-size: 10px; overflow-wrap: anywhere; }
 .cc-context-workspace-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 12px; }
 .cc-context-workspace-actions button { min-width: 0; min-height: 40px; white-space: normal; }
+/* Buttons that opt into wrapping keep the theme's fixed button height, which
+   clips the second line. Every wrapping control grows to its text instead. */
+.cc-context-workspace-actions button,
+.cc-example,
+.cc-build-links button,
+.cc-desk-next-controls button,
+.cc-desk-attention-row,
+.cc-research-open,
+.cc-research-record,
+.cc-research-actions button,
+.cc-intelligence-paths button,
+.cc-workspace-navigation button { height: auto; }
+
 .cc-empty-section-label { margin: 14px 0 8px; color: var(--text-faint); }
 .cc-empty-examples {
   display: grid;
@@ -2762,6 +2775,9 @@ pre.cc-has-copy:hover .cc-code-copy { opacity: 1; }
 .cc-setup-sub { color: var(--text-muted); font-size: 13px; }
 .cc-setup-link { font-size: 13px; }
 .cc-setup-row { display: flex; gap: 8px; margin-top: 4px; }
+.cc-setup-status { font-size: 12px; color: var(--text-muted); }
+.cc-setup-status:empty { display: none; }
+.cc-setup-status.is-err { color: var(--text-error); }
 .cc-setup-input {
   flex: 1;
   min-width: 0;
@@ -2907,7 +2923,6 @@ pre.cc-has-copy:hover .cc-code-copy { opacity: 1; }
 
 /* ---- shared Companion activity indicator and drawer ---- */
 .cc-activity-host {
-  position: relative;
   flex: 0 0 auto;
   min-width: 0;
 }
@@ -2961,7 +2976,7 @@ pre.cc-has-copy:hover .cc-code-copy { opacity: 1; }
   z-index: var(--layer-popover);
   inset-block-start: calc(100% + 6px);
   inset-inline-end: 0;
-  width: min(420px, calc(100vw - 24px));
+  width: min(420px, calc(100cqw - 16px));
   max-height: min(60vh, 560px);
   overflow: auto;
   padding: 8px;
@@ -3023,6 +3038,11 @@ pre.cc-has-copy:hover .cc-code-copy { opacity: 1; }
   gap: 10px;
   min-width: 0;
   margin-bottom: 10px;
+  /* Popovers below anchor and size against this header, not the window — a
+     narrow side pane in a wide window never triggers a viewport media query,
+     and the activity host sits well left of the pane edge. */
+  position: relative;
+  container-type: inline-size;
 }
 .cc-companion-chrome-title {
   flex: 1 1 auto;

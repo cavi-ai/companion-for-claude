@@ -1,14 +1,13 @@
 // Pure helpers for the MCP bridge: token generation and client config snippets.
 
-/** Generate a URL-safe random token. Uses Web Crypto when available. */
+/** Generate a URL-safe random token. Requires Web Crypto — this is a bearer token. */
 export function generateToken(bytes = 24): string {
   const arr = new Uint8Array(bytes);
   const c = (window as { crypto?: Crypto }).crypto;
-  if (c?.getRandomValues) {
-    c.getRandomValues(arr);
-  } else {
-    for (let i = 0; i < bytes; i++) arr[i] = Math.floor(Math.random() * 256);
+  if (!c?.getRandomValues) {
+    throw new Error("Cannot generate a secure MCP token: Web Crypto is unavailable on this device.");
   }
+  c.getRandomValues(arr);
   let s = "";
   for (const b of arr) s += b.toString(16).padStart(2, "0");
   return s;

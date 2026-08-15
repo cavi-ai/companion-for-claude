@@ -1,5 +1,12 @@
 export type DesktopPlatform = "darwin" | "win32" | "linux" | "unsupported";
 
+/** The published CAVI catalog: the repo `marketplace add` takes. */
+export const MARKETPLACE_REPO = "cavi-ai/plugins";
+/** The name that repo's marketplace.json declares — what follows `@` on install. */
+export const MARKETPLACE_NAME = "cavi-ai";
+/** The plugin id to install and enable. */
+export const OBSIDIAN_AGENT_PLUGIN_ID = `obsidian-agent@${MARKETPLACE_NAME}`;
+
 export interface ProbeResult {
   available: boolean;
   version?: string;
@@ -103,19 +110,19 @@ export function claudeCodeSetupPlan(state: ClaudeCodeInspection): CommandSpec[] 
   if (!state.marketplaceInstalled) {
     commands.push({
       executable: "claude",
-      args: ["plugin", "marketplace", "add", "cavi-ai/plugins"],
+      args: ["plugin", "marketplace", "add", MARKETPLACE_REPO],
       stage: "Add the CAVI marketplace",
     });
   }
   commands.push(state.pluginInstalled
     ? {
         executable: "claude",
-        args: ["plugin", "enable", "obsidian-agent@cavi", "--scope", "user"],
+        args: ["plugin", "enable", OBSIDIAN_AGENT_PLUGIN_ID, "--scope", "user"],
         stage: "Enable obsidian-agent",
       }
     : {
         executable: "claude",
-        args: ["plugin", "install", "obsidian-agent@cavi", "--scope", "user"],
+        args: ["plugin", "install", OBSIDIAN_AGENT_PLUGIN_ID, "--scope", "user"],
         stage: "Install obsidian-agent",
       });
   return commands;

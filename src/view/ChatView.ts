@@ -1088,7 +1088,9 @@ export class ChatView extends ItemView {
     card.createDiv({ cls: "cc-setup-title", text: "Connect to Claude" });
     card.createDiv({
       cls: "cc-setup-sub",
-      text: "Add your Anthropic API key to start chatting. It’s stored locally in this vault — nothing else leaves your machine.",
+      text: this.plugin.secrets().available()
+        ? "Add your Anthropic API key to start chatting. It’s kept in your device’s secret storage, not in this vault — nothing else leaves your machine."
+        : "Add your Anthropic API key to start chatting. It’s stored in this vault’s plugin data — nothing else leaves your machine.",
     });
     const link = card.createEl("a", {
       cls: "cc-setup-link",
@@ -1103,6 +1105,7 @@ export class ChatView extends ItemView {
       attr: { type: "password", placeholder: "sk-ant-api…", "aria-label": "Anthropic API key" },
     });
     const save = row.createEl("button", { cls: "mod-cta cc-setup-save", text: "Save key" });
+    const status = card.createDiv({ cls: "cc-setup-status" });
     save.addEventListener("click", () => void (async () => {
       const key = input.value.trim();
       if (!key) {
@@ -1112,6 +1115,21 @@ export class ChatView extends ItemView {
       this.plugin.settings.authMode = "apiKey";
       this.plugin.settings.apiKey = key;
       await this.plugin.saveSettings(); // rebuilds the provider router
+      // Verify here rather than letting the first send be the test — a typo'd
+      // key otherwise reads as a broken plugin.
+      save.disabled = true;
+      status.removeClass("is-err");
+      status.setText("Checking your key…");
+      const result = await this.plugin.router().anthropic.test();
+      save.disabled = false;
+      if (!result.ok) {
+        // The key stays saved so it can be corrected rather than retyped.
+        status.addClass("is-err");
+        status.setText(`Couldn’t connect: ${result.detail}`);
+        input.focus();
+        return;
+      }
+      status.setText("");
       quickNotice("API key saved — you’re connected.");
       if (this.messages.length === 0) {
         this.messagesEl.empty();
@@ -1119,6 +1137,8 @@ export class ChatView extends ItemView {
       } else {
         card.remove();
       }
+      // Prompts held back while there was no credential can run now.
+      await this.plugin.runFirstRunPrompts();
     })());
     const settingsBtn = card.createEl("button", { cls: "cc-setup-settings", text: "Other options (OAuth, environment)…" });
     settingsBtn.addEventListener("click", () => this.openSettings());

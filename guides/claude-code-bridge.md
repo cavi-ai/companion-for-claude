@@ -22,7 +22,7 @@ plugin with the equivalent of:
 
 ```bash
 claude plugin marketplace add cavi-ai/plugins
-claude plugin install obsidian-agent@cavi --scope user
+claude plugin install obsidian-agent@cavi-ai --scope user
 ```
 
 The commands use fixed argument arrays rather than a shell. Companion does not
@@ -78,9 +78,11 @@ Obsidian has to be open — the bridge only runs while the app does.
 A live status line shows `✓ Running at http://127.0.0.1:<port>/mcp`, or tells you
 the port is in use.
 
-Set `OBSIDIAN_COMPANION_MCP_TOKEN` in your environment to keep the bridge token
-outside synced vault plugin data. Connection snippets are masked by default;
-copy buttons still copy the working value.
+On Obsidian 1.11.5 and later the bridge token lives in your device's encrypted
+secret storage, not in the vault — see [auth.md](auth.md). Setting
+`OBSIDIAN_COMPANION_MCP_TOKEN` in your environment keeps it out of plugin data on
+any version. Connection snippets are masked by default; copy buttons still copy
+the working value.
 
 For an advanced Claude Code MCP connection instead of the default CLI path:
 
@@ -99,7 +101,7 @@ without Companion:
 
 ```text
 /plugin marketplace add cavi-ai/plugins
-/plugin install obsidian-agent@cavi
+/plugin install obsidian-agent@cavi-ai
 ```
 
 Enable the official CLI in Obsidian 1.12.7 or newer and verify that `obsidian`

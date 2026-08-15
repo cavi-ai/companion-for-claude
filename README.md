@@ -293,7 +293,7 @@ Companion, its in-app agent, and ordinary Claude Code workflows do not require
 MCP. From **Options → Desktop integrations** on any Companion page:
 
 - **Set up Claude Code** verifies the `claude` and official `obsidian` CLIs,
-  then can add `cavi-ai/plugins` and install `obsidian-agent@cavi` at user
+  then can add `cavi-ai/plugins` and install `obsidian-agent@cavi-ai` at user
   scope after explicit confirmation. Claude Code uses the official Obsidian CLI
   by default.
 - **Connect Claude Desktop** enables the read-only loopback MCP bridge, backs up

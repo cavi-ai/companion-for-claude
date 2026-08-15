@@ -91,6 +91,23 @@ describe("QuickOptionsModal", () => {
     expect(deps.snapshot).toHaveBeenCalledTimes(2);
   });
 
+  it("constrains the modal shell as well as its option content", () => {
+    const modal = new QuickOptionsModal(new App(), "inbox", {
+      snapshot: () => state(),
+      save: vi.fn(),
+      run: vi.fn(),
+      openAllSettings: vi.fn(),
+    });
+
+    modal.onOpen();
+
+    expect((modal.modalEl as unknown as FakeElement).classList.has("cc-quick-options-shell")).toBe(true);
+    expect((modal.contentEl as unknown as FakeElement).classList.has("cc-quick-options-modal")).toBe(true);
+
+    modal.onClose();
+    expect((modal.modalEl as unknown as FakeElement).classList.has("cc-quick-options-shell")).toBe(false);
+  });
+
   it("writes toggles through the shared save boundary and keeps all settings last", async () => {
     const save = vi.fn().mockResolvedValue(undefined);
     const openAllSettings = vi.fn();

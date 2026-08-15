@@ -21,7 +21,7 @@ export interface DesktopIntegrationsModalDependencies {
   closed?(): void;
 }
 
-const CLAUDE_CODE_DISCLOSURE = "Adds cavi-ai/plugins to Claude Code when missing, then installs or enables obsidian-agent@cavi at user scope.";
+const CLAUDE_CODE_DISCLOSURE = "Adds cavi-ai/plugins to Claude Code when missing, then installs or enables obsidian-agent@cavi-ai at user scope.";
 const CLAUDE_DESKTOP_DISCLOSURE = "Enables Companion's read-only loopback bridge and merges obsidian-vault into Claude Desktop's local configuration. Obsidian must remain open.";
 
 export class DesktopIntegrationsModal extends Modal {

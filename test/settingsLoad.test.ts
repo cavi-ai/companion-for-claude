@@ -3,6 +3,7 @@ import { App, FakeElement, openSettingTab } from "./fakes/obsidian";
 import { resolveSettings, isNamespacedData } from "../src/settingsLoad";
 import { DEFAULT_SETTINGS } from "../src/types";
 import { ClaudeCompanionSettingTab } from "../src/settings";
+import { unavailableStore } from "../src/secrets/store";
 import type ClaudeCompanionPlugin from "../src/main";
 
 // The initial-release flat shape: data.json *was* the settings object, with
@@ -80,6 +81,7 @@ describe("resolveSettings with legacy configs", () => {
     const plugin = {
       settings: resolveSettings(LEGACY_FLAT),
       saveSettings: async () => {},
+      secrets: () => unavailableStore(),
       router: () => ({
         anthropic: { hasCredentials: () => true },
         ollama: { listModels: async () => [], capabilities: async () => [], test: async () => ({ ok: true, detail: "" }) },

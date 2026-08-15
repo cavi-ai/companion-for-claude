@@ -18,7 +18,7 @@ export function normalizePath(p: string): string {
     .replace(/^\/+|\/+$/g, "");
 }
 
-export const Platform = { isMobile: false, isDesktop: true };
+export const Platform = { isMobile: false, isDesktop: true, isLinux: false, isMacOS: true, isWin: false };
 
 export const requestUrl = async (): Promise<never> => {
   throw new Error("requestUrl is not available in tests — inject a fake HTTP adapter instead.");
@@ -223,11 +223,35 @@ class FakeFileManager {
   }
 }
 
+export class FakeSecretStorage {
+  private data = new Map<string, string>();
+  setSecret(id: string, secret: string): void {
+    if (!/^[a-z0-9-]+$/.test(id)) throw new Error(`Invalid secret id: ${id}`);
+    this.data.set(id, secret);
+  }
+  getSecret(id: string): string | null { return this.data.get(id) ?? null; }
+  listSecrets(): string[] { return [...this.data.keys()]; }
+}
+
 export class App {
   vault = new FakeVault();
   metadataCache = new FakeMetadataCache(this.vault);
   fileManager = new FakeFileManager(this.vault);
-  workspace = { getLeaf: () => ({ openFile: async () => undefined }) };
+  workspace = {
+    getLeaf: () => ({ openFile: async () => undefined }),
+    getLeavesOfType: (_type: string): unknown[] => [],
+  };
+  secretStorage = new FakeSecretStorage();
+}
+
+/** Version the fake reports; tests flip it to exercise the pre-1.11.5 path. */
+let fakeApiVersion = "1.11.5";
+export function setApiVersion(version: string): void { fakeApiVersion = version; }
+export function requireApiVersion(version: string): boolean {
+  const parse = (v: string) => v.split(".").map((n) => Number.parseInt(n, 10) || 0);
+  const [a, b, c] = parse(fakeApiVersion);
+  const [x, y, z] = parse(version);
+  return a !== x ? a > x : b !== y ? b > y : c >= z;
 }
 
 // Value stubs for modules that import these names (not exercised in tests).
@@ -322,6 +346,8 @@ export class ItemView {
 let lastOpenedModal: Modal | undefined;
 export function getLastOpenedModal(): Modal | undefined { return lastOpenedModal; }
 export class Modal {
+  containerEl = new FakeElement() as unknown as HTMLElement;
+  modalEl = new FakeElement() as unknown as HTMLElement;
   titleEl = new FakeElement("h2");
   contentEl = new FakeElement() as unknown as HTMLElement;
   closed = false;

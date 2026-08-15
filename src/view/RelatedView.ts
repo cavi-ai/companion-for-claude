@@ -68,8 +68,13 @@ export class RelatedView extends ItemView {
     const file = this.app.workspace.getActiveFile();
     this.shownPath = file?.path ?? null;
     if (!(file instanceof TFile) || file.extension !== "md") {
-      root.createEl("div", { cls: "cc-eyebrow", text: "RELATED NOTES" });
-      root.createEl("p", { cls: "setting-item-description", text: "Open a note to see what it connects to." });
+      const empty = root.createEl("section", {
+        cls: "cc-view-empty",
+        attr: { role: "status", "aria-label": "Related Notes empty state" },
+      });
+      empty.createEl("div", { cls: "cc-eyebrow", text: "RELATED NOTES" });
+      empty.createEl("h3", { text: "Open a note to explore connections" });
+      empty.createEl("p", { text: "Related Notes will map links, mentions, and semantic neighbors for the note you are reading." });
       return;
     }
 
