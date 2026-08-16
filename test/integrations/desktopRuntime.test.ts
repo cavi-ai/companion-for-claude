@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { spawn } from "node:child_process";
 import {
   DesktopRuntime,
+  ExecFailure,
   claudeDesktopConfigPath,
   managedProcessPortFromSpawn,
   type DesktopFsPort,
@@ -20,7 +21,8 @@ class FakeExec implements ExecFilePort {
     const configured = this.responses.get([executable, ...args].join("\u0000"));
     const response = Array.isArray(configured) ? configured.shift() : configured;
     if (response instanceof Error) throw response;
-    if (!response) throw new Error(`unexpected command: ${executable} ${args.join(" ")}`);
+    // An unconfigured executable is one that is not installed, which is ENOENT.
+    if (!response) throw new ExecFailure(`spawn ${executable} ENOENT`, "ENOENT");
     return response;
   }
 }
@@ -133,8 +135,8 @@ describe("DesktopRuntime", () => {
     const runtime = new DesktopRuntime({ exec, fs: new MemoryFs(), platform: "darwin", homeDir: "/Users/test" });
 
     await expect(runtime.inspectClaudeCode()).resolves.toEqual({
-      claude: { available: true, version: "2.1.226" },
-      obsidian: { available: true, version: "1.12.7" },
+      claude: { available: true, state: "available", version: "2.1.226" },
+      obsidian: { available: true, state: "available", version: "1.12.7" },
       marketplaceInstalled: true,
       pluginInstalled: true,
       pluginEnabled: true,
@@ -320,5 +322,96 @@ describe("DesktopRuntime", () => {
     const result = await runtime.openTerminalAtVault("/home/me/My Notes");
     expect(result.opened).toBe(false);
     expect(result.instruction).toBe("cd '/home/me/My Notes' && claude");
+  });
+});
+
+// The Obsidian CLI answers only while it can reach the running app; a shim that
+// exists and exits non-zero is a different problem from one that is not there,
+// and reporting the first as "not found" sends the user after the wrong fix.
+describe("CLI probe states", () => {
+  const ranAndFailed = (message: string): ExecFailure => new ExecFailure(message);
+  const notInstalled = (): ExecFailure => new ExecFailure("spawn ENOENT", "ENOENT");
+
+  const withObsidian = (response: ExecResult | Error): Map<string, ExecResult | Error | ExecResult[]> => {
+    const responses = readyResponses();
+    responses.set(key("obsidian", "version"), response);
+    return responses;
+  };
+
+  it("reports an installed but unresponsive CLI as unreachable, not missing", async () => {
+    const runtime = new DesktopRuntime({
+      exec: new FakeExec(withObsidian(ranAndFailed("Command failed: obsidian version\nThe CLI is unable to find Obsidian."))),
+      fs: new MemoryFs(),
+      platform: "darwin",
+      homeDir: "/Users/test",
+    });
+    const { obsidian } = await runtime.inspectClaudeCode();
+    expect(obsidian.available).toBe(false);
+    expect(obsidian.state).toBe("unreachable");
+    expect(obsidian.message).toContain("unable to find Obsidian");
+  });
+
+  it("reports a CLI that is nowhere on disk as missing", async () => {
+    const runtime = new DesktopRuntime({
+      exec: new FakeExec(withObsidian(notInstalled())),
+      fs: new MemoryFs(),
+      platform: "darwin",
+      homeDir: "/Users/test",
+    });
+    const { obsidian } = await runtime.inspectClaudeCode();
+    expect(obsidian.state).toBe("missing");
+  });
+
+  // A later absent candidate must not overwrite an earlier one that actually ran.
+  it("keeps the failure from the candidate that ran", async () => {
+    const responses = withObsidian(ranAndFailed("unable to find Obsidian"));
+    const runtime = new DesktopRuntime({
+      exec: new FakeExec(responses),
+      fs: new MemoryFs(),
+      platform: "darwin",
+      homeDir: "/Users/test",
+    });
+    const { obsidian } = await runtime.inspectClaudeCode();
+    expect(obsidian.state).toBe("unreachable");
+    expect(obsidian.executable).toBe("obsidian");
+  });
+
+  it("finds the CLI at Obsidian's documented Linux target when PATH misses it", async () => {
+    const responses = readyResponses();
+    responses.delete(key("obsidian", "version"));
+    responses.set(key("/home/me/.local/bin/obsidian", "version"), ok("1.12.7\n"));
+    const runtime = new DesktopRuntime({
+      exec: new FakeExec(responses),
+      fs: new MemoryFs(),
+      platform: "linux",
+      homeDir: "/home/me",
+    });
+    const { obsidian } = await runtime.inspectClaudeCode();
+    expect(obsidian).toMatchObject({ available: true, version: "1.12.7" });
+  });
+
+  it("falls back to the CLI binary shipped beside the app executable", async () => {
+    const responses = readyResponses();
+    responses.delete(key("obsidian", "version"));
+    responses.set(key("/Applications/Obsidian.app/Contents/MacOS/obsidian-cli", "version"), ok("1.12.7\n"));
+    const runtime = new DesktopRuntime({
+      exec: new FakeExec(responses),
+      fs: new MemoryFs(),
+      platform: "darwin",
+      homeDir: "/Users/test",
+      execDir: "/Applications/Obsidian.app/Contents/MacOS",
+    });
+    const { obsidian } = await runtime.inspectClaudeCode();
+    expect(obsidian).toMatchObject({ available: true, version: "1.12.7" });
+  });
+
+  it("refuses to set up Claude Code with the reachability remedy, not a reinstall", async () => {
+    const runtime = new DesktopRuntime({
+      exec: new FakeExec(withObsidian(ranAndFailed("The CLI is unable to find Obsidian."))),
+      fs: new MemoryFs(),
+      platform: "darwin",
+      homeDir: "/Users/test",
+    });
+    await expect(runtime.setupClaudeCode()).rejects.toThrow("Restart Obsidian");
   });
 });

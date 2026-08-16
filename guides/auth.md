@@ -110,12 +110,17 @@ On **Obsidian 1.11.5 and later**, every credential Companion holds — the API k
 the OAuth token, the custom-endpoint key, the Zotero and Brave Search keys, the
 MCP bridge token, and the two cloud tokens — goes into your device's encrypted
 secret storage. None of them is written to the vault, so none of them rides vault
-sync. On Linux that storage needs kwallet or gnome-libsecret installed.
+sync. Obsidian's store relies on the operating system for that encryption; on
+Linux it needs kwallet, kwallet5, kwallet6, or gnome-libsecret installed.
 
 On **earlier versions** there is no encrypted store, so credentials stay in this
-vault's plugin data (`data.json`) and sync wherever the vault syncs. Companion
-says so in a callout at the top of the settings tab rather than implying safety
-it doesn't have.
+vault's plugin data (`data.json`) and sync wherever the vault syncs.
+
+On 1.11.5 and later, Companion confirms each credential by reading it back before
+removing it from `data.json`. A store that refuses the write — no keyring on
+Linux, or any backend failure — leaves the credential in `data.json` rather than
+dropping it from both places, and settings says so in a callout at the top of the
+tab. You never lose a key to a storage backend that isn't there.
 
 Updating to 1.11.5 or later moves any credential already sitting in `data.json` into
 secret storage and blanks it there. That move does not un-leak a copy that

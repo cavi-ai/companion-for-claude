@@ -14,8 +14,8 @@ import {
 } from "../../src/integrations/desktop";
 
 const inspection = (overrides: Partial<ClaudeCodeInspection> = {}): ClaudeCodeInspection => ({
-  claude: { available: true, version: "2.1.226" },
-  obsidian: { available: true, version: "1.12.7" },
+  claude: { available: true, state: "available", version: "2.1.226" },
+  obsidian: { available: true, state: "available", version: "1.12.7" },
   marketplaceInstalled: false,
   pluginInstalled: false,
   pluginEnabled: false,
@@ -24,7 +24,7 @@ const inspection = (overrides: Partial<ClaudeCodeInspection> = {}): ClaudeCodeIn
 
 describe("desktop integration contracts", () => {
   it("parses a callable Claude Code version without depending on exact release text", () => {
-    expect(parseClaudeVersion("2.1.226 (Claude Code)\n")).toEqual({ available: true, version: "2.1.226" });
+    expect(parseClaudeVersion("2.1.226 (Claude Code)\n")).toEqual({ available: true, state: "available", version: "2.1.226" });
   });
 
   it("rejects an empty Claude Code version", () => {
@@ -80,8 +80,24 @@ describe("desktop integration contracts", () => {
   });
 
   it("refuses setup plans until both desktop CLIs are callable", () => {
-    expect(() => claudeCodeSetupPlan(inspection({ claude: { available: false } }))).toThrow("Claude Code is not available");
-    expect(() => claudeCodeSetupPlan(inspection({ obsidian: { available: false } }))).toThrow("Obsidian CLI is not available");
+    expect(() => claudeCodeSetupPlan(inspection({ claude: { available: false, state: "missing" } }))).toThrow("Claude Code is not available");
+    expect(() => claudeCodeSetupPlan(inspection({ obsidian: { available: false, state: "missing" } }))).toThrow("The Obsidian CLI is not installed");
+  });
+
+  // "not found" for a CLI that is installed but cannot reach Obsidian points the
+  // user at reinstalling something they already have.
+  it("tells an unreachable Obsidian CLI apart from a missing one", () => {
+    expect(() => claudeCodeSetupPlan(inspection({ obsidian: { available: false, state: "unreachable" } })))
+      .toThrow("could not reach Obsidian");
+    expect(() => claudeCodeSetupPlan(inspection({ obsidian: { available: false, state: "unreachable" } })))
+      .not.toThrow("not installed");
+  });
+
+  it("names the platform's own registration target when the CLI is missing", () => {
+    expect(() => claudeCodeSetupPlan(inspection({ obsidian: { available: false, state: "missing" } }), "darwin"))
+      .toThrow("/usr/local/bin/obsidian");
+    expect(() => claudeCodeSetupPlan(inspection({ obsidian: { available: false, state: "missing" } }), "linux"))
+      .toThrow("~/.local/bin/obsidian");
   });
 
   it("preserves unrelated Claude Desktop configuration", () => {

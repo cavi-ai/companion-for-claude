@@ -19,15 +19,19 @@ export function pendingSecrets(settings: PluginSettings): SecretField[] {
  * Move any plaintext credential into the store and blank it in the returned
  * settings. Idempotent: a second run finds nothing pending. No-op when the store
  * is unavailable, so pre-1.11.5 keeps today's behaviour rather than losing keys.
+ * A field is blanked only when the write reads back — a backend that drops the
+ * write leaves the credential where it already was.
  */
 export function migrateSecrets(settings: PluginSettings, store: SecretStore): MigrationResult {
   if (!store.available()) return { moved: [], settings };
-  const moved = pendingSecrets(settings);
-  if (moved.length === 0) return { moved, settings };
+  const pending = pendingSecrets(settings);
+  if (pending.length === 0) return { moved: [], settings };
   const out = { ...settings };
-  for (const field of moved) {
-    store.set(secretIdFor(field), (settings[field] ?? "").trim());
+  const moved: SecretField[] = [];
+  for (const field of pending) {
+    if (!store.set(secretIdFor(field), (settings[field] ?? "").trim())) continue;
     out[field] = "";
+    moved.push(field);
   }
   return { moved, settings: out };
 }

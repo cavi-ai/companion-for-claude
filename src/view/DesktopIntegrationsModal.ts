@@ -1,5 +1,6 @@
 import { App, Modal } from "obsidian";
 import type { DesktopIntegrationViewState } from "../integrations/desktopCoordinator";
+import { OBSIDIAN_CLI_UNREACHABLE, obsidianCliInstallHint, type DesktopPlatform, type ProbeResult } from "../integrations/desktop";
 
 export interface DesktopIntegrationsController {
   snapshot(): DesktopIntegrationViewState;
@@ -16,9 +17,18 @@ export interface DesktopIntegrationsModalDependencies {
   mobile: boolean;
   openConnectionSettings(): void;
   openBridgeSettings(): void;
+  /** Opens Obsidian's own General settings, where the CLI switch lives. */
+  openObsidianCliSettings(): void;
   confirm(target: "claude-code" | "claude-desktop", message: string): Promise<boolean>;
   claudeDesktopConfigPath?: string;
+  platform: DesktopPlatform;
   closed?(): void;
+}
+
+/** An installed-but-failing binary reads as "unreachable", never "not found". */
+function probeLabel(probe: ProbeResult): string {
+  if (probe.available) return probe.version ?? "available";
+  return probe.state === "unreachable" ? "installed, not responding" : "not found";
 }
 
 const CLAUDE_CODE_DISCLOSURE = "Adds cavi-ai/plugins to Claude Code when missing, then installs or enables obsidian-agent@cavi-ai at user scope.";
@@ -84,8 +94,23 @@ export class DesktopIntegrationsModal extends Modal {
     if (inspection) {
       claudeCode.createDiv({
         cls: "cc-desktop-integration-state",
-        text: `Claude Code: ${inspection.claude.available ? inspection.claude.version ?? "available" : "not found"} · Obsidian CLI: ${inspection.obsidian.available ? inspection.obsidian.version ?? "available" : "not found"}`,
+        text: `Claude Code: ${probeLabel(inspection.claude)} · Obsidian CLI: ${probeLabel(inspection.obsidian)}`,
       });
+      // "not found" for a CLI that is installed but unreachable sends the user
+      // after the wrong fix, so the remediation is spelled out here.
+      if (inspection.obsidian.state === "unreachable") {
+        claudeCode.createEl("p", { cls: "cc-desktop-integration-disclosure", text: OBSIDIAN_CLI_UNREACHABLE });
+      } else if (inspection.obsidian.state === "missing") {
+        claudeCode.createEl("p", {
+          cls: "cc-desktop-integration-disclosure",
+          text: `The Obsidian CLI is not installed. ${obsidianCliInstallHint(this.deps.platform)}`,
+        });
+      }
+      // Obsidian owns the switch and the elevated Register that places the
+      // command, so the most Companion can do is land the user on them.
+      if (!inspection.obsidian.available && !this.deps.mobile) {
+        this.action(claudeCode, "Open Obsidian CLI settings", false, () => this.deps.openObsidianCliSettings());
+      }
     }
     const codeBusy = state.status === "loading" && state.operation === "claude-code";
     if (!inspection?.pluginInstalled || !inspection.pluginEnabled) {

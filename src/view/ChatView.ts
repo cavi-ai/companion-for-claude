@@ -37,6 +37,7 @@ import { mergeUsage, type TokenUsage } from "../claude/sse";
 import type { CompanionWorkspaceCard } from "./companionWorkspace";
 import { ActionModal, type ActionModalItem } from "./ActionModal";
 import { renderCompanionChrome } from "./companionChrome";
+import { QuickOptionsModal } from "./QuickOptionsModal";
 import { quickNotice } from "../notice";
 import { ComposerContextManager } from "./ComposerContextManager";
 import { buildContextManagerModel, type AutomaticContextKey } from "./contextManagerModel";
@@ -190,7 +191,6 @@ export class ChatView extends ItemView {
     root.empty();
     root.addClass("cc-chat-root"); // establishes the container-query context (see styles.css)
     root.addClass("cc-root");
-    this.disposeChrome = renderCompanionChrome(root, "chat", "Chat", this.plugin.companionChrome(), { hideTitle: true });
 
     // Initialize per-session controls from the settings default model.
     if (!this.controls) {
@@ -225,6 +225,13 @@ export class ChatView extends ItemView {
       const more = actions.createEl("button", { cls: "cc-icon-btn", attr: { "aria-label": "More actions" } });
       setIcon(more, "more-vertical");
       more.addEventListener("click", () => this.openOverflowMenu());
+      // Quick options reaches mobile through that one ⋯ menu; a second control on
+      // a phone-width header is the crowding this row exists to avoid.
+      this.disposeChrome = renderCompanionChrome(root, "chat", "Chat", this.plugin.companionChrome(), {
+        host: actions,
+        compact: true,
+        omitOptionsButton: true,
+      });
     } else {
       // One-shot actions (left group). These DO something on click.
       this.iconButton(actions, "plus", "New chat", () => this.clearChat());
@@ -246,7 +253,12 @@ export class ChatView extends ItemView {
       this.mcpStatusEl = actions.createEl("button", { cls: "cc-icon-btn cc-mcp-btn", attr: { "aria-label": "MCP bridge controls" } });
       setIcon(this.mcpStatusEl, "plug-zap");
       this.mcpStatusEl.addEventListener("click", (evt) => this.openMcpMenu(evt));
-      this.iconButton(actions, "settings", "Open settings", () => this.openSettings());
+      // Quick options joins this row rather than owning a header of its own, and
+      // replaces the gear: its own sheet already offers "Open all settings".
+      this.disposeChrome = renderCompanionChrome(root, "chat", "Chat", this.plugin.companionChrome(), {
+        host: actions,
+        compact: true,
+      });
     }
 
     // ---- messages ----
@@ -2112,6 +2124,7 @@ export class ChatView extends ItemView {
       { title: "History", icon: "history", run: () => this.openHistory() },
       { title: "Save chat to vault", icon: "save", run: () => void this.saveChat() },
       { title: "Model controls…", icon: "sliders-horizontal", run: () => this.openTuneModal() },
+      { title: "Options…", icon: "settings-2", run: () => new QuickOptionsModal(this.app, "chat", this.plugin.companionChrome()).open() },
     ];
     // Session toggles that live in the hidden desktop controls bar — without
     // these, phone users can't reach agent writes, Plan Mode, or memory ingest.

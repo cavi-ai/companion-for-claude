@@ -7,11 +7,43 @@ export const MARKETPLACE_NAME = "cavi-ai";
 /** The plugin id to install and enable. */
 export const OBSIDIAN_AGENT_PLUGIN_ID = `obsidian-agent@${MARKETPLACE_NAME}`;
 
+/**
+ * `missing` means no candidate path exists; `unreachable` means one ran and
+ * failed. Collapsing the two reports an installed binary as "not found", which
+ * points the user at the wrong fix.
+ */
+export type ProbeState = "available" | "missing" | "unreachable";
+
 export interface ProbeResult {
   available: boolean;
+  state: ProbeState;
   version?: string;
   message?: string;
+  /** The candidate that ran, when one did. */
+  executable?: string;
 }
+
+/** The Obsidian settings tab that carries the CLI switch. */
+export const OBSIDIAN_GENERAL_SETTINGS_TAB = "about";
+
+/**
+ * Obsidian owns both steps: a “Command line interface” switch, then a separate
+ * “Set up CLI to work in the terminal” → Register that elevates to place the
+ * command. Companion cannot do either, so it routes the user to them.
+ */
+export function obsidianCliInstallHint(platform: DesktopPlatform): string {
+  const enable = "In Obsidian 1.12.7 or later, turn on Settings → General → “Command line interface”, "
+    + "then use “Set up CLI to work in the terminal” → Register";
+  if (platform === "darwin") return `${enable}. Registering asks for your password and links /usr/local/bin/obsidian.`;
+  if (platform === "linux") return `${enable}. Registering places the command at ~/.local/bin/obsidian.`;
+  if (platform === "win32") return `${enable}. Registering adds the Obsidian folder to your user PATH.`;
+  return `${enable}.`;
+}
+
+/** The CLI answers only while Obsidian is reachable; a stale socket looks like this. */
+export const OBSIDIAN_CLI_UNREACHABLE =
+  "The Obsidian CLI is installed but could not reach Obsidian. Restart Obsidian, or turn "
+  + "Settings → General → “Command line interface” off and on again.";
 
 export interface CommandSpec {
   executable: string;
@@ -78,7 +110,7 @@ export function parseClaudeVersion(stdout: string): ProbeResult {
   const firstLine = stdout.split(/\r?\n/, 1)[0]?.trim() ?? "";
   const match = /(?:^|\s)(\d+\.\d+\.\d+)(?:\s|$)/.exec(firstLine);
   if (!match?.[1]) throw new DesktopIntegrationError("Check Claude Code", "Claude Code did not report a version.");
-  return { available: true, version: match[1] };
+  return { available: true, state: "available", version: match[1] };
 }
 
 export function parseMarketplaceList(stdout: string): string[] {
@@ -102,9 +134,16 @@ export function parsePluginList(stdout: string): ClaudeCodePluginState[] {
   });
 }
 
-export function claudeCodeSetupPlan(state: ClaudeCodeInspection): CommandSpec[] {
+export function claudeCodeSetupPlan(state: ClaudeCodeInspection, platform: DesktopPlatform = "unsupported"): CommandSpec[] {
   if (!state.claude.available) throw new DesktopIntegrationError("Set up Claude Code", "Claude Code is not available.");
-  if (!state.obsidian.available) throw new DesktopIntegrationError("Set up Claude Code", "Obsidian CLI is not available.");
+  if (!state.obsidian.available) {
+    throw new DesktopIntegrationError(
+      "Set up Claude Code",
+      state.obsidian.state === "unreachable"
+        ? OBSIDIAN_CLI_UNREACHABLE
+        : `The Obsidian CLI is not installed. ${obsidianCliInstallHint(platform)}`,
+    );
+  }
   if (state.pluginInstalled && state.pluginEnabled) return [];
   const commands: CommandSpec[] = [];
   if (!state.marketplaceInstalled) {

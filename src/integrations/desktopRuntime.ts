@@ -20,6 +20,21 @@ export interface ExecResult {
   stderr: string;
 }
 
+/** Carries the spawn error code so a probe can tell "no such file" from "ran and failed". */
+export class ExecFailure extends Error {
+  constructor(message: string, readonly code?: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "ExecFailure";
+  }
+}
+
+/** Only these mean the candidate path does not exist. Anything else ran. */
+const NOT_INSTALLED_CODES = new Set(["ENOENT", "ENOTDIR", "EACCES", "EPERM"]);
+
+export function isMissingExecutable(cause: unknown): boolean {
+  return cause instanceof ExecFailure && !!cause.code && NOT_INSTALLED_CODES.has(cause.code);
+}
+
 export interface ExecFileOptions {
   timeoutMs: number;
   maxBytes: number;
@@ -42,6 +57,8 @@ export interface DesktopRuntimeOptions {
   platform: DesktopPlatform;
   homeDir: string;
   env?: Record<string, string | undefined>;
+  /** Directory holding the app executable; the CLI binary ships beside it. */
+  execDir?: string | undefined;
 }
 
 interface ProcessStreamLike {
@@ -165,7 +182,7 @@ const commandError = (stage: string, cause: unknown, secrets: string[] = []): De
 const parseLooseVersion = (stdout: string): ProbeResult => {
   const version = stdout.trim().split(/\s+/, 1)[0];
   if (!version) throw new Error("no version reported");
-  return { available: true, version };
+  return { available: true, state: "available", version };
 };
 
 export { claudeDesktopConfigPath } from "./desktop";
@@ -175,21 +192,31 @@ export class DesktopRuntime {
 
   constructor(private readonly options: DesktopRuntimeOptions) {}
 
+  /**
+   * A candidate that ran and failed outranks one that was never there: reporting
+   * "not found" for an installed binary sends the user after the wrong fix. The
+   * first such failure is kept, so a later absent candidate cannot overwrite it.
+   */
   private async probe(
     executables: string[],
     args: string[],
     parser: (stdout: string) => ProbeResult,
   ): Promise<{ result: ProbeResult; executable?: string }> {
-    let message = "Command not found.";
+    let ran: { message: string; executable: string } | null = null;
     for (const executable of [...new Set(executables)]) {
       try {
         const command = await this.options.exec.run(executable, args, COMMAND_OPTIONS);
         return { result: parser(command.stdout), executable };
       } catch (cause) {
-        message = sanitizeDesktopError(cause instanceof Error ? cause.message : String(cause));
+        if (isMissingExecutable(cause)) continue;
+        ran ??= {
+          message: sanitizeDesktopError(cause instanceof Error ? cause.message : String(cause)),
+          executable,
+        };
       }
     }
-    return { result: { available: false, message } };
+    if (ran) return { result: { available: false, state: "unreachable", message: ran.message, executable: ran.executable } };
+    return { result: { available: false, state: "missing", message: "Command not found." } };
   }
 
   private claudeCandidates(): string[] {
@@ -202,9 +229,23 @@ export class DesktopRuntime {
     ];
   }
 
+  /**
+   * PATH inside Obsidian is not the user's shell PATH, so every documented
+   * registration target is tried by absolute path too: macOS symlinks
+   * /usr/local/bin/obsidian, Linux copies ~/.local/bin/obsidian, and the CLI
+   * binary itself ships beside the app executable.
+   */
   private obsidianCandidates(): string[] {
-    if (this.options.platform === "win32") return ["obsidian"];
-    return ["obsidian", "/usr/local/bin/obsidian", "/opt/homebrew/bin/obsidian", "/usr/bin/obsidian"];
+    const bundled = this.options.execDir ? [`${this.options.execDir}/obsidian-cli`] : [];
+    if (this.options.platform === "win32") return ["obsidian", ...bundled];
+    return [
+      "obsidian",
+      "/usr/local/bin/obsidian",
+      `${this.options.homeDir}/.local/bin/obsidian`,
+      "/opt/homebrew/bin/obsidian",
+      "/usr/bin/obsidian",
+      ...bundled,
+    ];
   }
 
   async inspectClaudeCode(): Promise<ClaudeCodeInspection> {
@@ -247,7 +288,7 @@ export class DesktopRuntime {
 
   async setupClaudeCode(): Promise<ClaudeCodeInspection> {
     const before = await this.inspectClaudeCode();
-    for (const command of claudeCodeSetupPlan(before)) {
+    for (const command of claudeCodeSetupPlan(before, this.options.platform)) {
       try {
         const executable = command.executable === "claude" ? this.claudeExecutable : command.executable;
         await this.options.exec.run(executable, command.args, { ...COMMAND_OPTIONS, timeoutMs: 30_000 });
@@ -326,6 +367,9 @@ export async function createNodeDesktopRuntime(
   const fs = nodeRequire("node:fs/promises") as typeof import("node:fs/promises");
   const path = nodeRequire("node:path") as typeof import("node:path");
   const nodeProcess = nodeRequire("node:process") as typeof import("node:process");
+  // Obsidian ships obsidian-cli beside its own executable, so the CLI is reachable
+  // even when the registered shim is absent or PATH here is not the shell's.
+  const execDir = nodeProcess.execPath ? path.dirname(nodeProcess.execPath) : undefined;
 
   const errorCode = (cause: unknown): string | undefined =>
     typeof cause === "object" && cause !== null && "code" in cause && typeof cause.code === "string"
@@ -341,7 +385,7 @@ export async function createNodeDesktopRuntime(
           maxBuffer: options.maxBytes,
           windowsHide: true,
         }, (error, stdout, stderr) => {
-          if (error) reject(new Error(error.message, { cause: error }));
+          if (error) reject(new ExecFailure(error.message, errorCode(error), { cause: error }));
           else resolve({ stdout, stderr });
         });
       });
@@ -387,7 +431,7 @@ export async function createNodeDesktopRuntime(
     },
   };
 
-  return new DesktopRuntime({ exec, fs: desktopFs, platform, homeDir, env });
+  return new DesktopRuntime({ exec, fs: desktopFs, platform, homeDir, env, execDir });
 }
 
 export function createNodeManagedProcessPort(): ManagedProcessPort {

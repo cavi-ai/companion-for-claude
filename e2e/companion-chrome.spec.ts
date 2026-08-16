@@ -4,11 +4,13 @@ import { launchObsidianHarness } from "./obsidianHarness";
 const OUTPUT = process.env.CC_E2E_OUTPUT_DIR ?? "/private/tmp/claude-companion-research-e2e-results";
 
 async function openChat(page: Page): Promise<Locator> {
+  // Chat has no chrome header of its own: the shared controls live in its
+  // existing actions row, which is also the drawer's positioning container.
   await page.evaluate(async () => {
     const app = (window as unknown as { app: { commands: { executeCommandById(id: string): Promise<void> } } }).app;
     await app.commands.executeCommandById("claude-companion:open-chat");
   });
-  const chrome = page.locator(".cc-companion-chrome").last();
+  const chrome = page.locator(".cc-chat-root .cc-header").last();
   await expect(chrome).toBeVisible();
   for (let attempt = 0; attempt < 4; attempt += 1) {
     const deferSetup = page.getByRole("button", { name: "Not now" }).last();
@@ -89,7 +91,7 @@ test("completed activity clears and Quick Options stays inside compact viewports
 
     await page.setViewportSize({ width: 960, height: 700 });
     for (const width of [280, 320, 360, 480, 768]) {
-      chrome = page.locator(".cc-companion-chrome").last();
+      chrome = page.locator(".cc-chat-root .cc-header").last();
       await chrome.evaluate((element, paneWidth) => {
         const pane = element.closest(".workspace-split.mod-right-split")
           ?? element.closest(".workspace-leaf")?.parentElement;
@@ -142,7 +144,7 @@ test("completed activity clears and Quick Options stays inside compact viewports
 
     for (const width of [280, 320, 360, 480, 768]) {
       await page.setViewportSize({ width, height: 560 });
-      chrome = page.locator(".cc-companion-chrome").last();
+      chrome = page.locator(".cc-chat-root .cc-header").last();
       const trigger = chrome.getByRole("button", { name: /Quick options for/i });
       await trigger.click();
       const modal = page.locator(".modal.cc-quick-options-shell");
@@ -165,6 +167,41 @@ test("completed activity clears and Quick Options stays inside compact viewports
       await expect(modal).toBeHidden();
       await expect(trigger).toBeFocused();
     }
+  } finally {
+    await harness.close();
+  }
+});
+
+// Chat used to spend a full-width header row on one "Options" text button,
+// stacked above the header it already had. One row, one control.
+test("chat spends no extra header row on quick options", async () => {
+  const harness = await launchObsidianHarness();
+  const { page } = harness;
+  try {
+    const header = await openChat(page);
+    await expect(page.locator(".cc-chat-root .cc-companion-chrome")).toHaveCount(0);
+
+    const options = header.getByRole("button", { name: /Quick options for/i });
+    await expect(options).toHaveCount(1);
+    await expect(header.locator(".cc-header-actions .cc-companion-quick-options")).toHaveCount(1);
+
+    // The control is an icon in the actions row, not a label eating the pane.
+    const geometry = await options.evaluate((element) => {
+      const button = element.getBoundingClientRect();
+      const row = element.closest(".cc-header-actions")!.getBoundingClientRect();
+      return { buttonWidth: button.width, rowWidth: row.width, text: element.textContent ?? "" };
+    });
+    expect(geometry.text.trim()).toBe("");
+    expect(geometry.buttonWidth).toBeLessThan(geometry.rowWidth / 2);
+
+    // Everything the removed gear reached is still one click away.
+    await options.click();
+    const modal = page.locator(".modal.cc-quick-options-shell");
+    await expect(modal).toBeVisible();
+    await expect(modal.getByRole("button", { name: "Open all settings" })).toBeAttached();
+    await expect(modal.getByRole("button", { name: "Desktop integrations" })).toBeAttached();
+    await page.keyboard.press("Escape");
+    await expect(modal).toBeHidden();
   } finally {
     await harness.close();
   }

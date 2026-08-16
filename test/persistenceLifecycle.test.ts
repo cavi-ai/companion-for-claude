@@ -64,7 +64,7 @@ describe("credentials never reach data.json", () => {
 
   it("strips every credential from the persisted payload", async () => {
     const { plugin, saved } = seedPlugin();
-    await (plugin as unknown as { persist(): Promise<void> }).persist();
+    await plugin.saveSettings();
     for (const field of SECRET_FIELDS) {
       expect(saved()).not.toContain(`SENTINEL-${field}`);
     }
@@ -73,8 +73,22 @@ describe("credentials never reach data.json", () => {
 
   it("keeps the credentials in memory so providers still work", async () => {
     const { plugin } = seedPlugin();
-    await (plugin as unknown as { persist(): Promise<void> }).persist();
+    await plugin.saveSettings();
     expect(plugin.settings.apiKey).toBe("SENTINEL-apiKey");
+  });
+
+  // A store that never took the write must not also cost the user data.json's copy.
+  it("keeps a credential the secret store does not hold", async () => {
+    const { plugin, saved } = seedPlugin();
+    await (plugin as unknown as { persist(): Promise<void> }).persist();
+    expect(saved()).toContain("SENTINEL-apiKey");
+    expect(plugin.secretsWriteFailures()).toContain("apiKey");
+  });
+
+  it("reports no write failures once the store holds the credentials", async () => {
+    const { plugin } = seedPlugin();
+    await plugin.saveSettings();
+    expect(plugin.secretsWriteFailures()).toEqual([]);
   });
 
   it("writes credentials through to the secret store on save", async () => {

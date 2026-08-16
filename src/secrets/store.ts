@@ -39,7 +39,8 @@ export function secretIdFor(field: SecretField): string {
 export interface SecretStore {
   available(): boolean;
   get(id: string): string | null;
-  set(id: string, value: string): void;
+  /** True only when a read-back proves the value landed. */
+  set(id: string, value: string): boolean;
 }
 
 interface SecretStorageApi {
@@ -47,31 +48,63 @@ interface SecretStorageApi {
   setSecret(id: string, secret: string): void;
 }
 
-/** Adapter over app.secretStorage, gated on the version that encrypts at rest. */
+/**
+ * Adapter over app.secretStorage, gated on the version that encrypts at rest.
+ * The backend can fail without the API saying so — Obsidian documents neither a
+ * capability check nor what Linux does without kwallet/gnome-libsecret — so every
+ * write is confirmed by reading it back, and every call is failure-tolerant.
+ */
 export function createSecretStore(app: App): SecretStore {
   const api = (): SecretStorageApi | undefined =>
     (app as unknown as { secretStorage?: SecretStorageApi } | undefined)?.secretStorage;
+  const read = (id: string): string | null => {
+    try {
+      return api()?.getSecret(id) ?? null;
+    } catch {
+      return null;
+    }
+  };
   return {
     available: () => requireApiVersion(MIN_SECRET_API) && !!api(),
-    get: (id) => api()?.getSecret(id) ?? null,
-    set: (id, value) => { api()?.setSecret(id, value); },
+    get: read,
+    set: (id, value) => {
+      try {
+        api()?.setSecret(id, value);
+      } catch {
+        return false;
+      }
+      return read(id) === value;
+    },
   };
 }
 
 /** A store that is never available — the pre-1.11.5 path. */
 export function unavailableStore(): SecretStore {
-  return { available: () => false, get: () => null, set: () => {} };
+  return { available: () => false, get: () => null, set: () => false };
+}
+
+export interface StripResult {
+  /** Copy safe to persist: credentials the store holds are blanked. */
+  settings: PluginSettings;
+  /** Credentials the store does not hold, so data.json still carries them. */
+  unverified: SecretField[];
 }
 
 /**
- * Copy with every credential blanked. Applied at the persist boundary so no
- * credential reaches data.json. The `out[field] = ""` assignment is also the
+ * Applied at the persist boundary: a credential leaves data.json only when the
+ * store provably holds it. A field the store dropped stays in the file rather
+ * than vanishing from both places. The `out[field] = ""` assignment is also the
  * compile-time check that every SecretField is a string field on PluginSettings.
  */
-export function stripSecrets(settings: PluginSettings): PluginSettings {
+export function stripVerifiedSecrets(settings: PluginSettings, store: SecretStore): StripResult {
   const out = { ...settings };
-  for (const field of SECRET_FIELDS) out[field] = "";
-  return out;
+  const unverified: SecretField[] = [];
+  for (const field of SECRET_FIELDS) {
+    const value = settings[field] ?? "";
+    if (value === "" || store.get(secretIdFor(field)) === value) out[field] = "";
+    else unverified.push(field);
+  }
+  return { settings: out, unverified };
 }
 
 /** Copy with credentials filled in from the store. In-memory settings stay whole. */
@@ -86,9 +119,9 @@ export function hydrate(settings: PluginSettings, store: SecretStore): PluginSet
 }
 
 /** Write one credential through to the store. No-op when unavailable. */
-export function writeSecret(store: SecretStore, field: SecretField, value: string): void {
-  if (!store.available()) return;
-  store.set(secretIdFor(field), value);
+export function writeSecret(store: SecretStore, field: SecretField, value: string): boolean {
+  if (!store.available()) return false;
+  return store.set(secretIdFor(field), value);
 }
 
 /**

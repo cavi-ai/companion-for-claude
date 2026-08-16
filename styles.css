@@ -29,6 +29,14 @@
   justify-content: space-between;
   padding: 10px 12px;
   border-bottom: 1px solid var(--background-modifier-border);
+  /* Chat hosts the shared chrome controls in this row instead of a header of
+     their own, so the activity drawer anchors and sizes against it. */
+  position: relative;
+  container-type: inline-size;
+}
+/* Borrowed host: the controls are row members, not a right-aligned group. */
+.cc-header-actions .cc-companion-chrome-controls {
+  display: contents;
 }
 .cc-title {
   display: flex;
@@ -3061,7 +3069,7 @@ pre.cc-has-copy:hover .cc-code-copy { opacity: 1; }
   min-width: 0;
 }
 .cc-companion-chrome-activity { min-width: 0; }
-.cc-companion-quick-options { min-height: 36px; white-space: nowrap; }
+.cc-companion-quick-options:not(.is-compact) { min-height: 36px; white-space: nowrap; }
 .cc-quick-options-modal { display: grid; gap: 4px; }
 .cc-quick-options-error:empty { display: none; }
 .cc-quick-options-error {

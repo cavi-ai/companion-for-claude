@@ -9,8 +9,13 @@ function fakeStore(): SecretStore & { data: Record<string, string> } {
     data,
     available: () => true,
     get: (id) => data[id] ?? null,
-    set: (id, value) => { data[id] = value; },
+    set: (id, value) => { data[id] = value; return true; },
   };
+}
+
+/** Accepts every write, keeps none — the shape a keyring-less backend can take. */
+function droppingStore(): SecretStore {
+  return { available: () => true, get: () => null, set: () => false };
 }
 
 describe("pendingSecrets", () => {
@@ -74,6 +79,29 @@ describe("migrateSecrets", () => {
     const settings = { ...DEFAULT_SETTINGS, apiKey: "sk-ant-api-x" };
     migrateSecrets(settings, fakeStore());
     expect(settings.apiKey).toBe("sk-ant-api-x");
+  });
+
+  // Blanking a field the store never kept would lose the credential outright.
+  it("keeps the plaintext when the store drops the write", () => {
+    const settings = { ...DEFAULT_SETTINGS, apiKey: "sk-ant-api-x" };
+    const result = migrateSecrets(settings, droppingStore());
+    expect(result.moved).toEqual([]);
+    expect(result.settings.apiKey).toBe("sk-ant-api-x");
+  });
+
+  it("moves only the fields that read back", () => {
+    const store = fakeStore();
+    const only = secretIdFor("apiKey");
+    const partial: SecretStore = {
+      available: () => true,
+      get: (id) => store.data[id] ?? null,
+      set: (id, value) => (id === only ? store.set(id, value) : false),
+    };
+    const seeded = { ...DEFAULT_SETTINGS, apiKey: "sk-ant-api-x", mcpToken: "tok" };
+    const { moved, settings } = migrateSecrets(seeded, partial);
+    expect(moved).toEqual(["apiKey"]);
+    expect(settings.apiKey).toBe("");
+    expect(settings.mcpToken).toBe("tok");
   });
 });
 

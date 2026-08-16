@@ -17,9 +17,14 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
 
   /** Where credentials actually land, so the copy can't claim safety it doesn't have. */
   private storageBlurb(): string {
-    return this.plugin.secrets().available()
+    return this.secretStorageWorking()
       ? "Stored in your device's secret storage, not in this vault."
       : "Stored locally in this vault's plugin data.";
+  }
+
+  /** The API being present is not proof the backend took the write. */
+  private secretStorageWorking(): boolean {
+    return this.plugin.secrets().available() && this.plugin.secretsWriteFailures().length === 0;
   }
 
   constructor(
@@ -104,19 +109,25 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
   private renderTopSection(containerEl: HTMLElement, rerenderTop: () => void): void {
     const s = this.plugin.settings;
 
-    // Below 1.11.5 there is no OS-encrypted secret store, so credentials stay in
-    // this vault's data.json and ride vault sync. Say so rather than implying safety.
-    if (!this.plugin.secrets().available()) {
+    // Credentials fall back to this vault's data.json two ways: no secret-store API
+    // below 1.11.5, or a backend that refused the write. Both ride vault sync, so
+    // both get said out loud rather than implying safety that isn't there.
+    if (!this.secretStorageWorking()) {
+      const unsupported = !this.plugin.secrets().available();
       const warn = containerEl.createDiv({ cls: "cc-connect-callout" });
       warn.createDiv({ cls: "cc-connect-title", text: "Credentials are stored in this vault" });
       const p = warn.createEl("p");
       p.appendText(
-        "This version of Obsidian has no encrypted secret storage, so keys and tokens are written to this vault’s "
-          + "data.json — if the vault syncs to iCloud, Dropbox, or git, they sync with it. "
-          + "Update Obsidian to 1.11.5 or later and Companion will move them into your device’s keychain automatically.",
+        unsupported
+          ? "This version of Obsidian has no encrypted secret storage, so keys and tokens are written to this vault’s "
+            + "data.json — if the vault syncs to iCloud, Dropbox, or git, they sync with it. "
+            + "Update Obsidian to 1.11.5 or later and Companion will move them into your device’s keychain automatically."
+          : "Your device’s secret storage did not accept the write, so keys and tokens remain in this vault’s "
+            + "data.json — if the vault syncs to iCloud, Dropbox, or git, they sync with it. "
+            + "Companion keeps them there rather than losing them, and moves them across as soon as the store works.",
       );
       if (Platform.isLinux) {
-        p.appendText(" On Linux that also needs kwallet or gnome-libsecret installed.");
+        p.appendText(" On Linux that needs kwallet, kwallet5, kwallet6, or gnome-libsecret installed.");
       }
     }
 
