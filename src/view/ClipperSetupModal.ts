@@ -63,15 +63,25 @@ export class ClipperSetupModal extends Modal {
       attr: { role: "status", "aria-live": "polite" },
     });
     const actions = this.contentEl.createDiv({ cls: "cc-clipper-actions" });
-    const copyJson = actions.createEl("button", { cls: "mod-cta", text: "Copy template JSON" });
+    // The clipper imports a .json file, so the file is the primary action —
+    // a copied template invites pasting it into a field, which breaks clips.
+    if (this.deps.saveJson) {
+      const save = actions.createEl("button", { cls: "mod-cta", text: "Save JSON file" });
+      save.addEventListener("click", () => void this.save(setup, verification));
+    }
+    const copyJson = actions.createEl("button", { text: "Copy template JSON" });
     copyJson.addEventListener("click", () => void this.copy(setup, setup.json, verification));
     const copyInstructions = actions.createEl("button", { text: "Copy instructions" });
     copyInstructions.addEventListener("click", () => void this.copyInstructions(setup.instructions, verification));
-    if (this.deps.saveJson) {
-      const save = actions.createEl("button", { text: "Save JSON file" });
-      save.addEventListener("click", () => void Promise.resolve(this.deps.saveJson?.(setup)).catch((error: unknown) => {
-        verification.setText(error instanceof Error ? error.message : "The JSON file could not be saved.");
-      }));
+  }
+
+  private async save(setup: ClipperSetupViewModel, status: HTMLElement): Promise<void> {
+    try {
+      await this.deps.saveJson?.(setup);
+      await this.deps.onCopied(setup.type, setup.fingerprint);
+      status.setText("Saved. Import that file in Web Clipper — waiting for a matching test clip.");
+    } catch (error) {
+      status.setText(error instanceof Error ? error.message : "The JSON file could not be saved.");
     }
   }
 

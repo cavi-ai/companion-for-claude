@@ -20,7 +20,8 @@ describe("ClipperSetupModal", () => {
     const root = modal.contentEl as unknown as FakeElement;
 
     expect(root.querySelectorAll(".cc-clipper-tab")).toHaveLength(3);
-    expect(root.querySelector(".cc-clipper-instructions")?.textContent).toContain("paste the JSON");
+    expect(root.querySelector(".cc-clipper-instructions")?.textContent).toContain("Import");
+    expect(root.querySelector(".cc-clipper-instructions")?.textContent).toContain("never paste it into a template's fields");
     expect(root.querySelector(".cc-clipper-verification")?.textContent).toBe("Waiting for a test clip after you copy this template.");
 
     root.querySelectorAll("button").find(({ textContent }) => textContent === "Copy template JSON")
@@ -30,5 +31,22 @@ describe("ClipperSetupModal", () => {
     expect(copyText).toHaveBeenCalledWith(expect.stringContaining('"schemaVersion": "0.1.0"'));
     expect(onCopied).toHaveBeenCalledWith("article", setups()[0]!.fingerprint);
     expect(root.querySelector(".cc-clipper-verification")?.textContent).not.toContain("Verified");
+  });
+
+  it("leads with the file save the clipper's import actually reads, and waits on it", async () => {
+    const onCopied = vi.fn().mockResolvedValue(undefined);
+    const saveJson = vi.fn().mockResolvedValue(undefined);
+    const modal = new ClipperSetupModal(new App(), { setups, copyText: vi.fn(), onCopied, saveJson });
+    modal.onOpen();
+    const root = modal.contentEl as unknown as FakeElement;
+
+    const save = root.querySelectorAll("button").find(({ textContent }) => textContent === "Save JSON file");
+    expect(save?.classList.has("mod-cta")).toBe(true);
+    save?.dispatchEvent({ type: "click" });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(saveJson).toHaveBeenCalledWith(expect.objectContaining({ type: "article" }));
+    expect(onCopied).toHaveBeenCalledWith("article", setups()[0]!.fingerprint);
   });
 });

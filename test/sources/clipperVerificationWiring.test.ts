@@ -52,6 +52,53 @@ describe("Clipper first-note verification wiring", () => {
     expect(harness.clipperVerificationTimers.size).toBe(0);
   });
 
+  it("reports a frontmatter-less inbox clip instead of waiting forever", async () => {
+    vi.useFakeTimers();
+    const app = new App();
+    const file = app.vault.seed("Clippings/Raw.md", "{\n\t\"schemaVersion\": \"0.1.0\"\n}\n");
+    const plugin = Object.create(ClaudeCompanionPlugin.prototype) as ClaudeCompanionPlugin;
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    settings.clipperVerification.article = { fingerprint: "fingerprint", state: "waiting", startedAt: 10, mismatches: [] };
+    Object.assign(plugin as unknown as Record<string, unknown>, {
+      app, settings,
+      persist: async () => undefined,
+      clipperVerificationTimers: new Map<string, number>(),
+      enrichTimers: new Map<string, number>(), enrichRecentlyWritten: new Set<string>(), enrichRecentlyWrittenExpiryTimers: new Map<string, number>(),
+      reindexTimer: null, _ontologyReloadTimer: null, researchRefreshTimer: null, inboxBadgeTimer: null,
+    });
+
+    (plugin as unknown as ClipperVerificationHarness).queueClipperVerification(file);
+    await vi.advanceTimersByTimeAsync(3000);
+
+    expect(plugin.settings.clipperVerification.article).toMatchObject({
+      state: "needs-attention",
+      path: "Clippings/Raw.md",
+      mismatches: [expect.objectContaining({ field: "template" })],
+    });
+    expect(plugin.activity.snapshot().records[0]).toMatchObject({ state: "needs-attention" });
+  });
+
+  it("leaves notes created outside the inbox alone while waiting", async () => {
+    vi.useFakeTimers();
+    const app = new App();
+    const file = app.vault.seed("Notes/Scratch.md", "Unrelated note written while waiting.");
+    const plugin = Object.create(ClaudeCompanionPlugin.prototype) as ClaudeCompanionPlugin;
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    settings.clipperVerification.article = { fingerprint: "fingerprint", state: "waiting", startedAt: 10, mismatches: [] };
+    Object.assign(plugin as unknown as Record<string, unknown>, {
+      app, settings,
+      persist: async () => undefined,
+      clipperVerificationTimers: new Map<string, number>(),
+      enrichTimers: new Map<string, number>(), enrichRecentlyWritten: new Set<string>(), enrichRecentlyWrittenExpiryTimers: new Map<string, number>(),
+      reindexTimer: null, _ontologyReloadTimer: null, researchRefreshTimer: null, inboxBadgeTimer: null,
+    });
+
+    (plugin as unknown as ClipperVerificationHarness).queueClipperVerification(file);
+    await vi.advanceTimersByTimeAsync(3000);
+
+    expect(plugin.settings.clipperVerification.article).toMatchObject({ state: "waiting" });
+  });
+
   it("cancels pending verification timers on plugin unload", () => {
     vi.useFakeTimers();
     const app = new App();

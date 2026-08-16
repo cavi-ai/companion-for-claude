@@ -999,7 +999,13 @@ export default class ClaudeCompanionPlugin extends Plugin {
         this.queueClipperVerification(file, attempt + 1);
         return;
       }
-      if (!frontmatter) return;
+      // A clip that lands in the inbox carrying nothing is proof the template
+      // never applied — report it instead of waiting for a note that can't come.
+      if (!frontmatter) {
+        const inbox = this.settings.sourceInboxFolder.replace(/\/+$/, "");
+        if (inbox && file.path.startsWith(`${inbox}/`)) void this.verifyArrivingClip(file, waiting[0], {});
+        return;
+      }
       const observedType = frontmatter.type;
       const typedWaiting = (observedType === "article" || observedType === "video" || observedType === "dataset")
         && this.settings.clipperVerification[observedType]?.state === "waiting"

@@ -1652,6 +1652,22 @@ pre.cc-has-copy:hover .cc-code-copy { opacity: 1; }
   opacity: 0.5;
   cursor: default;
 }
+.cc-inbox-typed {
+  margin-top: 18px;
+}
+.cc-inbox-typed-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+}
+.cc-inbox-typed-header .cc-eyebrow {
+  margin-bottom: 0;
+}
+.cc-inbox-typed-count {
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+}
 .cc-inbox-wireup {
   margin-top: 18px;
 }

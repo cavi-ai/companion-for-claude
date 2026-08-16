@@ -39,6 +39,13 @@ describe("verifyClipperNote", () => {
     expect(result.mismatches.length).toBeLessThanOrEqual(12);
   });
 
+  it("reports a clip that carries none of the template's properties", () => {
+    const result = verifyClipperNote({ path: "Clippings/Raw.md", frontmatter: {} }, expected);
+    expect(result.state).toBe("needs-attention");
+    expect(result.mismatches).toEqual([expect.objectContaining({ field: "template" })]);
+    expect(result.mismatches[0]?.observed).toContain("template");
+  });
+
   it("accepts the legacy url provenance field", () => {
     expect(verifyClipperNote({
       path: "Clippings/Legacy.md",

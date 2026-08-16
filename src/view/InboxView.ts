@@ -1,6 +1,6 @@
 import { ItemView, WorkspaceLeaf, TFile, setIcon } from "obsidian";
 import type ClaudeCompanionPlugin from "../main";
-import { inboxItems, type InboxFileEntry, type InboxItem } from "../sources/inbox";
+import { inboxItems, typedInboxItems, type InboxFileEntry, type InboxItem } from "../sources/inbox";
 import { wireUpItems, type WireUpEntry } from "../links/wireUp";
 import type { BatchLinkApplyResult } from "../links/batch";
 import { createInboxRefreshController, type InboxRefreshController } from "./inboxRefresh";
@@ -91,14 +91,23 @@ export class InboxView extends ItemView {
     this.refresh.request();
   }
 
-  private pending(): InboxItem[] {
-    const entries: InboxFileEntry[] = this.app.vault.getFiles().map((f: TFile) => ({
+  private entries(): InboxFileEntry[] {
+    return this.app.vault.getFiles().map((f: TFile) => ({
       path: f.path,
       basename: f.basename,
       ext: f.extension,
       frontmatter: this.app.metadataCache.getFileCache(f)?.frontmatter ?? undefined,
+      mtime: f.stat?.mtime,
     }));
-    return inboxItems(entries, this.plugin.settings.sourceInboxFolder);
+  }
+
+  private pending(): InboxItem[] {
+    return inboxItems(this.entries(), this.plugin.settings.sourceInboxFolder);
+  }
+
+  /** Auto-enrich types clips before they can be triaged; show them anyway. */
+  private typed(): InboxItem[] {
+    return typedInboxItems(this.entries(), this.plugin.settings.sourceInboxFolder);
   }
 
   async render(): Promise<void> {
@@ -123,10 +132,13 @@ export class InboxView extends ItemView {
     this.renderOperationFeedback(root);
 
     const items = this.pending();
+    const typed = this.typed();
     if (items.length === 0) {
       root.createEl("p", {
         cls: "setting-item-description",
-        text: `Inbox zero — nothing in “${this.plugin.settings.sourceInboxFolder}” needs typing. Clip something and it'll show up here.`,
+        text: typed.length > 0
+          ? `Inbox zero — every clip in “${this.plugin.settings.sourceInboxFolder}” is typed already.`
+          : `Inbox zero — nothing in “${this.plugin.settings.sourceInboxFolder}” needs typing. Clip something and it'll show up here.`,
       });
       const clipper = root.createEl("button", { cls: "cc-inbox-clipper-setup", text: "Set up Web Clipper" });
       clipper.addEventListener("click", () => this.plugin.openClipperSetup());
@@ -164,9 +176,35 @@ export class InboxView extends ItemView {
       }
     }
 
+    this.renderTyped(root, typed);
+
     // Wire-up section: enriched notes that mention other notes without linking
     // them. Async (mention scan reads bodies) — guarded against stale renders.
     void this.renderWireUp(root, generation);
+  }
+
+  /** Typed clips, newest first: without this the Inbox looks empty after every capture. */
+  private renderTyped(root: HTMLElement, typed: InboxItem[]): void {
+    if (typed.length === 0) return;
+    const section = root.createDiv({ cls: "cc-inbox-typed" });
+    const header = section.createDiv({ cls: "cc-inbox-typed-header" });
+    header.createEl("div", { cls: "cc-eyebrow", text: "TYPED" });
+    header.createSpan({
+      cls: "cc-inbox-typed-count",
+      text: `${typed.length} typed`,
+      attr: { role: "status", "aria-live": "polite" },
+    });
+    const list = section.createDiv({ cls: "cc-inbox-list" });
+    for (const item of typed) {
+      const row = list.createDiv({ cls: "cc-inbox-row" });
+      const open = row.createEl("button", { cls: "cc-inbox-open" });
+      open.createSpan({ cls: "cc-inbox-name", text: item.basename });
+      open.createSpan({ cls: `cc-inbox-type cc-inbox-type-${item.type}`, text: item.type });
+      open.addEventListener("click", () => {
+        const f = this.app.vault.getAbstractFileByPath(item.path);
+        if (f instanceof TFile) void this.app.workspace.getLeaf(false).openFile(f);
+      });
+    }
   }
 
   private enrichedInboxFiles(): TFile[] {

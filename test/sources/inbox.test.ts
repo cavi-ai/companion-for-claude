@@ -1,10 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { inboxItems, type InboxFileEntry } from "../../src/sources/inbox";
+import { inboxItems, typedInboxItems, type InboxFileEntry } from "../../src/sources/inbox";
 
-const entry = (path: string, frontmatter?: Record<string, unknown>): InboxFileEntry => {
+const entry = (path: string, frontmatter?: Record<string, unknown>, mtime?: number): InboxFileEntry => {
   const name = path.split("/").pop() ?? path;
   const dot = name.lastIndexOf(".");
-  return { path, basename: dot > 0 ? name.slice(0, dot) : name, ext: dot > 0 ? name.slice(dot + 1) : "", frontmatter };
+  return { path, basename: dot > 0 ? name.slice(0, dot) : name, ext: dot > 0 ? name.slice(dot + 1) : "", frontmatter, mtime };
 };
 
 describe("inboxItems", () => {
@@ -50,5 +50,28 @@ describe("inboxItems", () => {
 
   it("treats missing frontmatter as a pending article", () => {
     expect(inboxItems([entry("Clippings/raw.md")], "Clippings").map((i) => i.type)).toEqual(["article"]);
+  });
+});
+
+describe("typedInboxItems", () => {
+  it("lists enriched clips newest first so auto-typed captures stay visible", () => {
+    const items = typedInboxItems(
+      [
+        entry("Clippings/old.md", { source_enriched: true, type: "article" }, 10),
+        entry("Clippings/new.md", { source_enriched: true, type: "video" }, 20),
+        entry("Clippings/pending.md", {}, 30),
+      ],
+      "Clippings",
+    );
+    expect(items.map((i) => [i.basename, i.type])).toEqual([["new", "video"], ["old", "article"]]);
+  });
+
+  it("ignores enriched notes outside the inbox and caps the list", () => {
+    const entries = [
+      entry("Notes/elsewhere.md", { source_enriched: true }, 99),
+      ...Array.from({ length: 5 }, (_, i) => entry(`Clippings/c${i}.md`, { source_enriched: true }, i)),
+    ];
+    expect(typedInboxItems(entries, "Clippings", 2).map((i) => i.basename)).toEqual(["c4", "c3"]);
+    expect(typedInboxItems(entries, "").length).toBe(0);
   });
 });

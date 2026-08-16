@@ -61,10 +61,13 @@ export function clipperSetupFor(
     fingerprint,
     json: serializeClipperTemplate(template),
     instructions: [
-      "1. Open the official Obsidian Web Clipper → Settings → Templates.",
-      "2. Open any template, choose Import, paste the JSON, and confirm.",
-      `3. Return to a matching ${type} page and create one test clip into ${settings.inboxFolder}.`,
-      "4. Return to Companion. It will verify the arriving note before marking this setup verified.",
+      "1. Save this template as a .json file (button below), or copy it to a file yourself.",
+      "2. Open the official Obsidian Web Clipper → Settings → Templates → Import (top right) and pick that .json file — drag-and-drop onto the template list works too. Import the file; never paste it into a template's fields, which turns the JSON into clip content.",
+      template.triggers
+        ? "3. Nothing else to order — this template triggers itself on YouTube URLs."
+        : `3. Drag “${template.name}” to the top of the template list. Web Clipper uses the first template whose triggers match, and this one has none, so it only applies while it is first.`,
+      `4. Return to a matching ${type} page and create one test clip into ${settings.inboxFolder}.`,
+      "5. Return to Companion. It will verify the arriving note before marking this setup verified.",
     ].join("\n"),
   };
 }

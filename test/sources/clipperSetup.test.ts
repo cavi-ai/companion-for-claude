@@ -19,10 +19,18 @@ describe("clipperSetupFor", () => {
       schemaVersion: 1,
     });
     expect(setup.instructions).toContain("Web Clipper → Settings → Templates");
-    expect(setup.instructions).toContain("choose Import");
-    expect(setup.instructions).toContain("paste the JSON");
+    expect(setup.instructions).toContain("Import");
+    expect(setup.instructions).toContain(".json file");
+    expect(setup.instructions).toMatch(/never paste it into|not into a template field/i);
+    expect(setup.instructions).toContain("top of the template list");
     expect(setup.instructions).toContain("create one test clip");
     expect(JSON.parse(setup.json)).toMatchObject({ path: "Clippings", name: "Companion: article" });
+  });
+
+  it("tells triggered templates apart from list-order ones", () => {
+    const video = clipperSetupFor("video", schemas(), { inboxFolder: "Clippings", baseTags: [], savedFingerprint: "" });
+    expect(video.instructions).toContain("YouTube");
+    expect(video.instructions).not.toContain("top of the template list");
   });
 
   it("distinguishes current and stale exported fingerprints", () => {

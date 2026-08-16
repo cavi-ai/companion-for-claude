@@ -8,6 +8,7 @@ export interface InboxFileEntry {
   basename: string;
   ext: string;
   frontmatter?: Record<string, unknown> | undefined;
+  mtime?: number | undefined;
 }
 
 export interface InboxItem {
@@ -54,4 +55,15 @@ export function inboxItems(entries: InboxFileEntry[], inboxFolder: string): Inbo
     items.push({ path: e.path, basename: e.basename, ext: e.ext, type: itemType(e) });
   }
   return items.sort((a, b) => a.path.localeCompare(b.path));
+}
+
+/** Already-typed inbox clips, newest first — auto-enrich leaves no other trace. */
+export function typedInboxItems(entries: InboxFileEntry[], inboxFolder: string, limit = 10): InboxItem[] {
+  const inbox = inboxFolder.replace(/\/+$/, "");
+  if (!inbox) return [];
+  return entries
+    .filter((e) => e.ext === "md" && e.path.startsWith(`${inbox}/`) && e.frontmatter?.source_enriched === true)
+    .sort((a, b) => (b.mtime ?? 0) - (a.mtime ?? 0) || a.path.localeCompare(b.path))
+    .slice(0, limit)
+    .map((e) => ({ path: e.path, basename: e.basename, ext: e.ext, type: itemType(e) }));
 }

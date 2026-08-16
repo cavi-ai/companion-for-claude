@@ -27,6 +27,9 @@ export interface ClipperVerificationResult {
   mismatches: ClipperVerificationMismatch[];
 }
 
+/** Frontmatter keys only a Companion template stamps. */
+const STAMPS = ["type", "source", "url", "schema_version", "clipped"];
+
 const text = (value: unknown): string => {
   if (value === undefined || value === null) return "missing";
   if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") return String(value).slice(0, 160);
@@ -62,6 +65,21 @@ export function verifyClipperNote(
       path: entry.path,
       fingerprint: expected.fingerprint,
       mismatches: [{ field: "path", expected: destination, observed: entry.path }],
+    };
+  }
+
+  // No stamp at all: the clip was made by some other template (or the JSON was
+  // pasted into a template field), so field-by-field diffing would only noise.
+  if (!STAMPS.some((key) => entry.frontmatter[key] !== undefined)) {
+    return {
+      state: "needs-attention",
+      path: entry.path,
+      fingerprint: expected.fingerprint,
+      mismatches: [{
+        field: "template",
+        expected: `properties from the “Companion: ${expected.type}” template`,
+        observed: "clip has no Companion properties — the template was not applied to it",
+      }],
     };
   }
 
