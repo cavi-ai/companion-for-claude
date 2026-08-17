@@ -41,9 +41,9 @@ an unauthenticated model server to the public internet.
 
 1. Install [Ollama](https://ollama.com) and start it.
 2. Pull a model: `ollama pull llama3.1` (any chat model works).
-3. In Obsidian, open *Settings → Companion for Claude → Local models (Ollama)*.
+3. In Obsidian, open *Settings → Companion for Claude → Local models (Ollama & endpoints)*.
 4. Check **Ollama host** — default `http://localhost:11434`.
-5. Pick a **Local model**. The field becomes a dropdown populated from your Ollama server once models are detected, and stays free text until then.
+5. Pick a **Local chat model**. The field becomes a dropdown populated from your Ollama server once models are detected, and stays free text until then.
 6. Click **Test local connection**.
 
 ### Capability badges
@@ -70,10 +70,11 @@ Companion routes by task role, not just by a global switch:
 - **`chat`** — your primary provider, per the Chat backend above.
 - **`utility`** — summaries, auto-tagging, and ingestion.
 
-Turn on **Use local model for utility tasks** and utility work goes to Ollama
-while chat stays on Claude. That's the setting that saves the most tokens for the
-least quality cost: bulk summarizing and tagging don't need a frontier model, and
-a small local model is fine at them. It's off by default.
+**Utility tasks backend** — Claude, Ollama (local), or your OpenAI-compatible
+endpoint — sends utility work somewhere other than chat. That's the setting that
+saves the most tokens for the least quality cost: bulk summarizing and tagging
+don't need a frontier model, and a small local model is fine at them. It defaults
+to Claude.
 
 Structured utility work (source enrichment) requests JSON against a field-derived
 schema and turns thinking off, so reasoning models like qwen3 answer with the
@@ -108,7 +109,7 @@ fusion, deduped per note, each note keeping its best snippet. If the index is
 empty or the embedder is unavailable, it degrades to keyword search rather than
 returning nothing.
 
-### Two embedding engines
+### Three embedding engines
 
 **Built-in (recommended, default)** — runs `Snowflake/snowflake-arctic-embed-xs`
 (384-dimension vectors) inside Obsidian via transformers.js, on WebGPU where
@@ -121,6 +122,9 @@ removes the cached model.
 
 **Ollama** — uses your local Ollama server for embeddings instead
 (`nomic-embed-text` by default). Desktop only.
+
+**OpenAI-compatible endpoint** — embeds against the endpoint configured under
+*Local models*, using its embedding model.
 
 One pinned default on every platform means one index format, so a desktop-built
 index syncs to mobile and stays usable there.

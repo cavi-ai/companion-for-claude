@@ -15,6 +15,11 @@ export interface ObsidianHarnessOptions {
   fakeClaudeCode?: boolean;
   /** Seed a genuinely fresh install: no credential, stock onboarding defaults. */
   firstRun?: boolean;
+  /**
+   * Stand up an OpenAI-compatible endpoint stub serving these model ids and
+   * point `openaiCompatHost` at it (LM Studio / mlx-lm / vLLM stand-in).
+   */
+  endpointModels?: string[];
 }
 
 function note(frontmatter: string, body: string): string { return `---\n${frontmatter}\n---\n\n${body}\n`; }
@@ -26,7 +31,7 @@ async function freePort(): Promise<number> {
   });
 }
 
-async function seedVault(vault: string, providerPort: number, firstRun: boolean): Promise<void> {
+async function seedVault(vault: string, providerPort: number, firstRun: boolean, endpointPort: number | null): Promise<void> {
   const obsidian = join(vault, ".obsidian"); const plugin = join(obsidian, "plugins", "claude-companion");
   await mkdir(plugin, { recursive: true });
   for (const file of ["main.js", "manifest.json", "styles.css"]) await copyFile(join(process.cwd(), file), join(plugin, file));
@@ -36,7 +41,9 @@ async function seedVault(vault: string, providerPort: number, firstRun: boolean)
   // lived-in config, not just the pristine one a fresh install writes.
   const seeded = process.env.E2E_SEED_DATA ? JSON.parse(await readFile(process.env.E2E_SEED_DATA, "utf8")) as { settings?: Record<string, unknown> } : null;
   const neutralOnboarding = { ontologySeedPrompted: true, semanticModelPrompted: true, sourceCaptureConsent: "deny" };
-  const settings = { apiKey: "e2e-key", authMode: "apiKey", baseUrl: `http://127.0.0.1:${providerPort}`, model: "e2e-model", customModel: "", chatBackend: "claude", discoveryEnabled: false, ...neutralOnboarding };
+  // An endpoint host with no model id is the reported bug's starting state.
+  const endpoint = endpointPort === null ? {} : { openaiCompatHost: `http://127.0.0.1:${endpointPort}`, openaiCompatModel: "" };
+  const settings = { apiKey: "e2e-key", authMode: "apiKey", baseUrl: `http://127.0.0.1:${providerPort}`, model: "e2e-model", customModel: "", chatBackend: "claude", discoveryEnabled: false, ...neutralOnboarding, ...endpoint };
   // firstRun keeps the stock onboarding defaults and no credential, so the
   // connect path the other specs skip past is actually exercised.
   const firstRunSettings = { authMode: "apiKey", baseUrl: `http://127.0.0.1:${providerPort}`, model: "e2e-model", customModel: "", chatBackend: "claude", discoveryEnabled: false };
@@ -79,7 +86,27 @@ export async function launchObsidianHarness(options: ObsidianHarnessOptions = {}
   const provider = createServer((request, response) => { requests += 1; request.resume(); response.writeHead(200, { "content-type": "application/json" }); response.end(JSON.stringify({ content: [{ type: "text", text: JSON.stringify({ markdown: "Grounded prose [@study].", support: [], claimPreservation: [], changes: [], gaps: [] }) }] })); });
   await new Promise<void>((resolve, reject) => { provider.once("error", reject); provider.listen(0, "127.0.0.1", () => resolve()); });
   const address = provider.address(); if (!address || typeof address === "string") throw new Error("Provider stub did not bind");
-  await seedVault(vault, address.port, options.firstRun === true);
+  // OpenAI-compatible endpoint stub: only /v1/models matters for the pickers.
+  let endpoint: Server | null = null;
+  let endpointPort: number | null = null;
+  if (options.endpointModels) {
+    const ids = options.endpointModels;
+    endpoint = createServer((request, response) => {
+      request.resume();
+      if (request.url?.endsWith("/models")) {
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(JSON.stringify({ object: "list", data: ids.map((id) => ({ id, object: "model" })) }));
+        return;
+      }
+      response.writeHead(404, { "content-type": "application/json" });
+      response.end("{}");
+    });
+    await new Promise<void>((resolve, reject) => { endpoint?.once("error", reject); endpoint?.listen(0, "127.0.0.1", () => resolve()); });
+    const endpointAddress = endpoint.address();
+    if (!endpointAddress || typeof endpointAddress === "string") throw new Error("Endpoint stub did not bind");
+    endpointPort = endpointAddress.port;
+  }
+  await seedVault(vault, address.port, options.firstRun === true, endpointPort);
   let executablePath = process.env.PATH ?? "";
   if (options.fakeClaudeCode) {
     const bin = join(root, "bin");
@@ -132,7 +159,7 @@ esac
     await deferSetup.click();
     quietSince = Date.now();
   }
-  return { page, providerRequests: () => requests, close: async () => { await browser.close().catch(() => undefined); await stop(processHandle); await closeServer(provider); await rm(root, { recursive: true, force: true }); } };
+  return { page, providerRequests: () => requests, close: async () => { await browser.close().catch(() => undefined); await stop(processHandle); await closeServer(provider); if (endpoint) await closeServer(endpoint); await rm(root, { recursive: true, force: true }); } };
 }
 
 async function stop(handle: ChildProcess): Promise<void> { if (handle.exitCode !== null) return; handle.kill("SIGTERM"); await Promise.race([new Promise<void>((resolve) => handle.once("exit", () => resolve())), new Promise<void>((resolve) => setTimeout(resolve, 3_000))]); if (handle.exitCode === null) handle.kill("SIGKILL"); }

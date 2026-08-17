@@ -32,6 +32,7 @@ import { extractArtifact, saveArtifactNote, saveChatNote, savePlanNote } from ".
 import { extractTasks } from "../build/spec";
 import { errorHint, type ErrorHintProvider } from "../providers/errorHints";
 import { needsCredentialSetup } from "../providers/setupState";
+import { mergeDetectedModels } from "../providers/localModels";
 import { addUsage, contextGauge, EMPTY_SESSION, estimateTokens, formatCost, formatTokens, sessionCost, type SessionUsage } from "../usage/tokens";
 import { mergeUsage, type TokenUsage } from "../claude/sse";
 import type { CompanionWorkspaceCard } from "./companionWorkspace";
@@ -826,7 +827,7 @@ export class ChatView extends ItemView {
     // Pull in detected Ollama models so a local model can be picked here without
     // opening settings. Async — appended once the local server answers.
     void this.appendLocalModelOptions(select);
-    this.appendCustomModelOption(select);
+    void this.appendCustomModelOptions(select);
 
     // "Act on vault" — the discoverable switch for whether Claude can create /
     // edit notes in chat (agent writes). Only meaningful for Claude (Ollama has
@@ -893,16 +894,16 @@ export class ChatView extends ItemView {
     });
   }
 
-  /** Append an "Local (Ollama)" optgroup of detected models to the switcher. */
+  /** Append a "Local (Ollama)" optgroup of detected models to the switcher. */
   private async appendLocalModelOptions(select: HTMLSelectElement): Promise<void> {
-    let models: string[];
+    let detected: string[];
     try {
-      models = await this.plugin.router().ollama.listModels();
+      detected = await this.plugin.router().ollama.listModels();
     } catch {
-      return; // local server unreachable — Claude-only switcher
+      detected = []; // server unreachable — the configured model stays selectable
     }
     const configured = this.plugin.settings.ollamaModel;
-    if (configured && !models.includes(configured)) models = [configured, ...models];
+    const models = mergeDetectedModels(detected, configured);
     if (!models.length || !select.isConnected) return;
     const group = select.createEl("optgroup", { attr: { label: "Local (Ollama)" } });
     for (const m of models) group.createEl("option", { value: `ollama:${m}`, text: `${m} · local` });
@@ -910,13 +911,25 @@ export class ChatView extends ItemView {
     if (this.plugin.settings.chatBackend === "local" && configured) select.value = `ollama:${configured}`;
   }
 
-  /** Append a "Local (endpoint)" option for the configured OpenAI-compatible server. */
-  private appendCustomModelOption(select: HTMLSelectElement): void {
-    const model = this.plugin.settings.openaiCompatModel.trim();
-    if (!this.plugin.settings.openaiCompatHost.trim() || !model) return;
+  /**
+   * Append a "Local (endpoint)" optgroup for the OpenAI-compatible server —
+   * every model it reports, so one can be picked here without knowing its id.
+   */
+  private async appendCustomModelOptions(select: HTMLSelectElement): Promise<void> {
+    if (!this.plugin.settings.openaiCompatHost.trim()) return;
+    let detected: string[];
+    try {
+      detected = await this.plugin.router().openaiCompat.listModels();
+    } catch {
+      detected = []; // endpoint unreachable — the configured model stays selectable
+    }
+    const configured = this.plugin.settings.openaiCompatModel;
+    const models = mergeDetectedModels(detected, configured);
+    if (!models.length || !select.isConnected) return;
     const group = select.createEl("optgroup", { attr: { label: "Local (endpoint)" } });
-    group.createEl("option", { value: `custom:${model}`, text: `${model} · endpoint` });
-    if (this.plugin.settings.chatBackend === "custom") select.value = `custom:${model}`;
+    for (const m of models) group.createEl("option", { value: `custom:${m}`, text: `${m} · endpoint` });
+    const active = configured.trim() || models[0];
+    if (this.plugin.settings.chatBackend === "custom" && active) select.value = `custom:${active}`;
   }
 
   /**
@@ -929,6 +942,9 @@ export class ChatView extends ItemView {
       this.plugin.settings.ollamaModel = value.slice("ollama:".length);
       this.plugin.settings.chatBackend = "local";
     } else if (value.startsWith("custom:")) {
+      // The picker now lists every endpoint model, so the choice has to land in
+      // settings — the router reads openaiCompatModel, not the select value.
+      this.plugin.settings.openaiCompatModel = value.slice("custom:".length);
       this.plugin.settings.chatBackend = "custom";
     } else {
       this.controls.model = value;

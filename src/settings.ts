@@ -3,6 +3,7 @@ import type ClaudeCompanionPlugin from "./main";
 import { CLAUDE_MODELS } from "./claude/models";
 import type { ProviderStatus } from "./providers/types";
 import { readAnthropicEnv, hasAnthropicEnvCredential } from "./providers/env";
+import { mergeDetectedModels } from "./providers/localModels";
 import { generateToken, bridgeUrl, claudeCodeCommand, claudeDesktopConfig, maskToken, resolveMcpToken, mcpTokenEnvRef, MCP_TOKEN_ENV } from "./mcp/clientConfig";
 import { dispatchSetupSteps, repliesSetupSteps } from "./cloud/setup";
 import { BUILTIN_EMBEDDING_MODELS, builtinModelById } from "./semantic/transformers/model";
@@ -12,6 +13,8 @@ import { normalizeDiscoverySettings, type McpServerConfig, type PluginSettings }
 export class ClaudeCompanionSettingTab extends PluginSettingTab {
   /** Cached list of Ollama models from the last Detect, for the dropdown. */
   private detectedOllamaModels: string[] | null = null;
+  /** Same, for the OpenAI-compatible endpoint (LM Studio, mlx-lm, vLLM, Jan). */
+  private detectedEndpointModels: string[] | null = null;
   /** Transient (not persisted): reveal the real MCP token in the snippets. */
   private revealMcpToken = false;
 
@@ -582,15 +585,56 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
           }),
       );
 
-    new Setting(containerEl)
+    // Endpoint model: same shape as the Ollama field above — a dropdown of the
+    // models the server reports once Detect has run, otherwise free text.
+    const endpointModelSetting = new Setting(containerEl)
       .setName("Endpoint model")
-      .setDesc("The model id the server exposes (see Test / its model list).")
-      .addText((text) =>
+      .setDesc("Choose a model the server exposes, or type its id. Click Detect to refresh the list.");
+
+    const detectedEndpoint = this.detectedEndpointModels;
+    if (detectedEndpoint && detectedEndpoint.length > 0) {
+      endpointModelSetting.addDropdown((dd) => {
+        const models = mergeDetectedModels(detectedEndpoint, this.plugin.settings.openaiCompatModel);
+        for (const m of models) dd.addOption(m, m);
+        const current = this.plugin.settings.openaiCompatModel.trim() || models[0] || "";
+        dd.setValue(current).onChange(async (v) => {
+          this.plugin.settings.openaiCompatModel = v;
+          await this.plugin.saveSettings();
+          this.plugin.refreshViews();
+        });
+      });
+    } else {
+      endpointModelSetting.addText((text) =>
         text.setValue(this.plugin.settings.openaiCompatModel).onChange(async (v) => {
           this.plugin.settings.openaiCompatModel = v.trim();
           await this.plugin.saveSettings();
+          this.plugin.refreshViews();
         }),
       );
+    }
+    endpointModelSetting.addButton((btn) =>
+      btn
+        .setButtonText("Detect")
+        .setTooltip("Query the endpoint for the models it serves")
+        .onClick(async () => {
+          await this.plugin.saveSettings();
+          btn.setButtonText("Detecting…").setDisabled(true);
+          const models = await this.plugin.router().openaiCompat.listModels();
+          this.detectedEndpointModels = models;
+          if (models.length === 0) {
+            new Notice("No models detected. Check the endpoint host, and that the server has a model loaded.");
+          } else {
+            if (!models.includes(this.plugin.settings.openaiCompatModel)) {
+              const first = models[0];
+              if (first) this.plugin.settings.openaiCompatModel = first;
+              await this.plugin.saveSettings();
+            }
+            new Notice(`Detected ${models.length} model(s).`);
+          }
+          this.plugin.refreshViews();
+          rerender(); // re-render this accordion so the dropdown appears/updates
+        }),
+    );
 
     new Setting(containerEl)
       .setName("Endpoint API key")
@@ -844,14 +888,28 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
       if (this.plugin.settings.embeddingEngine === "custom") {
         new Setting(containerEl)
           .setName("Endpoint embedding model")
-          .setDesc("An embedding model id on the OpenAI-compatible endpoint (configured under Local models), e.g. text-embedding-nomic-embed-text-v1.5.")
-          .addText((text) =>
-            text.setValue(this.plugin.settings.openaiCompatEmbeddingModel).onChange(async (v) => {
+          .setDesc("An embedding model the OpenAI-compatible endpoint (configured under Local models) serves, e.g. text-embedding-nomic-embed-text-v1.5.")
+          .addDropdown((dd) => {
+            const cur = this.plugin.settings.openaiCompatEmbeddingModel;
+            // Always show the current selection; the endpoint's models are added
+            // asynchronously below.
+            if (cur) dd.addOption(cur, cur);
+            else dd.addOption("", "Not set — pick one once detected");
+            dd.setValue(cur).onChange(async (v) => {
               this.plugin.settings.openaiCompatEmbeddingModel = v.trim();
               await this.plugin.saveSettings();
               this.plugin.invalidateIndexer();
-            }),
-          );
+            });
+            void this.plugin
+              .router()
+              .openaiCompat.listModels()
+              .then((models) => {
+                for (const m of models) if (m !== cur) dd.addOption(m, m);
+              })
+              .catch(() => {
+                /* Endpoint not reachable — leave just the current value. */
+              });
+          });
       }
 
       const idxStatus = containerEl.createDiv({ cls: "cc-conn-status setting-item-description" });

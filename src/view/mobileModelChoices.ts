@@ -1,4 +1,5 @@
 import { CLAUDE_MODELS } from "../claude/models";
+import { mergeDetectedModels } from "../providers/localModels";
 import type { ProviderId } from "../providers/types";
 
 export interface MobileModelChoice {
@@ -22,22 +23,21 @@ export function mobileModelChoices(input: {
   configuredOllamaModel: string;
   openaiCompatHost: string;
   openaiCompatModel: string;
+  /** Models the endpoint reported; empty is fine (falls back to the configured id). */
+  openaiCompatModels?: string[];
 }): MobileModelChoice[] {
   const choices: MobileModelChoice[] = CLAUDE_MODELS.map((model) => ({
     value: model.id,
     label: model.label,
     provider: "claude",
   }));
-  const localModels = [...input.ollamaModels];
-  if (input.configuredOllamaModel && !localModels.includes(input.configuredOllamaModel)) {
-    localModels.unshift(input.configuredOllamaModel);
-  }
-  for (const model of localModels) {
+  for (const model of mergeDetectedModels(input.ollamaModels, input.configuredOllamaModel)) {
     choices.push({ value: `ollama:${model}`, label: `${model} · local`, provider: "local" });
   }
-  const endpointModel = input.openaiCompatModel.trim();
-  if (input.openaiCompatHost.trim() && endpointModel) {
-    choices.push({ value: `custom:${endpointModel}`, label: `${endpointModel} · endpoint`, provider: "custom" });
+  if (input.openaiCompatHost.trim()) {
+    for (const model of mergeDetectedModels(input.openaiCompatModels ?? [], input.openaiCompatModel)) {
+      choices.push({ value: `custom:${model}`, label: `${model} · endpoint`, provider: "custom" });
+    }
   }
   return choices;
 }

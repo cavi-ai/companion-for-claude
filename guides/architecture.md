@@ -52,10 +52,11 @@ Injection is used consistently to make that possible — `loop.ts` takes its str
 and tool executor as deps, `indexer.ts` takes its IO, `consolidate.ts` takes file
 contents and the model call.
 
-146 test files and ~1,300 tests run under Vitest, grouped by concern
+196 test files and ~1,790 tests run under Vitest, grouped by concern
 (`test/research/`, `test/semantic/`, `test/discovery/`, `test/ontology/`,
-`test/sources/`, `test/mcp/`). CI runs typecheck, lint, test, and build on Node
-20 and 22 for every push and PR.
+`test/sources/`, `test/mcp/`). CI runs version lockstep, typecheck, lint, test,
+the docs-artifact contract, build, and a reproducible-build-output check on Node
+20 and 22, plus a production dependency audit on 22.
 
 ```bash
 pnpm run typecheck   # tsc --noEmit --skipLibCheck

@@ -89,8 +89,7 @@ vault stays the single source of truth.
   credential works, with readable, actionable errors.
 - **Commands** — *Open chat panel*, *New chat*, *Resume a past conversation*,
   *Generate implementation plan from current note*, *Turn selection / note into
-  an artifact*, *Ask Claude about my vault*, *Hand off current note to Claude
-  Code (build)*.
+  an artifact*, *Ask Claude about my vault*, *Build current plan with Claude*.
 
 ### Artifacts & generation
 
@@ -418,9 +417,10 @@ checklist lives in [`CONTRIBUTING.md`](https://github.com/cavi-ai/claude-obsidia
 | Release repo | [`cavi-ai/companion-for-claude`](https://github.com/cavi-ai/companion-for-claude) — built `main.js`, `manifest.json`, `styles.css` attached per release |
 | Versioning | `manifest.json` = `versions.json` = `package.json` = git tag (exact version, no `v` prefix) |
 
-Releases are cut by the monorepo's release workflow, which runs the full gate
-(typecheck, lint, tests, build, audit), mirrors the plugin to the release repo,
-and publishes the tagged GitHub release the store serves.
+Releases are cut by the monorepo's release workflow, which runs the release gate
+(typecheck, lint, tests, build) and the version-lockstep check, mirrors the
+plugin to the release repo, and publishes the tagged GitHub release the store
+serves.
 
 ## License
 

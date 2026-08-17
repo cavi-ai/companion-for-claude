@@ -73,7 +73,8 @@ actionable messages rather than raw HTTP errors.
 
 | Model | When |
 |---|---|
-| Claude Opus 4.8 | Most capable — deep reasoning, best artifacts |
+| Claude Opus 5 | Most capable — deep reasoning and agentic work |
+| Claude Opus 4.8 | Previous Opus generation — deep reasoning, best artifacts |
 | **Claude Sonnet 5** | Balanced default — fast and strong |
 | Claude Haiku 4.5 | Fastest and cheapest — quick edits and Q&A |
 | Claude Fable 5 | Claude 5 family |

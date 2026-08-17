@@ -5,6 +5,10 @@
 
 export interface Workflow {
   id: string;
+  /** Universal capability this adapts; defaults to `id`. */
+  capability?: string;
+  /** Lens the capability declares. `id` is then `<capability>-<lens>`. */
+  lens?: string;
   /** Display name shown in the picker and as the chat label. */
   name: string;
   /** One-line description for the picker. */
@@ -21,6 +25,8 @@ const ARTIFACT = "as a single self-contained `claude-html` artifact using the de
 export const WORKFLOWS: Workflow[] = [
   {
     id: "manifest-pm",
+    capability: "manifest",
+    lens: "pm",
     name: "Manifest: Product roadmap",
     description: "Prioritized, client-facing product roadmap from your project notes",
     group: "Manifest",
@@ -37,6 +43,8 @@ export const WORKFLOWS: Workflow[] = [
   },
   {
     id: "manifest-content",
+    capability: "manifest",
+    lens: "content",
     name: "Manifest: Content plan",
     description: "Evidence-backed content plan + the best piece to write next",
     group: "Manifest",
@@ -45,6 +53,8 @@ export const WORKFLOWS: Workflow[] = [
   },
   {
     id: "manifest-research",
+    capability: "manifest",
+    lens: "research",
     name: "Manifest: Research agenda",
     description: "Map coverage, surface gaps, and a prioritized research agenda",
     group: "Manifest",
@@ -53,6 +63,8 @@ export const WORKFLOWS: Workflow[] = [
   },
   {
     id: "manifest-risk",
+    capability: "manifest",
+    lens: "risk",
     name: "Manifest: Risk register",
     description: "Ranked blockers, contradictions, SPOFs + mitigations",
     group: "Manifest",
@@ -61,6 +73,8 @@ export const WORKFLOWS: Workflow[] = [
   },
   {
     id: "manifest-feature",
+    capability: "manifest",
+    lens: "feature",
     name: "Manifest: Feature backlog",
     description: "Prioritized feature backlog from your idea/feedback notes",
     group: "Manifest",
@@ -69,6 +83,8 @@ export const WORKFLOWS: Workflow[] = [
   },
   {
     id: "manifest-infra",
+    capability: "manifest",
+    lens: "infra",
     name: "Manifest: Infra design",
     description: "Grounded system designs as a diagrammed artifact",
     group: "Manifest",

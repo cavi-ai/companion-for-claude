@@ -41,11 +41,13 @@ The complete list of hosts the plugin can ever contact:
 |---|---|
 | `api.anthropic.com` (or your gateway) | Chat, utility, and cloud-session requests |
 | `localhost:11434` | Your own Ollama server, if enabled |
+| The OpenAI-compatible endpoint you configure | Chat, utility, and embedding requests routed to that endpoint |
 | `huggingface.co` + `cdn.jsdelivr.net` | One-time embedding-model download, only after you click **Download** |
 | `api.openalex.org`, `api.crossref.org`, `export.arxiv.org` | Scholarly Discover searches, only on an explicit action |
 | `api.zotero.org` | Resolving a Zotero source on an explicit import, only if you configured a user id |
 | `api.github.com` | Cloud replies, only if you configure a vault repo |
 | `html.duckduckgo.com` or `api.search.brave.com` | Agent web search, only on an explicit search and only if you enabled the tool |
+| The page a web-fetch tool call names | Agent web fetch, only on an explicit tool call and only if you enabled the tool |
 | A page you asked to capture or fetch | Web-source capture, attach-page, or the agent's web fetch tool |
 | Any MCP server URL you configure | External MCP client tools, on explicit agent tool calls |
 
@@ -91,8 +93,9 @@ More in [claude-code-bridge.md](claude-code-bridge.md#troubleshooting).
 
 ## Which models can I use?
 
-Claude Opus 4.8, **Claude Sonnet 5** (the default), Claude Haiku 4.5, and Claude
-Fable 5 from the dropdown, switchable per message from the composer.
+Claude Opus 5, Claude Opus 4.8, **Claude Sonnet 5** (the default), Claude Haiku
+4.5, and Claude Fable 5 from the dropdown, switchable per message from the
+composer.
 
 A **Custom model id** field overrides the dropdown for anything newer than this
 build knows about, or a gateway-specific name. Connection tests always use Haiku
