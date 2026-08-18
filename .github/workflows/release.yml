@@ -62,19 +62,6 @@ jobs:
           git fetch --force origin "refs/tags/${TAG}:refs/tags/${TAG}"
           COMMIT="$(git rev-list -n 1 "$TAG")"
           SOURCE_DATE_EPOCH="$(git show -s --format=%ct "$COMMIT")"
-          # tools/ is mirrored from claude-obsidian; scripts/ is the pre-0.22.4 location.
-          if [ -f tools/cavi-release.mjs ]; then
-            cp tools/cavi-release.mjs "$RUNNER_TEMP/cavi-release.mjs"
-          else
-            cp scripts/cavi-release.mjs "$RUNNER_TEMP/cavi-release.mjs"
-          fi
-          chmod +x "$RUNNER_TEMP/cavi-release.mjs"
-          # Docs come from the current checkout, like the generator: a tag cut
-          # before guides/ was mirrored has none, and backfills still need them.
-          rm -rf "$RUNNER_TEMP/guides"
-          cp -R guides "$RUNNER_TEMP/guides"
-          cp README.md "$RUNNER_TEMP/guides-index.md"
-          cp tools/build-docs-artifact.mjs tools/verify-docs-artifact.mjs "$RUNNER_TEMP/"
           {
             echo "version=$VERSION"
             echo "tag=$TAG"
@@ -99,56 +86,6 @@ jobs:
             exit 1
           fi
           echo "Releasing $MANIFEST"
-
-      - name: Generate deterministic CAVI release facts
-        id: cavi
-        env:
-          VERSION: ${{ steps.source.outputs.version }}
-          TAG: ${{ steps.source.outputs.tag }}
-          COMMIT: ${{ steps.source.outputs.commit }}
-          SOURCE_DATE_EPOCH: ${{ steps.source.outputs.source_date_epoch }}
-        run: |
-          NAME="companion-for-claude-cavi-release-${TAG}.tar.gz"
-          STAGING="$RUNNER_TEMP/cavi-release"
-          ARTIFACT="$RUNNER_TEMP/$NAME"
-          ENVELOPE="$RUNNER_TEMP/cavi-release-envelope.json"
-          rm -rf "$STAGING"
-          mkdir -p "$STAGING"
-          node "$RUNNER_TEMP/cavi-release.mjs" manifest \
-            --version "$VERSION" \
-            --tag "$TAG" \
-            --repository "$GITHUB_REPOSITORY" \
-            --commit "$COMMIT" \
-            --source-date-epoch "$SOURCE_DATE_EPOCH" \
-            --asset main.js \
-            --asset manifest.json \
-            --asset styles.css > "$STAGING/cavi-release.json"
-          # cavi-home's registry requires a docs member beside cavi-release.json,
-          # under the path its artifactPathTemplate names.
-          # One builder for the docs artifact, shared with the source repo's gate.
-          DOCS_ROOT="$(node "$RUNNER_TEMP/build-docs-artifact.mjs" \
-            --version "$VERSION" --tag "$TAG" --commit "$COMMIT" \
-            --guides "$RUNNER_TEMP/guides" --readme "$RUNNER_TEMP/guides-index.md" \
-            --out "$STAGING" --source-date-epoch "$SOURCE_DATE_EPOCH")"
-          node "$RUNNER_TEMP/verify-docs-artifact.mjs" "$STAGING/$DOCS_ROOT"
-          tar --sort=name --mtime="@${SOURCE_DATE_EPOCH}" --owner=0 --group=0 \
-            --numeric-owner -czf "$ARTIFACT" -C "$STAGING" cavi-release.json docs
-          SHA256="$(sha256sum "$ARTIFACT" | cut -d' ' -f1)"
-          printf '%s  %s\n' "$SHA256" "$NAME" > "$ARTIFACT.sha256"
-          URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/${NAME}"
-          node "$RUNNER_TEMP/cavi-release.mjs" envelope \
-            --version "$VERSION" \
-            --tag "$TAG" \
-            --repository "$GITHUB_REPOSITORY" \
-            --commit "$COMMIT" \
-            --artifact-url "$URL" \
-            --artifact-sha256 "$SHA256" > "$ENVELOPE"
-          {
-            echo "name=$NAME"
-            echo "artifact=$ARTIFACT"
-            echo "envelope=$ENVELOPE"
-            echo "sha256=$SHA256"
-          } >> "$GITHUB_OUTPUT"
 
       - name: Verify any existing release assets
         id: release
@@ -177,49 +114,18 @@ jobs:
             main.js
             manifest.json
             styles.css
-            ${{ steps.cavi.outputs.artifact }}
 
+      # Obsidian downloads only these three files; the CAVI release artifact and
+      # its CAVI Home dispatch are cut from cavi-ai/claude-obsidian instead.
       - name: Publish or verify GitHub Release
         if: env.DRY_RUN != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.source.outputs.tag }}
           RELEASE_EXISTS: ${{ steps.release.outputs.exists }}
-          CAVI_NAME: ${{ steps.cavi.outputs.name }}
-          CAVI_ARTIFACT: ${{ steps.cavi.outputs.artifact }}
         run: |
           if [ "$RELEASE_EXISTS" = "false" ]; then
             gh release create "$TAG" main.js manifest.json styles.css \
-              "$CAVI_ARTIFACT" "$CAVI_ARTIFACT.sha256" \
               --title "$TAG" \
               --notes "Companion for Claude $TAG. Full notes: https://github.com/cavi-ai/claude-obsidian/blob/main/CHANGELOG.md"
-          elif gh api "/repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" \
-            --jq '.assets[].name' | grep -Fxq "$CAVI_NAME"; then
-            EXISTING="$RUNNER_TEMP/existing-cavi"
-            mkdir -p "$EXISTING"
-            gh release download "$TAG" --dir "$EXISTING" --pattern "$CAVI_NAME" --pattern "$CAVI_NAME.sha256"
-            cmp "$CAVI_ARTIFACT" "$EXISTING/$CAVI_NAME"
-            cmp "$CAVI_ARTIFACT.sha256" "$EXISTING/$CAVI_NAME.sha256"
-          else
-            gh release upload "$TAG" "$CAVI_ARTIFACT" "$CAVI_ARTIFACT.sha256"
           fi
-
-      - name: Dispatch verified release facts to CAVI Home
-        if: env.DRY_RUN != 'true'
-        env:
-          CONSUMER_DISPATCH_TOKEN: ${{ secrets.CONSUMER_DISPATCH_TOKEN }}
-          ENVELOPE: ${{ steps.cavi.outputs.envelope }}
-        run: |
-          if [ -z "$CONSUMER_DISPATCH_TOKEN" ]; then
-            echo "::error::CONSUMER_DISPATCH_TOKEN is not configured"
-            exit 1
-          fi
-          jq -n --slurpfile payload "$ENVELOPE" \
-            '{event_type:"cavi-oss-release", client_payload:$payload[0]}' > "$RUNNER_TEMP/dispatch.json"
-          curl --fail-with-body --silent --show-error \
-            --request POST \
-            --header "Accept: application/vnd.github+json" \
-            --header "Authorization: Bearer $CONSUMER_DISPATCH_TOKEN" \
-            --header "X-GitHub-Api-Version: 2022-11-28" \
-            "https://api.github.com/repos/cavi-ai/cavi-home/dispatches" \
-            --data-binary "@$RUNNER_TEMP/dispatch.json"
