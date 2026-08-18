@@ -2,7 +2,8 @@ import { chromium, type Browser, type Page } from "@playwright/test";
 import { createServer, type Server } from "node:http";
 import { chmod, copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { spawn, type ChildProcess } from "node:child_process";
 
 export interface ObsidianHarness {
@@ -20,6 +21,41 @@ export interface ObsidianHarnessOptions {
    * point `openaiCompatHost` at it (LM Studio / mlx-lm / vLLM stand-in).
    */
   endpointModels?: string[];
+}
+
+/** Compare dotted versions; -1 / 0 / 1. */
+function compareVersions(a: string, b: string): number {
+  const left = a.split(".").map(Number);
+  const right = b.split(".").map(Number);
+  for (let i = 0; i < Math.max(left.length, right.length); i += 1) {
+    const diff = (left[i] ?? 0) - (right[i] ?? 0);
+    if (diff !== 0) return diff < 0 ? -1 : 1;
+  }
+  return 0;
+}
+
+/**
+ * The plugin only loads on Obsidian >= manifest.minAppVersion. An older app
+ * fails deep inside Obsidian (a 1.13-only settings tab has no display()), so
+ * check the prerequisite up front and say what to do about it.
+ */
+async function assertSupportedObsidian(executable: string): Promise<void> {
+  const plist = executable.replace(/\/MacOS\/Obsidian$/, "/Info.plist");
+  const { minAppVersion } = JSON.parse(await readFile(join(dirname(fileURLToPath(import.meta.url)), "..", "manifest.json"), "utf8")) as { minAppVersion: string };
+  let installed: string;
+  try {
+    const raw = await readFile(plist, "utf8");
+    installed = /<key>CFBundleShortVersionString<\/key>\s*<string>([^<]+)<\/string>/.exec(raw)?.[1] ?? "";
+  } catch {
+    return; // Not a macOS bundle — leave the launch to report what went wrong.
+  }
+  if (!installed) return;
+  if (compareVersions(installed, minAppVersion) < 0) {
+    throw new Error(
+      `Obsidian ${installed} is installed but this plugin requires ${minAppVersion} or later. `
+        + `Update Obsidian, or point OBSIDIAN_APP_PATH at a ${minAppVersion}+ build, then re-run the e2e suite.`,
+    );
+  }
 }
 
 function note(frontmatter: string, body: string): string { return `---\n${frontmatter}\n---\n\n${body}\n`; }
@@ -126,6 +162,7 @@ esac
   await writeFile(join(profile, "obsidian.json"), JSON.stringify({ vaults: { e2e: { path: vault, ts: Date.now(), open: true } } }));
   const debuggingPort = await freePort();
   const executable = process.env.OBSIDIAN_APP_PATH ?? "/Applications/Obsidian.app/Contents/MacOS/Obsidian";
+  await assertSupportedObsidian(executable);
   const processHandle = spawn(executable, [vault, `--user-data-dir=${profile}`, `--remote-debugging-port=${debuggingPort}`, "--disable-gpu", "--no-sandbox"], { stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, PATH: executablePath } });
   let processOutput = ""; processHandle.stdout?.on("data", (chunk) => { processOutput += String(chunk); }); processHandle.stderr?.on("data", (chunk) => { processOutput += String(chunk); });
   await waitForCdp(debuggingPort);

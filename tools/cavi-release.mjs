@@ -5,7 +5,11 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 
 const PRODUCT_SLUG = "companion-for-claude";
-const PRODUCT_REPOSITORY = "cavi-ai/companion-for-claude";
+// The artifact is cut from the development monorepo; the community-store
+// mirror stays valid so either repository can publish during the move.
+const RELEASE_REPOSITORIES = new Set(["cavi-ai/claude-obsidian", "cavi-ai/companion-for-claude"]);
+// The monorepo namespaces its tags; the mirror tags the bare version.
+const TAG_PREFIXES = ["", "obsidian-v"];
 // cavi-home registers this slug as product-docs; envelope, manifest, and the
 // registry entry must agree or its release ingest rejects the dispatch.
 const PRODUCT_KIND = "product-docs";
@@ -62,8 +66,8 @@ function commonSource(values) {
   const repository = values.get("repository");
   const commit = values.get("commit");
   if (!VERSION_RE.test(version)) fail(`invalid stable version: ${version}`);
-  if (tag !== version) fail(`tag ${tag} must equal version ${version}`);
-  if (repository !== PRODUCT_REPOSITORY) fail(`unexpected repository: ${repository}`);
+  if (!TAG_PREFIXES.some((prefix) => tag === `${prefix}${version}`)) fail(`tag ${tag} does not name version ${version}`);
+  if (!RELEASE_REPOSITORIES.has(repository)) fail(`unexpected repository: ${repository}`);
   if (!COMMIT_RE.test(commit)) fail(`invalid commit: ${commit}`);
   return { version, tag, repository, commit };
 }
@@ -118,7 +122,7 @@ function buildEnvelope(values) {
   ]);
   const source = commonSource(values);
   const expectedUrl = `https://github.com/${source.repository}/releases/download/${source.tag}/` +
-    `companion-for-claude-cavi-release-${source.tag}.tar.gz`;
+    `${PRODUCT_SLUG}-cavi-release-${source.version}.tar.gz`;
   const artifactUrl = values.get("artifact-url");
   const artifactSha256 = values.get("artifact-sha256");
   if (artifactUrl !== expectedUrl) fail(`unexpected artifact URL: ${artifactUrl}`);

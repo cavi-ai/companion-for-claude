@@ -4,6 +4,7 @@
 // ids/timestamps so this stays unit-testable.
 
 import type { ChatMessage } from "../types";
+import type { ApiMessage } from "../providers/types";
 
 export interface Conversation {
   id: string;
@@ -81,16 +82,19 @@ export function compactArtifactsInHistory(messages: ChatMessage[]): ChatMessage[
  * Coalesce a message list into strictly alternating roles for the Anthropic
  * Messages API, merging consecutive same-role messages (the API 400s on two in
  * a row). Guards the case where a failed turn left a trailing `user` message and
- * the next send appended another `user` message.
+ * the next send appended another `user` message. This is also the wire boundary:
+ * the result carries `role` + `content` only.
  */
-export function toApiMessages(messages: ChatMessage[]): ChatMessage[] {
-  const out: ChatMessage[] = [];
+export function toApiMessages(messages: ChatMessage[]): ApiMessage[] {
+  // String content throughout: the inputs are chat turns, never tool-use blocks.
+  const out: Array<{ role: ChatMessage["role"]; content: string }> = [];
   for (const m of messages) {
     const prev = out[out.length - 1];
     if (prev && prev.role === m.role) {
       prev.content = `${prev.content}\n\n${m.content}`;
     } else {
-      out.push({ ...m });
+      // Project, never spread: the API 400s on any extra key (display, toolTrace).
+      out.push({ role: m.role, content: m.content });
     }
   }
   return out;

@@ -72,7 +72,7 @@ export class RelatedView extends ItemView {
         cls: "cc-view-empty",
         attr: { role: "status", "aria-label": "Related Notes empty state" },
       });
-      empty.createEl("div", { cls: "cc-eyebrow", text: "RELATED NOTES" });
+      empty.createDiv({ cls: "cc-eyebrow", text: "RELATED NOTES" });
       empty.createEl("h3", { text: "Open a note to explore connections" });
       empty.createEl("p", { text: "Related Notes will map links, mentions, and semantic neighbors for the note you are reading." });
       return;
@@ -85,7 +85,7 @@ export class RelatedView extends ItemView {
     await this.renderSuggestions(root, file, seq);
     if (seq !== this.renderSeq) return;
 
-    root.createEl("div", { cls: "cc-eyebrow", text: "RELATED NOTES" });
+    root.createDiv({ cls: "cc-eyebrow", text: "RELATED NOTES" });
     if (!this.plugin.settings.semanticEnabled) {
       root.createEl("p", {
         cls: "setting-item-description",
@@ -94,7 +94,7 @@ export class RelatedView extends ItemView {
       return;
     }
 
-    root.createEl("div", { cls: "cc-related-for", text: file.basename });
+    root.createDiv({ cls: "cc-related-for", text: file.basename });
     const loading = root.createEl("p", { cls: "setting-item-description", text: "Finding related notes…" });
 
     let hits: { path: string; score: number }[];
@@ -174,7 +174,7 @@ export class RelatedView extends ItemView {
     const n = neighborhood(this.app.metadataCache.resolvedLinks, file.path, fm, type);
     if (n.incoming.length === 0 && n.outgoing.length === 0 && n.relations.length === 0) return;
 
-    root.createEl("div", { cls: "cc-eyebrow", text: "CONNECTIONS" });
+    root.createDiv({ cls: "cc-eyebrow", text: "CONNECTIONS" });
     this.renderNeighborhoodGroup(root, "Backlinks", n.incoming);
     this.renderNeighborhoodGroup(root, "Links out", n.outgoing);
 
@@ -197,7 +197,7 @@ export class RelatedView extends ItemView {
   private renderNeighborhoodGroup(root: HTMLElement, title: string, paths: string[]): void {
     if (paths.length === 0) return;
     const group = root.createDiv({ cls: "cc-neighborhood-group" });
-    group.createEl("div", { cls: "cc-neighborhood-title", text: title });
+    group.createDiv({ cls: "cc-neighborhood-title", text: title });
     const list = group.createDiv({ cls: "cc-related-list" });
     for (const path of paths) {
       const target = this.app.vault.getAbstractFileByPath(path);
@@ -221,7 +221,7 @@ export class RelatedView extends ItemView {
     const suggestions = buildSuggestions(mentions, [], this.plugin.linkedTargets(file)).filter((s) => s.mention);
     if (suggestions.length === 0) return;
 
-    root.createEl("div", { cls: "cc-eyebrow", text: "LINK SUGGESTIONS" });
+    root.createDiv({ cls: "cc-eyebrow", text: "LINK SUGGESTIONS" });
     const list = root.createDiv({ cls: "cc-related-list" });
     for (const s of suggestions) {
       const m = s.mention!;

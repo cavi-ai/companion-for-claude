@@ -59,10 +59,9 @@ vault stays the single source of truth.
   run, cached and fully offline afterwards) or a local Ollama server. Search
   stays keyword-only until the model is downloaded. The index also covers
   **vault PDFs** — text is extracted with pdf.js and every chunk keeps its page
-  number, so results cite the page. The ONNX runtime is
-  `ort-wasm-simd-threaded.asyncify.wasm`, shipped by the `@huggingface/transformers`
-  dependency; it executes the embedding model on-device and makes no network
-  requests of its own.
+  number, so results cite the page. The ONNX runtime
+  (`ort-wasm-simd-threaded.asyncify.wasm`) is fetched once during that same
+  consented download and cached with the model; inference itself is on-device.
 - **PDFs & images in chat** — @-mention any PDF or image in your vault, or
   **paste a screenshot** straight into the composer; Claude reads it natively
   (vision + document understanding). Attachments are per-message pills you can
@@ -365,6 +364,48 @@ claude mcp add --transport http obsidian-vault \
 
 Now ask Claude Code "search my vault for X" or "create a note summarizing this"
 and it operates directly on your Obsidian notes.
+
+## What leaves your machine
+
+Every request below is triggered by something you do — there is no telemetry, no
+analytics, and no background polling of any third party.
+
+| Destination | Sent when | Carries |
+|---|---|---|
+| `api.anthropic.com` (or your **API base URL** override) | every chat, agent, and utility turn | your prompt, attached vault context, and the system prompt |
+| your **Ollama host** / **OpenAI-compatible endpoint** | only while a local backend is selected | the same request, to a server you run |
+| `huggingface.co` and `cdn.jsdelivr.net` | the one-time built-in embedding download, after you click **Download** | nothing but the model and ONNX-runtime requests; cached and offline afterwards |
+| your **routine fire URL** (an `api.anthropic.com` endpoint by default) | the **Send to cloud Claude session** command, when cloud dispatch is on | your prompt and attached note context |
+| `api.github.com` | **Cloud replies** pull, and only with a token you set | repo, branch, and folder you configured |
+| `api.openalex.org`, `api.crossref.org`, `export.arxiv.org`, `api.zotero.org` | an explicit **Discover** action in the Research Workbench | your search terms, plus the OpenAlex contact email if you set one |
+| the page you ask to capture | **web capture** and the agent's `web_fetch` tool | the URL you gave |
+| `html.duckduckgo.com` (or `api.search.brave.com`) | the agent's `web_search` tool, when enabled | your search query |
+| an MCP server you configure yourself | tool calls you confirm | the tool arguments |
+
+Web capture uses the bundled `defuddle` extractors, which reach two extra
+site-specific endpoints when you capture from those sites: `c2.com` (wiki page
+source) and `youtube.com` (transcript API).
+
+**WebAssembly.** Two families ship inside `main.js`. `ort-wasm-simd-threaded*.wasm`
+is the ONNX runtime behind built-in embeddings — fetched from `cdn.jsdelivr.net`
+during the consented model download and cached in the Cache API. `qcms_bg.wasm`,
+`jbig2.wasm`, and `openjpeg.wasm` belong to `pdfjs-dist`; Companion loads PDFs with
+`getDocument({ data })` and never sets `wasmUrl`, so those image-decode paths have
+no URL to fetch and no external host.
+
+**Base64.** One runtime `atob` in the plugin's own code, decoding GitHub's
+base64-encoded file payloads when pulling cloud replies. Other occurrences belong
+to bundled dependencies.
+
+**Shell execution.** Desktop only, always `execFile`/`spawn` with an argument
+array — never a shell string: opening an artifact in your chosen browser, running
+stdio MCP servers you configure, and the Obsidian / Claude CLI used by Desktop
+integrations. All of it is disabled on mobile.
+
+**Your vault.** Semantic search and vault search enumerate every file to build a
+local index; nothing about that index leaves the device. Copy buttons write to
+the system clipboard. Credentials live in Obsidian's encrypted secret storage,
+never in `data.json`.
 
 ## How artifacts work
 

@@ -52,16 +52,14 @@ test("Detect fills the endpoint model dropdown in settings", async () => {
       app.setting.open();
       app.setting.openTabById("claude-companion");
     });
-    const tab = page.locator(".vertical-tab-content.cc-settings-root");
+    const tab = page.locator(".vertical-tab-content-container .vertical-tab-content").last();
     await expect(tab).toBeVisible();
     await expect(tab.locator(".setting-item").first()).toBeVisible({ timeout: 10_000 });
-    const accordion = tab.locator(".cc-accordion").filter({
-      has: page.locator(".cc-accordion-summary", { hasText: "Local models (Ollama & endpoints)" }),
-    });
-    await accordion.locator(".cc-accordion-summary").click();
-    await expect(accordion).toHaveJSProperty("open", true);
+    // The tab is declarative since 0.27.1: sections are host-rendered pages, so
+    // open the page by its name before reaching for a row inside it.
+    await tab.locator(".setting-item", { hasText: "Local models (Ollama & endpoints)" }).first().click();
 
-    const local = accordion.locator(".setting-item", { hasText: "Endpoint model" }).first();
+    const local = tab.locator(".setting-item", { hasText: "Endpoint model" }).first();
     await expect(local).toBeVisible({ timeout: 10_000 });
 
     // Before Detect the field is free text — the endpoint's ids are unknown.

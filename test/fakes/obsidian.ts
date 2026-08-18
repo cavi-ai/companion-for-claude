@@ -284,6 +284,7 @@ export class FakeElement {
   parent: FakeElement | null = null;
   setCssStyles(styles: Record<string, string>): void { Object.assign(this.style, styles); }
   setCssProperty(name: string, value: string): void { this.style[name] = value; }
+  setCssProps(props: Record<string, string>): void { Object.assign(this.style, props); }
   private listeners = new Map<string, Array<(event: any) => void>>();
   constructor(tag = "div") { this.tagName = tag.toUpperCase(); }
   empty(): void { for (const child of this.children) child.parent = null; this.children = []; this.textContent = ""; }
@@ -328,6 +329,15 @@ function matches(item: FakeElement, selector: string): boolean {
   if (selector.startsWith(".")) return item.classList.has(selector.slice(1));
   return item.tagName === selector.toUpperCase();
 }
+/** Obsidian exposes createFragment() as a global; settings descriptions use it. */
+(globalThis as unknown as { createFragment?: unknown }).createFragment ??= (
+  callback?: (frag: FakeElement) => void,
+): FakeElement => {
+  const frag = new FakeElement("fragment");
+  callback?.(frag);
+  return frag;
+};
+
 export class Plugin {}
 export class MarkdownView {}
 export class WorkspaceLeaf {
@@ -443,7 +453,10 @@ export class Setting {
   setTooltip(tooltip: string): this { this.settingEl.attributes.set("title", tooltip); return this; }
   private add<T extends BaseComponent>(Ctor: ComponentCtor, cb: (component: never) => void): this {
     const component = new Ctor() as T;
-    this.controlEl.appendChild(component.inputEl);
+    // Buttons carry buttonEl, not inputEl — append whichever the component owns
+    // so an addButton row is reachable from the rendered tree.
+    const el = (component as unknown as { buttonEl?: FakeElement }).buttonEl ?? component.inputEl;
+    this.controlEl.appendChild(el);
     this.components.push(component);
     cb(component as never);
     return this;
@@ -457,7 +470,33 @@ export class Setting {
   addExtraButton(cb: (component: ExtraButtonComponent) => void): this { return this.add<ExtraButtonComponent>(ExtraButtonComponent as unknown as ComponentCtor, cb as never); }
   addSearch(cb: (component: SearchComponent) => void): this { return this.add<SearchComponent>(SearchComponent as unknown as ComponentCtor, cb as never); }
 }
-export interface SettingDefinitionItem { name: string; description?: string; aliases?: string[] }
+export interface SettingControl {
+  type: "toggle" | "dropdown" | "text" | "textarea" | "number" | "file" | "folder" | "slider" | "color";
+  key: string;
+  options?: Record<string, string>;
+  placeholder?: string;
+  rows?: number;
+  min?: number;
+  max?: number;
+  step?: number | "any";
+  defaultValue?: unknown;
+  validate?: (value: never) => string | void | Promise<string | void>;
+  disabled?: boolean | (() => boolean);
+}
+export interface SettingDefinitionItem {
+  type?: "group" | "list" | "page";
+  name?: string;
+  heading?: string;
+  desc?: string | DocumentFragment;
+  aliases?: string[];
+  searchable?: boolean | (() => boolean);
+  visible?: boolean | (() => boolean);
+  control?: SettingControl;
+  action?: (el: HTMLElement, index: number) => void;
+  render?: (setting: Setting, group: unknown) => void | (() => void);
+  items?: SettingDefinitionItem[];
+}
+export type SettingGroupItem = SettingDefinitionItem;
 export class PluginSettingTab {
   containerEl = new FakeElement() as unknown as HTMLElement;
   constructor(
@@ -467,6 +506,69 @@ export class PluginSettingTab {
   display(): void {}
   hide(): void {}
   getSettingDefinitions(): SettingDefinitionItem[] { return []; }
+  /** Obsidian re-derives the definitions and repaints; the fake just re-walks. */
+  update(): void { renderDefinitions(this as unknown as PluginSettingTab, this.getSettingDefinitions()); }
+  getControlValue(key: string): unknown { return (this.plugin as unknown as { settings: Record<string, unknown> }).settings[key]; }
+  setControlValue(key: string, value: unknown): void | Promise<void> {
+    (this.plugin as unknown as { settings: Record<string, unknown> }).settings[key] = value;
+  }
+  refreshDomState(): void {}
+}
+
+function truthy(value: boolean | (() => boolean) | undefined, fallback: boolean): boolean {
+  if (value === undefined) return fallback;
+  return typeof value === "function" ? value() : value;
+}
+
+/**
+ * Render one definition the way the 1.13 host does: a `control` becomes a real
+ * component bound to get/setControlValue, a `render` row hands the callback a
+ * live Setting, and everything else is a name/desc row.
+ */
+function renderDefinition(tab: PluginSettingTab, def: SettingDefinitionItem): void {
+  if (!truthy(def.visible, true)) return;
+  const container = tab.containerEl as unknown as FakeElement;
+  if (def.type === "group" || def.type === "page") {
+    if (def.heading) new Setting(container).setName(def.heading).setHeading();
+    for (const child of def.items ?? []) renderDefinition(tab, child);
+    return;
+  }
+  const setting = new Setting(container);
+  if (def.name) setting.setName(def.name);
+  if (typeof def.desc === "string") setting.setDesc(def.desc);
+  if (def.render) {
+    def.render(setting, undefined);
+    return;
+  }
+  const control = def.control;
+  if (!control) return;
+  const commit = (value: unknown): void => void tab.setControlValue(control.key, value);
+  const current = tab.getControlValue(control.key);
+  switch (control.type) {
+    case "toggle":
+      setting.addToggle((c) => c.setValue(Boolean(current)).onChange(commit));
+      return;
+    case "dropdown":
+      setting.addDropdown((c) => {
+        for (const [value, label] of Object.entries(control.options ?? {})) c.addOption(value, label);
+        c.setValue(String(current ?? "")).onChange(commit);
+      });
+      return;
+    case "slider":
+      setting.addSlider((c) => c.setValue(Number(current ?? 0)).onChange(commit));
+      return;
+    case "textarea":
+      setting.addTextArea((c) => c.setValue(String(current ?? "")).onChange(commit));
+      return;
+    default:
+      setting.addText((c) => c.setValue(String(current ?? "")).onChange(commit));
+      return;
+  }
+}
+
+function renderDefinitions(tab: PluginSettingTab, defs: SettingDefinitionItem[]): void {
+  (tab.containerEl as unknown as FakeElement).empty();
+  for (const def of defs) renderDefinition(tab, def);
 }
 
 /**
@@ -477,7 +579,7 @@ export class PluginSettingTab {
 export function openSettingTab(tab: PluginSettingTab): void {
   const prototype = Object.getPrototypeOf(tab) as object;
   if (Object.prototype.hasOwnProperty.call(prototype, "getSettingDefinitions")) {
-    tab.getSettingDefinitions();
+    renderDefinitions(tab, tab.getSettingDefinitions());
     return;
   }
   tab.display();

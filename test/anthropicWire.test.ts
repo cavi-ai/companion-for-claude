@@ -6,6 +6,7 @@ vi.mock("obsidian", () => ({ requestUrl: requestUrlMock }));
 import { AnthropicProvider, buildRequestBody } from "../src/providers/anthropic";
 import type { ResolvedAuth } from "../src/providers/auth";
 import type { AnthropicToolDef, CompletionRequest } from "../src/providers/types";
+import { toApiMessages } from "../src/conversations/store";
 
 const apiKeyAuth: ResolvedAuth = { credential: "sk-ant-api-test", scheme: "key", baseUrl: "https://api.anthropic.com", isOAuth: false };
 const oauthAuth: ResolvedAuth = { credential: "sk-ant-oat-test", scheme: "bearer", baseUrl: "https://api.anthropic.com", isOAuth: true };
@@ -35,6 +36,29 @@ describe("buildRequestBody", () => {
     const body = JSON.parse(buildRequestBody(baseReq, true, oauthAuth));
     expect(body.system[0]).toEqual({ type: "text", text: "You are Claude Code, Anthropic's official CLI for Claude." });
     expect(body.system[1]).toMatchObject({ text: "Be concise.", cache_control: { type: "ephemeral" } });
+  });
+
+  it("sends no UI-only message fields on a second turn (issue #7)", () => {
+    const body = JSON.parse(
+      buildRequestBody(
+        {
+          ...baseReq,
+          messages: toApiMessages([
+            { role: "user", content: "first question" },
+            {
+              role: "assistant",
+              content: "answer",
+              toolTrace: [{ name: "vault_search", argsSummary: "q", resultPreview: "r", ok: true }],
+            },
+            { role: "user", content: "second question" },
+          ]),
+        },
+        true,
+        apiKeyAuth,
+      ),
+    );
+    expect(body.messages).toHaveLength(3);
+    for (const m of body.messages) expect(Object.keys(m).sort()).toEqual(["content", "role"]);
   });
 
   it("omits the tools key when no tools are set", () => {

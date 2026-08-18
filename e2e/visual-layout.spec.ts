@@ -91,7 +91,7 @@ async function visualIssues(root: Locator): Promise<string[]> {
       }
     }
 
-    const settingRows = [...element.querySelectorAll(".cc-settings-root .setting-item")].filter(visible);
+    const settingRows = [...element.querySelectorAll(".vertical-tab-content .setting-item")].filter(visible);
     for (const row of settingRows) {
       const info = row.querySelector<HTMLElement>(".setting-item-info");
       const control = row.querySelector<HTMLElement>(".setting-item-control");
@@ -148,7 +148,7 @@ test("primary Companion screens are visually contained at real pane breakpoints"
       app.setting.open();
       app.setting.openTabById("claude-companion");
     });
-    const settings = page.locator(".vertical-tab-content.cc-settings-root");
+    const settings = page.locator(".vertical-tab-content-container .vertical-tab-content").last();
     await expect(settings).toBeVisible();
     await expect(settings.locator(".setting-item").first()).toBeVisible();
     // Desktop Obsidian keeps a fixed settings navigation rail; below 600px the

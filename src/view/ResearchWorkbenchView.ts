@@ -183,7 +183,7 @@ export class ResearchWorkbenchView extends ItemView {
 
     const header = root.createEl("header", { cls: "cc-research-header" });
     const headerTop = header.createDiv({ cls: "cc-research-header-top" });
-    headerTop.createEl("div", { cls: "cc-eyebrow", text: "RESEARCH WORKBENCH" });
+    headerTop.createDiv({ cls: "cc-eyebrow", text: "RESEARCH WORKBENCH" });
     if (this.projectPath && (this.dependencies?.openDesk || this.dependencies?.askCompanion)) {
       const navigation = headerTop.createDiv({ cls: "cc-workspace-navigation", attr: { "aria-label": "Research workspace navigation" } });
       if (this.dependencies.openDesk) {
@@ -197,9 +197,9 @@ export class ResearchWorkbenchView extends ItemView {
     }
     header.createEl("h2", { text: vm.title });
     header.createEl("p", { cls: "cc-research-question", text: vm.question });
-    header.createEl("span", { cls: "cc-research-stage", text: vm.stage });
+    header.createSpan({ cls: "cc-research-stage", text: vm.stage });
 
-    const tabs = root.createEl("div", { cls: "cc-research-tabs", attr: { role: "tablist", "aria-label": "Research workbench sections" } });
+    const tabs = root.createDiv({ cls: "cc-research-tabs", attr: { role: "tablist", "aria-label": "Research workbench sections" } });
     for (const group of TAB_GROUPS) {
       const groupRoot = tabs.createDiv({ cls: "cc-research-tab-group" });
       groupRoot.createSpan({ cls: "cc-research-tab-group-label", text: group.label });
@@ -806,7 +806,7 @@ class OutlineCreateModal extends Modal {
       const input = row.createEl("input", { attr: { type: "checkbox", "aria-label": `Include ${claim.title}` } });
       input.checked = true;
       row.createEl("strong", { text: claim.title });
-      row.createEl("span", { text: claim.proposition });
+      row.createSpan({ text: claim.proposition });
       selected.set(claim.path, input);
     }
     const error = this.contentEl.createEl("p", { cls: "cc-research-error", attr: { role: "alert" } });

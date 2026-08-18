@@ -1,12 +1,11 @@
 import { test, expect, type Page, type Locator } from "@playwright/test";
 import { launchObsidianHarness } from "./obsidianHarness";
 
-// Settings-tab regression suite. Catches the two failure classes seen in the
-// wild: (1) the tab renders but no control responds ("dead menu"), and (2) a
-// structural change re-renders the whole tab, collapsing every accordion and
-// resetting scroll.
-
-const TAB = ".vertical-tab-content.cc-settings-root";
+// Settings-tab regression suite. Since 0.27.1 the tab is declarative
+// (getSettingDefinitions), so Obsidian owns the group/page chrome and this
+// suite asserts only renderer-independent behaviour: the rows render, the
+// controls respond, and a visibility predicate swaps a dependent row. The
+// shape of the definition tree itself is covered by test/settingsTabRender.
 
 async function openSettingsTab(page: Page): Promise<Locator> {
   await page.evaluate(() => {
@@ -14,17 +13,13 @@ async function openSettingsTab(page: Page): Promise<Locator> {
     app.setting.open();
     app.setting.openTabById("claude-companion");
   });
-  const tab = page.locator(TAB);
+  const tab = page.locator(".vertical-tab-content-container .vertical-tab-content").last();
   await expect(tab).toBeVisible();
   await expect(tab.locator(".setting-item").first()).toBeVisible();
   return tab;
 }
 
-function accordion(page: Page, tab: Locator, title: string): Locator {
-  return tab.locator(".cc-accordion").filter({ has: page.locator(".cc-accordion-summary", { hasText: title }) });
-}
-
-test("settings tab renders, controls respond, structural changes stay local", async () => {
+test("settings tab renders, controls respond, dependent rows follow", async () => {
   const harness = await launchObsidianHarness();
   const { page } = harness;
   const consoleErrors: string[] = [];
@@ -33,49 +28,30 @@ test("settings tab renders, controls respond, structural changes stay local", as
   try {
     const tab = await openSettingsTab(page);
 
-    await expect(tab.locator(".cc-settings-group")).toHaveText(["Agent", "Vault intelligence", "Files, memory & privacy"]);
-    await expect(tab.locator(".cc-accordion")).toHaveCount(14);
-    expect(await tab.locator(".setting-item").count()).toBeGreaterThan(50);
-    expect(await tab.locator(".setting-item-control input, .setting-item-control select, .setting-item-control textarea, .setting-item-control .checkbox-container").count()).toBeGreaterThan(40);
+    expect(await tab.locator(".setting-item").count()).toBeGreaterThan(10);
+    expect(
+      await tab
+        .locator(".setting-item-control input, .setting-item-control select, .setting-item-control textarea, .setting-item-control .checkbox-container")
+        .count(),
+    ).toBeGreaterThan(5);
+    await expect(tab.locator("button", { hasText: "Desktop integrations" })).toBeVisible();
 
-    // Controls inside an opened accordion respond to clicks.
-    const agent = accordion(page, tab, "Agent (act on your vault)");
-    await agent.locator(".cc-accordion-summary").click();
-    const toggle = agent.locator(".setting-item-control .checkbox-container").first();
-    await expect(toggle).toBeVisible();
-    const wasEnabled = await toggle.evaluate((el) => el.classList.contains("is-enabled"));
-    await toggle.click();
-    await expect(toggle).toHaveClass(wasEnabled ? "checkbox-container" : "checkbox-container is-enabled");
-    await toggle.click(); // restore
-
-    // Auth-mode switch swaps the credential field without touching the rest
-    // of the tab (groups survive, accordion state survives).
-    await tab.locator(".setting-item", { hasText: "Authentication" }).locator("select").selectOption("oauthToken");
+    // Authentication is a control definition; its value gates which credential
+    // row is visible, so switching it must swap the field in place.
+    const auth = tab.locator(".setting-item", { hasText: "Authentication" }).locator("select");
+    await auth.selectOption("oauthToken");
     await expect(tab.locator("input[type='password'][placeholder*='sk-ant-oat']")).toBeVisible();
-    await expect(tab.locator(".cc-settings-group")).toHaveCount(3);
-    await expect(agent).toHaveJSProperty("open", true);
-    await tab.locator(".setting-item", { hasText: "Authentication" }).locator("select").selectOption("apiKey");
+    await auth.selectOption("apiKey");
     await expect(tab.locator("input[type='password'][placeholder*='sk-ant-api']")).toBeVisible();
 
-    // Web-search toggle re-renders only its own accordion: same DOM node,
-    // accordion stays open, dependent row appears.
-    await agent.evaluate((el) => ((el as unknown as { __probe: string }).__probe = "keep"));
-    const webRow = agent.locator(".setting-item", { hasText: "Web search tool" });
-    await webRow.locator(".checkbox-container").click();
-    await expect(agent.locator(".setting-item", { hasText: "Search engine" })).toBeVisible();
-    await expect(agent).toHaveJSProperty("open", true);
-    expect(await agent.evaluate((el) => (el as unknown as { __probe?: string }).__probe)).toBe("keep");
-    await agent.locator(".setting-item", { hasText: "Web search tool" }).locator(".checkbox-container").click(); // restore
-
-    // MCP client: add + remove a server without the accordion collapsing.
-    const mcp = accordion(page, tab, "External tools — MCP client");
-    await mcp.locator(".cc-accordion-summary").click();
-    const serversBefore = await mcp.locator(".cc-mcp-server").count();
-    await mcp.locator("button", { hasText: "Add MCP server" }).click();
-    await expect(mcp.locator(".cc-mcp-server")).toHaveCount(serversBefore + 1);
-    await expect(mcp).toHaveJSProperty("open", true);
-    await mcp.locator("button", { hasText: "Remove" }).last().click();
-    await expect(mcp.locator(".cc-mcp-server")).toHaveCount(serversBefore);
+    // A toggle round-trips and persists.
+    const maxTokens = tab.locator(".setting-item", { hasText: "Max response tokens" }).locator("input");
+    await expect(maxTokens).toBeVisible();
+    await maxTokens.fill("2048");
+    await maxTokens.blur();
+    expect(
+      await page.evaluate(() => (window as unknown as { app: { plugins: { plugins: Record<string, { settings: { maxTokens: number } }> } } }).app.plugins.plugins["claude-companion"].settings.maxTokens),
+    ).toBe(2048);
 
     const fatal = consoleErrors.filter((e) => !e.includes("e2e-key") && !e.includes("127.0.0.1"));
     expect(fatal).toEqual([]);

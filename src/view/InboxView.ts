@@ -119,7 +119,7 @@ export class InboxView extends ItemView {
     root.empty();
     root.addClass("cc-inbox-view");
     this.disposeChrome = renderCompanionChrome(root, "inbox", "Source Inbox", this.plugin.companionChrome());
-    root.createEl("div", { cls: "cc-eyebrow", text: "SOURCE INBOX" });
+    root.createDiv({ cls: "cc-eyebrow", text: "SOURCE INBOX" });
 
     if (!this.plugin.settings.sourceCaptureEnabled) {
       root.createEl("p", {
@@ -188,7 +188,7 @@ export class InboxView extends ItemView {
     if (typed.length === 0) return;
     const section = root.createDiv({ cls: "cc-inbox-typed" });
     const header = section.createDiv({ cls: "cc-inbox-typed-header" });
-    header.createEl("div", { cls: "cc-eyebrow", text: "TYPED" });
+    header.createDiv({ cls: "cc-eyebrow", text: "TYPED" });
     header.createSpan({
       cls: "cc-inbox-typed-count",
       text: `${typed.length} typed`,
@@ -230,7 +230,7 @@ export class InboxView extends ItemView {
 
   private renderFileFeedback(row: HTMLElement, path: string): void {
     const feedback = this.enrichmentFeedback.get(path) ?? { state: "idle" as const, message: "Ready" };
-    row.createEl("span", {
+    row.createSpan({
       cls: `cc-inbox-enrichment-status cc-inbox-enrichment-${feedback.state}`,
       text: feedback.message,
       attr: { role: "status", "aria-live": "polite" },
@@ -287,7 +287,7 @@ export class InboxView extends ItemView {
 
     const section = root.createDiv({ cls: "cc-inbox-wireup" });
     const header = section.createDiv({ cls: "cc-inbox-wireup-header" });
-    header.createEl("div", { cls: "cc-eyebrow", text: "WIRE INTO THE GRAPH" });
+    header.createDiv({ cls: "cc-eyebrow", text: "WIRE INTO THE GRAPH" });
     if (items.length > 0 || this.linkSummary) {
       const mentions = items.reduce((total, item) => total + item.mentionCount, 0);
       header.createSpan({
@@ -497,12 +497,12 @@ export class InboxView extends ItemView {
     if (!this.linkResult || (this.linkResult.conflicts.length === 0 && this.linkResult.failures.length === 0)) return;
     const details = section.createDiv({ cls: "cc-inbox-link-result-details" });
     if (this.linkResult.conflicts.length > 0) {
-      details.createEl("div", { cls: "cc-inbox-link-result-label", text: "Changed during review" });
+      details.createDiv({ cls: "cc-inbox-link-result-label", text: "Changed during review" });
       const list = details.createEl("ul", { cls: "cc-inbox-link-result-list" });
       for (const path of this.linkResult.conflicts) list.createEl("li", { text: path });
     }
     if (this.linkResult.failures.length > 0) {
-      details.createEl("div", { cls: "cc-inbox-link-result-label", text: "Could not complete" });
+      details.createDiv({ cls: "cc-inbox-link-result-label", text: "Could not complete" });
       const list = details.createEl("ul", { cls: "cc-inbox-link-result-list" });
       for (const failure of this.linkResult.failures) list.createEl("li", { text: `${failure.path}: ${failure.message}` });
     }

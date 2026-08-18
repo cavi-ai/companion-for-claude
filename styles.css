@@ -670,6 +670,7 @@
 }
 .cc-artifact-frame {
   width: 100%;
+  height: var(--cc-artifact-height, 640px);
   border: none;
   display: block;
   background: var(--cc-ivory);
@@ -1456,7 +1457,7 @@ pre.cc-has-copy:hover .cc-code-copy { opacity: 1; }
   overflow-x: hidden;
 }
 .cc-build-view > * { min-width: 0; }
-.cc-build-view [hidden] { display: none !important; }
+.cc-build-view.cc-build-view [hidden] { display: none; }
 .cc-build-title {
   margin: 0;
   font-size: var(--font-ui-large);
@@ -1548,9 +1549,9 @@ pre.cc-has-copy:hover .cc-code-copy { opacity: 1; }
   .cc-build-links button { width: 100%; min-height: 44px; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .cc-build-view *,
-  .cc-build-view *::before,
-  .cc-build-view *::after { scroll-behavior: auto !important; transition: none !important; animation: none !important; }
+  .cc-build-view.cc-build-view *,
+  .cc-build-view.cc-build-view *::before,
+  .cc-build-view.cc-build-view *::after { scroll-behavior: auto; transition: none; animation: none; }
 }
 
 /* ----- source inbox (clip triage) — touch-first ----- */
@@ -1797,48 +1798,6 @@ pre.cc-has-copy:hover .cc-code-copy { opacity: 1; }
   color: var(--text-muted);
 }
 
-/* ----- settings accordions ----- */
-.cc-accordion {
-  border: 1px solid var(--background-modifier-border);
-  border-radius: 8px;
-  margin: 10px 0;
-  padding: 0 12px;
-}
-.cc-accordion-summary {
-  cursor: pointer;
-  font-weight: 600;
-  padding: 10px 0;
-  list-style-position: inside;
-}
-.cc-accordion > button.cc-accordion-summary {
-  background: transparent;
-  border: 0;
-  box-shadow: none;
-  color: var(--text-normal);
-  height: auto;
-  text-align: left;
-  width: 100%;
-}
-.cc-accordion-summary:hover {
-  color: var(--text-accent);
-}
-.cc-accordion[open] > .cc-accordion-summary,
-.cc-accordion.is-open > .cc-accordion-summary {
-  border-bottom: 1px solid var(--background-modifier-border);
-  margin-bottom: 6px;
-}
-.cc-accordion-body {
-  padding-bottom: 8px;
-}
-.cc-settings-group {
-  color: var(--text-muted);
-  font-size: var(--font-ui-smaller);
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  margin: 18px 0 2px;
-  text-transform: uppercase;
-}
-
 /* Coordinate-based mouse menus are unreliable in touch WebViews. */
 .cc-action-sheet { display: flex; flex-direction: column; gap: 4px; }
 .cc-action-sheet-item {
@@ -2040,7 +1999,7 @@ pre.cc-has-copy:hover .cc-code-copy { opacity: 1; }
 
 /* Artifacts: the desktop fixed pixel height (default 640px) eats the whole
    phone screen — cap it to a share of the viewport instead. */
-.is-mobile .cc-artifact-frame { height: 52vh !important; }
+.is-mobile .cc-artifact-frame { height: 52vh; }
 .is-mobile .cc-artifact-bar {
   flex-wrap: wrap;
   gap: 6px;
@@ -2892,7 +2851,7 @@ pre.cc-has-copy:hover .cc-code-copy { opacity: 1; }
 }
 .cc-connect-title { font-weight: 600; margin-bottom: 2px; }
 .cc-connect-callout p { margin: 0; color: var(--text-muted); font-size: 13px; }
-.cc-input-invalid { border-color: var(--text-error) !important; }
+.setting-item input.cc-input-invalid { border-color: var(--text-error); }
 
 /* ---- inline rewrite modal ---- */
 .cc-rewrite-input {

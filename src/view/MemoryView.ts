@@ -57,7 +57,7 @@ export class MemoryView extends ItemView {
     root.empty();
     root.addClass("cc-memory-view");
     this.disposeChrome = renderCompanionChrome(root, "memory", "Session Memory", this.plugin.companionChrome());
-    root.createEl("div", { cls: "cc-eyebrow", text: "SESSION MEMORY" });
+    root.createDiv({ cls: "cc-eyebrow", text: "SESSION MEMORY" });
 
     const notes = this.capturedNotes();
     if (notes.length === 0) {

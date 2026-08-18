@@ -36,4 +36,32 @@ describe("toApiMessages", () => {
     expect(msgs).toHaveLength(2);
     expect(msgs[0].content).toBe("x");
   });
+
+  it("projects to role + content only, dropping the UI-only fields (issue #7)", () => {
+    const out = toApiMessages([
+      { role: "user", content: "generate a plan", display: "Generate implementation plan" },
+      {
+        role: "assistant",
+        content: "here it is",
+        toolTrace: [{ name: "vault_search", argsSummary: "q", resultPreview: "r", ok: true }],
+      },
+    ]);
+    expect(out.map((m) => Object.keys(m).sort())).toEqual([
+      ["content", "role"],
+      ["content", "role"],
+    ]);
+  });
+
+  it("drops the UI-only fields on the merge path too", () => {
+    const out = toApiMessages([
+      {
+        role: "assistant",
+        content: "a",
+        toolTrace: [{ name: "note_read", argsSummary: "n", resultPreview: "p", ok: true }],
+      },
+      { role: "assistant", content: "b" },
+    ]);
+    expect(out).toEqual([{ role: "assistant", content: "a\n\nb" }]);
+    expect(Object.keys(out[0]).sort()).toEqual(["content", "role"]);
+  });
 });

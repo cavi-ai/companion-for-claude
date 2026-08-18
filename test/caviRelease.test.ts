@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
@@ -10,6 +10,13 @@ const COMMIT = "c".repeat(40);
 
 function sha256(value: string): string {
   return createHash("sha256").update(value).digest("hex");
+}
+
+/** Invoke the generator in `cwd`; rejects with its stderr when it exits non-zero. */
+async function run(cwd: string, args: string[]): Promise<string> {
+  const result = spawnSync(process.execPath, [SCRIPT, ...args], { cwd, encoding: "utf8" });
+  if (result.status !== 0) throw new Error(result.stderr.trim());
+  return result.stdout;
 }
 
 // The release repo asserts its own workflow contract; .github/ is never mirrored.
@@ -122,5 +129,59 @@ describe("CAVI release facts", () => {
     const docsRoot = spawnSync(process.execPath, [SCRIPT, "docs-root", "--version", "0.24.1"], { encoding: "utf8" });
     expect(docsRoot.status, docsRoot.stderr).toBe(0);
     expect(docsRoot.stdout.trim()).toBe("docs/companion-for-claude/v0.24.1");
+  });
+
+  it("accepts the development monorepo and its namespaced tag", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "companion-cavi-release-"));
+    try {
+      await writeFile(path.join(root, "main.js"), "console.log(1);\n");
+      const manifest = await run(root, [
+        "manifest",
+        "--version", "0.27.1",
+        "--tag", "obsidian-v0.27.1",
+        "--repository", "cavi-ai/claude-obsidian",
+        "--commit", "a".repeat(40),
+        "--source-date-epoch", "1700000000",
+        "--asset", "main.js",
+      ]);
+      const manifestBody = JSON.parse(manifest) as Record<string, unknown>;
+      expect(manifestBody.repository).toBe("cavi-ai/claude-obsidian");
+      expect(manifestBody.tag).toBe("obsidian-v0.27.1");
+
+      // The asset name follows the version, so the namespaced tag only changes
+      // the release path — cavi-home still resolves one predictable filename.
+      const envelope = await run(root, [
+        "envelope",
+        "--version", "0.27.1",
+        "--tag", "obsidian-v0.27.1",
+        "--repository", "cavi-ai/claude-obsidian",
+        "--commit", "a".repeat(40),
+        "--artifact-url", "https://github.com/cavi-ai/claude-obsidian/releases/download/obsidian-v0.27.1/companion-for-claude-cavi-release-0.27.1.tar.gz",
+        "--artifact-sha256", "b".repeat(64),
+      ]);
+      const envelopeBody = JSON.parse(envelope) as { artifact: { url: string } };
+      expect(envelopeBody.artifact.url).toContain("cavi-ai/claude-obsidian");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a tag that does not name the version", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "companion-cavi-release-"));
+    try {
+      await expect(
+        run(root, [
+          "envelope",
+          "--version", "0.27.1",
+          "--tag", "v0.27.1",
+          "--repository", "cavi-ai/claude-obsidian",
+          "--commit", "a".repeat(40),
+          "--artifact-url", "https://github.com/cavi-ai/claude-obsidian/releases/download/v0.27.1/companion-for-claude-cavi-release-0.27.1.tar.gz",
+          "--artifact-sha256", "b".repeat(64),
+        ]),
+      ).rejects.toThrow(/does not name version/);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 });
