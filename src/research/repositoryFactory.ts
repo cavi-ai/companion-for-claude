@@ -13,9 +13,13 @@ export interface ResearchRepositoryFactoryOptions {
   ensureFolder: (folder: string) => Promise<void>;
   /** Write-path normalizer: normalizePath in-app, assertVaultPath on the MCP surface. */
   normalizeWritePath?: (path: string) => string;
-  /** Expose readBinary (source asset bytes). Off for the MCP surface. */
+  /** Expose readBinary for current source-asset fingerprints. */
   includeBinary?: boolean;
+  /** Refuse unexpectedly large binary reads before allocating renderer memory. */
+  maxBinaryBytes?: number;
 }
+
+export const DEFAULT_MAX_RESEARCH_BINARY_BYTES = 25 * 1024 * 1024;
 
 /** Folders (under a project) that hold research records. */
 const PROJECT_PREFIXES = ["Sources", "Evidence", "Claims", "Questions", "Documents"];
@@ -63,9 +67,11 @@ export function createResearchRepository(app: App, opts: ResearchRepositoryFacto
           readBinary: async (path: string) => {
             const file = app.vault.getAbstractFileByPath(normalizePath(path));
             if (!(file instanceof TFile)) throw new Error(`Research source asset not found: ${path}`);
+            const limit = opts.maxBinaryBytes ?? DEFAULT_MAX_RESEARCH_BINARY_BYTES;
+            if (file.stat.size > limit) throw new Error(`Research source asset exceeds the ${Math.floor(limit / (1024 * 1024))} MiB fingerprint limit: ${path}`);
             return new Uint8Array(await app.vault.readBinary(file));
           },
         }
       : {}),
-  });
+  }, app);
 }

@@ -1,7 +1,7 @@
 import { compareCodeUnits, isStaleEvidence, type ProjectSnapshot } from "./graph";
 
 export interface AuditFinding {
-  code: "missing-locator" | "unreviewed-evidence" | "unreviewed-claim" | "rejected-claim" | "unsupported-claim" | "broken-reference" | "unused-evidence" | "stale-evidence" | "invalid-record";
+  code: "missing-locator" | "unreviewed-evidence" | "unreviewed-claim" | "rejected-claim" | "unsupported-claim" | "broken-reference" | "unused-evidence" | "stale-evidence" | "unverifiable-source" | "invalid-record";
   severity: "error" | "warning" | "info";
   path: string;
   explanation: string;
@@ -30,6 +30,16 @@ export function auditProject(snapshot: ProjectSnapshot): AuditFinding[] {
     ...snapshot.documents.map(({ path }) => path),
   ]);
   const usedEvidence = new Set<string>();
+
+  for (const source of snapshot.sources) {
+    if (source.contentFingerprintUnavailable) findings.push({
+      code: "unverifiable-source",
+      severity: "error",
+      path: source.path,
+      explanation: "The current source asset could not be read within the configured fingerprint safety limit.",
+      repair: "Restore a readable asset within the fingerprint limit, then re-run the audit before trusting its evidence.",
+    });
+  }
 
   for (const item of snapshot.evidence) {
     const source = sources.get(item.source);

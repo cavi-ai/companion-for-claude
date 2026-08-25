@@ -5,10 +5,11 @@ vi.mock("obsidian", async (importOriginal) => ({
   PluginSettingTab: class {},
 }));
 
-import { App, FakeElement, TFile, WorkspaceLeaf } from "obsidian";
+import { App, FakeElement, getLastOpenedModal, TFile, WorkspaceLeaf } from "obsidian";
 import ClaudeCompanionPlugin from "../src/main";
 import { DEFAULT_SETTINGS } from "../src/types";
 import { InboxView, INBOX_VIEW_TYPE } from "../src/view/InboxView";
+import { ChoiceModal } from "../src/view/ChoiceModal";
 
 type EnrichRunOutcome = Awaited<ReturnType<ClaudeCompanionPlugin["enrichInboxItem"]>>;
 
@@ -16,6 +17,8 @@ interface EnrichmentLifecyclePlugin {
   queueEnrich(file: TFile): void;
   markEnrichRecentlyWritten(path: string): void;
   enrichTimers: Map<string, number>;
+  enrichPending: Map<string, TFile>;
+  enrichQueueRunning: boolean;
   enrichRecentlyWritten: Set<string>;
   enrichRecentlyWrittenExpiryTimers: Map<string, number>;
 }
@@ -46,6 +49,124 @@ function deferred<T>(): { promise: Promise<T>; resolve(value: T): void } {
 afterEach(() => vi.useRealTimers());
 
 describe("enrichment lifecycle", () => {
+  it("serializes a burst of automatic Clipper enrichments and continues after one fails", async () => {
+    vi.useFakeTimers();
+    const first = new TFile("Clippings/first.md", "First", 0);
+    const second = new TFile("Clippings/second.md", "Second", 0);
+    const third = new TFile("Clippings/third.md", "Third", 0);
+    const releaseFirst = deferred<void>();
+    const started: string[] = [];
+    let active = 0;
+    let maxActive = 0;
+    const plugin = Object.create(ClaudeCompanionPlugin.prototype) as ClaudeCompanionPlugin;
+    Object.assign(plugin, {
+      utilityLifecycleEnded: false,
+      utilityLifecycleGeneration: 0,
+      enrichTimers: new Map<string, number>(),
+      enrichPending: new Map<string, TFile>(),
+      enrichQueueRunning: false,
+      enrichRecentlyWritten: new Set<string>(),
+      enrichRecentlyWrittenExpiryTimers: new Map<string, number>(),
+      enrichFile: async (file: TFile): Promise<EnrichRunOutcome> => {
+        started.push(file.path);
+        active++;
+        maxActive = Math.max(maxActive, active);
+        if (file.path === first.path || file.path === second.path) await releaseFirst.promise;
+        active--;
+        if (file.path === second.path) throw new Error("malformed clipping");
+        return { status: "enriched" };
+      },
+    });
+    const lifecycle = plugin as unknown as EnrichmentLifecyclePlugin;
+
+    lifecycle.queueEnrich(first);
+    lifecycle.queueEnrich(second);
+    lifecycle.queueEnrich(third);
+    await vi.advanceTimersByTimeAsync(1500);
+    await settle();
+
+    expect(started).toEqual([first.path]);
+    expect(maxActive).toBe(1);
+
+    releaseFirst.resolve();
+    await settle(24);
+    expect(started).toEqual([first.path, second.path, third.path]);
+    expect(maxActive).toBe(1);
+    expect(lifecycle.enrichPending.size).toBe(0);
+    expect(lifecycle.enrichQueueRunning).toBe(false);
+    expect(plugin.activity.snapshot().records).toEqual(expect.arrayContaining([
+      expect.objectContaining({ state: "needs-attention", details: [expect.objectContaining({ message: "malformed clipping" })] }),
+    ]));
+  });
+
+  it("surfaces a consent persistence failure and lets the automatic queue continue", async () => {
+    vi.useFakeTimers();
+    const app = new App();
+    const first = app.vault.seed("Clippings/first.md", "First clip");
+    const second = app.vault.seed("Clippings/second.md", "Second clip");
+    const saveSettings = vi.fn()
+      .mockRejectedValueOnce(new Error("settings disk full"))
+      .mockResolvedValue(undefined);
+    const plugin = Object.create(ClaudeCompanionPlugin.prototype) as ClaudeCompanionPlugin;
+    Object.assign(plugin, {
+      app,
+      settings: { ...DEFAULT_SETTINGS, sourceCaptureConsent: "ask", sourceCaptureEnabled: true, sourceEnrichOnCreate: true, sourceInboxFolder: "Clippings" },
+      utilityLifecycleEnded: false,
+      utilityLifecycleGeneration: 0,
+      enrichTimers: new Map<string, number>(),
+      enrichPending: new Map<string, TFile>(),
+      enrichQueueRunning: false,
+      enrichRecentlyWritten: new Set<string>(),
+      enrichRecentlyWrittenExpiryTimers: new Map<string, number>(),
+      saveSettings,
+    });
+    const lifecycle = plugin as unknown as EnrichmentLifecyclePlugin;
+
+    lifecycle.queueEnrich(first);
+    await vi.advanceTimersByTimeAsync(1500);
+    const allow = (getLastOpenedModal()?.contentEl as unknown as FakeElement).querySelectorAll("button").find(({ textContent }) => textContent === "Enrich automatically");
+    allow?.dispatchEvent({ type: "click" });
+    await settle(24);
+
+    expect(lifecycle.enrichQueueRunning).toBe(false);
+    expect(plugin.activity.snapshot().records[0]).toMatchObject({ state: "needs-attention", details: [expect.objectContaining({ message: "settings disk full" })] });
+
+    lifecycle.queueEnrich(second);
+    await vi.advanceTimersByTimeAsync(1500);
+    const deny = (getLastOpenedModal()?.contentEl as unknown as FakeElement).querySelectorAll("button").find(({ textContent }) => textContent === "Manual only");
+    deny?.dispatchEvent({ type: "click" });
+    await settle(24);
+    expect(lifecycle.enrichQueueRunning).toBe(false);
+    expect(lifecycle.enrichPending.size).toBe(0);
+  });
+
+  it("treats persisted manual-only consent as an immediate skip without reopening consent", async () => {
+    vi.useFakeTimers();
+    const app = new App();
+    const file = app.vault.seed("Clippings/manual.md", "Manual clip");
+    const opened = vi.spyOn(ChoiceModal.prototype, "open");
+    const plugin = Object.create(ClaudeCompanionPlugin.prototype) as ClaudeCompanionPlugin;
+    Object.assign(plugin, {
+      app,
+      settings: { ...DEFAULT_SETTINGS, sourceCaptureConsent: "deny", sourceCaptureEnabled: true, sourceEnrichOnCreate: true, sourceInboxFolder: "Clippings" },
+      utilityLifecycleEnded: false,
+      utilityLifecycleGeneration: 0,
+      enrichTimers: new Map<string, number>(),
+      enrichPending: new Map<string, TFile>(),
+      enrichQueueRunning: false,
+      enrichRecentlyWritten: new Set<string>(),
+      enrichRecentlyWrittenExpiryTimers: new Map<string, number>(),
+    });
+    const lifecycle = plugin as unknown as EnrichmentLifecyclePlugin;
+
+    lifecycle.queueEnrich(file);
+    await vi.advanceTimersByTimeAsync(1500);
+    await settle();
+
+    expect(opened).not.toHaveBeenCalled();
+    expect(lifecycle.enrichQueueRunning).toBe(false);
+  });
+
   it("publishes honest per-file batch percentage and retains partial failures", async () => {
     const app = new App();
     app.vault.seed("Clippings/first.md", "First clip");
@@ -159,6 +280,8 @@ describe("enrichment lifecycle", () => {
       utilityLifecycleEnded: false,
       utilityLifecycleGeneration: 0,
       enrichTimers: new Map<string, number>(),
+      enrichPending: new Map([["Clippings/pending.md", new TFile("Clippings/pending.md", "Pending", 0)]]),
+      enrichQueueRunning: false,
       enrichRecentlyWritten: new Set<string>(),
       enrichRecentlyWrittenExpiryTimers: new Map<string, number>(),
       reindexTimer: null,
@@ -177,6 +300,7 @@ describe("enrichment lifecycle", () => {
     vi.runAllTimers();
 
     expect(lifecycle.enrichTimers.size).toBe(0);
+    expect(lifecycle.enrichPending.size).toBe(0);
     expect(lifecycle.enrichRecentlyWrittenExpiryTimers.size).toBe(0);
     expect(lifecycle.enrichRecentlyWritten.size).toBe(0);
     expect(vi.getTimerCount()).toBe(0);

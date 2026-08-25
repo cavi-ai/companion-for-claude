@@ -117,6 +117,10 @@ class FakeVault extends FakeEventSource {
     return Promise.resolve(file._content);
   }
 
+  readBinary(file: TFile): Promise<ArrayBuffer> {
+    return Promise.resolve(Uint8Array.from([...file._content].map((character) => character.charCodeAt(0) & 0xff)).buffer);
+  }
+
   createFolder(path: string): Promise<void> {
     const parts = normalizePath(path).split("/");
     for (let index = 1; index <= parts.length; index += 1) this.folders.add(parts.slice(0, index).join("/"));

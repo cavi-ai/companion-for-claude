@@ -64,7 +64,7 @@ describe("ResearchDeskView", () => {
     click(elements(view, "button").find(({ textContent }) => textContent === "Pin")); await Promise.resolve(); await Promise.resolve();
     expect(elements(view, ".cc-desk-next")[0]?.getAttribute("data-pinned")).toBe("true");
     const select = elements(view, "select")[0] as HTMLSelectElement; select.value = other.path; select.dispatchEvent({ type: "change" }); await Promise.resolve(); await Promise.resolve();
-    expect(loadProject).toHaveBeenCalledWith(other.path);
+    expect(loadProject).toHaveBeenCalledWith(other.path, { refreshBinaryFingerprints: true });
     expect(view.getProjectPath()).toBe(other.path);
   });
 
@@ -74,7 +74,7 @@ describe("ResearchDeskView", () => {
     const view = new ResearchDeskView(new WorkspaceLeaf(), { listProjects: async () => [project, other], loadProject } as never, { preferencesFor: () => ({ dismissedActionIds: [] }), updatePreferences: vi.fn(), openWorkbench: vi.fn() });
     await view.render();
     expect(view.getProjectPath()).toBe(project.path);
-    expect(loadProject).toHaveBeenCalledWith(project.path);
+    expect(loadProject).toHaveBeenCalledWith(project.path, { refreshBinaryFingerprints: true });
     expect(elements(view, "h2")[0]?.textContent).toBe("Continuity");
   });
 
@@ -83,5 +83,24 @@ describe("ResearchDeskView", () => {
     await view.render();
     expect(elements(view, "h2")[0]?.textContent).toBe("Start your research system");
     expect(elements(view, "button").map(({ textContent }) => textContent)).toContain("Create project");
+  });
+
+  it("reports an unavailable PDF as unverifiable without claiming its content changed", async () => {
+    const unavailable = buildProjectSnapshot(project.path, records.map((record) => record.type === "research-source"
+      ? { ...record, sourceKind: "pdf", asset: "Research/P/Sources/assets/S.pdf", contentFingerprint: undefined, contentFingerprintUnavailable: true }
+      : record.type === "evidence" ? { ...record, sourceFingerprint: "sha256:prior" } : record), []);
+    const openWorkbench = vi.fn(async () => undefined);
+    const view = new ResearchDeskView(new WorkspaceLeaf(), {
+      listProjects: async () => [project], loadProject: async () => unavailable,
+      loadDraftSections: async () => ({ issues: [], sections: [] }),
+    } as never, { preferencesFor: () => ({ dismissedActionIds: [] }), updatePreferences: vi.fn(), openWorkbench });
+
+    await view.setProjectPath(project.path);
+
+    expect(elements(view, ".cc-desk-next-reason")[0]?.textContent).toMatch(/could not be read/i);
+    expect(elements(view, ".cc-desk-next-reason")[0]?.textContent).not.toMatch(/source changed/i);
+    click(elements(view, "button").find(({ textContent }) => textContent === "Start this task"));
+    await Promise.resolve();
+    expect(openWorkbench).toHaveBeenCalledWith(project.path, "Audit", "Research/P/Sources/S.md");
   });
 });

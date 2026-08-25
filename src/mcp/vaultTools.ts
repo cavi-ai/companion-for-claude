@@ -415,6 +415,10 @@ export class VaultTools {
     return createResearchRepository(this.app, {
       ensureFolder: (folder) => this.ensureFolder(folder),
       normalizeWritePath: (p) => assertVaultPath(p),
+      // research_audit is read-only, but it must fingerprint current PDF bytes
+      // or agent-driven audits can silently trust stale evidence. The factory
+      // applies its renderer-safe per-asset size bound before allocating.
+      includeBinary: true,
     });
   }
 

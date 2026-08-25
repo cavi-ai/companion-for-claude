@@ -42,6 +42,8 @@ export interface ResearchSourceRecord extends BaseResearchRecord {
   /** Canonical captured Markdown/text persisted in the source note body. */
   capturedContent?: string;
   contentFingerprint?: string;
+  /** Transient result of a requested live binary refresh; never serialized. */
+  contentFingerprintUnavailable?: boolean;
   doi?: string;
   arxivId?: string;
   zoteroKey?: string;

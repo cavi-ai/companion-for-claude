@@ -59,6 +59,11 @@ class MemoryIO implements ResearchRepositoryIO {
 
 const projectInput = { title: "AI Reviews", question: "How reliable are automated reviews?", folder: "Research/AI Reviews" };
 
+function deferred<T>(): { promise: Promise<T>; resolve(value: T): void } {
+  let resolve!: (value: T) => void;
+  return { promise: new Promise<T>((done) => { resolve = done; }), resolve };
+}
+
 describe("ResearchRepository", () => {
   it("lists research projects deterministically for the Desk switcher", async () => {
     const io = new MemoryIO();
@@ -159,6 +164,91 @@ describe("ResearchRepository", () => {
     const expected = await crypto.subtle.digest("SHA-256", new Uint8Array([1, 2, 3]));
     const expectedFingerprint = `sha256:${[...new Uint8Array(expected)].map((value) => value.toString(16).padStart(2, "0")).join("")}`;
     expect((await new ResearchRepository(io).loadProject(project.path)).sources[0]?.contentFingerprint).toBe(expectedFingerprint);
+  });
+
+  it("uses persisted PDF fingerprints for ordinary project loads without rereading every asset", async () => {
+    const io = new MemoryIO();
+    const repo = new ResearchRepository(io);
+    const project = await repo.createProject(projectInput);
+    io.binaryFiles.set("Files/Paper.pdf", new Uint8Array([1, 2, 3]));
+    await repo.importSource(project.path, {
+      title: "Paper",
+      sourceKind: "pdf",
+      asset: "Files/Paper.pdf",
+      capturedContent: new Uint8Array([1, 2, 3]),
+    });
+    const readBinary = vi.spyOn(io, "readBinary");
+    readBinary.mockClear();
+
+    const snapshot = await repo.loadProject(project.path);
+
+    expect(readBinary).not.toHaveBeenCalled();
+    expect(snapshot.sources[0]?.contentFingerprint).toMatch(/^sha256:[a-f0-9]{64}$/);
+  });
+
+  it("refreshes PDF fingerprints sequentially when an audit explicitly requests live bytes", async () => {
+    const io = new MemoryIO();
+    const repo = new ResearchRepository(io);
+    const project = await repo.createProject(projectInput);
+    for (const [name, bytes] of [["One", [1]], ["Two", [2]]] as const) {
+      const asset = `Files/${name}.pdf`;
+      io.binaryFiles.set(asset, new Uint8Array(bytes));
+      await repo.importSource(project.path, { title: name, sourceKind: "pdf", asset, capturedContent: new Uint8Array(bytes) });
+    }
+    let active = 0;
+    let maxActive = 0;
+    vi.spyOn(io, "readBinary").mockImplementation(async (path) => {
+      active++;
+      maxActive = Math.max(maxActive, active);
+      await Promise.resolve();
+      active--;
+      const bytes = io.binaryFiles.get(path);
+      if (!bytes) throw new Error(`Binary file not found: ${path}`);
+      return bytes;
+    });
+
+    await repo.loadProject(project.path, { refreshBinaryFingerprints: true });
+
+    expect(maxActive).toBe(1);
+  });
+
+  it("shares in-flight PDF fingerprint reads across overlapping project refreshes", async () => {
+    const io = new MemoryIO();
+    const repo = new ResearchRepository(io);
+    const project = await repo.createProject(projectInput);
+    io.binaryFiles.set("Files/Paper.pdf", new Uint8Array([1, 2, 3]));
+    await repo.importSource(project.path, { title: "Paper", sourceKind: "pdf", asset: "Files/Paper.pdf", capturedContent: new Uint8Array([1, 2, 3]) });
+    const read = deferred<Uint8Array>();
+    const readBinary = vi.spyOn(io, "readBinary").mockImplementation(async () => await read.promise);
+
+    const first = repo.loadProject(project.path, { refreshBinaryFingerprints: true });
+    await Promise.resolve();
+    const second = new ResearchRepository(io).loadProject(project.path, { refreshBinaryFingerprints: true });
+    await Promise.resolve();
+
+    expect(readBinary).toHaveBeenCalledTimes(1);
+    read.resolve(new Uint8Array([1, 2, 3]));
+    await Promise.all([first, second]);
+  });
+
+  it("refreshes a changed PDF before evidence capture and excludes stale evidence from a new outline", async () => {
+    const io = new MemoryIO();
+    const repo = new ResearchRepository(io);
+    const project = await repo.createProject(projectInput);
+    const asset = "Files/Paper.pdf";
+    io.binaryFiles.set(asset, new Uint8Array([1]));
+    const source = await repo.importSource(project.path, { title: "Paper", sourceKind: "pdf", asset, capturedContent: new Uint8Array([1]) });
+    if (source.kind !== "created") throw new Error("expected source");
+    const original = await repo.createEvidence({ project: project.path, source: source.path, title: "Original", excerpt: "Original quote.", locatorKind: "page", locatorValue: "1", reviewState: "reviewed" });
+    const claim = await repo.createClaim({ project: project.path, title: "Claim", proposition: "Result.", supports: [original.path], reviewState: "reviewed" });
+
+    io.binaryFiles.set(asset, new Uint8Array([2]));
+    const current = await repo.createEvidence({ project: project.path, source: source.path, title: "Current", excerpt: "Current quote.", locatorKind: "page", locatorValue: "2" });
+    expect(current.sourceFingerprint).not.toBe(original.sourceFingerprint);
+
+    const outline = await repo.createOutline(project.path, [claim.path]);
+    expect(outline.content).toContain(`[[${original.path}|Original]] (supports; excluded: stale)`);
+    expect(outline.content).not.toContain("> Original quote.");
   });
 
   it("preserves the note body, comments, and unknown frontmatter when changing review state", async () => {

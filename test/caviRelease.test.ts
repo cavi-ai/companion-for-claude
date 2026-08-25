@@ -1,11 +1,13 @@
 import { createHash } from "node:crypto";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
 
 const SCRIPT = path.resolve("tools/cavi-release.mjs");
+const DOCS_SCRIPT = path.resolve("tools/build-docs-artifact.mjs");
+const VERIFY_SCRIPT = path.resolve("tools/verify-docs-artifact.mjs");
 const COMMIT = "c".repeat(40);
 
 function sha256(value: string): string {
@@ -180,6 +182,47 @@ describe("CAVI release facts", () => {
           "--artifact-sha256", "b".repeat(64),
         ]),
       ).rejects.toThrow(/does not name version/);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  // The docs builder enforces the same tag policy; a mismatch failed the 0.27.1
+  // release after the community-store mirror had already published.
+  it("builds the docs artifact under the monorepo's namespaced tag", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "companion-docs-artifact-"));
+    try {
+      const guides = path.join(root, "guides");
+      await mkdir(guides, { recursive: true });
+      await writeFile(path.join(guides, "getting-started.md"), "# Getting started\n\nInstall it.\n");
+      const readme = path.join(root, "README.md");
+      await writeFile(readme, "# Companion\n\nOverview.\n");
+      const out = path.join(root, "out");
+
+      const args = (tag: string): string[] => [
+        "--version", "0.27.1",
+        "--tag", tag,
+        "--commit", "a".repeat(40),
+        "--guides", guides,
+        "--readme", readme,
+        "--out", out,
+        "--source-date-epoch", "1700000000",
+      ];
+
+      const built = spawnSync(process.execPath, [DOCS_SCRIPT, ...args("obsidian-v0.27.1")], { cwd: root, encoding: "utf8" });
+      expect(built.stderr.trim()).toBe("");
+      expect(built.status).toBe(0);
+      expect(built.stdout.trim()).toBe("docs/companion-for-claude/v0.27.1");
+
+      // The verifier enforces the same policy on the artifact just built; it
+      // rejected obsidian-v0.27.1 after the builder alone had been fixed.
+      const verified = spawnSync(process.execPath, [VERIFY_SCRIPT, path.join(out, built.stdout.trim())], { cwd: root, encoding: "utf8" });
+      expect(verified.stderr.trim()).toBe("");
+      expect(verified.status).toBe(0);
+
+      const rejected = spawnSync(process.execPath, [DOCS_SCRIPT, ...args("v0.27.1")], { cwd: root, encoding: "utf8" });
+      expect(rejected.status).not.toBe(0);
+      expect(rejected.stderr).toMatch(/does not name version/);
     } finally {
       await rm(root, { recursive: true, force: true });
     }

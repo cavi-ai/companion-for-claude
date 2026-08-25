@@ -83,15 +83,26 @@ export function mediaBlock(kind: MediaKind, mime: string, base64: string): Conte
 export function arrayBufferToBase64(buf: ArrayBuffer): string {
   const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
   const bytes = new Uint8Array(buf);
-  let out = "";
-  for (let i = 0; i < bytes.length; i += 3) {
-    const b0 = bytes[i]!;
-    const b1 = bytes[i + 1];
-    const b2 = bytes[i + 2];
-    out += alphabet[b0 >> 2]!;
-    out += alphabet[((b0 & 0x03) << 4) | ((b1 ?? 0) >> 4)]!;
-    out += b1 === undefined ? "=" : alphabet[((b1 & 0x0f) << 2) | ((b2 ?? 0) >> 6)]!;
-    out += b2 === undefined ? "=" : alphabet[b2 & 0x3f]!;
+  // Joining bounded arrays avoids V8 retaining one rope node per output
+  // character. The old per-character concatenation retained ~424 MiB while
+  // encoding the supported 10 MiB PDF limit in the Electron renderer.
+  const parts: string[] = [];
+  const chunkBytes = 12 * 1024; // divisible by 3, so padding only occurs once
+  for (let start = 0; start < bytes.length; start += chunkBytes) {
+    const end = Math.min(bytes.length, start + chunkBytes);
+    const out: string[] = [];
+    for (let i = start; i < end; i += 3) {
+      const b0 = bytes[i]!;
+      const b1 = bytes[i + 1];
+      const b2 = bytes[i + 2];
+      out.push(
+        alphabet[b0 >> 2]!,
+        alphabet[((b0 & 0x03) << 4) | ((b1 ?? 0) >> 4)]!,
+        b1 === undefined ? "=" : alphabet[((b1 & 0x0f) << 2) | ((b2 ?? 0) >> 6)]!,
+        b2 === undefined ? "=" : alphabet[b2 & 0x3f]!,
+      );
+    }
+    parts.push(out.join(""));
   }
-  return out;
+  return parts.join("");
 }

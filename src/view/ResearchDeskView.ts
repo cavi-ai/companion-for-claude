@@ -49,7 +49,7 @@ export class ResearchDeskView extends ItemView {
     let snapshot: ProjectSnapshot | undefined;
     let loadError: string | undefined;
     if (this.projectPath) {
-      try { snapshot = await this.repository.loadProject(this.projectPath); }
+      try { snapshot = await this.repository.loadProject(this.projectPath, { refreshBinaryFingerprints: true }); }
       catch (error) { loadError = errorMessage(error); }
     }
     if (sequence !== this.renderSequence) return;

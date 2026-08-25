@@ -136,7 +136,7 @@ export class ResearchTools {
           },
         });
       }
-      case "research_audit": return JSON.stringify(auditProject(await this.repository.loadProject(requiredString(args.project))).map((finding) => ({ rule: finding.code, ...finding })));
+      case "research_audit": return JSON.stringify(auditProject(await this.repository.loadProject(requiredString(args.project), { refreshBinaryFingerprints: true })).map((finding) => ({ rule: finding.code, ...finding })));
       case "research_evidence_capture":
       case "research_evidence_create": {
         const project = requiredString(args.project);

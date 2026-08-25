@@ -98,6 +98,46 @@ describe("research tools", () => {
     expect(findings.filter(({ rule }: { rule: string }) => rule === "invalid-record")).toHaveLength(2);
     expect(read).toHaveBeenCalledTimes(4);
   });
+
+  it("refreshes PDF bytes during read-only agent audits and reports stale evidence", async () => {
+    const app = new App();
+    const project = "Research/P/Project.md";
+    const assetPath = "Research/P/Sources/assets/Paper.pdf";
+    const asset = app.vault.seed(assetPath, "\u0001");
+    const initialDigest = await crypto.subtle.digest("SHA-256", new Uint8Array([1]));
+    const initialFingerprint = `sha256:${[...new Uint8Array(initialDigest)].map((value) => value.toString(16).padStart(2, "0")).join("")}`;
+    app.vault.seed(project, "# project", { frontmatter: { title: "P", type: "research-project", project: `[[${project}]]`, question: "Why?", stage: "frame", status: "active" } });
+    app.vault.seed("Research/P/Sources/Paper.md", "# source", { frontmatter: { title: "Paper", type: "research-source", project: `[[${project}]]`, source_kind: "pdf", asset: `[[${assetPath}]]`, content_fingerprint: initialFingerprint } });
+    app.vault.seed("Research/P/Evidence/Result.md", "> Result", { frontmatter: { title: "Result", type: "evidence", project: `[[${project}]]`, source: "[[Research/P/Sources/Paper.md]]", source_fingerprint: initialFingerprint, locator_kind: "page", locator_value: "1", review_state: "reviewed" } });
+    asset._content = "\u0002";
+
+    const findings = JSON.parse(await new VaultTools(app as never, { allowWrites: false, defaultFolder: "Claude" }).call("research_audit", { project }));
+
+    expect(findings).toEqual(expect.arrayContaining([expect.objectContaining({ rule: "stale-evidence", path: "Research/P/Evidence/Result.md" })]));
+  });
+
+  it("fails closed when a read-only agent audit cannot fingerprint an oversized PDF", async () => {
+    const app = new App();
+    const project = "Research/P/Project.md";
+    const sourcePath = "Research/P/Sources/Paper.md";
+    const evidencePath = "Research/P/Evidence/Result.md";
+    const assetPath = "Research/P/Sources/assets/Paper.pdf";
+    const previousFingerprint = `sha256:${"a".repeat(64)}`;
+    const asset = app.vault.seed(assetPath, "pdf");
+    asset.stat.size = 25 * 1024 * 1024 + 1;
+    app.vault.seed(project, "# project", { frontmatter: { title: "P", type: "research-project", project: `[[${project}]]`, question: "Why?", stage: "frame", status: "active" } });
+    app.vault.seed(sourcePath, "# source", { frontmatter: { title: "Paper", type: "research-source", project: `[[${project}]]`, source_kind: "pdf", asset: `[[${assetPath}]]`, content_fingerprint: previousFingerprint } });
+    app.vault.seed(evidencePath, "> Result", { frontmatter: { title: "Result", type: "evidence", project: `[[${project}]]`, source: `[[${sourcePath}]]`, source_fingerprint: previousFingerprint, locator_kind: "page", locator_value: "1", review_state: "reviewed" } });
+    app.vault.seed("Research/P/Claims/Claim.md", "# claim", { frontmatter: { title: "Claim", type: "claim", project: `[[${project}]]`, proposition: "Result", confidence: "high", review_state: "reviewed", supports: [`[[${evidencePath}]]`] } });
+
+    const findings = JSON.parse(await new VaultTools(app as never, { allowWrites: false, defaultFolder: "Claude" }).call("research_audit", { project }));
+
+    expect(findings).toEqual(expect.arrayContaining([
+      expect.objectContaining({ rule: "unverifiable-source", path: sourcePath, severity: "error" }),
+      expect.objectContaining({ rule: "unsupported-claim", path: "Research/P/Claims/Claim.md" }),
+    ]));
+    expect(findings).not.toEqual(expect.arrayContaining([expect.objectContaining({ rule: "stale-evidence" })]));
+  });
 });
 
 describe("write tools reject vault escapes", () => {

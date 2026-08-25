@@ -75,4 +75,13 @@ describe("arrayBufferToBase64", () => {
     const bytes = new Uint8Array(1024).map((_, i) => (i * 31) % 256);
     expect(arrayBufferToBase64(bytes.buffer)).toBe(Buffer.from(bytes).toString("base64"));
   });
+
+  it("encodes the maximum PDF without retaining hundreds of megabytes of one-character ropes", () => {
+    const before = process.memoryUsage().heapUsed;
+    const encoded = arrayBufferToBase64(new ArrayBuffer(MAX_PDF_BYTES));
+    const retained = process.memoryUsage().heapUsed - before;
+
+    expect(encoded.length).toBe(13_981_016);
+    expect(retained).toBeLessThan(96 * 1024 * 1024);
+  });
 });

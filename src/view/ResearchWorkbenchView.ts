@@ -18,6 +18,8 @@ import { ResearchDraftPanel } from "./ResearchDraftPanel";
 import { renderCompanionChrome, type CompanionChromeDependencies } from "./companionChrome";
 
 export const RESEARCH_WORKBENCH_VIEW_TYPE = "claude-research-workbench";
+export const MAX_RESEARCH_SOURCE_FILE_BYTES = 25 * 1024 * 1024;
+export const MAX_RESEARCH_SOURCE_BATCH_BYTES = 100 * 1024 * 1024;
 export type ResearchWorkbenchTab = "Overview" | "Sources" | "Evidence" | "Claims" | "Outline" | "Draft" | "Audit" | "Intelligence" | "Discover";
 type Tab = ResearchWorkbenchTab;
 const TABS: Tab[] = ["Overview", "Sources", "Evidence", "Claims", "Outline", "Draft", "Audit", "Intelligence", "Discover"];
@@ -148,7 +150,7 @@ export class ResearchWorkbenchView extends ItemView {
     let snapshot: ProjectSnapshot | undefined;
     let loadError: string | undefined;
     if (this.projectPath) {
-      try { snapshot = await this.repository.loadProject(this.projectPath); }
+      try { snapshot = await this.repository.loadProject(this.projectPath, { refreshBinaryFingerprints: this.activeTab === "Draft" || this.activeTab === "Audit" || this.activeTab === "Intelligence" }); }
       catch (error) { loadError = sanitizeLoadError(error); }
     }
     if (sequence !== this.renderSequence) return;
@@ -414,20 +416,25 @@ export class ResearchWorkbenchView extends ItemView {
       importFiles: async (files) => {
         const saveAsset = this.dependencies?.saveAsset;
         if (!saveAsset) throw new Error("File import is unavailable in this environment.");
+        const oversized = files.find(({ size }) => size > MAX_RESEARCH_SOURCE_FILE_BYTES);
+        if (oversized) throw new Error(`${oversized.name} is too large. Research source files are limited to 25 MiB each.`);
+        const batchBytes = files.reduce((total, { size }) => total + size, 0);
+        if (batchBytes > MAX_RESEARCH_SOURCE_BATCH_BYTES) throw new Error("The selected files exceed the 100 MiB research import limit.");
         const imported: string[] = [];
         for (const file of files) {
           const ext = (file.name.split(".").pop() ?? "").toLowerCase();
           const base = file.name.replace(/\.[^.]+$/, "");
+          const data = await file.read();
           if (ext === "md") {
-            const text = new TextDecoder().decode(file.data);
+            const text = new TextDecoder().decode(data);
             const clipUrl = parseClipUrl(text);
             const body = text.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, "").trim();
             const res = await this.repository.importSource(project, { title: base, sourceKind: "vault", capturedContent: body.slice(0, 50000), ...(clipUrl ? { url: clipUrl } : {}) });
             if (res.kind === "created") imported.push(base);
             continue;
           }
-          const asset = await saveAsset(project, file.name, file.data);
-          const res = await this.repository.importSource(project, { title: base, sourceKind: ext === "pdf" ? "pdf" : "vault", asset, capturedContent: new Uint8Array(file.data) });
+          const asset = await saveAsset(project, file.name, data);
+          const res = await this.repository.importSource(project, { title: base, sourceKind: ext === "pdf" ? "pdf" : "vault", asset, capturedContent: new Uint8Array(data) });
           if (res.kind === "created") imported.push(base);
         }
         await this.render();
@@ -568,7 +575,7 @@ interface SourceCaptureHandlers {
   /** Clip a URL to clean markdown, import it, tag it. Returns a status message. */
   captureUrl(url: string): Promise<string>;
   /** Import dropped/uploaded files (md → text capture; others → project assets). Returns a status message. */
-  importFiles(files: Array<{ name: string; data: ArrayBuffer }>): Promise<string>;
+  importFiles(files: Array<{ name: string; size: number; read(): Promise<ArrayBuffer> }>): Promise<string>;
   /** Fuzzy-pick a vault note and import it. Resolves null when cancelled. */
   pickNote(): Promise<string | null>;
 }
@@ -606,9 +613,10 @@ class SourceCaptureModal extends Modal {
     const readFiles = (list: FileList | File[]) => {
       const files = [...list];
       if (!files.length) return;
-      void Promise.all(files.map(async (f) => ({ name: f.name, data: await f.arrayBuffer() })))
-        .then((payload) => run(`Importing ${files.length} file${files.length === 1 ? "" : "s"}`, () => this.handlers.importFiles(payload)))
-        .catch((cause: unknown) => status.setText(sanitizeLoadError(cause)));
+      run(
+        `Importing ${files.length} file${files.length === 1 ? "" : "s"}`,
+        () => this.handlers.importFiles(files.map((file) => ({ name: file.name, size: file.size, read: () => file.arrayBuffer() }))),
+      );
     };
 
     const drop = this.contentEl.createDiv({ cls: "cc-source-dropzone", text: "Drop a URL, PDF, or file here" });

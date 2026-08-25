@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { getLastOpenedModal, WorkspaceLeaf } from "obsidian";
 import type { ResearchRepository } from "../../src/research/repository";
-import { RESEARCH_WORKBENCH_VIEW_TYPE, ResearchWorkbenchView, replaceResearchProjectPath } from "../../src/view/ResearchWorkbenchView";
+import { MAX_RESEARCH_SOURCE_FILE_BYTES, RESEARCH_WORKBENCH_VIEW_TYPE, ResearchWorkbenchView, replaceResearchProjectPath } from "../../src/view/ResearchWorkbenchView";
 import { parseDraftSections, renderDraftSection } from "../../src/research/draftSections";
 import { ResearchDraftPanel, safeDraftError } from "../../src/view/ResearchDraftPanel";
 import { buildDraftGrounding, groundingClaimFingerprint } from "../../src/research/draftGrounding";
@@ -17,6 +17,9 @@ function click(element: any): void { element.dispatchEvent({ type: "click" }); }
 function deferred<T>(): { promise: Promise<T>; resolve(value: T): void } {
   let resolve!: (value: T) => void;
   return { promise: new Promise<T>((done) => { resolve = done; }), resolve };
+}
+async function settlePromises(turns = 12): Promise<void> {
+  for (let turn = 0; turn < turns; turn++) await Promise.resolve();
 }
 
 function intelligenceDependencies(overrides: Record<string, unknown> = {}) {
@@ -47,6 +50,56 @@ function discoveryCoordinator(overrides: Record<string, unknown> = {}) {
 }
 
 describe("ResearchWorkbenchView", () => {
+  it("reads selected source files lazily instead of buffering every PDF at once", async () => {
+    const firstRead = deferred<ArrayBuffer>();
+    const secondRead = deferred<ArrayBuffer>();
+    const reads: string[] = [];
+    const repository = {
+      loadProject: async () => snapshot,
+      importSource: async () => ({ kind: "created" as const, path: "Research/P/Sources/imported.md" }),
+    };
+    const view = new ResearchWorkbenchView(new WorkspaceLeaf(), repository as never, {
+      ...intelligenceDependencies().dependencies,
+      saveAsset: async (_project, name) => `Research/P/Sources/assets/${name}`,
+    });
+    await view.setProjectPath(snapshot.project.path);
+    click(elements(view, "button").find(({ textContent }) => textContent === "Add source"));
+    const modal = getLastOpenedModal()!;
+    const input = modal.contentEl.querySelector(".cc-source-file-input") as unknown as { files: unknown[]; dispatchEvent(event: unknown): void };
+    input.files = [
+      { name: "first.pdf", size: 1, arrayBuffer: () => { reads.push("first.pdf"); return firstRead.promise; } },
+      { name: "second.pdf", size: 1, arrayBuffer: () => { reads.push("second.pdf"); return secondRead.promise; } },
+    ];
+
+    input.dispatchEvent({ type: "change" });
+    await Promise.resolve();
+    expect(reads).toEqual(["first.pdf"]);
+
+    firstRead.resolve(new Uint8Array([1]).buffer);
+    await settlePromises();
+    expect(reads).toEqual(["first.pdf", "second.pdf"]);
+    secondRead.resolve(new Uint8Array([2]).buffer);
+    await settlePromises();
+  });
+
+  it("rejects an oversized source before allocating its ArrayBuffer", async () => {
+    const read = vi.fn(async () => new ArrayBuffer(0));
+    const view = new ResearchWorkbenchView(new WorkspaceLeaf(), { loadProject: async () => snapshot } as never, {
+      ...intelligenceDependencies().dependencies,
+      saveAsset: vi.fn(async () => "Research/P/Sources/assets/huge.pdf"),
+    });
+    await view.setProjectPath(snapshot.project.path);
+    click(elements(view, "button").find(({ textContent }) => textContent === "Add source"));
+    const modal = getLastOpenedModal()!;
+    const input = modal.contentEl.querySelector(".cc-source-file-input") as unknown as { files: unknown[]; dispatchEvent(event: unknown): void };
+    input.files = [{ name: "huge.pdf", size: MAX_RESEARCH_SOURCE_FILE_BYTES + 1, arrayBuffer: read }];
+
+    input.dispatchEvent({ type: "change" });
+    await settlePromises();
+
+    expect(read).not.toHaveBeenCalled();
+    expect(modal.contentEl.querySelector('[role="status"]')?.textContent).toMatch(/too large/i);
+  });
   it("redacts provider credentials from section drafting errors", () => {
     expect(safeDraftError(new Error("request failed\nBearer secret-token api_key=also-secret"))).toBe("request failed [redacted] [redacted]");
   });
@@ -89,6 +142,28 @@ describe("ResearchWorkbenchView", () => {
     expect(elements(broken, ".cc-research-error")[0]?.textContent).toBe("bad secret metadata [redacted]");
     expect(elements(broken, "h3").map(({ textContent }) => textContent)).not.toContain("No research project selected");
     expect(elements(broken, "button").map(({ textContent }) => textContent)).toContain("Run audit");
+  });
+
+  it("refreshes live PDF fingerprints before drafting and on both assurance tabs", async () => {
+    const loads: Array<{ refreshBinaryFingerprints?: boolean } | undefined> = [];
+    const view = new ResearchWorkbenchView(new WorkspaceLeaf(), {
+      loadProject: async (_path: string, options?: { refreshBinaryFingerprints?: boolean }) => {
+        loads.push(options);
+        return snapshot;
+      },
+    } as never);
+    await view.setProjectPath(snapshot.project.path);
+    loads.length = 0;
+
+    await view.focus("Draft");
+    await view.focus("Audit");
+    await view.focus("Intelligence");
+
+    expect(loads).toEqual([
+      { refreshBinaryFingerprints: true },
+      { refreshBinaryFingerprints: true },
+      { refreshBinaryFingerprints: true },
+    ]);
   });
 
   it("returns to the desk or asks Companion without losing project context", async () => {
@@ -297,7 +372,8 @@ describe("ResearchWorkbenchView", () => {
     const currentPacket = buildDraftGrounding(draftSnapshot, "Research/P/Claims/C.md");
     const currentEvidence = currentPacket.evidence.map(({ path, fingerprint }) => ({ path, fingerprint }));
     const acceptDraftSection = vi.fn(async () => undefined);
-    const repository = { loadProject: async () => draftSnapshot, loadDraftSections: async () => ({ sections: [managed], issues: [] }), acceptDraftSection } as never;
+    const loadProject = vi.fn(async () => draftSnapshot);
+    const repository = { loadProject, loadDraftSections: async () => ({ sections: [managed], issues: [] }), acceptDraftSection } as never;
     const preview = vi.fn(async () => ({
       section: managed,
       packet: { claim: { path: "Research/P/Claims/C.md" }, evidence: [{ path: "Research/P/Evidence/E.md", fingerprint: "fixture" }] },
@@ -311,13 +387,17 @@ describe("ResearchWorkbenchView", () => {
     expect(elements(view, "button").map(({ textContent }) => textContent)).toContain("Preview draft");
     expect(preview).not.toHaveBeenCalled();
 
+    loadProject.mockClear();
     click(elements(view, "button").find(({ textContent }) => textContent === "Preview draft"));
-    await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+    await settlePromises();
+    expect(loadProject).toHaveBeenCalledWith(snapshot.project.path, { refreshBinaryFingerprints: true });
     expect(elements(view, ".cc-draft-provider")[0]?.textContent).toBe("anthropic · claude-test");
     expect(elements(view, ".cc-draft-preview")[0]?.textContent).toBe("Grounded prose [@smith2025].");
     expect(elements(view, ".cc-draft-diff")).toHaveLength(1);
+    loadProject.mockClear();
     click(elements(view, "button").find(({ textContent }) => textContent === "Accept section"));
     await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+    expect(loadProject).toHaveBeenCalledWith(snapshot.project.path, { refreshBinaryFingerprints: true });
     expect(acceptDraftSection).toHaveBeenCalledWith(expect.objectContaining({ documentPath: "Research/P/Documents/Outline.md", markdown: "Grounded prose [@smith2025]." }));
   });
 
@@ -344,7 +424,8 @@ describe("ResearchWorkbenchView", () => {
     if (!accepted) throw new Error("missing accepted section");
     const revisionPreview = vi.fn(async (_snapshot, _section, request) => ({ section: accepted, packet, request, response: { markdown: "## Claim C\n\nThe result is grounded [@source-s].", support: [{ passage: "The result is grounded [@source-s].", claimPath: packet.claim.path, evidencePaths: ["Research/P/Evidence/E.md"], citationKeys: ["source-s"] }], claimPreservation: [{ claimPath: packet.claim.path, passage: "The result is grounded [@source-s].", status: "preserved" }], changes: [{ kind: "audience", severity: "warning", description: "Uses general-audience wording." }], gaps: [], warnings: ["Uses general-audience wording."], violations: [], canAccept: true }, envelope: { ...accepted.envelope, revisionIntent: request.intent, revisionInstruction: request.customInstruction, revisedFromFingerprint: "fnv1a-before", generatedAt: "now" } }));
     const acceptRevisionSection = vi.fn(async () => undefined);
-    const repository = { loadProject: async () => revisionSnapshot, acceptRevisionSection } as never;
+    const loadProject = vi.fn(async () => revisionSnapshot);
+    const repository = { loadProject, acceptRevisionSection } as never;
     const panel = new ResearchDraftPanel({ coordinator: {} as never, revisionCoordinator: { preview: revisionPreview } as never, repository, rerender: () => undefined });
     const root = new ResearchWorkbenchView(new WorkspaceLeaf(), {} as never).contentEl;
     panel.render(root, revisionSnapshot, { path: "Research/P/Documents/Draft.md", documentKind: "draft" } as never, { sections: [accepted], issues: [] });
@@ -355,11 +436,15 @@ describe("ResearchWorkbenchView", () => {
     panel.render(root, revisionSnapshot, { path: "Research/P/Documents/Draft.md", documentKind: "draft" } as never, { sections: [accepted], issues: [] });
     const select = root.querySelectorAll("select")[0] as any; select.value = "audience"; select.dispatchEvent({ type: "change" });
     const instruction = root.querySelectorAll("textarea")[0] as any; instruction.value = "Explain for policy readers"; instruction.dispatchEvent({ type: "input" });
-    click(root.querySelectorAll("button").find(({ textContent }: any) => textContent === "Preview revision")); await Promise.resolve(); await Promise.resolve(); root.empty();
+    loadProject.mockClear();
+    click(root.querySelectorAll("button").find(({ textContent }: any) => textContent === "Preview revision")); await settlePromises(); root.empty();
     panel.render(root, revisionSnapshot, { path: "Research/P/Documents/Draft.md", documentKind: "draft" } as never, { sections: [accepted], issues: [] });
+    expect(loadProject).toHaveBeenCalledWith(snapshot.project.path, { refreshBinaryFingerprints: true });
     expect(revisionPreview).toHaveBeenCalledWith(revisionSnapshot, accepted, { intent: "audience", customInstruction: "Explain for policy readers" }, expect.any(AbortSignal));
     expect(root.querySelectorAll(".cc-revision-warning")[0]?.textContent).toBe("Uses general-audience wording.");
+    loadProject.mockClear();
     click(root.querySelectorAll("button").find(({ textContent }: any) => textContent === "Accept revision")); await Promise.resolve(); await Promise.resolve();
+    expect(loadProject).toHaveBeenCalledWith(snapshot.project.path, { refreshBinaryFingerprints: true });
     expect(acceptRevisionSection).toHaveBeenCalledWith(expect.objectContaining({ packet, request: { intent: "audience", customInstruction: "Explain for policy readers" }, response: expect.objectContaining({ canAccept: true }), documentPath: "Research/P/Documents/Draft.md" }));
   });
 

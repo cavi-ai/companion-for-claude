@@ -2,7 +2,7 @@ import { chromium, type Browser, type Page } from "@playwright/test";
 import { createServer, type Server } from "node:http";
 import { chmod, copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn, type ChildProcess } from "node:child_process";
 
@@ -34,12 +34,20 @@ function compareVersions(a: string, b: string): number {
   return 0;
 }
 
+/** Resolve the core version an isolated profile will load, including an explicitly supplied auto-update ASAR. */
+export function effectiveObsidianCoreVersion(installed: string, coreAsarPath?: string): string {
+  if (!coreAsarPath) return installed;
+  const match = /^obsidian-(\d+(?:\.\d+)+)\.asar$/.exec(basename(coreAsarPath));
+  if (!match?.[1]) throw new Error(`OBSIDIAN_ASAR_PATH must name an obsidian-<version>.asar file: ${coreAsarPath}`);
+  return compareVersions(match[1], installed) > 0 ? match[1] : installed;
+}
+
 /**
  * The plugin only loads on Obsidian >= manifest.minAppVersion. An older app
  * fails deep inside Obsidian (a 1.13-only settings tab has no display()), so
  * check the prerequisite up front and say what to do about it.
  */
-async function assertSupportedObsidian(executable: string): Promise<void> {
+async function assertSupportedObsidian(executable: string, coreAsarPath?: string): Promise<void> {
   const plist = executable.replace(/\/MacOS\/Obsidian$/, "/Info.plist");
   const { minAppVersion } = JSON.parse(await readFile(join(dirname(fileURLToPath(import.meta.url)), "..", "manifest.json"), "utf8")) as { minAppVersion: string };
   let installed: string;
@@ -50,10 +58,11 @@ async function assertSupportedObsidian(executable: string): Promise<void> {
     return; // Not a macOS bundle — leave the launch to report what went wrong.
   }
   if (!installed) return;
-  if (compareVersions(installed, minAppVersion) < 0) {
+  const effective = effectiveObsidianCoreVersion(installed, coreAsarPath);
+  if (compareVersions(effective, minAppVersion) < 0) {
     throw new Error(
-      `Obsidian ${installed} is installed but this plugin requires ${minAppVersion} or later. `
-        + `Update Obsidian, or point OBSIDIAN_APP_PATH at a ${minAppVersion}+ build, then re-run the e2e suite.`,
+      `Obsidian core ${effective} is available but this plugin requires ${minAppVersion} or later. `
+        + `Update Obsidian, point OBSIDIAN_APP_PATH at a ${minAppVersion}+ build, or set OBSIDIAN_ASAR_PATH to an official ${minAppVersion}+ core ASAR.`,
     );
   }
 }
@@ -162,7 +171,9 @@ esac
   await writeFile(join(profile, "obsidian.json"), JSON.stringify({ vaults: { e2e: { path: vault, ts: Date.now(), open: true } } }));
   const debuggingPort = await freePort();
   const executable = process.env.OBSIDIAN_APP_PATH ?? "/Applications/Obsidian.app/Contents/MacOS/Obsidian";
-  await assertSupportedObsidian(executable);
+  const coreAsarPath = process.env.OBSIDIAN_ASAR_PATH?.trim() || undefined;
+  await assertSupportedObsidian(executable, coreAsarPath);
+  if (coreAsarPath) await copyFile(coreAsarPath, join(profile, basename(coreAsarPath)));
   const processHandle = spawn(executable, [vault, `--user-data-dir=${profile}`, `--remote-debugging-port=${debuggingPort}`, "--disable-gpu", "--no-sandbox"], { stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, PATH: executablePath } });
   let processOutput = ""; processHandle.stdout?.on("data", (chunk) => { processOutput += String(chunk); }); processHandle.stderr?.on("data", (chunk) => { processOutput += String(chunk); });
   await waitForCdp(debuggingPort);
@@ -195,6 +206,19 @@ esac
     if (!appeared) continue;
     await deferSetup.click();
     quietSince = Date.now();
+  }
+  // Accepting Obsidian's community-plugin trust prompt can leave an auxiliary
+  // Settings BrowserWindow focused. Obsidian's Modal API then mounts dialogs
+  // in that window even when Playwright clicks a control in the vault window.
+  // Remove only that harness-created window so modal tests exercise one
+  // deterministic renderer. First-run specs retain every onboarding surface.
+  if (!options.firstRun) {
+    for (const candidate of context.pages()) {
+      if (candidate === page || candidate.isClosed()) continue;
+      const title = await candidate.title().catch(() => "");
+      if (title.startsWith("Settings - ")) await candidate.close();
+    }
+    await page.bringToFront();
   }
   return { page, providerRequests: () => requests, close: async () => { await browser.close().catch(() => undefined); await stop(processHandle); await closeServer(provider); if (endpoint) await closeServer(endpoint); await rm(root, { recursive: true, force: true }); } };
 }

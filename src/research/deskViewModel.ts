@@ -50,6 +50,7 @@ function title(value: string): string { return value[0]?.toUpperCase() + value.s
 function findingAction(finding: AuditFinding): ResearchDeskAction | undefined {
   const name = basename(finding.path);
   if (finding.code === "unused-evidence") return undefined;
+  if (finding.code === "unverifiable-source") return { id: `unverifiable-source:${finding.path}`, label: `Restore ${name}`, reason: finding.explanation, target: "Audit", priority: 0, path: finding.path, tone: "blocked" };
   if (finding.code === "stale-evidence") return { id: `stale-evidence:${finding.path}`, label: `Re-check ${name}`, reason: "The source changed after this evidence was reviewed.", target: "Evidence", priority: 0, path: finding.path, tone: "blocked" };
   if (finding.code === "broken-reference" || finding.code === "invalid-record") return { id: `${finding.code}:${finding.path}`, label: `Repair ${name}`, reason: finding.explanation, target: "Audit", priority: 0, path: finding.path, tone: "blocked" };
   if (finding.code === "rejected-claim") return { id: `rejected-claim:${finding.path}`, label: `Rework ${name}`, reason: finding.explanation, target: "Claims", priority: 1, path: finding.path, tone: "blocked" };

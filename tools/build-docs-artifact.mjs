@@ -8,6 +8,7 @@ import path from "node:path";
 
 const SLUG = "companion-for-claude";
 const VERSION_RE = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
+const TAG_PREFIXES = ["", "obsidian-v"];
 const COMMIT_RE = /^[0-9a-f]{40}$/;
 
 // Layout mirrors the other CAVI docs products: introduction/ then guides/.
@@ -58,7 +59,8 @@ const readme = args.get("readme");
 const outRoot = args.get("out");
 const epoch = args.get("source-date-epoch");
 if (!VERSION_RE.test(version ?? "")) fail(`invalid version: ${version}`);
-if (tag !== version) fail(`tag ${tag} must equal version ${version}`);
+// Matches cavi-release.mjs: the monorepo namespaces its tags, the mirror does not.
+if (!TAG_PREFIXES.some((prefix) => tag === `${prefix}${version}`)) fail(`tag ${tag} does not name version ${version}`);
 if (!COMMIT_RE.test(commit ?? "")) fail(`invalid commit: ${commit}`);
 if (!guidesDir || !readme || !outRoot) fail("missing --guides, --readme, or --out");
 if (!/^\d+$/.test(epoch ?? "")) fail(`invalid source date epoch: ${epoch}`);

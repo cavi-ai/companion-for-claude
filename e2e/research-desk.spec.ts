@@ -5,6 +5,25 @@ test.describe.configure({ mode: "serial" });
 let harness: ObsidianHarness;
 let consoleFailures: string[] = [];
 
+function paddedPdf(size: number): Buffer {
+  const objects = [
+    "<< /Type /Catalog /Pages 2 0 R >>",
+    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>",
+  ];
+  let body = "%PDF-1.4\n";
+  const offsets: number[] = [];
+  for (let index = 0; index < objects.length; index++) {
+    offsets.push(Buffer.byteLength(body));
+    body += `${index + 1} 0 obj\n${objects[index]}\nendobj\n`;
+  }
+  const xref = Buffer.byteLength(body);
+  body += `xref\n0 4\n0000000000 65535 f \n${offsets.map((offset) => `${String(offset).padStart(10, "0")} 00000 n \n`).join("")}trailer\n<< /Size 4 /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+  const fixture = Buffer.alloc(size, 0x20);
+  Buffer.from(body).copy(fixture);
+  return fixture;
+}
+
 test.beforeAll(async () => {
   harness = await launchObsidianHarness();
   harness.page.on("console", (message) => { if (message.type() === "error") consoleFailures.push(message.text()); });
@@ -77,7 +96,27 @@ test("05 advanced workbench: grouped navigation exposes every research panel wit
   }
 });
 
-test("06 native continuity: evidence becomes a claim and an outline without leaving the workbench", async () => {
+test("06 PDF source import: a 10 MiB document stays in the live renderer", async () => {
+  const workbench = harness.page.locator(".cc-research-workbench");
+  await workbench.locator(".cc-research-tab-select").selectOption("Sources");
+  await harness.page.bringToFront();
+  await workbench.getByRole("button", { name: "Add source", exact: true }).click();
+  const capture = harness.page.locator(".modal-container").last();
+  await expect(capture.getByRole("heading", { name: "Add research source" })).toBeVisible();
+  await capture.locator("input.cc-source-file-input").setInputFiles({
+    name: "Renderer stress.pdf",
+    mimeType: "application/pdf",
+    buffer: paddedPdf(10 * 1024 * 1024),
+  });
+  await expect(capture.getByRole("status")).toContainText("Imported “Renderer stress”", { timeout: 30_000 });
+  await expect(workbench).toBeVisible();
+  await expect(workbench.getByText("Renderer stress", { exact: true })).toBeVisible();
+  expect(consoleFailures.filter((failure) => /out of memory|renderer|unhandled/i.test(failure))).toEqual([]);
+  await harness.page.keyboard.press("Escape");
+  await expect(capture).toBeHidden();
+});
+
+test("07 native continuity: evidence becomes a claim and an outline without leaving the workbench", async () => {
   const mobileWidths = [320, 360, 390, 428, 768];
   const verifyModalWidths = async (modal: ReturnType<typeof harness.page.locator>, actionName: string, artifact: string) => {
     for (const width of mobileWidths) {
@@ -125,7 +164,7 @@ test("06 native continuity: evidence becomes a claim and an outline without leav
   expect(consoleFailures.filter((failure) => /EPIPE|unhandled/i.test(failure))).toEqual([]);
 });
 
-test("07 accessibility and responsive states: controls remain named and reachable", async () => {
+test("08 accessibility and responsive states: controls remain named and reachable", async () => {
   await harness.page.evaluate(async () => { await (window as unknown as { app: { commands: { executeCommandById(id: string): Promise<void> } } }).app.commands.executeCommandById("claude-companion:open-research-desk"); });
   const desk = harness.page.locator(".cc-research-desk");
   await expect(desk.getByRole("button", { name: "Start this task" })).toBeVisible();
@@ -142,7 +181,7 @@ test("07 accessibility and responsive states: controls remain named and reachabl
   expect(consoleFailures.filter((failure) => /EPIPE|unhandled/i.test(failure))).toEqual([]);
 });
 
-test("08 Companion continuity: active research becomes context, not a new home", async () => {
+test("09 Companion continuity: active research becomes context, not a new home", async () => {
   await harness.page.evaluate(async () => {
     const app = (window as unknown as { app: { vault: { getAbstractFileByPath(path: string): unknown }; workspace: { getLeaf(value: boolean): { openFile(file: unknown): Promise<void> } }; commands: { executeCommandById(id: string): Promise<void> } } }).app;
     const project = app.vault.getAbstractFileByPath("Research/Alpha/Project.md");

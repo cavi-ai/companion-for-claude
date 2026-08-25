@@ -142,7 +142,8 @@ export class ResearchDraftPanel {
     this.active = controller;
     this.errors.delete(section.envelope.id);
     try {
-      const preview = await this.deps.coordinator.preview(snapshot, section, controller.signal);
+      const current = await this.deps.repository.loadProject(snapshot.project.path, { refreshBinaryFingerprints: true });
+      const preview = await this.deps.coordinator.preview(current, section, controller.signal);
       if (!controller.signal.aborted) this.previews.set(section.envelope.id, preview);
     } catch (error) {
       if (!controller.signal.aborted) this.errors.set(section.envelope.id, safeDraftError(error));
@@ -155,7 +156,7 @@ export class ResearchDraftPanel {
   private async accept(projectPath: string, documentPath: string, preview: DraftPreview): Promise<void> {
     this.errors.delete(preview.section.envelope.id);
     try {
-      const current = await this.deps.repository.loadProject(projectPath);
+      const current = await this.deps.repository.loadProject(projectPath, { refreshBinaryFingerprints: true });
       const packet = buildDraftGrounding(current, preview.packet.claim.path);
       await this.deps.repository.acceptDraftSection({ documentPath, preview: preview.section, envelope: preview.envelope, markdown: preview.response.markdown, currentEvidence: packet.evidence.map(({ path, fingerprint }) => ({ path, fingerprint })), currentClaimFingerprint: groundingClaimFingerprint(packet) });
       this.previews.delete(preview.section.envelope.id);
@@ -170,7 +171,8 @@ export class ResearchDraftPanel {
     this.active?.abort(); const controller = new AbortController(); this.active = controller; this.errors.delete(section.envelope.id);
     try {
       const request = { intent: form.intent, ...(form.customInstruction.trim() ? { customInstruction: form.customInstruction.trim() } : {}) };
-      const preview = await this.deps.revisionCoordinator.preview(snapshot, section, request, controller.signal);
+      const current = await this.deps.repository.loadProject(snapshot.project.path, { refreshBinaryFingerprints: true });
+      const preview = await this.deps.revisionCoordinator.preview(current, section, request, controller.signal);
       if (!controller.signal.aborted) this.revisionPreviews.set(section.envelope.id, preview);
     } catch (error) { if (!controller.signal.aborted) this.errors.set(section.envelope.id, safeDraftError(error)); }
     finally { if (this.active === controller) this.active = undefined; if (!controller.signal.aborted) await this.deps.rerender(); }
@@ -179,7 +181,7 @@ export class ResearchDraftPanel {
   private async acceptRevision(projectPath: string, documentPath: string, preview: RevisionPreview): Promise<void> {
     this.errors.delete(preview.section.envelope.id);
     try {
-      const current = await this.deps.repository.loadProject(projectPath); const packet = buildDraftGrounding(current, preview.packet.claim.path);
+      const current = await this.deps.repository.loadProject(projectPath, { refreshBinaryFingerprints: true }); const packet = buildDraftGrounding(current, preview.packet.claim.path);
       await this.deps.repository.acceptRevisionSection({ documentPath, preview: preview.section, envelope: preview.envelope, markdown: preview.response.markdown, currentEvidence: packet.evidence.map(({ path, fingerprint }) => ({ path, fingerprint })), currentClaimFingerprint: groundingClaimFingerprint(packet), packet, request: preview.request, response: preview.response });
       this.revisionPreviews.delete(preview.section.envelope.id); this.revisionForms.delete(preview.section.envelope.id);
     } catch (error) { this.errors.set(preview.section.envelope.id, safeDraftError(error)); }

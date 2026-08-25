@@ -12,6 +12,9 @@ if (!root) {
   process.exit(1);
 }
 
+// Same tag policy as cavi-release.mjs and build-docs-artifact.mjs: the monorepo
+// namespaces its tags, the community-store mirror tags the bare version.
+const TAG_PREFIXES = ["", "obsidian-v"];
 const errors = [];
 const check = (condition, message) => { if (!condition) errors.push(message); };
 
@@ -42,7 +45,10 @@ for (const key of ["schemaVersion", "package", "version", "contentSha256", "rele
 }
 check(manifest.package === "companion-for-claude", `manifest.package ${manifest.package} is not companion-for-claude`);
 check(typeof manifest.release?.tag === "string" && typeof manifest.release?.commit === "string", "manifest.release needs tag and commit");
-check(manifest.release?.tag === manifest.version, `manifest.release.tag ${manifest.release?.tag} must equal version ${manifest.version}`);
+check(
+  TAG_PREFIXES.some((prefix) => manifest.release?.tag === `${prefix}${manifest.version}`),
+  `manifest.release.tag ${manifest.release?.tag} does not name version ${manifest.version}`,
+);
 check(navigation.version === manifest.version, `navigation.version ${navigation.version} must equal manifest version ${manifest.version}`);
 check(Array.isArray(navigation.sections) && navigation.sections.length > 0, "navigation.sections must not be empty");
 

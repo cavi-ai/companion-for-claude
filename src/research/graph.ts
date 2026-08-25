@@ -68,11 +68,22 @@ function hasLocator(evidence: EvidenceRecord): boolean {
 }
 
 export function isStaleEvidence(evidence: EvidenceRecord, source: ResearchSourceRecord | undefined): boolean {
-  return Boolean(source && evidence.sourceFingerprint && source.contentFingerprint !== evidence.sourceFingerprint);
+  if (!source) return false;
+  if (source.contentFingerprintUnavailable) return false;
+  if (source.asset && source.contentFingerprint && !evidence.sourceFingerprint) return true;
+  return Boolean(evidence.sourceFingerprint && source.contentFingerprint !== evidence.sourceFingerprint);
 }
 
 export function isTrustedEvidence(evidence: EvidenceRecord | undefined, source: ResearchSourceRecord | undefined): boolean {
-  return Boolean(evidence && source && evidence.reviewState === "reviewed" && hasLocator(evidence) && !isStaleEvidence(evidence, source));
+  return Boolean(
+    evidence
+    && source
+    && !source.contentFingerprintUnavailable
+    && (!source.asset || Boolean(source.contentFingerprint && evidence.sourceFingerprint))
+    && evidence.reviewState === "reviewed"
+    && hasLocator(evidence)
+    && !isStaleEvidence(evidence, source),
+  );
 }
 
 export function buildProjectSnapshot(projectPath: string, records: ResearchRecord[], parseIssues: ParseIssue[]): ProjectSnapshot {

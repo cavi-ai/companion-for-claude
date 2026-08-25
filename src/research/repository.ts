@@ -56,6 +56,11 @@ export interface ImportSourceInput {
 
 export type ImportSourceResult = { kind: "created"; path: string } | { kind: "duplicate"; path: string };
 
+export interface LoadProjectOptions {
+  /** Re-read binary assets to detect source drift. Expensive; use only for an explicit audit. */
+  refreshBinaryFingerprints?: boolean;
+}
+
 export interface CreateEvidenceInput {
   project: string;
   source: string;
@@ -126,13 +131,44 @@ function parentFolder(path: string): string {
 }
 
 async function contentFingerprint(content: string | Uint8Array): Promise<string> {
-  const bytes = typeof content === "string" ? new TextEncoder().encode(content) : Uint8Array.from(content);
+  const bytes = typeof content === "string"
+    ? new TextEncoder().encode(content)
+    : content.buffer instanceof ArrayBuffer
+      ? new Uint8Array(content.buffer, content.byteOffset, content.byteLength)
+      : Uint8Array.from(content);
   const digest = await crypto.subtle.digest("SHA-256", bytes);
   return `sha256:${[...new Uint8Array(digest)].map((value) => value.toString(16).padStart(2, "0")).join("")}`;
 }
 
+const binaryFingerprintRefreshes = new WeakMap<object, Map<string, Promise<string | undefined>>>();
+
 export class ResearchRepository {
-  constructor(private readonly io: ResearchRepositoryIO) {}
+  private readonly binaryRefreshes: Map<string, Promise<string | undefined>>;
+
+  constructor(private readonly io: ResearchRepositoryIO, refreshScope: object = io) {
+    let refreshes = binaryFingerprintRefreshes.get(refreshScope);
+    if (!refreshes) {
+      refreshes = new Map();
+      binaryFingerprintRefreshes.set(refreshScope, refreshes);
+    }
+    this.binaryRefreshes = refreshes;
+  }
+
+  private refreshBinaryFingerprint(asset: string): Promise<string | undefined> {
+    const current = this.binaryRefreshes.get(asset);
+    if (current) return current;
+    const refresh = (async () => {
+      if (!this.io.readBinary) return undefined;
+      try { return await contentFingerprint(await this.io.readBinary(asset)); }
+      catch { return undefined; }
+    })();
+    this.binaryRefreshes.set(asset, refresh);
+    void refresh.then(
+      () => { if (this.binaryRefreshes.get(asset) === refresh) this.binaryRefreshes.delete(asset); },
+      () => { if (this.binaryRefreshes.get(asset) === refresh) this.binaryRefreshes.delete(asset); },
+    );
+    return refresh;
+  }
 
   async listProjects(): Promise<ResearchProjectRecord[]> {
     const projects: ResearchProjectRecord[] = [];
@@ -143,7 +179,7 @@ export class ResearchRepository {
     return projects.sort((left, right) => compareCodeUnits(left.title, right.title) || compareCodeUnits(left.path, right.path));
   }
 
-  async loadProject(projectPath: string): Promise<ProjectSnapshot> {
+  async loadProject(projectPath: string, options: LoadProjectOptions = {}): Promise<ProjectSnapshot> {
     projectFolder(projectPath);
     let scoped = false;
     let notes: ResearchNoteInput[];
@@ -154,17 +190,29 @@ export class ResearchRepository {
       notes = await this.io.listMarkdown();
     }
     const parsed = notes.map(scoped ? parseResearchCandidate : parseResearchRecord);
-    const records = await Promise.all(parsed.flatMap(({ record }) => record ? [record] : []).map(async (record) => {
-      if (record.type !== "research-source") return record;
-      let currentPayload: string | Uint8Array | undefined = record.capturedContent;
-      if (currentPayload === undefined && record.asset && this.io.readBinary) {
-        try { currentPayload = await this.io.readBinary(record.asset); } catch { currentPayload = undefined; }
+    const records: ResearchRecord[] = [];
+    for (const { record } of parsed) {
+      if (!record || record.type !== "research-source") {
+        if (record) records.push(record);
+        continue;
       }
-      const { contentFingerprint: _storedFingerprint, ...withoutStoredFingerprint } = record;
-      return currentPayload === undefined
-        ? withoutStoredFingerprint
-        : { ...withoutStoredFingerprint, contentFingerprint: await contentFingerprint(currentPayload) };
-    }));
+      if (record.capturedContent !== undefined) {
+        const { contentFingerprint: _storedFingerprint, ...withoutStoredFingerprint } = record;
+        records.push({ ...withoutStoredFingerprint, contentFingerprint: await contentFingerprint(record.capturedContent) });
+        continue;
+      }
+      if (options.refreshBinaryFingerprints && record.asset && this.io.readBinary) {
+        const { contentFingerprint: _storedFingerprint, ...withoutStoredFingerprint } = record;
+        const fingerprint = await this.refreshBinaryFingerprint(record.asset);
+        records.push(fingerprint
+          ? { ...withoutStoredFingerprint, contentFingerprint: fingerprint }
+          : { ...withoutStoredFingerprint, contentFingerprintUnavailable: true });
+        continue;
+      }
+      // Routine view/model loads use the verified fingerprint stored at import.
+      // Re-reading every PDF belongs to the explicit audit path above.
+      records.push(record);
+    }
     return buildProjectSnapshot(projectPath, records, parsed.flatMap(({ issues }) => issues));
   }
 
@@ -231,9 +279,10 @@ export class ResearchRepository {
   }
 
   async createEvidence(input: CreateEvidenceInput): Promise<EvidenceRecord> {
-    const snapshot = await this.loadProject(input.project);
+    const snapshot = await this.loadProject(input.project, { refreshBinaryFingerprints: true });
     const source = snapshot.sources.find((candidate) => candidate.path === input.source);
     if (!source) throw new Error(`Source is not part of project: ${input.source}`);
+    if (source.contentFingerprintUnavailable) throw new Error(`Cannot capture evidence because the source asset could not be fingerprinted: ${source.asset ?? source.path}`);
     if (!input.excerpt.trim()) throw new Error("Evidence excerpt must not be empty");
     return this.createTyped({
       path: recordPath(input.project, "evidence", input.title), title: safeTitle(input.title), type: "evidence",
@@ -273,7 +322,7 @@ export class ResearchRepository {
   }
 
   async createOutline(projectPath: string, claimPaths: string[]): Promise<{ path: string; content: string }> {
-    const snapshot = await this.loadProject(projectPath);
+    const snapshot = await this.loadProject(projectPath, { refreshBinaryFingerprints: true });
     const claims = claimPaths.map((path) => {
       const claim = snapshot.claims.find((candidate) => candidate.path === path);
       if (!claim) throw new Error(`Claim is not part of project: ${path}`);

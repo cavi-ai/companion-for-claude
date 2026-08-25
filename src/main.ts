@@ -224,11 +224,16 @@ export default class ClaudeCompanionPlugin extends Plugin {
   private reindexTimer: number | null = null;
   private reindexQueue = new Set<string>();
   private enrichTimers = new Map<string, number>();
+  /** Debounced Clipper arrivals waiting for one-at-a-time utility processing. */
+  private enrichPending = new Map<string, TFile>();
+  private enrichQueueRunning = false;
   private enrichRecentlyWritten = new Set<string>();
   private enrichRecentlyWrittenExpiryTimers = new Map<string, number>();
   private clipperVerificationTimers = new Map<string, number>();
   private utilityLifecycleEnded = false;
   private utilityLifecycleGeneration = 0;
+  private sourceCaptureConsentModal: ChoiceModal<"allow" | "deny"> | null = null;
+  private sourceCaptureConsentInFlight: Promise<boolean> | null = null;
   /** Mobile loopback → Claude consent, scoped to one exact source/destination context. */
   private mobileUtilityFallbackApproval: UtilityFallbackConsentKey & { decision: UtilityFallbackApproval } | undefined;
   /** Coalesces concurrent automatic enrichments onto one consent decision. */
@@ -251,6 +256,8 @@ export default class ClaudeCompanionPlugin extends Plugin {
     this.mcpLifecycleEnded = false;
     this.utilityLifecycleGeneration = (this.utilityLifecycleGeneration ?? 0) + 1;
     this.utilityLifecycleEnded = false;
+    this.sourceCaptureConsentModal = null;
+    this.sourceCaptureConsentInFlight = null;
     this.mobileUtilityFallbackApproval = undefined;
     this.mobileUtilityFallbackConsentInFlight = null;
     this.mobileUtilityFallbackModal = null;
@@ -1084,15 +1091,63 @@ export default class ClaudeCompanionPlugin extends Plugin {
       window.setTimeout(() => {
         this.enrichTimers.delete(path);
         if (this.utilityLifecycleEnded) return;
-        void this.enrichFile(file);
+        this.enrichPending.set(path, file);
+        void this.drainEnrichQueue();
       }, 1500),
     );
+  }
+
+  /**
+   * Clipper and agent imports can create many notes in one event-loop turn.
+   * Keep their model calls and vault rewrites serial so a burst cannot multiply
+   * renderer memory, and isolate an unreadable/deleted file from later clips.
+   */
+  private async drainEnrichQueue(): Promise<void> {
+    if (this.enrichQueueRunning || this.utilityLifecycleEnded) return;
+    this.enrichQueueRunning = true;
+    try {
+      while (!this.utilityLifecycleEnded) {
+        const next = this.enrichPending.entries().next().value;
+        if (!next) break;
+        const [path, file] = next;
+        this.enrichPending.delete(path);
+        try {
+          await this.enrichFile(file);
+        } catch (error) {
+          if (!this.isUtilityLifecycleActive(this.utilityLifecycleGeneration ?? 0)) continue;
+          const detail = sourceActivityDetail(error instanceof Error ? error.message : String(error));
+          console.warn("[companion] automatic source enrichment failed", error);
+          const activityId = this.activity.start({
+            id: `source-enrichment:auto:${path}`,
+            kind: "source-enrichment",
+            title: `Enriching ${file.basename}`,
+            total: 1,
+          });
+          this.activity.fail(activityId, {
+            completed: 1,
+            failed: 1,
+            technicalDetails: detail,
+            details: [{ label: path, message: detail, state: "error" }],
+            recovery: [
+              { id: "review-inbox-failures", label: "Open Source Inbox", kind: "retry" },
+              { id: "utility-settings", label: "Open utility settings", kind: "settings" },
+            ],
+          });
+        }
+      }
+    } finally {
+      this.enrichQueueRunning = false;
+      if (!this.utilityLifecycleEnded && this.enrichPending.size > 0) void this.drainEnrichQueue();
+    }
   }
 
   private async enrichFile(file: TFile, notify = true): Promise<EnrichRunOutcome> {
     const content = file.extension === "md" ? await this.app.vault.cachedRead(file) : "";
     if (!shouldEnrich({ path: file.path, ext: file.extension, content, inboxFolder: this.settings.sourceInboxFolder, recentlyWritten: this.enrichRecentlyWritten })) {
       return { status: "skipped", reason: `${file.basename} is not eligible for source enrichment.` };
+    }
+    if (this.settings.sourceCaptureConsent === "deny") {
+      return { status: "skipped", reason: "automatic source enrichment is set to manual only." };
     }
     if (this.settings.sourceCaptureConsent !== "allow" && !(await this.askSourceCaptureConsent())) {
       return { status: "skipped", reason: "automatic source enrichment was not approved." };
@@ -1106,8 +1161,12 @@ export default class ClaudeCompanionPlugin extends Plugin {
    * unprompted. Declining turns off auto-enrich (the manual command stays).
    */
   private async askSourceCaptureConsent(): Promise<boolean> {
-    return new Promise((resolve) => {
-      new ChoiceModal<"allow" | "deny">(this.app, {
+    if (this.settings.sourceCaptureConsent === "allow") return true;
+    if (this.settings.sourceCaptureConsent === "deny" || this.utilityLifecycleEnded) return false;
+    if (this.sourceCaptureConsentInFlight) return this.sourceCaptureConsentInFlight;
+    const lifecycleGeneration = this.utilityLifecycleGeneration ?? 0;
+    const consent = new Promise<boolean>((resolve, reject) => {
+      const modal = new ChoiceModal<"allow" | "deny">(this.app, {
         title: "Enrich clips automatically?",
         message:
           `Source capture can type each new file in ${this.settings.sourceInboxFolder}/ into a schema-validated source note. ` +
@@ -1118,15 +1177,31 @@ export default class ClaudeCompanionPlugin extends Plugin {
         ],
         fallback: "deny",
         onChoice: (c) => {
-          void (async () => {
-            this.settings.sourceCaptureConsent = c;
-            if (c === "deny") this.settings.sourceEnrichOnCreate = false;
-            await this.saveSettings();
-            resolve(c === "allow");
-          })();
+          this.sourceCaptureConsentModal = null;
+          if (!this.isUtilityLifecycleActive(lifecycleGeneration)) { resolve(false); return; }
+          const previousConsent = this.settings.sourceCaptureConsent;
+          const previousAutoEnrich = this.settings.sourceEnrichOnCreate;
+          this.settings.sourceCaptureConsent = c;
+          if (c === "deny") this.settings.sourceEnrichOnCreate = false;
+          void this.saveSettings().then(
+            () => resolve(this.isUtilityLifecycleActive(lifecycleGeneration) && c === "allow"),
+            (error: unknown) => {
+              this.settings.sourceCaptureConsent = previousConsent;
+              this.settings.sourceEnrichOnCreate = previousAutoEnrich;
+              reject(error instanceof Error ? error : new Error(String(error)));
+            },
+          );
         },
-      }).open();
+      });
+      this.sourceCaptureConsentModal = modal;
+      modal.open();
     });
+    this.sourceCaptureConsentInFlight = consent;
+    void consent.then(
+      () => { if (this.sourceCaptureConsentInFlight === consent) this.sourceCaptureConsentInFlight = null; },
+      () => { if (this.sourceCaptureConsentInFlight === consent) this.sourceCaptureConsentInFlight = null; },
+    );
+    return consent;
   }
 
   private async runEnrich(file: TFile, notify = true): Promise<EnrichRunOutcome> {
@@ -1543,12 +1618,15 @@ export default class ClaudeCompanionPlugin extends Plugin {
     this._activity?.dispose();
     this.utilityLifecycleEnded = true;
     this.utilityLifecycleGeneration = (this.utilityLifecycleGeneration ?? 0) + 1;
+    this.sourceCaptureConsentModal?.close();
+    this.sourceCaptureConsentModal = null;
     this.mobileUtilityFallbackApproval = undefined;
     this.mobileUtilityFallbackModal?.close();
     this.mobileUtilityFallbackModal = null;
     this.mobileUtilityFallbackConsentInFlight = null;
     for (const timer of this.enrichTimers?.values() ?? []) window.clearTimeout(timer);
     this.enrichTimers?.clear();
+    this.enrichPending?.clear();
     for (const timer of this.enrichRecentlyWrittenExpiryTimers?.values() ?? []) window.clearTimeout(timer);
     this.enrichRecentlyWrittenExpiryTimers?.clear();
     this.enrichRecentlyWritten?.clear();
