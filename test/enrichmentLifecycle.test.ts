@@ -5,9 +5,10 @@ vi.mock("obsidian", async (importOriginal) => ({
   PluginSettingTab: class {},
 }));
 
-import { App, FakeElement, getLastOpenedModal, TFile, WorkspaceLeaf } from "obsidian";
+import { App, FakeElement, getLastOpenedModal, Platform, TFile, WorkspaceLeaf } from "obsidian";
 import ClaudeCompanionPlugin from "../src/main";
 import { DEFAULT_SETTINGS } from "../src/types";
+import { ExtractError } from "../src/sources/extract";
 import { InboxView, INBOX_VIEW_TYPE } from "../src/view/InboxView";
 import { ChoiceModal } from "../src/view/ChoiceModal";
 
@@ -46,7 +47,11 @@ function deferred<T>(): { promise: Promise<T>; resolve(value: T): void } {
   return { promise: new Promise<T>((done) => { resolve = done; }), resolve };
 }
 
-afterEach(() => vi.useRealTimers());
+afterEach(() => {
+  Platform.isMobile = false;
+  Platform.isDesktop = true;
+  vi.useRealTimers();
+});
 
 describe("enrichment lifecycle", () => {
   it("single-flights the same clip across automatic and Inbox enrichment", async () => {
@@ -301,6 +306,70 @@ describe("enrichment lifecycle", () => {
     ]));
   });
 
+  it("stops a mobile batch after one exhausted extraction contract instead of sending every remaining clip", async () => {
+    Platform.isMobile = true;
+    Platform.isDesktop = false;
+    const app = new App();
+    app.vault.seed("Clippings/first.md", "First clip");
+    app.vault.seed("Clippings/second.md", "Second clip");
+    app.vault.seed("Clippings/third.md", "Third clip");
+    let calls = 0;
+    const plugin = inboxPlugin(app, async () => {
+      calls++;
+      return { status: "failed", error: new ExtractError(["reply was not valid JSON"]) };
+    });
+    const view = new InboxView(new WorkspaceLeaf(app), plugin);
+    await view.render();
+
+    (view.contentEl as unknown as FakeElement).querySelector(".cc-inbox-enrich-all")?.dispatchEvent({ type: "click" });
+    await settle(32);
+
+    expect(calls).toBe(1);
+    expect((view.contentEl as unknown as FakeElement).querySelector(".cc-inbox-operation-status")?.textContent)
+      .toMatch(/stopped.*2.*not attempted/i);
+    expect(plugin.activity.snapshot().records[0]).toMatchObject({
+      completed: 1,
+      total: 3,
+      failed: 1,
+      state: "needs-attention",
+    });
+  });
+
+  it("keeps a successfully enriched clip out of the pending Inbox while metadata parsing catches up", async () => {
+    const app = new App();
+    const file = app.vault.seed("Clippings/large.md", "Large clip");
+    const plugin = inboxPlugin(app, async () => ({ status: "enriched" }));
+    const view = new InboxView(new WorkspaceLeaf(app), plugin);
+    await view.render();
+
+    (view.contentEl as unknown as FakeElement).querySelector(".cc-inbox-enrich")?.dispatchEvent({ type: "click" });
+    await settle(24);
+
+    expect((view.contentEl as unknown as FakeElement).querySelector(".cc-inbox-enrich-all")).toBeNull();
+    expect((view.contentEl as unknown as FakeElement).querySelector(".setting-item-description")?.textContent)
+      .toContain("Inbox zero");
+    expect((view.contentEl as unknown as FakeElement).querySelector(".cc-inbox-typed-count")?.textContent)
+      .toBe("1 typed");
+    expect(app.metadataCache.getFileCache(file)?.frontmatter).toBeUndefined();
+  });
+
+  it("reconciles optimistic Inbox state after metadata confirms the enrichment", async () => {
+    const app = new App();
+    const file = app.vault.seed("Clippings/reconciled.md", "Clip");
+    const plugin = inboxPlugin(app, async () => ({ status: "enriched" }));
+    const view = new InboxView(new WorkspaceLeaf(app), plugin);
+    await view.render();
+
+    (view.contentEl as unknown as FakeElement).querySelector(".cc-inbox-enrich")?.dispatchEvent({ type: "click" });
+    await settle(24);
+    app.vault.frontmatters.set(file.path, { source_enriched: true });
+    await view.render();
+    app.vault.frontmatters.delete(file.path);
+    await view.render();
+
+    expect((view.contentEl as unknown as FakeElement).querySelector(".cc-inbox-enrich-all")).not.toBeNull();
+  });
+
   it("catches a regression that rescans the full Inbox for every item in enrich-all", async () => {
     vi.useFakeTimers();
     const app = new App();
@@ -370,7 +439,7 @@ describe("enrichment lifecycle", () => {
     await vi.advanceTimersByTimeAsync(1000);
     await settle(160);
 
-    expect((view.contentEl as unknown as FakeElement).querySelector(".cc-inbox-enrich-all")?.disabled).toBe(false);
+    expect((view.contentEl as unknown as FakeElement).querySelector(".cc-inbox-enrich-all")).toBeNull();
     expect(reads).toBeLessThanOrEqual((pendingCount * 2) + (enrichedCount * 2));
     plugin.onunload();
   });
@@ -447,7 +516,7 @@ describe("enrichment lifecycle", () => {
       .toContain("remote model unavailable");
   });
 
-  it("catches a regression that leaves a single-note control locked when its first render rejects", async () => {
+  it("removes a completed single-note control when its first render rejects", async () => {
     const app = new App();
     app.vault.seed("Clippings/single.md", "Private clip");
     const plugin = inboxPlugin(app, async () => ({ status: "enriched" }));
@@ -458,14 +527,11 @@ describe("enrichment lifecycle", () => {
     (view.contentEl as unknown as FakeElement).querySelector(".cc-inbox-enrich")?.dispatchEvent({ type: "click" });
     await settle();
 
-    const retry = (view.contentEl as unknown as FakeElement).querySelector(".cc-inbox-enrich");
-    expect(retry?.disabled).toBe(false);
-    retry?.dispatchEvent({ type: "click" });
-    await settle();
+    expect((view.contentEl as unknown as FakeElement).querySelector(".cc-inbox-enrich")).toBeNull();
     expect((view.contentEl as unknown as FakeElement).querySelector(".cc-inbox-operation-status")?.classList.has("cc-inbox-operation-success")).toBe(true);
   });
 
-  it("catches a regression that leaves an enrich-all control locked when its first render rejects", async () => {
+  it("removes a completed enrich-all control when its first render rejects", async () => {
     const app = new App();
     app.vault.seed("Clippings/batch.md", "Private clip");
     const plugin = inboxPlugin(app, async () => ({ status: "enriched" }));
@@ -476,10 +542,7 @@ describe("enrichment lifecycle", () => {
     (view.contentEl as unknown as FakeElement).querySelector(".cc-inbox-enrich-all")?.dispatchEvent({ type: "click" });
     await settle();
 
-    const retry = (view.contentEl as unknown as FakeElement).querySelector(".cc-inbox-enrich-all");
-    expect(retry?.disabled).toBe(false);
-    retry?.dispatchEvent({ type: "click" });
-    await settle();
+    expect((view.contentEl as unknown as FakeElement).querySelector(".cc-inbox-enrich-all")).toBeNull();
     expect((view.contentEl as unknown as FakeElement).querySelector(".cc-inbox-operation-status")?.classList.has("cc-inbox-operation-success")).toBe(true);
   });
 
@@ -521,7 +584,7 @@ describe("enrichment lifecycle", () => {
     (view.contentEl as unknown as FakeElement).querySelector(".cc-inbox-enrich")?.dispatchEvent({ type: "click" });
     await settle();
 
-    expect((view.contentEl as unknown as FakeElement).querySelector(".cc-inbox-enrich")?.disabled).toBe(false);
+    expect((view.contentEl as unknown as FakeElement).querySelector(".cc-inbox-enrich")).toBeNull();
     expect((view.contentEl as unknown as FakeElement).querySelector(".cc-inbox-operation-status")?.classList.has("cc-inbox-operation-success")).toBe(true);
   });
 });

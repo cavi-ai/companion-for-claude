@@ -193,6 +193,104 @@ describe("source enrichment wiring", () => {
     });
   });
 
+  it("rejects a mobile source above 5 MiB before reading the note or calling the model", async () => {
+    Platform.isMobile = true;
+    Platform.isDesktop = false;
+    const { app, file, plugin, router } = mobilePlugin({
+      utilityBackend: "custom",
+      openaiCompatHost: "https://models.example.com/v1",
+      openaiCompatModel: "remote-model",
+    });
+    file.stat.size = (5 * 1024 * 1024) + 1;
+    const read = vi.spyOn(app.vault, "cachedRead");
+    const complete = vi.spyOn(router.openaiCompat, "complete");
+
+    const outcome = await plugin.enrichInboxItem(file, { inline: true, refreshInboxViews: false });
+
+    expect(outcome.status).toBe("failed");
+    if (outcome.status === "failed") expect(outcome.error.message).toMatch(/5 MiB.*reduce|reduce.*5 MiB/i);
+    expect(read).not.toHaveBeenCalled();
+    expect(complete).not.toHaveBeenCalled();
+  });
+
+  it("reads an admitted source only once before its atomic frontmatter write", async () => {
+    Platform.isMobile = true;
+    Platform.isDesktop = false;
+    const { app, file, plugin, router } = mobilePlugin({
+      utilityBackend: "custom",
+      openaiCompatHost: "https://models.example.com/v1",
+      openaiCompatModel: "remote-model",
+    });
+    vi.spyOn(router.openaiCompat, "complete").mockResolvedValue(JSON.stringify({
+      title: "Private note",
+      site: "Vault",
+      summary: "Private content.",
+    }));
+    const read = vi.spyOn(app.vault, "cachedRead");
+
+    await expect(plugin.enrichInboxItem(file, { inline: true, refreshInboxViews: false }))
+      .resolves.toEqual({ status: "enriched" });
+
+    expect(read).toHaveBeenCalledTimes(1);
+  });
+
+  it("reads a CSV once and preserves derived columns and rows through the public enrichment path", async () => {
+    Platform.isMobile = true;
+    Platform.isDesktop = false;
+    const { app, plugin, router } = mobilePlugin({
+      utilityBackend: "custom",
+      openaiCompatHost: "https://models.example.com/v1",
+      openaiCompatModel: "remote-model",
+    });
+    const csv = app.vault.seed("Clippings/sales.csv", "date,units\n2024,10\n2025,20");
+    vi.spyOn(router.openaiCompat, "complete").mockResolvedValue(JSON.stringify({
+      title: "Sales",
+      summary: "Monthly sales.",
+    }));
+    const read = vi.spyOn(app.vault, "cachedRead");
+
+    await expect(plugin.enrichInboxItem(csv, { inline: true, refreshInboxViews: false }))
+      .resolves.toEqual({ status: "enriched" });
+
+    expect(read).toHaveBeenCalledTimes(1);
+    const sidecar = app.vault.getAbstractFileByPath("Clippings/Sales.md");
+    expect(sidecar).toBeInstanceOf(TFile);
+    const written = await app.vault.cachedRead(sidecar as TFile);
+    expect(written).toContain("columns:");
+    expect(written).toContain('  - "date"');
+    expect(written).toContain('  - "units"');
+    expect(written).toContain("rows: 2");
+  });
+
+  it("keeps chat instructions and vault context out of source extraction requests", async () => {
+    Platform.isMobile = true;
+    Platform.isDesktop = false;
+    const { app, file, plugin, router } = mobilePlugin({
+      utilityBackend: "custom",
+      openaiCompatHost: "https://models.example.com/v1",
+      openaiCompatModel: "remote-model",
+      systemPrompt: "CHAT-SYSTEM-SENTINEL",
+      context: { activeNote: true, selection: true, linkedNotes: true, searchVault: true },
+    });
+    app.vault.seed("Private/active-context.md", "VAULT-CONTEXT-SENTINEL");
+    const complete = vi.spyOn(router.openaiCompat, "complete").mockResolvedValue(JSON.stringify({
+      title: "Private note",
+      site: "Vault",
+      summary: "Private content.",
+    }));
+
+    await expect(plugin.enrichInboxItem(file, { inline: true, refreshInboxViews: false }))
+      .resolves.toEqual({ status: "enriched" });
+
+    expect(complete).toHaveBeenCalledTimes(1);
+    const request = complete.mock.calls[0]?.[0];
+    expect(request?.system).toContain("You extract structured metadata");
+    expect(request?.system).not.toContain("CHAT-SYSTEM-SENTINEL");
+    expect(request?.messages).toHaveLength(1);
+    expect(request?.messages[0]?.content).toContain("Private note content.");
+    expect(request?.messages[0]?.content).not.toContain("VAULT-CONTEXT-SENTINEL");
+  });
+
   it("keeps a successful public Inbox enrichment successful when one registered Inbox view cannot refresh", async () => {
     Platform.isMobile = true;
     Platform.isDesktop = false;

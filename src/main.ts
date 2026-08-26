@@ -134,6 +134,12 @@ import { OBSIDIAN_GENERAL_SETTINGS_TAB, claudeDesktopConfigPath, type DesktopPla
 // Artifacts/plans are long (rich layout + inline script); give generous output
 // headroom so a tabbed document finishes instead of truncating into broken JS.
 const ARTIFACT_MAX_TOKENS = 32000;
+/**
+ * Mobile's native vault bridge expands a full-file read/write into several
+ * Java and JS copies. A larger note can exceed Android's renderer heap even
+ * though extraction sends only the first 8,000 characters to the model.
+ */
+const MOBILE_SOURCE_NOTE_MAX_BYTES = 5 * 1024 * 1024;
 
 /** Shape of this plugin's persisted data.json (settings + chat history). */
 interface PersistedData {
@@ -991,6 +997,8 @@ export default class ClaudeCompanionPlugin extends Plugin {
   }
 
   private async performEnrichFile(file: TFile, notify = true): Promise<EnrichRunOutcome> {
+    const sizeFailure = this.mobileSourceSizeFailure(file);
+    if (sizeFailure) return sizeFailure;
     const content = file.extension === "md" ? await this.app.vault.cachedRead(file) : "";
     if (!shouldEnrich({ path: file.path, ext: file.extension, content, inboxFolder: this.settings.sourceInboxFolder, recentlyWritten: this.enrichRecentlyWritten })) {
       return { status: "skipped", reason: `${file.basename} is not eligible for source enrichment.` };
@@ -1001,7 +1009,17 @@ export default class ClaudeCompanionPlugin extends Plugin {
     if (this.settings.sourceCaptureConsent !== "allow" && !(await this.askSourceCaptureConsent())) {
       return { status: "skipped", reason: "automatic source enrichment was not approved." };
     }
-    return this.runEnrich(file, notify);
+    return this.runEnrich(file, notify, file.extension === "md" ? content : undefined);
+  }
+
+  private mobileSourceSizeFailure(file: TFile): Extract<EnrichRunOutcome, { status: "failed" }> | null {
+    if (!Platform.isMobile || file.stat.size <= MOBILE_SOURCE_NOTE_MAX_BYTES) return null;
+    return {
+      status: "failed",
+      error: new Error(
+        `${file.basename} exceeds the 5 MiB mobile enrichment limit. Reduce the clip before enriching it.`,
+      ),
+    };
   }
 
   /**
@@ -1053,7 +1071,9 @@ export default class ClaudeCompanionPlugin extends Plugin {
     return consent;
   }
 
-  private async runEnrich(file: TFile, notify = true): Promise<EnrichRunOutcome> {
+  private async runEnrich(file: TFile, notify = true, prefetchedContent?: string): Promise<EnrichRunOutcome> {
+    const sizeFailure = this.mobileSourceSizeFailure(file);
+    if (sizeFailure) return sizeFailure;
     let selection: ProviderSelection | undefined;
     const lifecycleGeneration = this.utilityLifecycleGeneration ?? 0;
     const activityId = notify
@@ -1065,7 +1085,7 @@ export default class ClaudeCompanionPlugin extends Plugin {
         })
       : undefined;
     try {
-      const raw = await this.app.vault.cachedRead(file);
+      const raw = prefetchedContent ?? await this.app.vault.cachedRead(file);
       const capture =
         file.extension === "md"
           ? { kind: "markdown" as const, path: file.path, basename: file.basename, content: raw, url: parseClipUrl(raw) }

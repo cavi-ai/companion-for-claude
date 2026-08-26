@@ -1,6 +1,7 @@
-import { ItemView, WorkspaceLeaf, TFile, setIcon } from "obsidian";
+import { ItemView, WorkspaceLeaf, TFile, setIcon, Platform } from "obsidian";
 import type ClaudeCompanionPlugin from "../main";
 import { inboxItems, typedInboxItems, type InboxFileEntry, type InboxItem } from "../sources/inbox";
+import { ExtractError } from "../sources/extract";
 import { wireUpItems, type WireUpEntry } from "../links/wireUp";
 import type { BatchLinkApplyResult } from "../links/batch";
 import { createInboxRefreshController, type InboxRefreshController } from "./inboxRefresh";
@@ -46,6 +47,12 @@ export class InboxView extends ItemView {
   private linkResult: BatchLinkApplyResult | null = null;
   /** Per-file feedback persists for failures so users can retry the exact item. */
   private enrichmentFeedback = new Map<string, InboxFeedback>();
+  /**
+   * A large mobile note can take time to re-enter Obsidian's metadata cache
+   * after its atomic rewrite. Keep successful paths typed in this view so a
+   * stale cache cannot offer the same work again in the meantime.
+   */
+  private enrichedOptimistically = new Set<string>();
   /** One concise inline summary for the current or most recent Inbox operation. */
   private operationFeedback: InboxFeedback = { state: "idle", message: "Ready to enrich Inbox notes." };
 
@@ -73,8 +80,14 @@ export class InboxView extends ItemView {
 
   override async onOpen(): Promise<void> {
     this.registerEvent(this.app.vault.on("create", () => this.requestRefresh()));
-    this.registerEvent(this.app.vault.on("delete", () => this.requestRefresh()));
-    this.registerEvent(this.app.vault.on("rename", () => this.requestRefresh()));
+    this.registerEvent(this.app.vault.on("delete", (file) => {
+      this.enrichedOptimistically.delete(file.path);
+      this.requestRefresh();
+    }));
+    this.registerEvent(this.app.vault.on("rename", (_file, oldPath) => {
+      this.enrichedOptimistically.delete(oldPath);
+      this.requestRefresh();
+    }));
     this.registerEvent(this.app.metadataCache.on("changed", () => this.requestRefresh()));
     await this.render();
   }
@@ -92,13 +105,20 @@ export class InboxView extends ItemView {
   }
 
   private entries(): InboxFileEntry[] {
-    return this.app.vault.getFiles().map((f: TFile) => ({
-      path: f.path,
-      basename: f.basename,
-      ext: f.extension,
-      frontmatter: this.app.metadataCache.getFileCache(f)?.frontmatter ?? undefined,
-      mtime: f.stat?.mtime,
-    }));
+    return this.app.vault.getFiles().map((f: TFile) => {
+      const cached = this.app.metadataCache.getFileCache(f)?.frontmatter ?? undefined;
+      if (cached?.source_enriched === true) this.enrichedOptimistically.delete(f.path);
+      const frontmatter = this.enrichedOptimistically.has(f.path)
+        ? { ...(cached ?? {}), source_enriched: true }
+        : cached;
+      return {
+        path: f.path,
+        basename: f.basename,
+        ext: f.extension,
+        frontmatter,
+        mtime: f.stat?.mtime,
+      };
+    });
   }
 
   private pending(): InboxItem[] {
@@ -362,6 +382,7 @@ export class InboxView extends ItemView {
       if (!fromBatch) await this.renderSafely();
       const outcome = await this.plugin.enrichInboxItem(f, { inline: true, refreshInboxViews: !fromBatch });
       if (outcome.status === "enriched") {
+        this.enrichedOptimistically.add(item.path);
         this.enrichmentFeedback.delete(item.path);
         if (!fromBatch) this.setOperationFeedback("success", `Typed source note: ${item.basename}.`);
         return outcome;
@@ -394,6 +415,7 @@ export class InboxView extends ItemView {
     let enriched = 0;
     let failed = 0;
     let completed = 0;
+    let notAttempted = 0;
     try {
       await this.renderSafely();
       for (const item of items) {
@@ -418,10 +440,16 @@ export class InboxView extends ItemView {
             details: [{ label: item.path, message: detail, state: "error" }],
           });
         }
+        if (Platform.isMobile && outcome.status === "failed" && outcome.error instanceof ExtractError) {
+          notAttempted = items.length - completed;
+          break;
+        }
       }
       this.setOperationFeedback(
         failed === 0 ? "success" : "error",
-        failed === 0
+        notAttempted > 0
+          ? `Inbox enrichment stopped after invalid model output; ${notAttempted} note${notAttempted === 1 ? " was" : "s were"} not attempted.`
+          : failed === 0
           ? `Typed ${enriched} source note${enriched === 1 ? "" : "s"}.`
           : `Typed ${enriched} of ${items.length} source notes; ${failed} failed.`,
       );
@@ -432,6 +460,7 @@ export class InboxView extends ItemView {
           completed,
           succeeded: enriched,
           failed,
+          ...(notAttempted > 0 ? { technicalDetails: `${notAttempted} note${notAttempted === 1 ? " was" : "s were"} not attempted after repeated invalid model output.` } : {}),
           recovery: [
             { id: "review-inbox-failures", label: "Review failed notes", kind: "retry" },
             { id: "utility-settings", label: "Open utility settings", kind: "settings" },
