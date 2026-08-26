@@ -47,14 +47,10 @@ test("Detect fills the endpoint model dropdown in settings", async () => {
   const harness = await launchObsidianHarness({ endpointModels: MODELS });
   const { page } = harness;
   try {
-    await page.evaluate(() => {
-      const app = (window as unknown as { app: { setting: { open(): void; openTabById(id: string): void } } }).app;
-      app.setting.open();
-      app.setting.openTabById("claude-companion");
-    });
-    const tab = page.locator(".vertical-tab-content-container .vertical-tab-content").last();
+    const settingsPage = await harness.openSettings();
+    const tab = settingsPage.locator(".vertical-tab-content-container .vertical-tab-content").last();
     await expect(tab).toBeVisible();
-    await expect(tab.locator(".setting-item").first()).toBeVisible({ timeout: 10_000 });
+    await expect(tab.locator(".setting-item:visible").first()).toBeVisible({ timeout: 10_000 });
     // The tab is declarative since 0.27.1: sections are host-rendered pages, so
     // open the page by its name before reaching for a row inside it.
     await tab.locator(".setting-item", { hasText: "Local models (Ollama & endpoints)" }).first().click();
@@ -63,12 +59,13 @@ test("Detect fills the endpoint model dropdown in settings", async () => {
     await expect(local).toBeVisible({ timeout: 10_000 });
 
     // Before Detect the field is free text — the endpoint's ids are unknown.
-    await expect(local.locator("select")).toHaveCount(0);
+    await expect(local.locator("select:not(.is-measuring)")).toHaveCount(0);
     // setTooltip puts the tooltip on aria-label, so the button's accessible name
     // is not "Detect" — match its text.
     await local.locator("button").filter({ hasText: "Detect" }).click();
 
-    const dropdown = local.locator("select");
+    // Skip Obsidian 1.13's hidden measuring twin; it is not the control.
+    const dropdown = local.locator("select:not(.is-measuring)");
     await expect(dropdown).toHaveCount(1, { timeout: 10_000 });
     for (const model of MODELS) {
       await expect(dropdown.locator("option", { hasText: model })).toHaveCount(1);

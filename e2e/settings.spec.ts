@@ -1,5 +1,5 @@
-import { test, expect, type Page, type Locator } from "@playwright/test";
-import { launchObsidianHarness } from "./obsidianHarness";
+import { test, expect, type Locator } from "@playwright/test";
+import { launchObsidianHarness, type ObsidianHarness } from "./obsidianHarness";
 
 // Settings-tab regression suite. Since 0.27.1 the tab is declarative
 // (getSettingDefinitions), so Obsidian owns the group/page chrome and this
@@ -7,15 +7,13 @@ import { launchObsidianHarness } from "./obsidianHarness";
 // controls respond, and a visibility predicate swaps a dependent row. The
 // shape of the definition tree itself is covered by test/settingsTabRender.
 
-async function openSettingsTab(page: Page): Promise<Locator> {
-  await page.evaluate(() => {
-    const app = (window as unknown as { app: { setting: { open(): void; openTabById(id: string): void } } }).app;
-    app.setting.open();
-    app.setting.openTabById("claude-companion");
-  });
-  const tab = page.locator(".vertical-tab-content-container .vertical-tab-content").last();
+async function openSettingsTab(harness: ObsidianHarness): Promise<Locator> {
+  const settingsPage = await harness.openSettings();
+  const tab = settingsPage.locator(".vertical-tab-content-container .vertical-tab-content").last();
   await expect(tab).toBeVisible();
-  await expect(tab.locator(".setting-item").first()).toBeVisible();
+  // Intro rows are conditional (credential callouts), so the first row in DOM
+  // order can legitimately be hidden — assert on the first rendered one.
+  await expect(tab.locator(".setting-item:visible").first()).toBeVisible();
   return tab;
 }
 
@@ -26,7 +24,7 @@ test("settings tab renders, controls respond, dependent rows follow", async () =
   page.on("console", (msg) => { if (msg.type() === "error") consoleErrors.push(msg.text()); });
   page.on("pageerror", (err) => consoleErrors.push(String(err)));
   try {
-    const tab = await openSettingsTab(page);
+    const tab = await openSettingsTab(harness);
 
     expect(await tab.locator(".setting-item").count()).toBeGreaterThan(10);
     expect(
@@ -38,7 +36,9 @@ test("settings tab renders, controls respond, dependent rows follow", async () =
 
     // Authentication is a control definition; its value gates which credential
     // row is visible, so switching it must swap the field in place.
-    const auth = tab.locator(".setting-item", { hasText: "Authentication" }).locator("select");
+    // Obsidian 1.13 mounts a hidden `select.is-measuring` twin beside every
+    // dropdown to size it; only the real control is addressable.
+    const auth = tab.locator(".setting-item", { hasText: "Authentication" }).locator("select:not(.is-measuring)");
     await auth.selectOption("oauthToken");
     await expect(tab.locator("input[type='password'][placeholder*='sk-ant-oat']")).toBeVisible();
     await auth.selectOption("apiKey");

@@ -49,6 +49,109 @@ function deferred<T>(): { promise: Promise<T>; resolve(value: T): void } {
 afterEach(() => vi.useRealTimers());
 
 describe("enrichment lifecycle", () => {
+  it("single-flights the same clip across automatic and Inbox enrichment", async () => {
+    vi.useFakeTimers();
+    const app = new App();
+    const file = app.vault.seed("Clippings/same.md", "Same clip");
+    const release = deferred<void>();
+    const started: string[] = [];
+    let active = 0;
+    let maxActive = 0;
+    const plugin = Object.create(ClaudeCompanionPlugin.prototype) as ClaudeCompanionPlugin;
+    Object.assign(plugin, {
+      app,
+      settings: {
+        ...DEFAULT_SETTINGS,
+        sourceCaptureConsent: "allow",
+        sourceCaptureEnabled: true,
+        sourceEnrichOnCreate: true,
+        sourceInboxFolder: "Clippings",
+      },
+      utilityLifecycleEnded: false,
+      utilityLifecycleGeneration: 0,
+      enrichTimers: new Map<string, number>(),
+      enrichPending: new Map<string, TFile>(),
+      enrichQueueRunning: false,
+      enrichRecentlyWritten: new Set<string>(),
+      enrichRecentlyWrittenExpiryTimers: new Map<string, number>(),
+      runEnrich: async (candidate: TFile): Promise<EnrichRunOutcome> => {
+        started.push(candidate.path);
+        active++;
+        maxActive = Math.max(maxActive, active);
+        await release.promise;
+        active--;
+        return { status: "enriched" };
+      },
+    });
+    const lifecycle = plugin as unknown as EnrichmentLifecyclePlugin;
+
+    lifecycle.queueEnrich(file);
+    await vi.advanceTimersByTimeAsync(1500);
+    await settle();
+    const inbox = plugin.enrichInboxItem(file, { inline: true, refreshInboxViews: false });
+    await settle();
+
+    expect(started).toEqual([file.path]);
+    expect(maxActive).toBe(1);
+
+    release.resolve();
+    await expect(inbox).resolves.toEqual({ status: "enriched" });
+    await settle();
+    expect(lifecycle.enrichQueueRunning).toBe(false);
+  });
+
+  it("serializes different clips across automatic and Inbox enrichment", async () => {
+    vi.useFakeTimers();
+    const app = new App();
+    const automatic = app.vault.seed("Clippings/automatic.md", "Automatic clip");
+    const inbox = app.vault.seed("Clippings/inbox.md", "Inbox clip");
+    const releaseAutomatic = deferred<void>();
+    const started: string[] = [];
+    let active = 0;
+    let maxActive = 0;
+    const plugin = Object.create(ClaudeCompanionPlugin.prototype) as ClaudeCompanionPlugin;
+    Object.assign(plugin, {
+      app,
+      settings: {
+        ...DEFAULT_SETTINGS,
+        sourceCaptureConsent: "allow",
+        sourceCaptureEnabled: true,
+        sourceEnrichOnCreate: true,
+        sourceInboxFolder: "Clippings",
+      },
+      utilityLifecycleEnded: false,
+      utilityLifecycleGeneration: 0,
+      enrichTimers: new Map<string, number>(),
+      enrichPending: new Map<string, TFile>(),
+      enrichQueueRunning: false,
+      enrichRecentlyWritten: new Set<string>(),
+      enrichRecentlyWrittenExpiryTimers: new Map<string, number>(),
+      runEnrich: async (candidate: TFile): Promise<EnrichRunOutcome> => {
+        started.push(candidate.path);
+        active++;
+        maxActive = Math.max(maxActive, active);
+        if (candidate.path === automatic.path) await releaseAutomatic.promise;
+        active--;
+        return { status: "enriched" };
+      },
+    });
+    const lifecycle = plugin as unknown as EnrichmentLifecyclePlugin;
+
+    lifecycle.queueEnrich(automatic);
+    await vi.advanceTimersByTimeAsync(1500);
+    await settle();
+    const inboxResult = plugin.enrichInboxItem(inbox, { inline: true, refreshInboxViews: false });
+    await settle();
+
+    expect(started).toEqual([automatic.path]);
+    expect(maxActive).toBe(1);
+
+    releaseAutomatic.resolve();
+    await expect(inboxResult).resolves.toEqual({ status: "enriched" });
+    expect(started).toEqual([automatic.path, inbox.path]);
+    expect(maxActive).toBe(1);
+  });
+
   it("serializes a burst of automatic Clipper enrichments and continues after one fails", async () => {
     vi.useFakeTimers();
     const first = new TFile("Clippings/first.md", "First", 0);

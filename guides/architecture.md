@@ -35,6 +35,7 @@ the MCP bridge on layout-ready. Everything else is organized by concern.
 | `bases/baseFile.ts` | Validates a model-proposed database view and emits Obsidian Bases `.base` YAML. |
 | `conversations/store.ts` | Pure conversation store — saved chats survive restarts and resume from a session list. |
 | `usage/tokens.ts` | Token counting and cost estimation for the context gauge and session totals. |
+| `commands/definitions.ts` | The command-palette surface as data — ids, names, and availability rules behind a `CommandActions` interface, so `main.ts` keeps only the wiring and the set is testable without an Obsidian app. |
 | `view/` | The side-panel chat UI plus the Research Desk/Workbench views, diff modal, pickers, and slash/at menus. `BatchDiffModal.ts` reviews many notes at once over the pure `batchDiffState.ts` selection model; `inboxRefresh.ts` coalesces Inbox rescans and drops superseded ones; `quickOptions.ts` derives each page's focused option menu (settings last) and `QuickOptionsModal.ts` renders it; `ActivityIndicator.ts` renders the activity drawer over the shared store, ordering needs-attention work first; `companionChrome.ts` mounts both on every Companion view; `ClipperSetupModal.ts` walks through installing the generated clipper templates. |
 
 ## The pure-module pattern

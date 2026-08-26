@@ -3,25 +3,22 @@ import { launchObsidianHarness } from "./obsidianHarness";
 
 test("Desktop integrations opens through Obsidian's real Node runtime boundary", async () => {
   const harness = await launchObsidianHarness();
-  const { page } = harness;
   try {
-    await page.evaluate(() => {
-      const app = (window as unknown as { app: { setting: { open(): void; openTabById(id: string): void } } }).app;
-      app.setting.open();
-      app.setting.openTabById("claude-companion");
-    });
+    // Settings is its own window on Obsidian 1.13+, and the modal mounts in
+    // whichever window owns the control that opened it.
+    const settingsPage = await harness.openSettings();
 
-    const settings = page.locator(".vertical-tab-content");
+    const settings = settingsPage.locator(".vertical-tab-content");
     const open = settings.getByRole("button", { name: "Desktop integrations", exact: true });
     await expect(open).toBeVisible();
     await open.click();
 
-    const modal = page.locator(".cc-desktop-integrations-modal");
-    await page.waitForTimeout(250);
-    const notices = await page.locator(".notice").allTextContents();
+    const modal = settingsPage.locator(".cc-desktop-integrations-modal");
+    await settingsPage.waitForTimeout(250);
+    const notices = await settingsPage.locator(".notice").allTextContents();
     expect(await modal.count(), `notices: ${notices.join(" | ")}`).toBeGreaterThan(0);
     await expect(modal).toBeVisible();
-    await expect(page.getByText("Claude Code", { exact: true })).toBeVisible();
+    await expect(settingsPage.getByText("Claude Code", { exact: true })).toBeVisible();
   } finally {
     await harness.close();
   }

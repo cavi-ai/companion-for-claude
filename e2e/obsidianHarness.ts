@@ -1,13 +1,26 @@
-import { chromium, type Browser, type Page } from "@playwright/test";
+import { chromium, type Browser, type BrowserContext, type Page } from "@playwright/test";
 import { createServer, type Server } from "node:http";
-import { chmod, copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { chmod, copyFile, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn, type ChildProcess } from "node:child_process";
+import { compareVersions, effectiveObsidianCoreVersion, newestCoreAsar } from "./coreAsar";
+
+export { effectiveObsidianCoreVersion };
 
 export interface ObsidianHarness {
   page: Page;
+  /**
+   * Open a settings tab and return the page that renders it. Obsidian 1.13 moved
+   * Settings into its own window, so this is not always the vault window.
+   */
+  openSettings(tabId?: string): Promise<Page>;
+  /**
+   * Every live Obsidian window. Obsidian mounts a modal in whichever window is
+   * focused, so app-wide assertions must span all of them, not just the vault.
+   */
+  windows(): Page[];
   providerRequests(): number;
   close(): Promise<void>;
 }
@@ -23,23 +36,23 @@ export interface ObsidianHarnessOptions {
   endpointModels?: string[];
 }
 
-/** Compare dotted versions; -1 / 0 / 1. */
-function compareVersions(a: string, b: string): number {
-  const left = a.split(".").map(Number);
-  const right = b.split(".").map(Number);
-  for (let i = 0; i < Math.max(left.length, right.length); i += 1) {
-    const diff = (left[i] ?? 0) - (right[i] ?? 0);
-    if (diff !== 0) return diff < 0 ? -1 : 1;
-  }
-  return 0;
+/** Where Obsidian keeps the cores it auto-updates into. */
+function obsidianUserDataDir(): string {
+  if (process.platform === "darwin") return join(homedir(), "Library", "Application Support", "obsidian");
+  if (process.platform === "win32") return join(process.env.APPDATA ?? join(homedir(), "AppData", "Roaming"), "obsidian");
+  return join(process.env.XDG_CONFIG_HOME ?? join(homedir(), ".config"), "obsidian");
 }
 
-/** Resolve the core version an isolated profile will load, including an explicitly supplied auto-update ASAR. */
-export function effectiveObsidianCoreVersion(installed: string, coreAsarPath?: string): string {
-  if (!coreAsarPath) return installed;
-  const match = /^obsidian-(\d+(?:\.\d+)+)\.asar$/.exec(basename(coreAsarPath));
-  if (!match?.[1]) throw new Error(`OBSIDIAN_ASAR_PATH must name an obsidian-<version>.asar file: ${coreAsarPath}`);
-  return compareVersions(match[1], installed) > 0 ? match[1] : installed;
+/**
+ * The newest core Obsidian has already downloaded. The installed .app is only a
+ * shell and loads this at runtime, so without it the harness reads the bundle's
+ * version and refuses to run against a machine that is in fact up to date.
+ */
+async function discoverCoreAsar(): Promise<string | undefined> {
+  const dir = obsidianUserDataDir();
+  const names = await readdir(dir).catch(() => [] as string[]);
+  const newest = newestCoreAsar(names);
+  return newest ? join(dir, newest) : undefined;
 }
 
 /**
@@ -64,6 +77,32 @@ async function assertSupportedObsidian(executable: string, coreAsarPath?: string
       `Obsidian core ${effective} is available but this plugin requires ${minAppVersion} or later. `
         + `Update Obsidian, point OBSIDIAN_APP_PATH at a ${minAppVersion}+ build, or set OBSIDIAN_ASAR_PATH to an official ${minAppVersion}+ core ASAR.`,
     );
+  }
+}
+
+/** The container Obsidian renders a settings tab into, whichever window holds it. */
+const SETTINGS_TAB = ".vertical-tab-content-container .vertical-tab-content";
+
+/**
+ * Ask Obsidian to open `tabId`, then resolve the window that actually rendered
+ * it. Settings is a separate BrowserWindow on 1.13+ and part of the vault window
+ * before that, so a spec must never assume which page holds the tab.
+ */
+async function openSettingsSurface(context: BrowserContext, page: Page, tabId: string): Promise<Page> {
+  await page.evaluate((id) => {
+    const app = (window as unknown as { app: { setting: { open(): void; openTabById(id: string): void } } }).app;
+    app.setting.open();
+    app.setting.openTabById(id);
+  }, tabId);
+  const deadline = Date.now() + 15_000;
+  for (;;) {
+    for (const candidate of context.pages()) {
+      if (candidate.isClosed()) continue;
+      const rendered = await candidate.locator(SETTINGS_TAB).count().catch(() => 0);
+      if (rendered > 0) return candidate;
+    }
+    if (Date.now() > deadline) throw new Error(`Settings tab ${tabId} did not render in any Obsidian window`);
+    await page.waitForTimeout(150);
   }
 }
 
@@ -171,7 +210,7 @@ esac
   await writeFile(join(profile, "obsidian.json"), JSON.stringify({ vaults: { e2e: { path: vault, ts: Date.now(), open: true } } }));
   const debuggingPort = await freePort();
   const executable = process.env.OBSIDIAN_APP_PATH ?? "/Applications/Obsidian.app/Contents/MacOS/Obsidian";
-  const coreAsarPath = process.env.OBSIDIAN_ASAR_PATH?.trim() || undefined;
+  const coreAsarPath = process.env.OBSIDIAN_ASAR_PATH?.trim() || await discoverCoreAsar();
   await assertSupportedObsidian(executable, coreAsarPath);
   if (coreAsarPath) await copyFile(coreAsarPath, join(profile, basename(coreAsarPath)));
   const processHandle = spawn(executable, [vault, `--user-data-dir=${profile}`, `--remote-debugging-port=${debuggingPort}`, "--disable-gpu", "--no-sandbox"], { stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, PATH: executablePath } });
@@ -220,7 +259,7 @@ esac
     }
     await page.bringToFront();
   }
-  return { page, providerRequests: () => requests, close: async () => { await browser.close().catch(() => undefined); await stop(processHandle); await closeServer(provider); if (endpoint) await closeServer(endpoint); await rm(root, { recursive: true, force: true }); } };
+  return { page, openSettings: (tabId = "claude-companion") => openSettingsSurface(context, page, tabId), windows: () => context.pages().filter((candidate) => !candidate.isClosed()), providerRequests: () => requests, close: async () => { await browser.close().catch(() => undefined); await stop(processHandle); await closeServer(provider); if (endpoint) await closeServer(endpoint); await rm(root, { recursive: true, force: true }); } };
 }
 
 async function stop(handle: ChildProcess): Promise<void> { if (handle.exitCode !== null) return; handle.kill("SIGTERM"); await Promise.race([new Promise<void>((resolve) => handle.once("exit", () => resolve())), new Promise<void>((resolve) => setTimeout(resolve, 3_000))]); if (handle.exitCode === null) handle.kill("SIGKILL"); }

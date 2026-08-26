@@ -315,6 +315,7 @@ export class FakeElement {
   dispatchEvent(event: any): boolean { for (const listener of this.listeners.get(event.type) ?? []) listener(event); return true; }
   focus(): void { this.attributes.set("data-focused", "true"); }
   setAttr(name: string, value: string): void { this.attributes.set(name, String(value)); }
+  setAttribute(name: string, value: string): void { this.attributes.set(name, String(value)); }
   removeAttribute(name: string): void { this.attributes.delete(name); }
   remove(): void {
     if (!this.parent) return;

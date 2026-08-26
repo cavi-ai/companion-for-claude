@@ -143,25 +143,23 @@ test("primary Companion screens are visually contained at real pane breakpoints"
       }
     }
 
-    await page.evaluate(() => {
-      const app = (window as unknown as { app: { setting: { open(): void; openTabById(id: string): void } } }).app;
-      app.setting.open();
-      app.setting.openTabById("claude-companion");
-    });
-    const settings = page.locator(".vertical-tab-content-container .vertical-tab-content").last();
+    const settingsPage = await harness.openSettings();
+    const settings = settingsPage.locator(".vertical-tab-content-container .vertical-tab-content").last();
     await expect(settings).toBeVisible();
-    await expect(settings.locator(".setting-item").first()).toBeVisible();
+    await expect(settings.locator(".setting-item:visible").first()).toBeVisible();
     // Desktop Obsidian keeps a fixed settings navigation rail; below 600px the
     // host shell itself horizontally scrolls. Compact phone settings require
     // Obsidian's native mobile shell rather than viewport-emulating desktop.
     for (const width of [600, 768]) {
-      await page.setViewportSize({ width, height: 700 });
-      await page.waitForTimeout(100);
-      await page.screenshot({ path: `${OUTPUT}/visual-settings-${width}-light.png` });
+      await settingsPage.setViewportSize({ width, height: 700 });
+      await settingsPage.waitForTimeout(100);
+      await settingsPage.screenshot({ path: `${OUTPUT}/visual-settings-${width}-light.png` });
       for (const issue of await visualIssues(settings)) failures.push(`settings@${width}: ${issue}`);
     }
 
-    await page.keyboard.press("Escape");
+    // Resizing the settings window can tear it down on 1.13; closing it is the
+    // point, so a window that is already gone is success, not a failure.
+    if (!settingsPage.isClosed()) await settingsPage.keyboard.press("Escape").catch(() => undefined);
     await page.setViewportSize({ width: 1280, height: 800 });
     const chat = await openSurface(page, surfaces[0]!);
     await sizePane(chat, 320);

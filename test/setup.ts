@@ -9,6 +9,10 @@ const g = globalThis as Record<string, unknown>;
 g.window ??= globalThis;
 g.activeWindow ??= globalThis;
 g.activeDocument ??= (globalThis as { document?: unknown }).document ?? {};
+// Node 21+ exposes a `navigator` global; Node 20 does not, so a test that
+// defines `navigator.clipboard` throws "called on non-object" there. Provision
+// a bare object when it is missing so clipboard-shape tests run on every Node.
+g.navigator ??= {};
 if (typeof (globalThis as { require?: unknown }).require !== "function") {
   g.require = createRequire(import.meta.url);
 }
