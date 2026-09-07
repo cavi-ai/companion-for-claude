@@ -111,8 +111,9 @@ export interface PluginSettings {
   /** Route cheap "utility" work (summarize/tag/ingest) to this backend. */
   utilityBackend: "claude" | "ollama" | "custom";
   /** Chat backend: always Claude, always local, auto (Claude with local
-   *  fallback), or custom (an OpenAI-compatible endpoint). */
-  chatBackend: "claude" | "local" | "auto" | "custom";
+   *  fallback), custom (an OpenAI-compatible endpoint), or claude-cli (the
+   *  user's Claude Code sign-in, desktop). */
+  chatBackend: "claude" | "local" | "auto" | "custom" | "claude-cli";
   /** Provider policy for explicit Research Intelligence narrative analysis. */
   intelligenceNarrator: "current" | "claude" | "local" | "disabled";
 
@@ -169,6 +170,10 @@ export interface PluginSettings {
   agentModeEnabled: boolean;
   /** Also offer write tools (create/append/update/move). Each write asks for confirmation. */
   agentAllowWrites: boolean;
+  /** Review proposed edits inline in the editor when the note is open. */
+  inlineDiffEnabled: boolean;
+  /** Floating "Rewrite with Claude" action over a selection (desktop). */
+  selectionActionEnabled: boolean;
   /** Max stream→tools→stream iterations per turn. */
   agentMaxIterations: number;
   /** Offer the web_search agent tool (explicit calls only). */
@@ -254,6 +259,8 @@ export interface PluginSettings {
   ontologyFolder: string;
   /** Set once the ontology seed prompt has been shown (don't nag again). */
   ontologySeedPrompted: boolean;
+  /** One-time desktop-integrations offer already shown. */
+  desktopIntegrationsOffered: boolean;
 }
 
 export const DEFAULT_SETTINGS: PluginSettings = {
@@ -325,6 +332,8 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   // confirmation before it touches the vault, so this is safe; the in-chat
   // "Act on vault" toggle flips it per session.
   agentAllowWrites: true,
+  inlineDiffEnabled: true,
+  selectionActionEnabled: true,
   agentMaxIterations: 10,
   webSearchEnabled: false,
   webSearchEngine: "duckduckgo",
@@ -367,6 +376,7 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   ontologyEnabled: true,
   ontologyFolder: "Ontology",
   ontologySeedPrompted: false,
+  desktopIntegrationsOffered: false,
 };
 
 export type DiscoveryNumericSettings = Pick<PluginSettings,

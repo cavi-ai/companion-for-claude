@@ -13,6 +13,7 @@ function stubPlugin(): ClaudeCompanionPlugin & { settings: Record<string, unknow
       anthropic: { hasCredentials: () => true, test: async () => ({ ok: true, detail: "" }) },
       ollama: { listModels: async () => [], capabilities: async () => [], test: async () => ({ ok: true, detail: "" }) },
       openaiCompat: { listModels: async () => [], test: async () => ({ ok: true, detail: "" }) },
+      claudeCli: { probe: () => null, hasCredentials: () => false, test: async () => ({ ok: false, detail: "" }), refresh: async () => ({ ok: false, detail: "" }) },
     }),
     secrets: () => unavailableStore(),
     secretsWriteFailures: () => [],
@@ -122,5 +123,17 @@ describe("settings tab render", () => {
       Platform.isMobile = false;
       Platform.isDesktop = true;
     }
+  });
+});
+
+describe("Claude Code backend settings", () => {
+  it("offers claude-cli in the chat backend dropdown, renders a status row, and warns that it covers chat only", () => {
+    const defs = flatten(definitionsOf());
+    const backend = defs.find((d) => (d.control as { key?: string } | undefined)?.key === "chatBackend") as { control: { options: Record<string, string> } } | undefined;
+    expect(backend?.control.options["claude-cli"]).toBe("Claude Code — your subscription (desktop)");
+    const status = defs.find((d) => d.name === "Claude Code") as { render?: unknown } | undefined;
+    expect(typeof status?.render).toBe("function");
+    const utility = defs.find((d) => (d.control as { key?: string } | undefined)?.key === "utilityBackend") as { desc?: string } | undefined;
+    expect(utility?.desc).toContain("covers chat only");
   });
 });

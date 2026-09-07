@@ -38,6 +38,10 @@ import { findUnlinkedMentions, linkMention, type LinkCandidate } from "./links/u
 import { selectDigests, buildConsolidationPrompt, parseConsolidation, renderMemoryNote, MEMORY_NOTE_BASENAME, type DigestSource } from "./memory/consolidate";
 import { mentionEdits } from "./links/suggest";
 import { planEdits, applyPlan, diffToEdits, type EditPlan } from "./edit/diff";
+import { inlineDiffExtension, reviewInline } from "./editor/inlineDiffExtension";
+import { selectionActionExtension } from "./editor/selectionAction";
+import { editorViewOf } from "./editor/reviewEdits";
+import { createRangeSession } from "./editor/inlineDiffState";
 import { REWRITE_SYSTEM, buildRewriteUser, buildGroundedRewriteUser, rewriteMaxTokens, parseRewrite } from "./edit/rewrite";
 import { DiffModal } from "./view/DiffModal";
 import { BatchDiffModal } from "./view/BatchDiffModal";
@@ -45,6 +49,7 @@ import { RewriteModal } from "./view/RewriteModal";
 import { renderArtifactInline, ArtifactModal, openArtifactExternally } from "./artifacts/renderInline";
 import type { McpHttpServer } from "./mcp/server";
 import { VaultTools, type VaultToolsOptions } from "./mcp/vaultTools";
+import { catalogPromptProvider, vaultResourceProvider } from "./mcp/providers";
 import { ExternalMcpManager } from "./mcp/externalManager";
 import { externalAnthropicTools } from "./mcp/external";
 import type { AnthropicToolDef, ProviderId } from "./providers/types";
@@ -58,6 +63,13 @@ import { sanitizeFileName } from "./artifacts/parse";
 import { OrganizeReviewModal } from "./view/OrganizeReviewModal";
 import { stripFrontmatter } from "./semantic/chunk";
 import { generateToken, resolveMcpToken } from "./mcp/clientConfig";
+import type { AgentTurnRunner } from "./agent/loop";
+import { ClaudeCliSession } from "./cli/session";
+import { buildClaudeArgv, mcpConfigJson } from "./cli/argv";
+import { CLI_HIDDEN_TOOLS, cliAllowedTools, interactiveTools, type InteractiveToolDeps } from "./cli/bridgeTools";
+import { createNodeCliRuntime, type ClaudeCliRuntime } from "./cli/runtime";
+import { ClaudeCliProvider } from "./providers/claudeCli";
+import { excludeSessions } from "./memory/sessions";
 import { extractTasks, specBody, type SpecInput } from "./build/spec";
 import { trackerNoteBody } from "./build/tracker";
 import { BuildRunCoordinator, createBuildRun, restoreBuildRuns, type BuildRun, type BuildTaskExecutor } from "./build/run";
@@ -89,6 +101,8 @@ import {
   fromPersisted,
   getActive,
   newConversation,
+  withCliSession,
+  cliSessionIds,
   saveConversation,
   deleteConversation as removeConversation,
   setActive,
@@ -195,11 +209,16 @@ export default class ClaudeCompanionPlugin extends Plugin {
   /** Set by the last persist: credentials the store refused, still in data.json. */
   private unverifiedSecrets: SecretField[] = [];
   private _router: ProviderRouter | null = null;
+  /** Owns the sign-in probe across router rebuilds (settings saves null the router). */
+  private _cliProvider: ClaudeCliProvider | null = null;
   private _intelligenceCoordinator: IntelligenceCoordinator | null = null;
   private _discoveryCoordinator: DiscoveryCoordinator | null = null;
   private _viewIntelligenceCoordinators?: Set<IntelligenceCoordinator>;
   private _viewDiscoveryCoordinators?: Set<DiscoveryCoordinator>;
   private mcpServer: McpHttpServer | null = null;
+  private cliSessions = new Map<string, { session: ClaudeCliSession; bridge: McpHttpServer; signature: string; promptFile: string; lastUsed: number }>();
+  private cliPromptFiles = new Set<string>();
+  private _cliRuntime: ClaudeCliRuntime | null | undefined;
   private _desktopIntegrationModals?: Set<DesktopIntegrationsModal>;
   private _desktopRuntimeLoader: () => Promise<{
     createNodeDesktopRuntime(platform: DesktopPlatform, homeDir: string, env: Record<string, string | undefined>): Promise<DesktopIntegrationRuntime>;
@@ -276,6 +295,19 @@ export default class ClaudeCompanionPlugin extends Plugin {
     this.registerViews();
 
     this.registerArtifactBlocks();
+
+    this.registerEditorExtension(inlineDiffExtension());
+    if (Platform.isDesktop) {
+      this.registerEditorExtension(
+        selectionActionExtension({
+          enabled: () => this.settings.selectionActionEnabled,
+          run: () => {
+            const view = this.app.workspace.getActiveViewOfType(MarkdownView);
+            if (view) void this.runInlineRewrite(view.editor, view);
+          },
+        }),
+      );
+    }
 
     // One ribbon icon for the plugin itself. Workflows and session capture live
     // in the chat panel's header action bar, so they don't need ribbon entries.
@@ -395,6 +427,7 @@ export default class ClaudeCompanionPlugin extends Plugin {
    * initial scan does not fire create/modify for every note and stampede them.
    */
   private startAfterLayout(): void {
+    if (!Platform.isMobile) void this.router().claudeCli.refresh().then(() => this.refreshViews());
       void this.syncMcpServer();
       this.syncPlanBuildActions();
       void this.runFirstRun();
@@ -1315,6 +1348,15 @@ export default class ClaudeCompanionPlugin extends Plugin {
       });
       const rewritten = parseRewrite(raw, selection);
 
+      const cm = this.settings.inlineDiffEnabled ? editorViewOf(editor) : null;
+      if (cm && editor.getValue().slice(anchorFrom, anchorTo) === selection) {
+        const session = createRangeSession(editor.getValue(), { from: anchorFrom, to: anchorTo, newText: rewritten }, { path: file.path, description: `Rewrite — ${instruction}` });
+        progress.hide();
+        const accepted = await reviewInline(cm, session);
+        if (accepted) new Notice("Rewrite applied.");
+        return;
+      }
+
       const content = editor.getValue();
       let plan: EditPlan;
       let anchor: { start: number; end: number } | null = null;
@@ -1484,6 +1526,7 @@ export default class ClaudeCompanionPlugin extends Plugin {
   }
 
   override onunload(): void {
+    void this.closeCliSessions();
     this._activity?.dispose();
     this.utilityLifecycleEnded = true;
     this.utilityLifecycleGeneration = (this.utilityLifecycleGeneration ?? 0) + 1;
@@ -1928,6 +1971,15 @@ export default class ClaudeCompanionPlugin extends Plugin {
     return updated.id;
   }
 
+  /** The active conversation id, creating and persisting one when the chat is fresh. */
+  activeConversationId(): string {
+    const active = getActive(this.convState);
+    if (active) return active.id;
+    const fresh = newConversation(this.nextConversationId(), Date.now());
+    this.convState = saveConversation(this.convState, fresh, this.settings.maxConversations);
+    return fresh.id;
+  }
+
   /** Switch the active conversation (e.g. from the history picker). */
   async setActiveConversation(id: string): Promise<Conversation | null> {
     this.convState = setActive(this.convState, id);
@@ -2015,6 +2067,7 @@ export default class ClaudeCompanionPlugin extends Plugin {
       defaultFolder: s.mcpWriteFolder,
       semantic: (q: string, k: number) => this.semanticSearch(q, k),
       ontology: () => this.ontology(),
+      ontologyFolder: () => this.settings.ontologyFolder,
       zotero: () => this.zoteroLibrary(),
       ...this.webToolImpls(),
     };
@@ -2026,7 +2079,13 @@ export default class ClaudeCompanionPlugin extends Plugin {
 
     const { McpHttpServer } = await import("./mcp/server");
     const server = new McpHttpServer(
-      { port: s.mcpPort, token: this.resolvedMcpToken(), serverInfo: { name: "obsidian-vault", version: "0.2.0" } },
+      {
+        port: s.mcpPort,
+        token: this.resolvedMcpToken(),
+        serverInfo: { name: "obsidian-vault", version: "0.2.0" },
+        resources: vaultResourceProvider(this.app),
+        prompts: catalogPromptProvider(() => this.promptTemplates()),
+      },
       this.vaultTools,
       (level, message) => { if (level === "error") console.error("[Claude Companion MCP]", message); },
     );
@@ -2089,7 +2148,8 @@ export default class ClaudeCompanionPlugin extends Plugin {
 
   router(): ProviderRouter {
     if (this._router && !this._router.hasCurrentAnthropicEnvironment()) this._router = null;
-    if (!this._router) this._router = new ProviderRouter(this.settings, () => this.resolveUtilitySelectionForSession());
+    this._cliProvider ??= new ClaudeCliProvider(this.cliRuntime());
+    if (!this._router) this._router = new ProviderRouter(this.settings, () => this.resolveUtilitySelectionForSession(), { cliRuntime: this.cliRuntime(), cliProvider: this._cliProvider });
     return this._router;
   }
 
@@ -2283,9 +2343,11 @@ export default class ClaudeCompanionPlugin extends Plugin {
       needsCredential: needsCredentialSetup({
         backend: router.chatBackend,
         hasAnthropicCredential: router.anthropic.hasCredentials(),
+        hasClaudeCli: router.claudeCli.hasCredentials(),
       }),
       ontologyPending: this.settings.ontologyEnabled && !this.settings.ontologySeedPrompted,
       semanticPending: this.settings.semanticEnabled && !this.settings.semanticModelPrompted,
+      integrationsPending: !Platform.isMobile && !this.settings.desktopIntegrationsOffered,
     };
   }
 
@@ -2303,7 +2365,8 @@ export default class ClaudeCompanionPlugin extends Plugin {
   async runFirstRunPrompts(): Promise<void> {
     for (const prompt of pendingFirstRunPrompts(this.firstRunState())) {
       if (prompt === "ontology") await this.offerOntologySeed();
-      else await this.promptSemanticModelIfNeeded();
+      else if (prompt === "semantic") await this.promptSemanticModelIfNeeded();
+      else await this.offerDesktopIntegrations();
     }
   }
 
@@ -2338,6 +2401,30 @@ export default class ClaudeCompanionPlugin extends Plugin {
         fallback: "skip",
         onChoice: (c) => {
           if (c === "seed") void this.seedOntology();
+          resolve();
+        },
+      }).open();
+    });
+  }
+
+  /** One-time offer to wire Claude Code and Claude Desktop to this vault. Resolves when dismissed. */
+  async offerDesktopIntegrations(): Promise<void> {
+    if (Platform.isMobile || this.settings.desktopIntegrationsOffered) return;
+    this.settings.desktopIntegrationsOffered = true;
+    await this.saveSettings();
+    await new Promise<void>((resolve) => {
+      new ChoiceModal<"open" | "skip">(this.app, {
+        title: "Set up desktop integrations",
+        message:
+          "Install the obsidian-agent plugin for Claude Code and connect Claude Desktop to this vault. " +
+          "Both are available later under Settings → Desktop integrations.",
+        buttons: [
+          { label: "Open desktop integrations", value: "open", cta: true },
+          { label: "Not now", value: "skip" },
+        ],
+        fallback: "skip",
+        onChoice: (c) => {
+          if (c === "open") this.openDesktopIntegrations();
           resolve();
         },
       }).open();
@@ -2665,12 +2752,116 @@ export default class ClaudeCompanionPlugin extends Plugin {
       defaultFolder: this.settings.mcpWriteFolder,
       semantic: (q: string, k: number) => this.semanticSearch(q, k),
       ontology: () => this.ontology(),
+      ontologyFolder: () => this.settings.ontologyFolder,
       zotero: () => this.zoteroLibrary(),
       ...this.webToolImpls(),
     };
     if (!this.agentVaultTools) this.agentVaultTools = new VaultTools(this.app, opts);
     else this.agentVaultTools.setOptions(opts);
     return this.agentVaultTools;
+  }
+
+  /** Desktop only: the Node ports for the Claude Code backend. Tests override this. */
+  cliRuntime(): ClaudeCliRuntime | null {
+    if (this._cliRuntime !== undefined) return this._cliRuntime;
+    if (Platform.isMobile || !(this.app.vault.adapter instanceof FileSystemAdapter)) {
+      this._cliRuntime = null;
+      return null;
+    }
+    this._cliRuntime = createNodeCliRuntime();
+    return this._cliRuntime;
+  }
+
+  private async createChatBridge(binding: { deps: InteractiveToolDeps; readOnly: boolean; tools: boolean }): Promise<{ server: McpHttpServer; port: number; token: string }> {
+    const { McpHttpServer } = await import("./mcp/server");
+    const token = generateToken();
+    const registry = interactiveTools(this.agentTools(), () => binding.deps, () => binding.readOnly, () => binding.tools);
+    const server = new McpHttpServer(
+      {
+        port: 0,
+        token,
+        serverInfo: { name: "obsidian-vault", version: "0.2.0" },
+        resources: vaultResourceProvider(this.app),
+        prompts: catalogPromptProvider(() => this.promptTemplates()),
+      },
+      registry,
+      (level, message) => { if (level === "error") console.error("[Claude Companion chat bridge]", message); },
+      CLI_HIDDEN_TOOLS,
+    );
+    await server.start();
+    const addr = server.address();
+    if (!addr) {
+      await server.stop();
+      throw new Error("The chat bridge did not bind.");
+    }
+    return { server, port: addr.port, token };
+  }
+
+  async cliTurnRunner(opts: { conversationId: string; planMode: boolean; agentMode: boolean; model: string; deps: InteractiveToolDeps; transcript: string }): Promise<AgentTurnRunner> {
+    const cli = this.router().claudeCli;
+    const executable = cli.executable();
+    if (!executable) throw new Error(cli.probe() ? "Claude Code is not signed in. Run `claude auth login` in a terminal." : "Claude Code not found.");
+    const runtime = this.cliRuntime();
+    const cwd = this.vaultBasePath();
+    if (!runtime || !cwd) throw new Error("Claude Code runs on desktop only.");
+    const allowedTools = opts.agentMode ? cliAllowedTools(this.agentTools().definitions(), opts.planMode) : [];
+    const signature = JSON.stringify({ model: opts.model, planMode: opts.planMode, agentMode: opts.agentMode, allowedTools, writes: this.settings.agentAllowWrites });
+    const existing = this.cliSessions.get(opts.conversationId);
+    if (existing && existing.signature === signature && !existing.session.isClosed()) {
+      existing.lastUsed = Date.now();
+      return existing.session;
+    }
+    if (existing) await this.closeCliSession(opts.conversationId);
+    while (this.cliSessions.size >= 3) {
+      const oldest = [...this.cliSessions.entries()].filter(([, e]) => !e.session.isBusy()).sort((a, b) => a[1].lastUsed - b[1].lastUsed)[0];
+      if (!oldest) break;
+      await this.closeCliSession(oldest[0]);
+    }
+    const promptFile = await runtime.writeSystemPromptFile(this.composeSystemPrompt({ agent: true, plan: opts.planMode }));
+    this.cliPromptFiles.add(promptFile);
+    let bridge: McpHttpServer | null = null;
+    try {
+      const started = await this.createChatBridge({ deps: opts.deps, readOnly: opts.planMode, tools: opts.agentMode });
+      bridge = started.server;
+      const sessionId = crypto.randomUUID();
+      const argv = buildClaudeArgv({ model: opts.model, systemPromptFile: promptFile, mcpConfigJson: mcpConfigJson(started.port, started.token), allowedTools, maxTurns: this.settings.agentMaxIterations, sessionId });
+      const session = new ClaudeCliSession({ spawn: () => runtime.spawn(executable, argv, cwd), ...(opts.transcript ? { transcript: opts.transcript } : {}) });
+      this.cliSessions.set(opts.conversationId, { session, bridge, signature, promptFile, lastUsed: Date.now() });
+      await this.setConversationCliSession(opts.conversationId, sessionId);
+      return session;
+    } catch (error) {
+      this.cliSessions.delete(opts.conversationId);
+      await bridge?.stop();
+      await runtime.removeFile(promptFile);
+      this.cliPromptFiles.delete(promptFile);
+      throw error;
+    }
+  }
+
+  interruptCliTurn(conversationId: string): void {
+    this.cliSessions.get(conversationId)?.session.interrupt();
+  }
+
+  private async closeCliSession(conversationId: string): Promise<void> {
+    const entry = this.cliSessions.get(conversationId);
+    if (!entry) return;
+    this.cliSessions.delete(conversationId);
+    await entry.session.close();
+    await entry.bridge.stop();
+    await this.cliRuntime()?.removeFile(entry.promptFile);
+    this.cliPromptFiles.delete(entry.promptFile);
+  }
+
+  async closeCliSessions(): Promise<void> {
+    for (const id of [...(this.cliSessions?.keys() ?? [])]) await this.closeCliSession(id);
+  }
+
+  async setConversationCliSession(conversationId: string, sessionId: string): Promise<void> {
+    this.convState = {
+      ...this.convState,
+      conversations: this.convState.conversations.map((c) => (c.id === conversationId ? withCliSession(c, sessionId) : c)),
+    };
+    await this.persist();
   }
 
   /**
@@ -3176,7 +3367,7 @@ export default class ClaudeCompanionPlugin extends Plugin {
     if (!base || Platform.isMobile) return [];
     // node fs reader lives in the desktop-only module — load it lazily.
     const { nodeSessionReader, defaultProjectsRoot } = await import("./memory/nodeReader");
-    return listSessionsForVault(nodeSessionReader, base, defaultProjectsRoot());
+    return excludeSessions(await listSessionsForVault(nodeSessionReader, base, defaultProjectsRoot()), this.convState.conversations.flatMap(cliSessionIds));
   }
 
   private ingestDeps() {

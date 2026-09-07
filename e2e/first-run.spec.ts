@@ -1,3 +1,5 @@
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import { expect, test } from "@playwright/test";
 import { launchObsidianHarness } from "./obsidianHarness";
 
@@ -70,6 +72,48 @@ test("saving a key verifies it, then releases the deferred prompts", async () =>
     // Held-back consent now runs, one modal at a time — in whichever window
     // Obsidian has focused.
     await expect.poll(() => deferredPrompts(harness), { timeout: 10_000 }).toBe(1);
+  } finally {
+    await harness.close();
+  }
+});
+
+const offerLocators = (harness: { windows(): import("@playwright/test").Page[] }) =>
+  harness.windows().map((w) => w.locator(".modal-container").filter({ hasText: "Set up desktop integrations" }));
+
+const offerVisible = async (harness: { windows(): import("@playwright/test").Page[] }): Promise<boolean> => {
+  const counts = await Promise.all(offerLocators(harness).map((l) => l.count().catch(() => 0)));
+  return counts.some((n) => n > 0);
+};
+
+// Click "Not now" in whichever window currently shows a prompt.
+const dismissOne = async (harness: { windows(): import("@playwright/test").Page[] }): Promise<void> => {
+  for (const w of harness.windows()) {
+    const button = w.getByRole("button", { name: "Not now" }).last();
+    if ((await button.count().catch(() => 0)) > 0) { await button.click(); return; }
+  }
+};
+
+test("after the consents, a desktop install is offered integrations once", async () => {
+  const harness = await launchObsidianHarness({ firstRun: true });
+  const { page } = harness;
+  try {
+    await openChat(page);
+    await page.locator(".cc-setup-input").fill("sk-ant-api-e2e");
+    await page.locator(".cc-setup-save").click();
+    await expect(page.locator(".cc-setup-card")).toHaveCount(0);
+
+    // Ontology, then semantic, then the offer — dismiss whatever precedes it.
+    for (let i = 0; i < 3; i += 1) {
+      await expect.poll(() => deferredPrompts(harness), { timeout: 10_000 }).toBeGreaterThan(0);
+      if (await offerVisible(harness)) break;
+      await dismissOne(harness);
+    }
+    await expect.poll(() => offerVisible(harness), { timeout: 10_000 }).toBe(true);
+    await dismissOne(harness);
+    await expect.poll(() => offerVisible(harness), { timeout: 10_000 }).toBe(false);
+
+    const dataPath = join(harness.paths.vault, ".obsidian", "plugins", "claude-companion", "data.json");
+    await expect.poll(async () => (JSON.parse(await readFile(dataPath, "utf8")) as { settings: { desktopIntegrationsOffered?: boolean } }).settings.desktopIntegrationsOffered, { timeout: 10_000 }).toBe(true);
   } finally {
     await harness.close();
   }

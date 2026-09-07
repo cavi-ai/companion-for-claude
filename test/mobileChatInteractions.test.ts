@@ -9,6 +9,7 @@ function pluginStub(): ClaudeCompanionPlugin {
     settings: structuredClone(DEFAULT_SETTINGS),
     router: () => ({
       chatProvider: () => ({ provider: { id: "anthropic" }, model: DEFAULT_SETTINGS.model }),
+      chatCapabilities: () => ({ agentActions: true, claudeControls: true, metered: true, local: false, cli: false }),
     }),
   } as unknown as ClaudeCompanionPlugin;
 }

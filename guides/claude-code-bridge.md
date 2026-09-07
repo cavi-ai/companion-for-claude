@@ -5,6 +5,9 @@ with the open vault.
 
 On desktop, use the integration that matches the client:
 
+- **Claude Code inside Companion chat:** choose the Claude Code backend. It runs
+  the installed, signed-in `claude` command and does not require the background
+  MCP bridge.
 - **Claude Code and other terminal agents:** use the official Obsidian CLI and
   the portable `obsidian-agent` workflows by default.
 - **Claude Desktop:** use Companion's read-only loopback MCP bridge because
@@ -127,9 +130,9 @@ is on `PATH`. Try a portable command such as
 
 ## The tool reference
 
-Ten read/audit tools are **always** served. Fourteen mutations appear only when
-*Allow writes* is on — so a client can read and audit a research project even
-when writing is off.
+With the default ontology enabled, eleven read/audit tools are served. Sixteen
+mutations appear only when *Allow writes* is on — so a client can inspect the
+ontology and audit a research project even when writing is off.
 
 ### Reads (always)
 
@@ -143,6 +146,7 @@ when writing is off.
 | `get_backlinks` | Notes linking to a given note |
 | `get_outgoing_links` | Notes a given note links to |
 | `frontmatter_query` | Notes matching a frontmatter field, optionally by value |
+| `ontology_get` | Resolved ontology types, properties, relations, and ancestry |
 | `research_project_read` | Compact project snapshot: sources, evidence, claims, issues, health |
 | `research_audit` | Audit a research project, returning actionable JSON findings |
 
@@ -153,10 +157,12 @@ when writing is off.
 | `note_create` | Create a note with indexed frontmatter (advertises `type`/`properties` once an ontology is seeded) |
 | `note_append` | Append to a note |
 | `note_update` | Replace a note's body or a single section |
+| `note_patch` | Replace, append, or prepend one heading, block, frontmatter key, or document target |
 | `update_frontmatter` | Set tags and frontmatter fields |
 | `note_move` | Rename/move a note, rewriting backlinks automatically |
 | `base_create` | Emit a `.base` database view over frontmatter |
 | `canvas_create` | Emit a `.canvas` mind map with auto-layout, wired to real notes |
+| `ontology_propose` | Validate and propose a new ontology schema note |
 | `research_project_create` | Create a research project |
 | `research_source_import` | Import a source; web URLs are fetched and reduced to clean readable markdown |
 | `research_evidence_capture` | Capture a provenance-linked evidence card |
@@ -175,6 +181,15 @@ The client direction works too: the in-chat agent can consume **external MCP
 servers** configured under *Settings → External tools — MCP client* — HTTP or
 (desktop) stdio, namespaced per server, each call confirmed. See
 [agent-mode.md](agent-mode.md#external-mcp-servers).
+
+## Protocol surface
+
+The HTTP bridge negotiates MCP `2025-06-18` while retaining compatibility with
+`2025-03-26` and `2024-11-05`. It exposes vault notes as paginated
+`obsidian://vault/` resources and exposes built-in workflows plus user prompt
+templates through MCP prompts. Initialization creates an authenticated session;
+clients return its `Mcp-Session-Id`, and authenticated `DELETE /mcp` tears it
+down. The bridge does not open a server-initiated SSE stream.
 
 ## What `obsidian-agent` adds separately
 
@@ -208,7 +223,12 @@ This is the security-sensitive part of the plugin, and it's deliberately narrow:
 - **Constant-time token comparison**, so a wrong token leaks nothing through timing.
 - **Loopback `Host` enforcement.** Requests whose `Host` header isn't a loopback value are rejected with 403 — defense in depth against DNS rebinding, where a page on an attacker domain resolving to `127.0.0.1` would carry that domain as `Host`.
 - **Writes off by default**, and separately gated from reads.
-- **Only `/mcp` is routed**; any other path 404s. An authorized `GET /mcp` answers a liveness probe, every other method returns 405, and only `POST` carries JSON-RPC.
+- **Only `/mcp` is routed**; any other path 404s. `POST` carries JSON-RPC,
+  authenticated `DELETE` closes a known session, `OPTIONS` handles CORS, and
+  `GET` returns 405 because the bridge does not offer server-initiated SSE.
+- **In-chat CLI bridges are conversation-scoped.** Each live Claude Code
+  session receives its own ephemeral port and token, so its approval callback,
+  agent mode, and Plan Mode cannot be rebound by another conversation.
 
 Reporting policy and boundaries: [`SECURITY.md`](../SECURITY.md).
 

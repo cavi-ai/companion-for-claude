@@ -10,7 +10,7 @@ import { RESEARCH_WRITE_TOOLS } from "../research/tools";
 export const TOOL_RESULT_MAX_CHARS = 8000;
 
 /** The vault tools that mutate the vault; everything else is read-only. */
-const WRITE_TOOLS = new Set(["note_create", "note_append", "note_update", "update_frontmatter", "note_move", "canvas_create", "base_create", ...RESEARCH_WRITE_TOOLS]);
+const WRITE_TOOLS = new Set(["note_create", "note_append", "note_update", "note_patch", "update_frontmatter", "note_move", "canvas_create", "base_create", "ontology_propose", ...RESEARCH_WRITE_TOOLS]);
 
 export function isWriteTool(name: string): boolean {
   return WRITE_TOOLS.has(name);

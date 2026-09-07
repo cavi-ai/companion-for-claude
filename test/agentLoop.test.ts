@@ -199,3 +199,23 @@ describe("runAgentTurn with rejected edit proposals", () => {
     expect(r.trace[0]).toMatchObject({ name: "propose_note_edit", ok: true });
   });
 });
+
+import { providerTurnRunner, toTraceEntry } from "../src/agent/loop";
+
+describe("providerTurnRunner", () => {
+  it("delegates a turn to runAgentTurn with the same deps", async () => {
+    const { stream } = fakeStream([{ text: "hello", stopReason: "end_turn" }]);
+    const runner = providerTurnRunner({ stream, execute: async (b) => okResult(b.id), maxIterations: 3 });
+    const text: string[] = [];
+    const result = await runner.run(baseReq, { onText: (d) => text.push(d) });
+    expect(result.text).toBe("hello");
+    expect(text.join("")).toBe("hello");
+  });
+});
+
+describe("toTraceEntry", () => {
+  it("summarizes args and previews the result", () => {
+    const entry = toTraceEntry(use("t1"), okResult("t1", "x".repeat(500)));
+    expect(entry).toEqual({ name: "vault_search", argsSummary: '{"query":"x"}', resultPreview: `${"x".repeat(400)}…`, ok: true });
+  });
+});

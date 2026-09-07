@@ -59,3 +59,11 @@ describe("fallbackReason", () => {
     expect(fallbackReason({ status: 500 })).toMatch(/service/i);
   });
 });
+
+describe("claude-cli backend", () => {
+  it("starts on Claude and falls back to local only on offline/usage errors, like claude", () => {
+    expect(primaryBackend("claude-cli")).toBe("claude");
+    expect(shouldFallbackToLocal({ backend: "claude-cli", localAvailable: true, error: { status: 429 } })).toBe(true);
+    expect(shouldFallbackToLocal({ backend: "claude-cli", localAvailable: true, error: { status: 400 } })).toBe(false);
+  });
+});

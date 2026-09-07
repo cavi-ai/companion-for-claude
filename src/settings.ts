@@ -115,6 +115,7 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
       case "chatBackend":
       case "intelligenceNarrator":
       case "openaiCompatModel":
+        if (key === "chatBackend" && this.plugin.settings.chatBackend === "claude-cli") void this.plugin.router().claudeCli.refresh().then(() => this.plugin.refreshViews());
         this.plugin.refreshViews();
         return;
       case "semanticIndexPdfs":
@@ -374,16 +375,37 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
       },
       {
         name: "Chat backend",
-        desc: "Where chat runs. Auto keeps using Claude but transparently falls back to your local model when Claude is offline or out of usage — so you never lose chat on a plane or when tokens run out.",
+        desc: "Where chat runs. Auto keeps using Claude but transparently falls back to your local model when Claude is offline or out of usage — so you never lose chat on a plane or when tokens run out. Claude Code uses the claude command already signed in on this computer — no key needed; chat only.",
         control: {
           type: "dropdown",
           key: "chatBackend",
           options: {
             claude: "Claude only",
+            "claude-cli": "Claude Code — your subscription (desktop)",
             auto: "Auto (Claude, fall back to local)",
             local: "Local only — Ollama (offline)",
             custom: "Local only — OpenAI-compatible endpoint",
           },
+        },
+      },
+      {
+        name: "Claude Code",
+        desc: "Status of the claude command this backend runs. Companion never sees your credentials; Claude Code holds them.",
+        render: (setting) => {
+          const status = setting.settingEl.createDiv({ cls: "cc-conn-status" });
+          const probe = this.plugin.router().claudeCli.probe();
+          if (probe) this.renderStatus(status, { ok: probe.loggedIn, detail: probe.loggedIn ? `Claude Code ${probe.version} · signed in via ${probe.method} · ${probe.executable}` : "Not signed in — run `claude auth login`." });
+          setting.addButton((btn) =>
+            btn
+              .setButtonText("Check Claude Code")
+              .onClick(async () => {
+                this.renderStatus(status, { ok: true, detail: "Checking…" });
+                const result = await this.plugin.router().claudeCli.test();
+                this.renderStatus(status, result);
+                this.plugin.refreshViews();
+                if (result.ok) await this.plugin.runFirstRunPrompts();
+              }),
+          );
         },
       },
       {
@@ -502,6 +524,8 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
       },
       { name: "Let Claude use vault tools", desc: "Claude can search and read your notes on its own while answering (read-only). Turn off for plain chat with pre-attached context.", control: { type: "toggle", key: "agentModeEnabled" } },
       { name: "Allow write tools", desc: "Also let Claude create, edit, and move notes from chat. Every write asks for your confirmation first.", control: { type: "toggle", key: "agentAllowWrites" } },
+      { name: "Review edits in the editor", desc: "When the note is open, show proposed changes inline with word-level highlights and per-change Accept/Reject instead of a dialog.", control: { type: "toggle", key: "inlineDiffEnabled" } },
+      { name: "Rewrite button on selection", desc: "Show a small “Rewrite with Claude” action above selected text. Desktop only.", control: { type: "toggle", key: "selectionActionEnabled" } },
       { name: "Max tool iterations per turn", desc: "How many search/read/write rounds Claude may take before it must answer.", control: { type: "slider", key: "agentMaxIterations", min: 1, max: 20, step: 1 } },
       { name: "Web search tool", desc: "Let Claude search the public web from chat (explicit searches only — nothing fires in the background).", control: { type: "toggle", key: "webSearchEnabled" } },
       {
@@ -612,7 +636,7 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
       { name: "About local models", desc: "Run cheap, bulk work — summarizing, tagging, ingestion — on a local model to save Anthropic tokens. Chat and plans still use Claude unless you route them here." },
       {
         name: "Utility tasks backend",
-        desc: "Summaries, auto-tagging, and ingestion go to this backend instead of Claude.",
+        desc: "Summaries, auto-tagging, and ingestion go to this backend instead of Claude. Claude Code sign-in covers chat only. Background tasks (tagging, source enrichment, memory) need an API key or a local model.",
         control: { type: "dropdown", key: "utilityBackend", options: { claude: "Claude", ollama: "Ollama (local)", custom: "OpenAI-compatible endpoint" } },
       },
       { name: "Ollama host", desc: "Base URL of your local Ollama server.", control: { type: "text", key: "ollamaHost", placeholder: "http://localhost:11434" } },

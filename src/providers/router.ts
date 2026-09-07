@@ -3,6 +3,8 @@ import type { Provider, ProviderId, TaskRole, CompletionRequest } from "./types"
 import { AnthropicProvider } from "./anthropic";
 import { OllamaProvider } from "./ollama";
 import { OpenAICompatProvider } from "./openaiCompat";
+import { ClaudeCliProvider } from "./claudeCli";
+import type { ClaudeCliRuntime } from "../cli/runtime";
 import { readAnthropicEnv, type AnthropicEnv } from "./env";
 import { resolveModelId } from "../claude/models";
 import {
@@ -59,6 +61,19 @@ export function migrateUtilityBackend(
   return persisted.localUtilityEnabled === true ? "ollama" : undefined;
 }
 
+export interface ChatCapabilities {
+  /** In-chat vault actions are offered: Act on vault, Plan Mode, implement-from-reply. */
+  agentActions: boolean;
+  /** The Claude model controls (thinking, effort, temperature) apply to this backend. */
+  claudeControls: boolean;
+  /** Usage bills per token, so the gauge shows a cost estimate. */
+  metered: boolean;
+  /** A local model answers: media is dropped, the gauge says "local". */
+  local: boolean;
+  /** The turn runs through the Claude Code CLI session. */
+  cli: boolean;
+}
+
 /**
  * Builds providers from settings and routes a task to the right one:
  * - "chat"    → the user's primary provider (Claude by default)
@@ -69,12 +84,14 @@ export class ProviderRouter {
   readonly anthropic: AnthropicProvider;
   readonly ollama: OllamaProvider;
   readonly openaiCompat: OpenAICompatProvider;
+  readonly claudeCli: ClaudeCliProvider;
   private readonly anthropicEnv: AnthropicEnv;
   private readonly utilityConsentIdentity = Object.freeze({});
 
   constructor(
     private settings: PluginSettings,
     private utilitySelectionResolver?: UtilitySelectionResolver,
+    options: { cliRuntime?: ClaudeCliRuntime | null; cliProvider?: ClaudeCliProvider } = {},
   ) {
     this.anthropicEnv = readAnthropicEnv();
     this.anthropic = new AnthropicProvider({
@@ -86,6 +103,7 @@ export class ProviderRouter {
     });
     this.ollama = new OllamaProvider(settings.ollamaHost, settings.ollamaModel);
     this.openaiCompat = new OpenAICompatProvider(settings.openaiCompatHost, settings.openaiCompatModel, settings.openaiCompatKey);
+    this.claudeCli = options.cliProvider ?? new ClaudeCliProvider(options.cliRuntime ?? null);
   }
 
   /** Whether an environment-auth provider still represents the live process environment. */
@@ -102,6 +120,7 @@ export class ProviderRouter {
   get(id: ProviderId): Provider {
     if (id === "ollama") return this.ollama;
     if (id === "openai-compat") return this.openaiCompat;
+    if (id === "claude-cli") return this.claudeCli;
     return this.anthropic;
   }
 
@@ -124,6 +143,9 @@ export class ProviderRouter {
     // OpenAI-compatible endpoint; "claude"/"auto" start on Claude (auto
     // degrades to local on failure — handled in ChatView).
     if (role === "chat") {
+      if (this.settings.chatBackend === "claude-cli" && this.claudeCli.hasCredentials()) {
+        return { provider: this.claudeCli, model: resolveModelId(this.settings.model, this.settings.customModel) };
+      }
       if (this.settings.chatBackend === "local" && this.ollama.hasCredentials()) {
         return { provider: this.ollama, model: this.settings.ollamaModel };
       }
@@ -228,13 +250,20 @@ export class ProviderRouter {
    */
   async chatToolCapable(): Promise<boolean> {
     const { provider, model } = this.chatProvider();
-    if (provider.id === "anthropic") return true;
+    if (provider.id === "anthropic" || provider.id === "claude-cli") return true;
     if (provider.supportsTools !== true || !provider.capabilities) return provider.supportsTools === true;
     try {
       return (await provider.capabilities(model)).includes("tools");
     } catch {
       return false;
     }
+  }
+
+  chatCapabilities(): ChatCapabilities {
+    const { provider } = this.chatProvider();
+    if (provider.id === "anthropic") return { agentActions: true, claudeControls: true, metered: !this.anthropic.isOAuth(), local: false, cli: false };
+    if (provider.id === "claude-cli") return { agentActions: true, claudeControls: false, metered: false, local: false, cli: true };
+    return { agentActions: false, claudeControls: false, metered: false, local: true, cli: false };
   }
 
   /**

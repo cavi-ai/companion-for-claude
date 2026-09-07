@@ -2,7 +2,7 @@
 
 import { sanitizeEndpointForDisplay } from "./endpointPolicy";
 
-export type ErrorHintProvider = "anthropic" | "ollama" | "openai-compat";
+export type ErrorHintProvider = "anthropic" | "ollama" | "openai-compat" | "claude-cli";
 
 function redactUrlUserinfo(message: string): string {
   return message.replace(/\b([a-z][a-z0-9+.-]*:\/\/)[^/\s?#]*@/gi, "$1");
@@ -13,11 +13,16 @@ function endpointName(provider: ErrorHintProvider, endpoint?: string): string {
   const at = safeEndpoint ? ` at ${safeEndpoint}` : "";
   if (provider === "ollama") return `Ollama${at}`;
   if (provider === "openai-compat") return `the OpenAI-compatible endpoint${at}`;
+  if (provider === "claude-cli") return "Claude Code";
   return `Anthropic${at}`;
 }
 
 export function errorHint(message: string, provider: ErrorHintProvider = "anthropic", endpoint?: string): string | null {
   const m = message.toLowerCase();
+  if (provider === "claude-cli") {
+    if (m.includes("not found")) return "Claude Code was not found on this machine. Install it, then run `claude auth login`, or pick another chat backend in Companion settings.";
+    if (m.includes("not signed in") || m.includes("not logged in") || m.includes("authentication")) return "Claude Code is not signed in. Run `claude auth login` in a terminal, then send again.";
+  }
   if (m.includes("401") || m.includes("invalid api key") || m.includes("authentication")) {
     if (provider !== "anthropic") {
       return `Authentication failed for ${endpointName(provider, endpoint)}. Check its host and API key in Companion settings.`;

@@ -324,3 +324,47 @@ describe("migrateUtilityBackend", () => {
     expect(migrateUtilityBackend({ utilityBackend: "custom", localUtilityEnabled: true })).toBeUndefined();
   });
 });
+
+import { ClaudeCliProvider } from "../../src/providers/claudeCli";
+
+const cliRuntime = (loggedIn: boolean) => ({
+  findClaude: async () => ({ executable: "/usr/local/bin/claude", version: "2.1.257" }),
+  authStatus: async () => ({ loggedIn, method: "claude.ai" }),
+  writeSystemPromptFile: async () => "/tmp/p.md",
+  removeFile: async () => undefined,
+  spawn: () => { throw new Error("no spawn in router tests"); },
+});
+
+describe("ProviderRouter — claude-cli backend", () => {
+  it("routes chat to the CLI provider once it is signed in", async () => {
+    const r = new ProviderRouter(settings({ chatBackend: "claude-cli", apiKey: "" }), undefined, { cliRuntime: cliRuntime(true) });
+    expect(r.chatProvider().provider.id).toBe("anthropic");
+    await r.claudeCli.refresh();
+    expect(r.chatProvider().provider.id).toBe("claude-cli");
+    expect(r.chatProvider().model).toBe(DEFAULT_SETTINGS.model);
+    expect(r.get("claude-cli")).toBeInstanceOf(ClaudeCliProvider);
+  });
+  it("falls back to the API key when the CLI is signed out or the runtime is absent (mobile)", async () => {
+    const out = new ProviderRouter(settings({ chatBackend: "claude-cli" }), undefined, { cliRuntime: cliRuntime(false) });
+    await out.claudeCli.refresh();
+    expect(out.chatProvider().provider.id).toBe("anthropic");
+    const mobile = new ProviderRouter(settings({ chatBackend: "claude-cli" }), undefined, { cliRuntime: null });
+    expect(mobile.claudeCli.available()).toBe(false);
+    expect(mobile.chatProvider().provider.id).toBe("anthropic");
+  });
+  it("reports tool capability and capabilities for every backend", async () => {
+    const cli = new ProviderRouter(settings({ chatBackend: "claude-cli", apiKey: "" }), undefined, { cliRuntime: cliRuntime(true) });
+    await cli.claudeCli.refresh();
+    expect(await cli.chatToolCapable()).toBe(true);
+    expect(cli.chatCapabilities()).toEqual({ agentActions: true, claudeControls: false, metered: false, local: false, cli: true });
+    const api = new ProviderRouter(settings({}));
+    expect(api.chatCapabilities()).toEqual({ agentActions: true, claudeControls: true, metered: true, local: false, cli: false });
+    const local = new ProviderRouter(settings({ chatBackend: "local" }));
+    expect(local.chatCapabilities()).toEqual({ agentActions: false, claudeControls: false, metered: false, local: true, cli: false });
+  });
+  it("never routes utility work to the CLI", async () => {
+    const r = new ProviderRouter(settings({ chatBackend: "claude-cli", utilityBackend: "claude" }), undefined, { cliRuntime: cliRuntime(true) });
+    await r.claudeCli.refresh();
+    expect(r.resolve("utility").provider.id).toBe("anthropic");
+  });
+});

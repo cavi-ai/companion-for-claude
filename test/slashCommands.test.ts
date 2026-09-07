@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { dispatchNativeSlashAction, parseSlashQuery, filterCommands, moveSelection, REGISTERED_ACTION_COMMANDS, runNativeSlashCommand, SLASH_COMMANDS, workflowSlashCommands, WORKFLOW_ACTION_PREFIX } from "../src/view/slashCommands";
+import { dispatchNativeSlashAction, parseSlashQuery, filterCommands, moveSelection, REGISTERED_ACTION_COMMANDS, runNativeSlashCommand, SLASH_COMMANDS, workflowSlashCommands, WORKFLOW_ACTION_PREFIX, skillSlashCommands, SKILL_ACTION_PREFIX } from "../src/view/slashCommands";
 import { WORKFLOWS } from "../src/workflows/catalog";
+import { SKILLS } from "../src/workflows/skillRegistry.generated";
 
 describe("native research desk command", () => {
   it("registers /research as a native desk action", () => {
@@ -75,6 +76,19 @@ describe("workflowSlashCommands", () => {
     const front = filterCommands(all, "front").map((c) => c.name);
     expect(front).toContain("frontmatter");
     expect(front).toContain("frontmatter-normalizer");
+  });
+});
+
+describe("skillSlashCommands", () => {
+  it("lists skills that have no Companion workflow adaptation, as awaiting-input actions", () => {
+    const cmds = skillSlashCommands(SKILLS, WORKFLOWS);
+    const adapted = new Set(WORKFLOWS.flatMap((w) => [w.id, w.capability ?? w.id]));
+    expect(cmds.every((c) => !adapted.has(c.name))).toBe(true);
+    expect(cmds.map((c) => c.name)).toContain("wikilink-weaver");
+    expect(cmds.map((c) => c.name)).not.toContain("daily-rollup");
+    const weaver = cmds.find((c) => c.name === "wikilink-weaver")!;
+    expect(weaver).toMatchObject({ kind: "action", action: `${SKILL_ACTION_PREFIX}wikilink-weaver` });
+    expect(weaver.description).toContain("<note path>");
   });
 });
 

@@ -3,6 +3,7 @@
 // query→matches logic so it can be unit-tested.
 
 import type { Workflow } from "../workflows/catalog";
+import type { SkillEntry } from "../workflows/skillRegistry.generated";
 import type { PromptTemplate } from "../templates/promptTemplates";
 
 export interface SlashCommand {
@@ -100,7 +101,7 @@ export async function dispatchNativeSlashAction(
 
 export interface NativeSlashCommandContext {
   command: SlashCommand;
-  backend: "claude" | "auto" | "local" | "custom";
+  backend: "claude" | "auto" | "local" | "custom" | "claude-cli";
   clearComposer: () => void;
   activateResearchDesk: () => Promise<void>;
   requestCompletion: (prompt: string, display?: string) => Promise<void>;
@@ -127,6 +128,22 @@ export function workflowSlashCommands(workflows: Workflow[]): SlashCommand[] {
     kind: "action",
     action: `${WORKFLOW_ACTION_PREFIX}${wf.id}`,
   }));
+}
+
+/** Action-id prefix for an obsidian-agent skill run as a chat turn. */
+export const SKILL_ACTION_PREFIX = "skill:";
+
+/** Skills without a Companion workflow adaptation; the adaptation wins when both exist. */
+export function skillSlashCommands(skills: SkillEntry[], workflows: Workflow[]): SlashCommand[] {
+  const adapted = new Set(workflows.flatMap((w) => [w.id, w.capability ?? w.id]));
+  return skills
+    .filter((s) => !adapted.has(s.id))
+    .map((s) => ({
+      name: s.id,
+      description: s.argHint ? `${s.description} Usage: /${s.id} ${s.argHint}` : s.description,
+      kind: "action",
+      action: `${SKILL_ACTION_PREFIX}${s.id}`,
+    }));
 }
 
 /** Move a selection index within [0, len) with wrap-around. */

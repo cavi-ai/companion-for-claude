@@ -14,11 +14,10 @@ vault stays the single source of truth.
 
 <!-- screenshots wanted: session-to-note.png, chat-controls.png — see assets/CAPTURE.md in the mirror repo -->
 
-> **Bring your own credential.** Companion for Claude talks to the Anthropic
-> Messages API with *your* credential — nothing is sent anywhere else. On desktop,
-> direct network access is required for Claude and the local MCP bridge; on mobile,
-> chat, artifacts, and semantic search all work, with only the MCP bridge and
-> session import gated off (desktop/Electron only). Three auth modes:
+> **Choose how Claude runs.** On desktop, Companion can use the installed,
+> signed-in Claude Code CLI for subscription-backed chat without storing an API
+> credential. On desktop and mobile, it can talk directly to the Anthropic
+> Messages API with *your* credential. The three direct-API auth modes are:
 >
 > - **API key** (default, recommended) — a standard `sk-ant-api…` key from
 >   console.anthropic.com. This is the mode used for community-store builds.
@@ -31,7 +30,9 @@ vault stays the single source of truth.
 >
 > An optional **base URL** override points any mode at a gateway/proxy. The key
 > stays the default so the plugin remains community-store eligible; the token and
-> environment modes are clearly marked as power-user options.
+> environment modes are clearly marked as power-user options. The Claude Code
+> backend is desktop-only and covers chat; background utility work still needs a
+> direct API credential or a local model.
 
 ## Features
 
@@ -40,9 +41,13 @@ vault stays the single source of truth.
 - **Chat in a side panel** — streaming responses, Markdown-rendered, with
   per-message **Copy / Insert / Save as note / Regenerate** actions and
   hover-to-copy on every code block.
-- **First-run in seconds** — a keyless vault shows an in-chat **Connect to
-  Claude** card; paste your key and start, without opening settings. Your typed
-  message is never discarded while unconfigured.
+- **Use your Claude Code sign-in on desktop** — select **Claude Code — your
+  subscription** as the chat backend. Companion runs the installed `claude`
+  command, resumes one CLI session per saved conversation, and keeps vault-tool
+  writes behind the normal confirmation gate.
+- **First-run in seconds** — an unconfigured vault shows an in-chat **Connect to
+  Claude** card; use a detected Claude Code sign-in on desktop or paste an API
+  key, without losing the message you already typed.
 - **Errors don't lose work** — if a turn fails mid-stream, the partial reply is
   kept and a **Retry** appears; a truncated reply offers **retry with a higher
   limit**; attachments survive failed sends and Regenerate.
@@ -71,10 +76,10 @@ vault stays the single source of truth.
   dial, stream the model's **reasoning** in a collapsible panel, and set
   per-message **temperature / max tokens**. Controls are model-aware — anything
   a model would reject is hidden, not broken.
-- **Slash commands** — type `/` in the composer for a fuzzy palette:
+- **Slash commands and portable skills** — type `/` in the composer for a fuzzy palette:
   summarize, ask, improve, artifact, plan, canvas, workflows, capture, build,
-  research, and more. A run shows as a compact **command chip**, not a wall of
-  prompt text.
+  research, and the pinned `obsidian-agent` skill catalog. A run shows as a
+  compact **command chip**, not a wall of prompt text.
 - **Conversation history** — chats persist across restarts; resume any past
   conversation from a fuzzy picker, or **delete** one there (two-tap confirm).
 - **Prompt caching** — repeated context (system prompt, tools, conversation
@@ -180,9 +185,10 @@ document write.
 
 ### Agent & automation
 
-One agent, three surfaces: **agent mode in chat** (everywhere), the **MCP
-bridge** for Claude Code (desktop), and **cloud sessions** (mobile-friendly) —
-same vault, same confirm-before-write guardrails, wherever you are.
+The vault agent runs in Companion chat through the direct API, Claude Code, or a
+tool-capable local model. Separate integrations expose the same vault through
+the optional **MCP bridge** (desktop) and **cloud sessions** (mobile-friendly),
+with confirm-before-write guardrails.
 
 - **Agent mode (vault tools in chat)** — Claude can **search your vault, read
   notes, and follow links on its own** while answering, showing each step as an
@@ -201,13 +207,15 @@ same vault, same confirm-before-write guardrails, wherever you are.
   confirm-per-call. Companion is the two-way hub: your vault is served to
   Claude Code while the agent uses everything else.
 - **Apply edits as reviewable diffs** — ask Claude to improve or fix a note and
-  it **proposes the change as a red/green diff**; you accept or reject **each
-  hunk** before anything is written, and Claude is told exactly what you
-  accepted. Works even with write tools off — the review is the permission.
+  it proposes exact changes. When the note is open, they appear as word-level
+  inline changes in the editor; otherwise Companion uses the red/green modal.
+  You accept or reject **each hunk** before anything is written, and Claude is
+  told exactly what you accepted. Works even with write tools off — the review
+  is the permission.
 - **Inline rewrite in the editor** — select text, then *Rewrite selection with
   Claude…* (command palette or right-click menu): pick a preset (improve,
   grammar, shorten, expand, tone) or type your own instruction, and review the
-  result as the same per-hunk diff before it lands. No chat round-trip.
+  result through the same inline-first review before it lands. No chat round-trip.
 - **Link suggestions while you write** — the Related panel surfaces **unlinked
   mentions** (note titles and aliases sitting in your prose as plain text) with
   one-click linking, or **Review & link all** as a single diff. A **Connections**
@@ -273,7 +281,8 @@ same vault, same confirm-before-write guardrails, wherever you are.
 **From the community store (recommended):** *Settings → Community plugins →
 Browse* → search **Companion for Claude** → Install → Enable, or use
 [this direct link](https://obsidian.md/plugins?id=claude-companion). Then open
-*Settings → Companion for Claude* and paste your Anthropic API key.
+Companion and choose a detected Claude Code sign-in on desktop, or paste an
+Anthropic API key.
 
 **From source (development):**
 
@@ -287,8 +296,13 @@ folder into a test vault.
 
 ## Desktop agents: CLI first, MCP when needed
 
-Companion, its in-app agent, and ordinary Claude Code workflows do not require
-MCP. From **Options → Desktop integrations** on any Companion page:
+Companion chat can use Claude Code directly: choose **Claude Code — your
+subscription** under *Connection* and Companion runs the installed, signed-in
+`claude` command with one resumable CLI session per conversation. This chat
+backend does not require the background MCP bridge.
+
+For external agents, open **Options → Desktop integrations** on any Companion
+page:
 
 - **Set up Claude Code** verifies the `claude` and official `obsidian` CLIs,
   then can add `cavi-ai/plugins` and install `obsidian-agent@cavi-ai` at user
@@ -317,16 +331,18 @@ The server binds to **127.0.0.1 only** (never the network), requires a
 | `get_backlinks` | `base_create` |
 | `get_outgoing_links` | `canvas_create` |
 | `frontmatter_query` | `research_project_create` |
-| `research_project_read` | `research_source_import` |
-| `research_audit` | `research_evidence_capture` |
+| `ontology_get` | `ontology_propose` |
+| `research_project_read` | `note_patch` |
+| `research_audit` | `research_source_import` |
+| | `research_evidence_capture` |
 | | `research_evidence_review` |
 | | `research_claim_create` |
 | | `research_claim_link` |
 | | `research_outline_generate` |
 
-That is 10 always-available read/audit tools and 14 write-gated mutation tools
-(24 advertised tools when writes are enabled), plus the optional `web_search`
-and `web_fetch` read tools when enabled in settings. Research Workbench reads
+With the default ontology enabled, that is 11 read/audit tools and 16
+write-gated mutation tools (27 advertised tools when writes are enabled), plus
+the optional `web_search` and `web_fetch` read tools. Research Workbench reads
 and audits remain available with writes disabled. Creating projects, importing
 sources, capturing or reviewing evidence, creating or linking claims, and
 generating outlines requires *Allow writes*; agent mode also keeps its normal
@@ -372,7 +388,8 @@ analytics, and no background polling of any third party.
 
 | Destination | Sent when | Carries |
 |---|---|---|
-| `api.anthropic.com` (or your **API base URL** override) | every chat, agent, and utility turn | your prompt, attached vault context, and the system prompt |
+| `api.anthropic.com` (or your **API base URL** override) | a direct-API chat, agent, or utility turn | your prompt, attached vault context, and the system prompt |
+| the installed `claude` command | a desktop chat turn on the Claude Code backend | your prompt and attached vault context; the CLI owns authentication and service traffic |
 | your **Ollama host** / **OpenAI-compatible endpoint** | only while a local backend is selected | the same request, to a server you run |
 | `huggingface.co` and `cdn.jsdelivr.net` | the one-time built-in embedding download, after you click **Download** | nothing but the model and ONNX-runtime requests; cached and offline afterwards |
 | your **routine fire URL** (an `api.anthropic.com` endpoint by default) | the **Send to cloud Claude session** command, when cloud dispatch is on | your prompt and attached note context |
@@ -399,8 +416,8 @@ to bundled dependencies.
 
 **Shell execution.** Desktop only, always `execFile`/`spawn` with an argument
 array — never a shell string: opening an artifact in your chosen browser, running
-stdio MCP servers you configure, and the Obsidian / Claude CLI used by Desktop
-integrations. All of it is disabled on mobile.
+stdio MCP servers you configure, the Claude Code chat backend, and the Obsidian /
+Claude CLI used by Desktop integrations. All of it is disabled on mobile.
 
 **Your vault.** Semantic search and vault search enumerate every file to build a
 local index; nothing about that index leaves the device. Copy buttons write to
@@ -445,7 +462,8 @@ pnpm test            # vitest (unit tests in test/)
 pnpm run build       # typecheck + production bundle
 ```
 
-CI runs all four on every push/PR (Node 20 & 22) in the
+CI runs these gates on every push/PR (Node 20 & 22), along with version, docs,
+skill-registry, reproducible-output, and production bundle-budget checks, in the
 [monorepo](https://github.com/cavi-ai/claude-obsidian). A manual smoke-test
 checklist lives in [`CONTRIBUTING.md`](https://github.com/cavi-ai/claude-obsidian/blob/main/CONTRIBUTING.md).
 

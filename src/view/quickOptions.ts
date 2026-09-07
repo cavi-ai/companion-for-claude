@@ -25,7 +25,7 @@ export interface QuickOptionDefinition {
 }
 
 export interface QuickOptionsState {
-  chatBackend: "claude" | "local" | "auto" | "custom";
+  chatBackend: "claude" | "local" | "auto" | "custom" | "claude-cli";
   chatModel: string;
   agentModeEnabled: boolean;
   vaultContextEnabled: boolean;
@@ -64,6 +64,7 @@ export interface QuickOptionAction {
 const chatBackends: QuickOptionChoice[] = [
   { value: "auto", label: "Auto" },
   { value: "claude", label: "Claude" },
+  { value: "claude-cli", label: "Claude Code — your subscription (desktop)" },
   { value: "local", label: "Local" },
   { value: "custom", label: "Custom endpoint" },
 ];

@@ -86,6 +86,7 @@ describe("resolveSettings with legacy configs", () => {
         anthropic: { hasCredentials: () => true },
         ollama: { listModels: async () => [], capabilities: async () => [], test: async () => ({ ok: true, detail: "" }) },
         openaiCompat: { test: async () => ({ ok: true, detail: "" }) },
+        claudeCli: { probe: () => null, hasCredentials: () => false, test: async () => ({ ok: false, detail: "" }), refresh: async () => ({ ok: false, detail: "" }) },
       }),
       externalMcp: () => ({ errorFor: () => null, test: async () => ({ ok: true }) }),
       mcpRunning: () => false,

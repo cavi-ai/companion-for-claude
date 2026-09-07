@@ -200,3 +200,11 @@ describe("parseTaggerOutput", () => {
     expect(out.summary).toBe("");
   });
 });
+
+describe("errorHint — claude-cli", () => {
+  it("names the two CLI failure modes", () => {
+    expect(errorHint("Claude Code not found", "claude-cli")).toMatch(/Install it/);
+    expect(errorHint("Claude Code is not signed in", "claude-cli")).toMatch(/claude auth login/);
+    expect(errorHint("Claude Code exited (code 1). rate limit", "claude-cli")).toMatch(/Wait a moment/);
+  });
+});

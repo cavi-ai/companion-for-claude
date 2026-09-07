@@ -5,21 +5,23 @@
 The plugin is free and MIT-licensed — the whole feature set, no paid tier, no
 account with us.
 
-You pay Anthropic for model usage, either with an API key or by billing to an
-existing Claude subscription via a long-term token. Or run
+You pay Anthropic for model usage, either with an API key or through a Claude
+subscription using the desktop Claude Code backend or a long-term token. Or run
 [local models](local-models.md) and pay nothing at all, which also covers
 semantic search: the built-in embedding model runs on-device.
 
-See [auth.md](auth.md) for the three credential modes and the caching rates that
-keep vault work cheap.
+See [auth.md](auth.md) for the backend and credential choices and the caching
+rates that keep vault work cheap.
 
 ## Does it work on mobile?
 
 Mostly, yes. Chat, agent mode, artifacts, the research workbench, and semantic
 search — including building the index — all work on mobile.
 
-Three things need special handling because they rely on a desktop-local runtime:
+Four things need special handling because they rely on a desktop-local runtime:
 
+- **Claude Code chat** — the installed CLI backend is desktop-only; use a direct
+  API credential on mobile.
 - **The MCP bridge** — it runs an HTTP server. Use cloud sessions on mobile instead.
 - **Ollama** — local chat and embedding models need a localhost server. Utility
   work can use a reachable LAN/remote endpoint; if only a loopback endpoint is
@@ -58,9 +60,10 @@ to build a local index. All filesystem access is disabled on mobile.
 
 ## API key or subscription?
 
-Either. An **API key** is the default and the simplest path — usage bills to your
-Anthropic API account. A **long-term OAuth token** from `claude setup-token` bills
-to your existing Claude subscription instead.
+Either. An **API key** works on desktop and mobile and bills your Anthropic API
+account. On desktop, the **Claude Code** backend uses the installed CLI's sign-in
+without storing a credential in Companion. A **long-term OAuth token** from
+`claude setup-token` is the direct-API subscription alternative.
 
 Both are first-class. What isn't supported is a pasted browser session cookie from
 claude.ai — that's outside the plugin's auth surface by design. Details in
@@ -105,7 +108,7 @@ build knows about, or a gateway-specific name. Connection tests always use Haiku
 
 No. Three separate gates:
 
-- **Edits** go through a per-hunk red/green diff. Only the hunks you accept are written — and that path stays available even with write tools off, because reviewing the diff *is* the approval.
+- **Edits** use word-level inline review when the note is open and the red/green modal otherwise. Only accepted hunks are written — and that path stays available even with write tools off, because reviewing the diff *is* the approval.
 - **Write tools** (create, append, move, Canvas, Bases, research records) each ask for confirmation before running. Decline and Claude is told, then carries on.
 - **Plan Mode** — the **Plan** toggle in the composer hands Claude the read-only tool set only, whatever your settings say. Use it when you want a proposal, not an action.
 

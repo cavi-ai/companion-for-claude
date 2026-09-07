@@ -196,3 +196,47 @@ describe("relativeTime", () => {
     expect(relativeTime(now + 5000, now)).toBe("just now");
   });
 });
+
+import { withCliSession, cliSessionIds, transcriptText } from "../src/conversations/store";
+
+describe("cliSessionId", () => {
+  it("attaches to a conversation and survives touch and save", () => {
+    const c = withCliSession(newConversation("c1", 1), "0f1e2d3c-4b5a-4968-8776-655443322110");
+    expect(c.cliSessionId).toBe("0f1e2d3c-4b5a-4968-8776-655443322110");
+    const touched = touch(c, [u("hi")], 2);
+    expect(touched.cliSessionId).toBe(c.cliSessionId);
+    const state = saveConversation(emptyState(), touched, 10);
+    expect(state.conversations[0]!.cliSessionId).toBe(c.cliSessionId);
+    const reloaded = fromPersisted(JSON.parse(JSON.stringify(state)));
+    expect(reloaded.conversations[0]!.cliSessionId).toBe(c.cliSessionId);
+  });
+
+  it("keeps earlier session ids so memory ingest can skip every process this chat ran", () => {
+    const first = withCliSession(newConversation("c2", 1), "11111111-1111-4111-8111-111111111111");
+    const second = withCliSession(first, "22222222-2222-4222-8222-222222222222");
+    expect(second.cliSessionId).toBe("22222222-2222-4222-8222-222222222222");
+    expect(second.cliSessionHistory).toEqual(["11111111-1111-4111-8111-111111111111"]);
+    expect(cliSessionIds(second)).toEqual(["11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222"]);
+    expect(withCliSession(second, "22222222-2222-4222-8222-222222222222").cliSessionHistory).toEqual(["11111111-1111-4111-8111-111111111111"]);
+    expect(cliSessionIds(newConversation("c3", 1))).toEqual([]);
+  });
+
+  it("ignores a malformed persisted history", () => {
+    const bad = { ...newConversation("c4", 1), cliSessionId: "33333333-3333-4333-8333-333333333333", cliSessionHistory: "oops" as unknown as string[] };
+    expect(cliSessionIds(bad)).toEqual(["33333333-3333-4333-8333-333333333333"]);
+    const next = withCliSession(bad, "44444444-4444-4444-8444-444444444444");
+    expect(next.cliSessionHistory).toEqual(["33333333-3333-4333-8333-333333333333"]);
+    const mixed = { ...newConversation("c5", 1), cliSessionHistory: ["55555555-5555-4555-8555-555555555555", 7 as unknown as string] };
+    expect(cliSessionIds(mixed)).toEqual(["55555555-5555-4555-8555-555555555555"]);
+  });
+});
+
+describe("transcriptText", () => {
+  it("renders prior turns under a header, using content never display labels", () => {
+    const text = transcriptText([u("first"), { role: "assistant", content: "answer" }, { role: "user", content: "raw", display: "pretty" }]);
+    expect(text).toBe("Conversation so far (for context; reply only to the newest message):\n\nUser: first\n\nAssistant: answer\n\nUser: raw");
+  });
+  it("is empty for no prior turns", () => {
+    expect(transcriptText([])).toBe("");
+  });
+});

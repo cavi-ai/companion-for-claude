@@ -1,4 +1,5 @@
 import esbuild from "esbuild";
+import fs from "node:fs/promises";
 import { builtinModules } from "node:module";
 import process from "node:process";
 
@@ -70,10 +71,12 @@ const context = await esbuild.context({
   treeShaking: true,
   outfile: "main.js",
   minify: prod,
+  metafile: prod,
 });
 
 if (prod) {
-  await context.rebuild();
+  const result = await context.rebuild();
+  await fs.writeFile(".build/meta.json", JSON.stringify(result.metafile));
   process.exit(0);
 } else {
   await context.watch();

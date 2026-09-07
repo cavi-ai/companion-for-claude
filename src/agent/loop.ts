@@ -39,6 +39,15 @@ export interface AgentTurnResult {
   error?: Error;
 }
 
+/** One turn of the chat, whoever executes the tools: the provider loop below or the Claude Code CLI session. */
+export interface AgentTurnRunner {
+  run(req: CompletionRequest, handlers: AgentTurnHandlers): Promise<AgentTurnResult>;
+}
+
+export function providerTurnRunner(deps: AgentTurnDeps): AgentTurnRunner {
+  return { run: (req, handlers) => runAgentTurn(deps, req, handlers) };
+}
+
 const ARGS_SUMMARY_MAX = 120;
 const RESULT_PREVIEW_MAX = 400;
 
@@ -100,7 +109,7 @@ export async function runAgentTurn(deps: AgentTurnDeps, req: CompletionRequest, 
   return { text: joined(), trace, capped: true };
 }
 
-function toTraceEntry(block: ToolUseBlock, result: ToolResultBlock): ToolTraceEntry {
+export function toTraceEntry(block: ToolUseBlock, result: ToolResultBlock): ToolTraceEntry {
   const args = JSON.stringify(block.input);
   return {
     name: block.name,

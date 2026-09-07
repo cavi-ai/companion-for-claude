@@ -45,8 +45,8 @@ describe("toAnthropicTools", () => {
 });
 
 describe("isWriteTool", () => {
-  it("classifies the five write tools and nothing else", () => {
-    for (const t of ["note_create", "note_append", "note_update", "update_frontmatter", "note_move"]) {
+  it("classifies the six write tools and nothing else", () => {
+    for (const t of ["note_create", "note_append", "note_update", "note_patch", "update_frontmatter", "note_move"]) {
       expect(isWriteTool(t)).toBe(true);
     }
     for (const t of ["vault_search", "note_read", "list_recent", "vault_tags", "list_titles", "get_backlinks", "get_outgoing_links", "frontmatter_query"]) {
@@ -201,5 +201,12 @@ describe("canvas_create classification", () => {
 describe("base_create classification", () => {
   it("is a write tool (vault mutation — gated + confirmed)", () => {
     expect(isWriteTool("base_create")).toBe(true);
+  });
+});
+
+describe("ontology_propose classification", () => {
+  it("is a write tool; ontology_get is not", () => {
+    expect(isWriteTool("ontology_propose")).toBe(true);
+    expect(isWriteTool("ontology_get")).toBe(false);
   });
 });

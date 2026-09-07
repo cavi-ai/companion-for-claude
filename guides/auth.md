@@ -1,12 +1,24 @@
 # Authentication & cost
 
-Companion talks directly to Anthropic. There is no service in between, no account
-with us, and no key of ours involved. You bring a credential; it's stored on your
-device and used only for requests you trigger.
+Companion can run desktop chat through your installed Claude Code CLI, or talk
+directly to Anthropic with a credential you provide. There is no Companion
+service or account in between.
 
-*Settings → Companion for Claude → Connection → Authentication*
+*Settings → Companion for Claude → Connection*
 
-## Three modes
+## Claude Code backend (desktop)
+
+Choose **Claude Code — your subscription** as the chat backend to use the
+installed, signed-in `claude` command. Companion does not read or store the
+CLI's credentials. Each saved conversation owns a resumable Claude Code
+session; aborting or losing the process starts a fresh one on the next turn.
+Vault-tool writes keep Companion's normal per-action confirmation.
+
+This backend is desktop-only and covers chat. Background utility tasks such as
+summaries, tagging, and source enrichment still need a direct API credential or
+a local model. If the command is not signed in, run `claude auth login`.
+
+## Three direct API modes
 
 ### API key (default, recommended)
 
@@ -55,8 +67,8 @@ token must not carry it.
 
 ## Base URL override
 
-**API base URL** points any of the three modes at a gateway or proxy instead of
-`https://api.anthropic.com`. Trailing slashes are normalized, so both
+**API base URL** points any of the three direct API modes at a gateway or proxy
+instead of `https://api.anthropic.com`. Trailing slashes are normalized, so both
 `https://gw.example.com` and `https://gw.example.com/` work.
 
 An explicit setting wins over `ANTHROPIC_BASE_URL`.
@@ -98,16 +110,20 @@ Relative to the base input rate:
 | Cache write | 1.25× |
 | **Cache read** | **0.1×** |
 
-The context-window gauge and session cost estimate account for each bucket
-separately, so what you see reflects what caching actually saved rather than
-pricing every token as fresh input.
+For direct API credentials, the context-window gauge and session cost estimate
+account for each bucket separately, so what you see reflects what caching
+actually saved rather than pricing every token as fresh input.
+
+Claude Code chat reports subscription usage rather than a dollar estimate;
+billing and limits are owned by the signed-in CLI account.
 
 Other levers: route bulk work to a local model, or let the Auto backend keep you
 running when usage runs out — see [local-models.md](local-models.md).
 
 ## Where credentials are stored
 
-On **Obsidian 1.11.5 and later**, every credential Companion holds — the API key,
+The Claude Code backend stores no Claude credential in Companion. On **Obsidian
+1.11.5 and later**, every credential Companion does hold — the API key,
 the OAuth token, the custom-endpoint key, the Zotero and Brave Search keys, the
 MCP bridge token, and the two cloud tokens — goes into your device's encrypted
 secret storage. None of them is written to the vault, so none of them rides vault

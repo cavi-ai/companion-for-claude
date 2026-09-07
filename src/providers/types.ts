@@ -5,7 +5,7 @@
 
 import type { ChatMessage, StreamHandlers } from "../types";
 
-export type ProviderId = "anthropic" | "ollama" | "openai-compat";
+export type ProviderId = "anthropic" | "ollama" | "openai-compat" | "claude-cli";
 
 /** A role describes *what* a request is for, so the router can pick a backend. */
 export type TaskRole = "chat" | "utility";

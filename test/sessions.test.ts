@@ -46,3 +46,12 @@ describe("listSessionsForVault", () => {
     expect(await listSessionsForVault(reader, vault, root)).toEqual([]);
   });
 });
+
+import { excludeSessions } from "../src/memory/sessions";
+
+describe("excludeSessions", () => {
+  it("drops the sessions Companion's own chats created", () => {
+    const sessions = [{ id: "a", path: "/p/a.jsonl", mtimeMs: 1 }, { id: "b", path: "/p/b.jsonl", mtimeMs: 2 }] as never[];
+    expect(excludeSessions(sessions, ["b", undefined]).map((s: { id: string }) => s.id)).toEqual(["a"]);
+  });
+});

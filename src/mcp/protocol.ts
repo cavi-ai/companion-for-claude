@@ -29,9 +29,16 @@ export const RPC = {
   METHOD_NOT_FOUND: -32601,
   INVALID_PARAMS: -32602,
   INTERNAL_ERROR: -32603,
+  RESOURCE_NOT_FOUND: -32002,
 } as const;
 
-export const MCP_PROTOCOL_VERSION = "2024-11-05";
+export const SUPPORTED_PROTOCOL_VERSIONS = ["2025-06-18", "2025-03-26", "2024-11-05"] as const;
+export const MCP_PROTOCOL_VERSION = SUPPORTED_PROTOCOL_VERSIONS[0];
+
+/** The client's version when we speak it, else our newest. */
+export function negotiateProtocolVersion(requested: unknown): string {
+  return typeof requested === "string" && (SUPPORTED_PROTOCOL_VERSIONS as readonly string[]).includes(requested) ? requested : MCP_PROTOCOL_VERSION;
+}
 
 export interface McpToolDef {
   name: string;
@@ -45,6 +52,56 @@ export type ToolHandler = (args: Record<string, unknown>) => Promise<string>;
 export interface ServerInfo {
   name: string;
   version: string;
+}
+
+export interface McpResource {
+  uri: string;
+  name: string;
+  title?: string;
+  description?: string;
+  mimeType?: string;
+}
+
+export interface McpResourceTemplate {
+  uriTemplate: string;
+  name: string;
+  description?: string;
+  mimeType?: string;
+}
+
+export interface McpResourceContents {
+  uri: string;
+  mimeType: string;
+  text: string;
+}
+
+export interface ResourceProvider {
+  list(cursor?: string): Promise<{ resources: McpResource[]; nextCursor?: string }>;
+  templates(): McpResourceTemplate[];
+  read(uri: string): Promise<McpResourceContents | null>;
+}
+
+export interface McpPromptArgument {
+  name: string;
+  description?: string;
+  required?: boolean;
+}
+
+export interface McpPrompt {
+  name: string;
+  title?: string;
+  description?: string;
+  arguments?: McpPromptArgument[];
+}
+
+export interface McpPromptMessage {
+  role: "user" | "assistant";
+  content: { type: "text"; text: string };
+}
+
+export interface PromptProvider {
+  list(): Promise<McpPrompt[]>;
+  get(name: string, args: Record<string, string>): Promise<{ description?: string; messages: McpPromptMessage[] } | null>;
 }
 
 export function ok(id: JsonRpcRequest["id"], result: unknown): JsonRpcResponse {
@@ -87,15 +144,23 @@ export async function handleRpc(
     /** Explicit compatibility calls accepted without exposing them through tools/list. */
     hiddenTools?: ReadonlySet<string>;
     call: (name: string, args: Record<string, unknown>) => Promise<string>;
+    resources?: ResourceProvider;
+    prompts?: PromptProvider;
   },
 ): Promise<JsonRpcResponse | null> {
   switch (req.method) {
-    case "initialize":
+    case "initialize": {
+      const params = (req.params ?? {}) as { protocolVersion?: unknown };
       return ok(req.id, {
-        protocolVersion: MCP_PROTOCOL_VERSION,
-        capabilities: { tools: { listChanged: false } },
+        protocolVersion: negotiateProtocolVersion(params.protocolVersion),
+        capabilities: {
+          tools: { listChanged: false },
+          ...(ctx.resources ? { resources: { subscribe: false, listChanged: false } } : {}),
+          ...(ctx.prompts ? { prompts: { listChanged: false } } : {}),
+        },
         serverInfo: ctx.serverInfo,
       });
+    }
 
     case "notifications/initialized":
       return null; // notification, no response
@@ -122,6 +187,39 @@ export async function handleRpc(
         // Tool errors are reported as content with isError, per MCP convention.
         return ok(req.id, { content: [{ type: "text", text: e instanceof Error ? e.message : String(e) }], isError: true });
       }
+    }
+
+    case "resources/list": {
+      if (!ctx.resources) return ok(req.id, { resources: [] });
+      const params = (req.params ?? {}) as { cursor?: unknown };
+      const page = await ctx.resources.list(typeof params.cursor === "string" ? params.cursor : undefined);
+      return ok(req.id, { resources: page.resources, ...(page.nextCursor !== undefined ? { nextCursor: page.nextCursor } : {}) });
+    }
+
+    case "resources/templates/list":
+      return ok(req.id, { resourceTemplates: ctx.resources?.templates() ?? [] });
+
+    case "resources/read": {
+      const params = (req.params ?? {}) as { uri?: unknown };
+      if (typeof params.uri !== "string") return err(req.id, RPC.INVALID_PARAMS, "resources/read requires a string 'uri'");
+      const contents = ctx.resources ? await ctx.resources.read(params.uri) : null;
+      if (!contents) return err(req.id, RPC.RESOURCE_NOT_FOUND, `Resource not found: ${params.uri}`);
+      return ok(req.id, { contents: [contents] });
+    }
+
+    case "prompts/list":
+      return ok(req.id, { prompts: ctx.prompts ? await ctx.prompts.list() : [] });
+
+    case "prompts/get": {
+      const params = (req.params ?? {}) as { name?: unknown; arguments?: unknown };
+      if (typeof params.name !== "string") return err(req.id, RPC.INVALID_PARAMS, "prompts/get requires a string 'name'");
+      const args: Record<string, string> = {};
+      if (params.arguments && typeof params.arguments === "object") {
+        for (const [k, v] of Object.entries(params.arguments as Record<string, unknown>)) if (typeof v === "string") args[k] = v;
+      }
+      const prompt = ctx.prompts ? await ctx.prompts.get(params.name, args) : null;
+      if (!prompt) return err(req.id, RPC.INVALID_PARAMS, `Unknown prompt: ${params.name}`);
+      return ok(req.id, prompt);
     }
 
     default:

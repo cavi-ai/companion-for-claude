@@ -3,7 +3,7 @@
 // or when tokens run out. The router/ChatView own the wiring; this owns the
 // decision and stays unit-testable.
 
-export type ChatBackend = "claude" | "local" | "auto" | "custom";
+export type ChatBackend = "claude" | "local" | "auto" | "custom" | "claude-cli";
 
 /**
  * Classify an error as one where falling back to a local model makes sense:

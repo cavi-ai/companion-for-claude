@@ -1,7 +1,8 @@
 # Getting started
 
-Install Companion for Claude, connect a key, and get to a useful first answer.
-Ten minutes, no terminal required.
+Install Companion for Claude, connect Claude, and get to a useful first answer.
+The API-key path takes no terminal; desktop subscribers can instead use an
+already installed and signed-in Claude Code CLI.
 
 ## 1. Install
 
@@ -14,9 +15,16 @@ Ten minutes, no terminal required.
 and enter `cavi-ai/companion-for-claude`. Releases are published from that mirror
 repo; the store listing tracks it.
 
-## 2. Add your key
+## 2. Connect Claude
 
-The simple path is an Anthropic API key:
+On desktop, the first-run card offers **Use Claude Code sign-in** when the
+installed `claude` command is signed in. That runs chat on your Claude
+subscription without saving an API credential. Each saved Companion
+conversation resumes its own Claude Code session. The CLI backend is desktop
+only and covers chat; utility work such as source enrichment still needs a
+direct API credential or a local model.
+
+The simple path on every device is an Anthropic API key:
 
 1. Open the [Anthropic Console → API keys](https://console.anthropic.com/settings/keys) and create a key.
 2. In Obsidian, go to *Settings → Companion for Claude → Connection*.
@@ -26,9 +34,9 @@ The simple path is an Anthropic API key:
 You pay Anthropic for usage; nothing is billed by this plugin, and there is no
 account to create with us.
 
-Already have a Claude subscription, or an `ANTHROPIC_API_KEY` in your shell? Both
-work — see [auth.md](auth.md) for the OAuth-token and environment-import modes,
-and for pointing Companion at a gateway.
+Already have a Claude subscription, a long-term OAuth token, or an
+`ANTHROPIC_API_KEY` in your shell? See [auth.md](auth.md) for the differences
+and for pointing direct API traffic at a gateway.
 
 ## 3. Your first chat
 
@@ -104,9 +112,10 @@ Under *Settings → Companion for Claude → Agent (act on your vault)*:
 - **Allow write tools** — also lets Claude create, edit, and move notes. On by default, and **every single write asks you first**.
 - **Max tool iterations per turn** — how many search/read/write rounds Claude may take before it has to answer. Default 10.
 
-Note edits are a separate, safer path: Claude proposes exact replacements, you
-review a **per-hunk red/green diff**, and only the hunks you accept are written.
-That happens even with write tools off.
+Note edits are a separate, safer path: Claude proposes exact replacements. If
+the target note is open, you review word-level changes directly in the editor;
+otherwise Companion opens the red/green modal. Only accepted hunks are written,
+even with write tools off.
 
 The agent isn't Claude-only: on the **Local only** backend it runs against your
 Ollama server too, as long as the selected model supports tools (settings badge
@@ -117,7 +126,8 @@ Full detail in [agent-mode.md](agent-mode.md).
 
 ## 6. Desktop integrations
 
-Companion and its built-in agent do **not** require MCP. On desktop, open
+The in-chat Claude Code backend does **not** require the background MCP bridge.
+On desktop, open
 **Options → Desktop integrations** from any Companion page (or use the button at
 the top of Companion settings) for two optional connections:
 
@@ -146,5 +156,5 @@ advanced live-vault API.
 - [research-workbench.md](research-workbench.md) — evidence-backed writing.
 - [claude-code-bridge.md](claude-code-bridge.md) — CLI-first Claude Code and optional Claude Desktop/live-vault MCP.
 - [local-models.md](local-models.md) — Ollama fallback and on-device semantic search.
-- [auth.md](auth.md) — API key vs subscription token vs environment.
+- [auth.md](auth.md) — Claude Code sign-in vs direct API credentials.
 - [faq.md](faq.md) — cost, privacy, mobile, troubleshooting.

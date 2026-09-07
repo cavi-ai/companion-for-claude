@@ -14,3 +14,11 @@ describe("needsCredentialSetup", () => {
     expect(needsCredentialSetup({ backend: "local", hasAnthropicCredential: false })).toBe(false);
   });
 });
+
+describe("needsCredentialSetup — claude-cli", () => {
+  it("gates claude-cli on the CLI being available and signed in, never on a key", () => {
+    expect(needsCredentialSetup({ backend: "claude-cli", hasAnthropicCredential: false, hasClaudeCli: true })).toBe(false);
+    expect(needsCredentialSetup({ backend: "claude-cli", hasAnthropicCredential: true, hasClaudeCli: false })).toBe(true);
+    expect(needsCredentialSetup({ backend: "claude", hasAnthropicCredential: false, hasClaudeCli: true })).toBe(true);
+  });
+});

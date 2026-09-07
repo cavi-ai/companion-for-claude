@@ -84,7 +84,7 @@ describe("Chat render lifecycle", () => {
     };
     const plugin = {
       settings: structuredClone(DEFAULT_SETTINGS),
-      router: () => ({ chatProvider: () => ({ provider, model: DEFAULT_SETTINGS.model }) }),
+      router: () => ({ chatProvider: () => ({ provider, model: DEFAULT_SETTINGS.model }), chatCapabilities: () => ({ agentActions: true, claudeControls: true, metered: true, local: false, cli: false }) }),
       composeSystemPrompt: () => "system",
       externalMcpTools: async () => [],
       agentTools: () => ({ definitions: () => [], call: async () => "" }),

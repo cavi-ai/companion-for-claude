@@ -14,6 +14,10 @@ export interface Conversation {
   /** Epoch ms; conversations are ordered by this, most-recent first. */
   updatedAt: number;
   messages: ChatMessage[];
+  /** The Claude Code --session-id this chat runs under; memory ingest skips it. */
+  cliSessionId?: string;
+  /** Earlier Claude Code session ids of this chat; memory ingest skips them too. */
+  cliSessionHistory?: string[];
 }
 
 export interface ConversationState {
@@ -184,4 +188,29 @@ function isConversation(v: unknown): v is Conversation {
     Array.isArray(c.messages) &&
     c.messages.every((m) => m && typeof (m).role === "string" && typeof (m).content === "string")
   );
+}
+
+/** Persisted history may be hand-edited; anything but a string array counts as none. */
+function historyOf(convo: Conversation): string[] {
+  return Array.isArray(convo.cliSessionHistory) ? convo.cliSessionHistory.filter((id): id is string => typeof id === "string") : [];
+}
+
+export function withCliSession(convo: Conversation, sessionId: string): Conversation {
+  const previous = convo.cliSessionId;
+  const history = previous !== undefined && previous !== sessionId ? [...historyOf(convo), previous] : historyOf(convo);
+  return { ...convo, cliSessionId: sessionId, ...(history.length > 0 ? { cliSessionHistory: history } : {}) };
+}
+
+/** Every Claude Code session id this chat has run under, oldest first. */
+export function cliSessionIds(convo: Conversation): string[] {
+  return [...historyOf(convo), ...(typeof convo.cliSessionId === "string" ? [convo.cliSessionId] : [])];
+}
+
+const TRANSCRIPT_HEADER = "Conversation so far (for context; reply only to the newest message):";
+
+/** Prior turns flattened for a fresh Claude Code process, which holds no history yet. */
+export function transcriptText(messages: ChatMessage[]): string {
+  if (messages.length === 0) return "";
+  const lines = messages.map((m) => `${m.role === "user" ? "User" : "Assistant"}: ${m.content}`);
+  return [TRANSCRIPT_HEADER, ...lines].join("\n\n");
 }

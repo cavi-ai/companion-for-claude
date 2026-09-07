@@ -3,7 +3,8 @@
 In agent mode the model works the vault itself instead of answering from
 whatever you pasted. It searches, reads, follows links, and — when you allow
 it — writes, all inside a single turn, with every step shown to you. The agent
-runs on Claude, or **fully local** on a tool-capable Ollama model — see
+runs through the direct Claude API, the signed-in Claude Code CLI on desktop,
+or **fully local** on a tool-capable Ollama model — see
 [Runs on local models](#runs-on-local-models).
 
 ## The loop
@@ -42,6 +43,7 @@ trace.
 | `get_backlinks` | Notes linking to a given note |
 | `get_outgoing_links` | Notes a given note links to |
 | `frontmatter_query` | Find notes by a frontmatter field, optionally by value |
+| `ontology_get` | Inspect the resolved vault ontology or one type and its ancestors |
 | `research_project_read` | Read a research project snapshot |
 | `research_audit` | Audit a research project and return findings |
 
@@ -62,15 +64,17 @@ the [MCP bridge](claude-code-bridge.md) catalog when enabled.
 | `note_create` | Create a note with indexed frontmatter |
 | `note_append` | Append to an existing note |
 | `note_update` | Replace a note's body or one section |
+| `note_patch` | Replace, append, or prepend one heading, block, frontmatter key, or document target |
 | `update_frontmatter` | Set tags and frontmatter fields |
 | `note_move` | Rename/move a note, rewriting backlinks |
 | `canvas_create` | Build a `.canvas` mind map wired to real notes |
 | `base_create` | Build a `.base` database view over frontmatter |
+| `ontology_propose` | Validate and propose a new ontology schema note |
 | `research_project_create` · `research_source_import` · `research_evidence_capture` · `research_evidence_review` · `research_claim_create` · `research_claim_link` · `research_outline_generate` | Research record mutations |
 
-That's **10 reads and 14 write-gated tools** (plus the two optional web tools).
-The same set is what the [MCP bridge](claude-code-bridge.md) exposes to Claude
-Code.
+With the default ontology enabled, that's **11 reads and 16 write-gated tools**
+(plus the two optional web tools). The same set is available through the
+[MCP bridge](claude-code-bridge.md).
 
 ## Runs on local models
 
@@ -100,9 +104,10 @@ the URL/command and counts the exposed tools.
 ## Editing notes: diffs, not writes
 
 Changing an existing note doesn't go through the write tools. Claude calls
-`propose_note_edit` with exact string replacements; Companion shows you a
-**per-hunk red/green diff**; only the hunks you accept are written, and Claude is
-told which ones those were.
+`propose_note_edit` with exact string replacements. When the target note is
+open, Companion renders word-level additions and removals directly in the
+editor with per-hunk controls; otherwise it opens the red/green review modal.
+Only accepted hunks are written, and Claude is told which ones those were.
 
 <!-- screenshot: ../assets/diff-review.png — pending capture -->
 
@@ -170,7 +175,7 @@ characters, oldest dropped first.
 | Setting | Default | Effect |
 |---|---|---|
 | Let Claude use vault tools | On | Enables the read-only loop. Off = plain chat with pre-attached context only. |
-| Allow write tools | On | Adds the 14 write tools. Every call still asks first. |
+| Allow write tools | On | Adds the 16 write tools when ontology is enabled. Every call still asks first. |
 | Max tool iterations per turn | 10 | Rounds of search/read/write before the model must answer. |
 | Web search tool | Off | Adds `web_search` (engine: DuckDuckGo keyless, or Brave with an API key). |
 | Web fetch tool | Off | Adds `web_fetch` — read one public page per explicit call. |
@@ -178,6 +183,7 @@ characters, oldest dropped first.
 Plan Mode has no setting — it's the **Plan** toggle in the composer, per
 conversation.
 
-One agent, three surfaces: in chat here, over the
-[MCP bridge](claude-code-bridge.md) for Claude Code on desktop, and via a cloud
-session on mobile. Same vault, same guardrails.
+The agent runs in Companion chat through the direct API, Claude Code CLI, or a
+tool-capable local model. The [MCP bridge](claude-code-bridge.md) exposes the
+live vault to configured desktop clients, while cloud sessions provide a
+mobile-friendly external path. Same vault, same write gates.

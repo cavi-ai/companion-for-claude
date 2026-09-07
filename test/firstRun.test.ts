@@ -5,6 +5,7 @@ const state = (over: Partial<FirstRunState> = {}): FirstRunState => ({
   needsCredential: false,
   ontologyPending: false,
   semanticPending: false,
+  integrationsPending: false,
   ...over,
 });
 
@@ -31,5 +32,18 @@ describe("pendingFirstRunPrompts", () => {
   it("orders ontology before semantic — the cheap consent precedes the download", () => {
     expect(pendingFirstRunPrompts(state({ ontologyPending: true, semanticPending: true })))
       .toEqual(["ontology", "semantic"]);
+  });
+
+  it("offers desktop integrations last, after both consents", () => {
+    expect(pendingFirstRunPrompts(state({ ontologyPending: true, semanticPending: true, integrationsPending: true })))
+      .toEqual(["ontology", "semantic", "integrations"]);
+  });
+
+  it("holds the integrations offer back without a credential", () => {
+    expect(pendingFirstRunPrompts(state({ needsCredential: true, integrationsPending: true }))).toEqual([]);
+  });
+
+  it("offers integrations alone once the consents are spent", () => {
+    expect(pendingFirstRunPrompts(state({ integrationsPending: true }))).toEqual(["integrations"]);
   });
 });

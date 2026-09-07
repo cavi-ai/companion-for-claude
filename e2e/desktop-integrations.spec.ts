@@ -18,7 +18,7 @@ test("Desktop integrations opens through Obsidian's real Node runtime boundary",
     const notices = await settingsPage.locator(".notice").allTextContents();
     expect(await modal.count(), `notices: ${notices.join(" | ")}`).toBeGreaterThan(0);
     await expect(modal).toBeVisible();
-    await expect(settingsPage.getByText("Claude Code", { exact: true })).toBeVisible();
+    await expect(modal.getByRole("heading", { name: "Claude Code" })).toBeVisible();
   } finally {
     await harness.close();
   }

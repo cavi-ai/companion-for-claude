@@ -23,7 +23,20 @@ beforeAll(async () => {
   app.vault.seed("Notes/Other.md", "Unrelated content about databases.", { mtime: Date.now() - 60_000 });
 
   const tools = new VaultTools(app as never, { allowWrites: true, defaultFolder: "Claude" });
-  server = new McpHttpServer({ port: 0, token: TOKEN, serverInfo: { name: "obsidian-vault", version: "0.4.0" } }, tools);
+  server = new McpHttpServer(
+    {
+      port: 0,
+      token: TOKEN,
+      serverInfo: { name: "obsidian-vault", version: "0.4.0" },
+      resources: {
+        list: async () => ({ resources: [{ uri: "obsidian://vault/Notes/Welcome.md", name: "Welcome", mimeType: "text/markdown" }] }),
+        templates: () => [],
+        read: async () => null,
+      },
+      prompts: { list: async () => [{ name: "seeded" }], get: async () => null },
+    },
+    tools,
+  );
   await server.start();
   const addr = server.address();
   if (!addr) throw new Error("server did not bind");
@@ -81,12 +94,13 @@ describe("MCP bridge — transport & auth", () => {
     expect(res.status).toBe(404);
   });
 
-  it("serves a GET liveness probe", async () => {
-    const res = await fetch(base, { headers: { authorization: `Bearer ${TOKEN}` } });
-    expect(res.status).toBe(200);
-    const json = (await res.json()) as { status: string; server: { name: string } };
-    expect(json.status).toBe("ok");
-    expect(json.server.name).toBe("obsidian-vault");
+  it("does not treat an /mcp-prefixed path as the MCP endpoint", async () => {
+    const res = await fetch(`${base}-other`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${TOKEN}`, "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "ping" }),
+    });
+    expect(res.status).toBe(404);
   });
 
   it("reports a JSON parse error per JSON-RPC", async () => {
@@ -254,5 +268,78 @@ describe("MCP bridge — write gating", () => {
     } finally {
       await s2.stop();
     }
+  });
+});
+
+describe("MCP bridge — hidden tools option", () => {
+  it("calls a hidden tool without listing it", async () => {
+    const hidden = new McpHttpServer(
+      { port: 0, token: TOKEN, serverInfo: { name: "obsidian-vault", version: "0.4.0" } },
+      { definitions: () => [{ name: "shown", description: "s", inputSchema: { type: "object" } }], call: async (name) => `ran:${name}` },
+      undefined,
+      new Set(["secret_tool"]),
+    );
+    await hidden.start();
+    const addr = hidden.address();
+    const url = `http://127.0.0.1:${addr!.port}/mcp`;
+    const headers = { "content-type": "application/json", authorization: `Bearer ${TOKEN}` };
+    const list = await (await fetch(url, { method: "POST", headers, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }) })).json() as { result: { tools: { name: string }[] } };
+    expect(list.result.tools.map((t) => t.name)).toEqual(["shown"]);
+    const run = await (await fetch(url, { method: "POST", headers, body: JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "secret_tool", arguments: {} } }) })).json() as { result: { content: { text: string }[] } };
+    expect(run.result.content[0]!.text).toBe("ran:secret_tool");
+    await hidden.stop();
+  });
+});
+
+describe("MCP bridge — 2025-06-18 transport rules", () => {
+  const initialize = () => rpc({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18" } });
+
+  it("issues a session id on initialize and accepts it afterwards", async () => {
+    const res = await initialize();
+    const sid = res.headers.get("mcp-session-id");
+    expect(sid).toMatch(/^[0-9a-f-]{36}$/);
+    const ping = await fetch(base, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${TOKEN}`, "mcp-session-id": sid! }, body: JSON.stringify({ jsonrpc: "2.0", id: 2, method: "ping" }) });
+    expect(ping.status).toBe(200);
+  });
+
+  it("still serves clients that never send a session id", async () => {
+    const res = await rpc({ jsonrpc: "2.0", id: 1, method: "ping" });
+    expect(res.status).toBe(200);
+  });
+
+  it("rejects an unknown session id with 404", async () => {
+    const res = await fetch(base, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${TOKEN}`, "mcp-session-id": "00000000-0000-4000-8000-000000000000" }, body: JSON.stringify({ jsonrpc: "2.0", id: 2, method: "ping" }) });
+    expect(res.status).toBe(404);
+  });
+
+  it("DELETE ends a session", async () => {
+    const sid = (await initialize()).headers.get("mcp-session-id")!;
+    const del = await fetch(base, { method: "DELETE", headers: { authorization: `Bearer ${TOKEN}`, "mcp-session-id": sid } });
+    expect(del.status).toBe(200);
+    const after = await fetch(base, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${TOKEN}`, "mcp-session-id": sid }, body: JSON.stringify({ jsonrpc: "2.0", id: 2, method: "ping" }) });
+    expect(after.status).toBe(404);
+    const unknown = await fetch(base, { method: "DELETE", headers: { authorization: `Bearer ${TOKEN}`, "mcp-session-id": sid } });
+    expect(unknown.status).toBe(404);
+  });
+
+  it("GET is not offered (no server stream)", async () => {
+    const res = await fetch(base, { method: "GET", headers: { authorization: `Bearer ${TOKEN}` } });
+    expect(res.status).toBe(405);
+    expect(res.headers.get("allow")).toBe("POST, DELETE");
+  });
+
+  it("checks the MCP-Protocol-Version header", async () => {
+    const bad = await fetch(base, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${TOKEN}`, "mcp-protocol-version": "1999-01-01" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "ping" }) });
+    expect(bad.status).toBe(400);
+    const old = await fetch(base, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${TOKEN}`, "mcp-protocol-version": "2024-11-05" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "ping" }) });
+    expect(old.status).toBe(200);
+  });
+
+  it("serves resources and prompts from the configured providers", async () => {
+    const listed = await rpc({ jsonrpc: "2.0", id: 1, method: "resources/list" });
+    const json = (await listed.json()) as { result: { resources: Array<{ uri: string }> } };
+    expect(json.result.resources.map((r) => r.uri)).toEqual(["obsidian://vault/Notes/Welcome.md"]);
+    const prompts = await rpc({ jsonrpc: "2.0", id: 2, method: "prompts/list" });
+    expect(((await prompts.json()) as { result: { prompts: Array<{ name: string }> } }).result.prompts.map((p) => p.name)).toEqual(["seeded"]);
   });
 });

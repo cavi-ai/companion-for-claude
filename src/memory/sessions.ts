@@ -77,3 +77,9 @@ export async function listSessionsForVault(
     .filter((m) => !m.cwd || m.cwd === vaultPath)
     .sort((a, b) => b.mtimeMs - a.mtimeMs);
 }
+
+/** Drop sessions whose ids Companion's own chats own, so a chat is never ingested twice. */
+export function excludeSessions(sessions: SessionMeta[], ids: Iterable<string | undefined>): SessionMeta[] {
+  const skip = new Set([...ids].filter((id): id is string => typeof id === "string"));
+  return sessions.filter((s) => !skip.has(s.id));
+}

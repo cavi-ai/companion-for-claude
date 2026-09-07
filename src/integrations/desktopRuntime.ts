@@ -187,6 +187,12 @@ const parseLooseVersion = (stdout: string): ProbeResult => {
 
 export { claudeDesktopConfigPath } from "./desktop";
 
+/** Candidate `claude` executables: PATH first, then every documented install location. */
+export function claudeExecutableCandidates(platform: DesktopPlatform, homeDir: string): string[] {
+  if (platform === "win32") return ["claude", `${homeDir}\\.local\\bin\\claude.exe`];
+  return ["claude", `${homeDir}/.local/bin/claude`, "/usr/local/bin/claude", "/opt/homebrew/bin/claude"];
+}
+
 export class DesktopRuntime {
   private claudeExecutable = "claude";
 
@@ -220,13 +226,7 @@ export class DesktopRuntime {
   }
 
   private claudeCandidates(): string[] {
-    if (this.options.platform === "win32") return ["claude", `${this.options.homeDir}\\.local\\bin\\claude.exe`];
-    return [
-      "claude",
-      `${this.options.homeDir}/.local/bin/claude`,
-      "/usr/local/bin/claude",
-      "/opt/homebrew/bin/claude",
-    ];
+    return claudeExecutableCandidates(this.options.platform, this.options.homeDir);
   }
 
   /**
