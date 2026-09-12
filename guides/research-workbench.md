@@ -15,7 +15,7 @@ document progress, and a queue of work needing attention. None of that requires 
 model request. Pin or dismiss guidance, switch projects, or open the Workbench
 when you need record-level control.
 
-<!-- screenshot: ../assets/research-desk.png — pending capture -->
+![Research Desk showing the project stage, next action, active document, and attention queue](../assets/research-desk.png)
 
 The **Research Workbench** is the advanced surface, grouped into four phases:
 
@@ -102,7 +102,7 @@ into four categories:
 - **Research gaps** identify open questions, unsupported claims, or places where counterevidence or independent sources should be investigated.
 - **Evidence quality** surfaces deterministic audit problems such as stale or unreviewed evidence, missing locators, and broken references.
 
-<!-- screenshot: ../assets/research-workbench-intelligence.png — pending capture -->
+![Research Workbench Intelligence tab showing deterministic research gaps and evidence-quality findings](../assets/research-workbench-intelligence.png)
 
 ### Model narrative (optional)
 

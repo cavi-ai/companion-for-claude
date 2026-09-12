@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { App, FakeElement, openSettingTab, Platform, type SettingDefinitionItem } from "./fakes/obsidian";
+import { App, FakeElement, openSettingTab, Platform, Setting, type SettingDefinitionItem } from "./fakes/obsidian";
 import { ClaudeCompanionSettingTab } from "../src/settings";
 import { DEFAULT_SETTINGS } from "../src/types";
 import { unavailableStore } from "../src/secrets/store";
@@ -37,8 +37,8 @@ function flatten(items: SettingDefinitionItem[]): SettingDefinitionItem[] {
   return items.flatMap((item) => (item.items ? [item, ...flatten(item.items)] : [item]));
 }
 
-function definitionsOf(): SettingDefinitionItem[] {
-  const tab = new ClaudeCompanionSettingTab(new App() as never, stubPlugin());
+function definitionsOf(plugin: ReturnType<typeof stubPlugin> = stubPlugin()): SettingDefinitionItem[] {
+  const tab = new ClaudeCompanionSettingTab(new App() as never, plugin);
   return tab.getSettingDefinitions() as unknown as SettingDefinitionItem[];
 }
 
@@ -104,7 +104,7 @@ describe("settings tab render", () => {
 
     const controls = container.querySelectorAll(".setting-item-control");
     expect(controls.filter((c) => c.children.length > 0).length).toBeGreaterThan(30);
-    expect(container.querySelectorAll("button").some((b) => b.textContent === "Desktop integrations")).toBe(true);
+    expect(container.querySelectorAll("button").some((b) => b.textContent === "Set up")).toBe(true);
   });
 
   it("renders on mobile with the desktop-only pages withheld", () => {
@@ -135,5 +135,38 @@ describe("Claude Code backend settings", () => {
     expect(typeof status?.render).toBe("function");
     const utility = defs.find((d) => (d.control as { key?: string } | undefined)?.key === "utilityBackend") as { desc?: string } | undefined;
     expect(utility?.desc).toContain("covers chat only");
+  });
+
+  it("hides the connect callout on the Claude Code backend when the CLI is signed in", () => {
+    const plugin = stubPlugin();
+    plugin.router = () => ({
+      chatBackend: "claude-cli",
+      anthropic: { hasCredentials: () => false },
+      claudeCli: { hasCredentials: () => true },
+    }) as never;
+    const item = flatten(definitionsOf(plugin)).find((i) => i.name === "Step 1 — connect to Claude");
+    expect(item?.visible?.()).toBe(false);
+  });
+
+  it("shows the connect callout on the Claude Code backend when the CLI is signed out", () => {
+    const plugin = stubPlugin();
+    plugin.router = () => ({
+      chatBackend: "claude-cli",
+      anthropic: { hasCredentials: () => false },
+      claudeCli: { hasCredentials: () => false },
+    }) as never;
+    const item = flatten(definitionsOf(plugin)).find((i) => i.name === "Step 1 — connect to Claude");
+    expect(item?.visible?.()).toBe(true);
+  });
+
+  it("renders Desktop integrations as a plain settings button", () => {
+    const plugin = stubPlugin();
+    const item = flatten(definitionsOf(plugin)).find((i) => i.name === "Desktop integrations");
+    expect(item?.render).toBeTypeOf("function");
+    const setting = new Setting(new FakeElement() as unknown as HTMLElement);
+    item!.render!(setting, undefined);
+    const button = (setting.settingEl as unknown as FakeElement).querySelectorAll("button")[0];
+    expect(button?.textContent).toBe("Set up");
+    expect(button?.classList?.has("cc-settings-desktop-integrations") ?? false).toBe(false);
   });
 });

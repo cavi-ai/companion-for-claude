@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import { runAgentTurn, type AgentTurnDeps } from "../src/agent/loop";
 import type { StreamHandlers } from "../src/types";
 import type { CompletionRequest, ToolResultBlock, ToolUseBlock } from "../src/providers/types";
+import { chipLabel } from "../src/view/toolChipLabel";
 
 /** One scripted model response for the fake provider. */
 interface Scripted {
@@ -217,5 +218,11 @@ describe("toTraceEntry", () => {
   it("summarizes args and previews the result", () => {
     const entry = toTraceEntry(use("t1"), okResult("t1", "x".repeat(500)));
     expect(entry).toEqual({ name: "vault_search", argsSummary: '{"query":"x"}', resultPreview: `${"x".repeat(400)}…`, ok: true });
+  });
+
+  it("stores a parseable reduced summary for a write call with a large content field, so replay renders the same chip as live", () => {
+    const input = { path: "Notes/Big.md", content: "x".repeat(2048) };
+    const entry = toTraceEntry(use("t1", "note_update", input), okResult("t1"));
+    expect(chipLabel("note_update", entry.argsSummary)).toBe(chipLabel("note_update", input));
   });
 });

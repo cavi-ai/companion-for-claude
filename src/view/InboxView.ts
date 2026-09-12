@@ -176,23 +176,16 @@ export class InboxView extends ItemView {
 
       const list = root.createDiv({ cls: "cc-inbox-list" });
       for (const item of items) {
-        const row = list.createDiv({ cls: "cc-inbox-row" });
-        const open = row.createEl("button", { cls: "cc-inbox-open" });
-        open.createSpan({ cls: "cc-inbox-name", text: item.basename });
-        open.createSpan({ cls: `cc-inbox-type cc-inbox-type-${item.type}`, text: item.type });
-        open.addEventListener("click", () => {
-          const f = this.app.vault.getAbstractFileByPath(item.path);
-          if (f instanceof TFile) void this.app.workspace.getLeaf(false).openFile(f);
+        this.renderInboxRow(list, item, {
+          meta: { cls: `cc-inbox-type cc-inbox-type-${item.type}`, text: item.type },
+          action: {
+            icon: this.enriching.has(item.path) ? "loader" : "wand-sparkles",
+            label: `Enrich ${item.basename}`,
+            disabled: this.enriching.has(item.path) || this.batchOperation !== null,
+            onClick: () => void this.enrichOne(item),
+          },
+          feedback: true,
         });
-
-        const btn = row.createEl("button", {
-          cls: "cc-inbox-enrich",
-          attr: { "aria-label": `Enrich ${item.basename}` },
-        });
-        setIcon(btn, this.enriching.has(item.path) ? "loader" : "wand-sparkles");
-        btn.disabled = this.enriching.has(item.path) || this.batchOperation !== null;
-        btn.addEventListener("click", () => void this.enrichOne(item));
-        this.renderFileFeedback(row, item.path);
       }
     }
 
@@ -216,15 +209,48 @@ export class InboxView extends ItemView {
     });
     const list = section.createDiv({ cls: "cc-inbox-list" });
     for (const item of typed) {
-      const row = list.createDiv({ cls: "cc-inbox-row" });
-      const open = row.createEl("button", { cls: "cc-inbox-open" });
-      open.createSpan({ cls: "cc-inbox-name", text: item.basename });
-      open.createSpan({ cls: `cc-inbox-type cc-inbox-type-${item.type}`, text: item.type });
-      open.addEventListener("click", () => {
-        const f = this.app.vault.getAbstractFileByPath(item.path);
-        if (f instanceof TFile) void this.app.workspace.getLeaf(false).openFile(f);
+      this.renderInboxRow(list, item, {
+        meta: { cls: `cc-inbox-type cc-inbox-type-${item.type}`, text: item.type },
       });
     }
+  }
+
+  /**
+   * One Inbox list row: the open-note button (name + optional meta chip), an
+   * optional action button, and optional per-file feedback — shared by the
+   * pending, typed, and link-review lists so the DOM stays identical across
+   * them.
+   */
+  private renderInboxRow(
+    list: HTMLElement,
+    item: { path: string; basename: string },
+    opts: {
+      meta?: { cls: string; text: string };
+      action?: { icon: string; label: string; disabled: boolean; onClick: () => void };
+      feedback?: boolean;
+    },
+  ): HTMLElement {
+    const row = list.createDiv({ cls: "cc-inbox-row" });
+    const open = row.createEl("button", { cls: "cc-inbox-open" });
+    open.createSpan({ cls: "cc-inbox-name", text: item.basename });
+    if (opts.meta) open.createSpan({ cls: opts.meta.cls, text: opts.meta.text });
+    open.addEventListener("click", () => {
+      const f = this.app.vault.getAbstractFileByPath(item.path);
+      if (f instanceof TFile) void this.app.workspace.getLeaf(false).openFile(f);
+    });
+
+    if (opts.action) {
+      const action = opts.action;
+      const btn = row.createEl("button", {
+        cls: "cc-inbox-enrich",
+        attr: { "aria-label": action.label },
+      });
+      setIcon(btn, action.icon);
+      btn.disabled = action.disabled;
+      btn.addEventListener("click", () => action.onClick());
+    }
+    if (opts.feedback) this.renderFileFeedback(row, item.path);
+    return row;
   }
 
   private enrichedInboxFiles(): TFile[] {
@@ -331,22 +357,15 @@ export class InboxView extends ItemView {
 
     const list = section.createDiv({ cls: "cc-inbox-list" });
     for (const item of items) {
-      const row = list.createDiv({ cls: "cc-inbox-row" });
-      const open = row.createEl("button", { cls: "cc-inbox-open" });
-      open.createSpan({ cls: "cc-inbox-name", text: item.basename });
-      open.createSpan({ cls: "cc-inbox-mentions", text: `${item.mentionCount} mention${item.mentionCount === 1 ? "" : "s"}` });
-      open.addEventListener("click", () => {
-        const f = this.app.vault.getAbstractFileByPath(item.path);
-        if (f instanceof TFile) void this.app.workspace.getLeaf(false).openFile(f);
+      this.renderInboxRow(list, item, {
+        meta: { cls: "cc-inbox-mentions", text: `${item.mentionCount} mention${item.mentionCount === 1 ? "" : "s"}` },
+        action: {
+          icon: this.linking.has(item.path) ? "loader" : "link",
+          label: `Review link suggestions for ${item.basename}`,
+          disabled: this.batchOperation !== null || this.linking.has(item.path),
+          onClick: () => void this.reviewOneLinks(item.path, item.basename),
+        },
       });
-
-      const btn = row.createEl("button", {
-        cls: "cc-inbox-enrich",
-        attr: { "aria-label": `Review link suggestions for ${item.basename}` },
-      });
-      setIcon(btn, this.linking.has(item.path) ? "loader" : "link");
-      btn.disabled = this.batchOperation !== null || this.linking.has(item.path);
-      btn.addEventListener("click", () => void this.reviewOneLinks(item.path, item.basename));
     }
   }
 
@@ -405,6 +424,7 @@ export class InboxView extends ItemView {
   private async enrichAll(items: InboxItem[]): Promise<void> {
     if (this.batchOperation !== null) return;
     this.batchOperation = "enrich";
+    const releaseReindex = this.plugin.suspendReindex();
     this.setOperationFeedback("running", `Enriching ${items.length} note${items.length === 1 ? "" : "s"}…`);
     const activityId = this.plugin.activity.start({
       id: "source-enrichment:inbox-batch",
@@ -412,6 +432,7 @@ export class InboxView extends ItemView {
       title: "Enriching Inbox",
       total: items.length,
     });
+    this.plugin.enrichDiagnostics.log("batch-start", { n: items.length });
     let enriched = 0;
     let failed = 0;
     let completed = 0;
@@ -454,7 +475,14 @@ export class InboxView extends ItemView {
           : `Typed ${enriched} of ${items.length} source notes; ${failed} failed.`,
       );
       if (failed === 0) {
-        this.plugin.activity.finish(activityId, { completed, succeeded: enriched, failed });
+        this.plugin.activity.finish(activityId, {
+          completed,
+          succeeded: enriched,
+          failed,
+          ...(this.plugin.settings.enrichmentDiagnostics
+            ? { recovery: [{ id: "copy-diagnostics", label: "Copy enrichment log", kind: "copy-details" }] }
+            : {}),
+        });
       } else {
         this.plugin.activity.fail(activityId, {
           completed,
@@ -464,6 +492,9 @@ export class InboxView extends ItemView {
           recovery: [
             { id: "review-inbox-failures", label: "Review failed notes", kind: "retry" },
             { id: "utility-settings", label: "Open utility settings", kind: "settings" },
+            ...(this.plugin.settings.enrichmentDiagnostics
+              ? [{ id: "copy-diagnostics", label: "Copy enrichment log", kind: "copy-details" as const }]
+              : []),
           ],
         });
       }
@@ -474,10 +505,17 @@ export class InboxView extends ItemView {
         succeeded: enriched,
         failed: Math.max(failed, 1),
         technicalDetails: detail,
-        recovery: [{ id: "review-inbox-failures", label: "Review failed notes", kind: "retry" }],
+        recovery: [
+          { id: "review-inbox-failures", label: "Review failed notes", kind: "retry" },
+          ...(this.plugin.settings.enrichmentDiagnostics
+            ? [{ id: "copy-diagnostics", label: "Copy enrichment log", kind: "copy-details" as const }]
+            : []),
+        ],
       });
       this.setOperationFeedback("error", `Inbox enrichment stopped — ${detail}`);
     } finally {
+      releaseReindex();
+      this.plugin.enrichDiagnostics.log("batch-end", { completed, enriched, failed });
       this.batchOperation = null;
       await this.renderSafely();
     }

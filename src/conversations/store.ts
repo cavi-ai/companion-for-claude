@@ -18,6 +18,24 @@ export interface Conversation {
   cliSessionId?: string;
   /** Earlier Claude Code session ids of this chat; memory ingest skips them too. */
   cliSessionHistory?: string[];
+  /** Durable receipt for the one turn that has not reached a persisted success. */
+  activeTurn?: ChatTurnReceipt;
+}
+
+export type ChatTurnState = "running" | "interrupted" | "failed";
+export type ChatTurnMode = "ask" | "plan" | "act";
+
+export interface ChatTurnReceipt {
+  id: string;
+  state: ChatTurnState;
+  backend: string;
+  model: string;
+  mode: ChatTurnMode;
+  userMessageIndex: number;
+  createdAt: number;
+  updatedAt: number;
+  cliSessionId?: string;
+  error?: string;
 }
 
 export interface ConversationState {
@@ -128,6 +146,46 @@ export function saveConversation(state: ConversationState, convo: Conversation, 
   return { conversations: kept, activeId };
 }
 
+/** Store the submitted messages and running receipt before execution starts. */
+export function startConversationTurn(
+  state: ConversationState,
+  conversationId: string,
+  messages: ChatMessage[],
+  receipt: ChatTurnReceipt,
+  maxKeep: number,
+): ConversationState {
+  const base = state.conversations.find((conversation) => conversation.id === conversationId)
+    ?? newConversation(conversationId, receipt.createdAt);
+  return saveConversation(state, { ...touch(base, messages, receipt.updatedAt), activeTurn: { ...receipt } }, maxKeep);
+}
+
+export function settleConversationTurn(
+  state: ConversationState,
+  conversationId: string,
+  turnId: string,
+  turnState: Exclude<ChatTurnState, "running">,
+  now: number,
+  error?: string,
+): ConversationState {
+  const conversation = state.conversations.find((entry) => entry.id === conversationId);
+  if (!conversation?.activeTurn || conversation.activeTurn.id !== turnId) return state;
+  const activeTurn: ChatTurnReceipt = {
+    ...conversation.activeTurn,
+    state: turnState,
+    updatedAt: now,
+    ...(error ? { error: error.slice(0, 500) } : {}),
+  };
+  return saveConversation(state, { ...conversation, activeTurn, updatedAt: now }, 0);
+}
+
+export function clearConversationTurn(state: ConversationState, conversationId: string, turnId: string, now: number): ConversationState {
+  const conversation = state.conversations.find((entry) => entry.id === conversationId);
+  if (!conversation?.activeTurn || conversation.activeTurn.id !== turnId) return state;
+  const updated = { ...conversation, updatedAt: now };
+  delete updated.activeTurn;
+  return saveConversation(state, updated, 0);
+}
+
 export function deleteConversation(state: ConversationState, id: string): ConversationState {
   const conversations = state.conversations.filter((c) => c.id !== id);
   const activeId = state.activeId === id ? (conversations[0]?.id ?? null) : state.activeId;
@@ -157,11 +215,52 @@ export function fromPersisted(raw: unknown): ConversationState {
   if (!raw || typeof raw !== "object") return emptyState();
   const o = raw as { conversations?: unknown; activeId?: unknown };
   const conversations = Array.isArray(o.conversations)
-    ? o.conversations.filter(isConversation).map((c) => ({ ...c, messages: compactMessages(c.messages) }))
+    ? o.conversations.filter(isConversation).map((c) => {
+        const { activeTurn: rawTurn, ...conversation } = c;
+        const activeTurn = normalizeTurnReceipt(rawTurn);
+        return {
+          ...conversation,
+          messages: compactMessages(c.messages),
+          ...(activeTurn ? { activeTurn: activeTurn.state === "running"
+            ? { ...activeTurn, state: "interrupted" as const }
+            : activeTurn } : {}),
+        };
+      })
     : [];
   conversations.sort((a, b) => b.updatedAt - a.updatedAt);
   const activeId = typeof o.activeId === "string" && conversations.some((c) => c.id === o.activeId) ? o.activeId : conversations[0]?.id ?? null;
   return { conversations, activeId };
+}
+
+const TURN_STATES = new Set<ChatTurnState>(["running", "interrupted", "failed"]);
+const TURN_MODES = new Set<ChatTurnMode>(["ask", "plan", "act"]);
+
+function normalizeTurnReceipt(value: unknown): ChatTurnReceipt | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const receipt = value as Partial<ChatTurnReceipt>;
+  const userMessageIndex = receipt.userMessageIndex;
+  if (
+    typeof receipt.id !== "string" || receipt.id.length === 0
+    || typeof receipt.state !== "string" || !TURN_STATES.has(receipt.state)
+    || typeof receipt.backend !== "string" || receipt.backend.length === 0
+    || typeof receipt.model !== "string" || receipt.model.length === 0
+    || typeof receipt.mode !== "string" || !TURN_MODES.has(receipt.mode)
+    || typeof userMessageIndex !== "number" || !Number.isInteger(userMessageIndex) || userMessageIndex < 0
+    || typeof receipt.createdAt !== "number" || !Number.isFinite(receipt.createdAt)
+    || typeof receipt.updatedAt !== "number" || !Number.isFinite(receipt.updatedAt)
+  ) return undefined;
+  return {
+    id: receipt.id,
+    state: receipt.state,
+    backend: receipt.backend,
+    model: receipt.model,
+    mode: receipt.mode,
+    userMessageIndex,
+    createdAt: receipt.createdAt,
+    updatedAt: receipt.updatedAt,
+    ...(typeof receipt.cliSessionId === "string" ? { cliSessionId: receipt.cliSessionId } : {}),
+    ...(typeof receipt.error === "string" ? { error: receipt.error.slice(0, 500) } : {}),
+  };
 }
 
 /** Compact relative time for the history list: "just now", "5m ago", "2d ago", or a date. */

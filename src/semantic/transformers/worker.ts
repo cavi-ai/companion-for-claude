@@ -61,6 +61,15 @@ let webgpuBroken = false;
  * dead-session inference fails await this instead of racing a second rebuild. */
 let rebuilding: Promise<void> | null = null;
 
+async function hasWebGpuAdapter(): Promise<boolean> {
+  if (typeof navigator === "undefined" || !("gpu" in navigator)) return false;
+  try {
+    return (await navigator.gpu.requestAdapter()) !== null;
+  } catch {
+    return false;
+  }
+}
+
 function makeExtractor(device: "webgpu" | "wasm", id: number, repo: string): Promise<Extractor> {
   // Hub progress events carry {status:"progress", file, progress: 0-100};
   // other statuses (initiate/download/done/ready) have no progress field.
@@ -88,7 +97,7 @@ async function doLoad(id: number, repo: string, pooling: "cls" | "mean"): Promis
   // session creation or first inference — probe the API up front, then verify
   // with a warm-up inference before committing to the backend. Weights are
   // already cached by then, so the wasm fallback re-load is offline.
-  if (!webgpuBroken && typeof navigator !== "undefined" && "gpu" in navigator) {
+  if (!webgpuBroken && await hasWebGpuAdapter()) {
     let webgpu: Extractor | null = null;
     try {
       webgpu = await makeExtractor("webgpu", id, repo);
@@ -96,7 +105,13 @@ async function doLoad(id: number, repo: string, pooling: "cls" | "mean"): Promis
       candidate = webgpu;
       chosen = "webgpu";
     } catch {
-      void webgpu?.dispose?.()?.catch(() => {});
+      webgpuBroken = true;
+      try {
+        await webgpu?.dispose?.();
+      } catch {
+        // Disposal is best-effort; construction may have failed before a live
+        // session existed. Do not overlap a known live session with WASM.
+      }
     }
   }
   if (!candidate) {
@@ -164,17 +179,27 @@ async function embed(id: number, texts: string[]): Promise<void> {
     const dead = extractor;
     extractor = null;
     loading = null; // stale: referred to the dead session; a future load must rebuild
-    void dead.dispose?.()?.catch(() => {});
-    rebuilding = makeExtractor("wasm", id, repo)
-      .then((candidate) => {
+    rebuilding = (async () => {
+      try {
+        await dead.dispose?.();
+      } catch {
+        // Best-effort: a lost WebGPU device may reject cleanup even though its
+        // resources are already gone.
+      }
+      if (gen !== generation) throw new Error("disposed during load");
+      const candidate = await makeExtractor("wasm", id, repo);
+      try {
         if (gen !== generation) {
           // "dispose" arrived during the rebuild: don't resurrect the pipeline.
-          void candidate.dispose?.()?.catch(() => {});
           throw new Error("disposed during load");
         }
         extractor = candidate;
         backend = "wasm";
-      })
+      } catch (error) {
+        void candidate.dispose?.()?.catch(() => {});
+        throw error;
+      }
+    })()
       .finally(() => {
         rebuilding = null;
       });

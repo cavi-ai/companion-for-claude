@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { SemanticIndexer, type IndexFile, type IndexerDeps } from "../src/semantic/indexer";
 import type { IndexData } from "../src/semantic/store";
 
@@ -69,6 +69,90 @@ describe("SemanticIndexer", () => {
     expect(result.failures).toEqual([{ path: "broken.md", message: "Ollama refused connection" }]);
   });
 
+  it("rejects an oversized file before reading or embedding it", async () => {
+    const ctx = makeDeps({ "large.md": "cat" });
+    let reads = 0;
+    ctx.deps.listMarkdown = () => [{ path: "large.md", mtime: 1, size: 11 }];
+    ctx.deps.maxInputBytes = () => 10;
+    ctx.deps.read = async (path) => {
+      reads++;
+      return ctx.files[path] ?? "";
+    };
+
+    const result = await new SemanticIndexer(ctx.deps).build({ force: true });
+
+    expect(reads).toBe(0);
+    expect(ctx.embedCalls).toEqual([]);
+    expect(result).toMatchObject({ indexed: 0, skipped: 1, failureCount: 1 });
+    expect(result.failures[0]?.message).toContain("exceeds the semantic indexing limit");
+  });
+
+  it("rejects an oversized incremental update before reading it", async () => {
+    const ctx = makeDeps({ "large.pdf": "binary" });
+    let reads = 0;
+    ctx.deps.maxInputBytes = () => 10;
+    ctx.deps.readPdfPages = async () => {
+      reads++;
+      return [{ page: 1, text: "cat" }];
+    };
+    const ix = new SemanticIndexer(ctx.deps);
+
+    await expect(ix.updateNote("large.pdf", 1, 11)).rejects.toThrow("exceeds the semantic indexing limit");
+
+    expect(reads).toBe(0);
+    expect(ctx.embedCalls).toEqual([]);
+  });
+
+  it("does not live-read an oversized note for Related Notes", async () => {
+    const ctx = makeDeps({ "indexed.md": "cat", "large.md": "dog" });
+    let reads = 0;
+    ctx.deps.listMarkdown = () => [
+      { path: "indexed.md", mtime: 1, size: 3 },
+      { path: "large.md", mtime: 1, size: 11 },
+    ];
+    ctx.deps.maxInputBytes = () => 10;
+    ctx.deps.read = async (path) => {
+      reads++;
+      return ctx.files[path] ?? "";
+    };
+    const ix = new SemanticIndexer(ctx.deps);
+    await ix.build({ force: true });
+    reads = 0;
+
+    await expect(ix.related("large.md", 5)).rejects.toThrow("exceeds the semantic indexing limit");
+
+    expect(reads).toBe(0);
+  });
+
+  it("prunes stale vectors when a previously indexed file grows oversized", async () => {
+    const ctx = makeDeps({ "large.md": "cat" });
+    let size = 3;
+    ctx.deps.listMarkdown = () => [{ path: "large.md", mtime: 1, size }];
+    ctx.deps.maxInputBytes = () => 10;
+    const ix = new SemanticIndexer(ctx.deps);
+    await ix.build({ force: true });
+    size = 11;
+    ctx.files["large.md"] = "dog";
+
+    const result = await ix.build({ force: true });
+
+    expect(result).toMatchObject({ removed: 1, failureCount: 1 });
+    expect((await ix.stats()).notes).toBe(0);
+    expect(ctx.store.data?.notes).toEqual({});
+  });
+
+  it("prunes and persists stale vectors when an incremental file grows oversized", async () => {
+    const ctx = makeDeps({ "large.md": "cat" });
+    ctx.deps.maxInputBytes = () => 10;
+    const ix = new SemanticIndexer(ctx.deps);
+    await ix.build({ force: true });
+
+    await expect(ix.updateNote("large.md", 2, 11)).rejects.toThrow("exceeds the semantic indexing limit");
+
+    expect((await ix.stats()).notes).toBe(0);
+    expect(ctx.store.data?.notes).toEqual({});
+  });
+
   it("builds, persists, and finds the semantically closest note", async () => {
     const ctx = makeDeps({
       "cats.md": "# Cats\nThe feline cat is a small mammal.",
@@ -110,6 +194,32 @@ describe("SemanticIndexer", () => {
     const res = await ix.build({ force: true });
     expect(res.indexed).toBe(2);
     expect(res.skipped).toBe(0);
+  });
+
+  it("bounds embedding batches when configured for a low-memory runtime", async () => {
+    const ctx = makeDeps({ "large.md": "cat sentence. ".repeat(600) });
+    Object.assign(ctx.deps, { embedBatchSize: 1 });
+
+    await new SemanticIndexer(ctx.deps).build();
+
+    expect(ctx.embedCalls.length).toBeGreaterThan(1);
+    expect(ctx.embedCalls.every((batch) => batch.length === 1)).toBe(true);
+  });
+
+  it("never creates an empty inference batch from a positive fractional limit", async () => {
+    const ctx = makeDeps({ "large.md": "cat sentence. ".repeat(600) });
+    const embed = ctx.deps.embed;
+    ctx.deps.embedBatchSize = 0.5;
+    ctx.deps.embed = async (input) => {
+      if (input.length === 0) throw new Error("empty inference batch");
+      return embed(input);
+    };
+
+    const result = await new SemanticIndexer(ctx.deps).build();
+
+    expect(result.failureCount).toBe(0);
+    expect(ctx.embedCalls.length).toBeGreaterThan(1);
+    expect(ctx.embedCalls.every((batch) => batch.length === 1)).toBe(true);
   });
 
   it("prunes notes that left the vault", async () => {
@@ -219,5 +329,62 @@ describe("SemanticIndexer", () => {
     const ix = new SemanticIndexer(ctx.deps);
     await ix.build();
     expect((await ix.stats()).notes).toBe(1);
+  });
+
+  it("reports embed phases per batch through onPhase", async () => {
+    const ctx = makeDeps({ "a.md": "cat cat cat cat" });
+    const phases: Array<{ phase: string; chunks: number }> = [];
+    ctx.deps.embedBatchSize = 1;
+    ctx.deps.onPhase = (phase, fields) => { phases.push({ phase, chunks: fields.chunks }); };
+    const ix = new SemanticIndexer(ctx.deps);
+    await ix.updateNote("a.md", 1);
+    expect(phases.length).toBeGreaterThanOrEqual(2);
+    expect(phases[0]?.phase).toBe("embed-start");
+    expect(phases[phases.length - 1]?.phase).toBe("embed-done");
+    expect(phases.every((p) => p.chunks === 1)).toBe(true);
+  });
+
+  it("updateNotes embeds every note and saves once", async () => {
+    const ctx = makeDeps({ "a.md": "cat", "b.md": "dog", "c.md": "fish" });
+    let saves = 0;
+    const save = ctx.deps.save;
+    ctx.deps.save = async (d) => { saves++; await save(d); };
+    const ix = new SemanticIndexer(ctx.deps);
+    await ix.updateNotes([{ path: "a.md", mtime: 1 }, { path: "b.md", mtime: 1 }, { path: "c.md", mtime: 1 }]);
+    expect(ctx.embedCalls.length).toBe(3);
+    expect(saves).toBe(1);
+    expect(Object.keys(ctx.store.data?.notes ?? {}).sort()).toEqual(["a.md", "b.md", "c.md"]);
+  });
+
+  it("updateNotes calls yieldBetween between notes, not after the last", async () => {
+    const ctx = makeDeps({ "a.md": "cat", "b.md": "dog", "c.md": "fish" });
+    const ix = new SemanticIndexer(ctx.deps);
+    const yieldBetween = vi.fn(async () => {});
+    await ix.updateNotes(
+      [{ path: "a.md", mtime: 1 }, { path: "b.md", mtime: 1 }, { path: "c.md", mtime: 1 }],
+      { yieldBetween },
+    );
+    expect(yieldBetween).toHaveBeenCalledTimes(2);
+  });
+
+  it("updateNotes reports an oversized entry as a failure, removes it, and still indexes the rest", async () => {
+    const ctx = makeDeps({ "large.md": "cat", "b.md": "dog", "c.md": "fish" });
+    ctx.deps.maxInputBytes = () => 10;
+    let saves = 0;
+    const save = ctx.deps.save;
+    ctx.deps.save = async (d) => { saves++; await save(d); };
+    const ix = new SemanticIndexer(ctx.deps);
+    await ix.updateNote("large.md", 1, 3);
+
+    const failures = await ix.updateNotes([
+      { path: "large.md", mtime: 2, size: 11 },
+      { path: "b.md", mtime: 1 },
+      { path: "c.md", mtime: 1 },
+    ]);
+
+    expect(failures).toHaveLength(1);
+    expect(failures[0]?.path).toBe("large.md");
+    expect(saves).toBe(2);
+    expect(Object.keys(ctx.store.data?.notes ?? {}).sort()).toEqual(["b.md", "c.md"]);
   });
 });

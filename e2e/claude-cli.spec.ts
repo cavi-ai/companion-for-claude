@@ -91,3 +91,42 @@ test("a skill from the palette runs as a composed turn on the Claude Code backen
     await harness.close();
   }
 });
+
+test("an unresponsive Claude Code turn survives restart and resumes explicitly", async () => {
+  const first = await launchObsidianHarness({ claudeCli: true });
+  const dataPath = join(first.paths.vault, ".obsidian", "plugins", "claude-companion", "data.json");
+  try {
+    await first.page.evaluate(async () => {
+      const app = (window as unknown as { app: { commands: { executeCommandById(id: string): Promise<void> } } }).app;
+      await app.commands.executeCommandById("claude-companion:open-chat");
+    });
+    const chat = first.page.locator(".cc-chat-root").first();
+    await expect(chat).toContainText("● Claude Code", { timeout: 15_000 });
+    await chat.locator(".cc-input").fill("hang forever");
+    await chat.locator(".cc-input").press("Enter");
+    await expect.poll(async () => {
+      const data = await readFile(dataPath, "utf8").catch(() => "");
+      return data.includes("hang forever") && /"activeTurn"\s*:\s*\{/.test(data) && /"state"\s*:\s*"running"/.test(data);
+    }, { timeout: 10_000 }).toBe(true);
+  } finally {
+    await first.close({ keep: true });
+  }
+
+  const second = await launchObsidianHarness({ claudeCli: true, reuse: first.paths });
+  try {
+    await second.page.evaluate(async () => {
+      const app = (window as unknown as { app: { commands: { executeCommandById(id: string): Promise<void> } } }).app;
+      await app.commands.executeCommandById("claude-companion:open-chat");
+    });
+    const chat = second.page.locator(".cc-chat-root").first();
+    await expect(chat).toContainText("hang forever");
+    await expect(chat).toContainText("This task was interrupted");
+    await chat.getByRole("button", { name: "Resume", exact: true }).click();
+    await expect(chat.locator(".cc-msg.cc-assistant").last()).toContainText("pong from claude code", { timeout: 30_000 });
+    await expect.poll(async () => /"activeTurn"\s*:/.test(await readFile(dataPath, "utf8").catch(() => "")), { timeout: 10_000 }).toBe(false);
+    const log = await readFile(second.argvLog, "utf8");
+    expect(log.split("\n").filter((line) => line.startsWith("ARGV ")).at(-1)).toContain("--resume");
+  } finally {
+    await second.close();
+  }
+});

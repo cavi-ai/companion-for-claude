@@ -75,6 +75,25 @@ describe("mountActivityIndicator", () => {
     expect(element(root, ".cc-activity-detail-message").textContent).toBe("Enriched");
   });
 
+  it("preserves keyboard focus when toggling the labelled activity details region", () => {
+    const root = new FakeElement();
+    const store = new ActivityStore();
+    mountActivityIndicator(root as unknown as HTMLElement, {
+      store,
+      runRecovery: vi.fn(),
+      dismiss: vi.fn(),
+    });
+    store.start({ id: "index", kind: "semantic-index", title: "Building index" });
+
+    const indicator = element(root, ".cc-activity-indicator");
+    vi.stubGlobal("document", { activeElement: indicator });
+    indicator.dispatchEvent({ type: "click" });
+
+    expect(element(root, ".cc-activity-indicator").getAttribute("data-focused")).toBe("true");
+    expect(element(root, ".cc-activity-drawer").getAttribute("role")).toBe("region");
+    vi.unstubAllGlobals();
+  });
+
   it("surfaces recovery and dismissal actions for an activity that needs attention", async () => {
     const root = new FakeElement();
     const store = new ActivityStore();

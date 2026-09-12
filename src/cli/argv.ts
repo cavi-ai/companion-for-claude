@@ -28,14 +28,17 @@ export interface CliArgvInput {
   /** Exact bridge tool names; auto-approved. Writes stay off this list so they route to the permission tool. */
   allowedTools: string[];
   maxTurns: number;
-  sessionId: string;
+  sessionId?: string;
+  resumeSessionId?: string;
 }
 
 export function buildClaudeArgv(i: CliArgvInput): string[] {
   for (const t of i.allowedTools) {
     if (t.includes("*") || !t.startsWith(PREFIX)) throw new Error(`allowedTools must name bridge tools exactly: ${t}`);
   }
-  if (!UUID.test(i.sessionId)) throw new Error("sessionId must be a UUID");
+  const ids = [i.sessionId, i.resumeSessionId].filter((id): id is string => id !== undefined);
+  if (ids.length !== 1) throw new Error("Exactly one sessionId or resumeSessionId is required");
+  if (!UUID.test(ids[0]!)) throw new Error("session id must be a UUID");
   if (!Number.isInteger(i.maxTurns) || i.maxTurns < 1) throw new Error("maxTurns must be a positive integer");
   return [
     "-p",
@@ -52,7 +55,7 @@ export function buildClaudeArgv(i: CliArgvInput): string[] {
     "--append-system-prompt-file", i.systemPromptFile,
     "--mcp-config", i.mcpConfigJson,
     "--permission-prompt-tool", cliToolName(CLI_PERMISSION_TOOL),
-    "--session-id", i.sessionId,
+    ...(i.resumeSessionId ? ["--resume", i.resumeSessionId] : ["--session-id", i.sessionId!]),
     ...(i.allowedTools.length > 0 ? ["--allowedTools", i.allowedTools.join(",")] : []),
   ];
 }

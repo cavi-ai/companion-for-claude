@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { ClaudeCliSession, userMessageLine } from "../../src/cli/session";
 import type { CompletionRequest } from "../../src/providers/types";
 
@@ -161,13 +161,32 @@ describe("ClaudeCliSession", () => {
     s.interrupt();
     expect(children[0]!.signals).toEqual(["SIGINT"]);
     expect(s.isClosed()).toBe(true);
-    feed(children[0]!, result(""));
-    children[0]!.emit("exit", 0);
     const r = await turn;
     expect(r.text).toBe("1");
+    expect(r.aborted).toBe(true);
     expect(r.error).toBeUndefined();
+    feed(children[0]!, result("late"));
+    children[0]!.emit("exit", 0);
     await expect(s.run(req, { onText: () => {} })).rejects.toThrow(/closed/);
     expect(children).toHaveLength(1);
+  });
+
+  it("settles immediately and escalates when a child ignores interruption", async () => {
+    vi.useFakeTimers();
+    try {
+      const { s, children } = session();
+      const turn = s.run(req, { onText: () => {} });
+      feed(children[0]!, init + text("partial"));
+
+      s.interrupt();
+
+      await expect(turn).resolves.toMatchObject({ text: "partial", aborted: true });
+      expect(children[0]!.signals).toEqual(["SIGINT"]);
+      await vi.advanceTimersByTimeAsync(3_000);
+      expect(children[0]!.signals).toEqual(["SIGINT", "SIGTERM", "SIGKILL"]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("a process exit closes the session so the next turn gets a fresh one from the registry", async () => {

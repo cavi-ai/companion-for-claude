@@ -13,7 +13,11 @@ import {
   compactMessages,
   compactArtifactsInHistory,
   relativeTime,
+  startConversationTurn,
+  settleConversationTurn,
+  clearConversationTurn,
   type Conversation,
+  type ChatTurnReceipt,
 } from "../src/conversations/store";
 import type { ChatMessage } from "../src/types";
 
@@ -238,5 +242,60 @@ describe("transcriptText", () => {
   });
   it("is empty for no prior turns", () => {
     expect(transcriptText([])).toBe("");
+  });
+});
+
+describe("durable chat turn receipts", () => {
+  const receipt = (state: ChatTurnReceipt["state"] = "running"): ChatTurnReceipt => ({
+    id: "turn-1",
+    state,
+    backend: "claude-cli",
+    model: "claude-sonnet-5",
+    mode: "act",
+    userMessageIndex: 0,
+    createdAt: 100,
+    updatedAt: 100,
+  });
+
+  it("stores the submitted message and running receipt in one state transition", () => {
+    const state = startConversationTurn(emptyState(), "c1", [u("Research the release risks")], receipt(), 10);
+
+    expect(state.activeId).toBe("c1");
+    expect(state.conversations[0]).toMatchObject({
+      id: "c1",
+      title: "Research the release risks",
+      messages: [u("Research the release risks")],
+      activeTurn: receipt(),
+    });
+  });
+
+  it("restores unfinished work as interrupted without replaying it", () => {
+    const conversation = {
+      ...newConversation("c1", 1),
+      messages: [u("Keep this request")],
+      activeTurn: receipt("running"),
+    };
+
+    const restored = fromPersisted({ conversations: [conversation], activeId: "c1" });
+
+    expect(restored.conversations[0]?.messages).toEqual([u("Keep this request")]);
+    expect(restored.conversations[0]?.activeTurn).toMatchObject({ id: "turn-1", state: "interrupted" });
+  });
+
+  it("drops malformed receipts without dropping an otherwise valid conversation", () => {
+    const conversation = { ...newConversation("c1", 1), messages: [u("Keep me")], activeTurn: { id: 7, state: "running" } };
+
+    const restored = fromPersisted({ conversations: [conversation], activeId: "c1" });
+
+    expect(restored.conversations[0]?.messages).toEqual([u("Keep me")]);
+    expect(restored.conversations[0]?.activeTurn).toBeUndefined();
+  });
+
+  it("settles and clears only the matching active turn", () => {
+    const started = startConversationTurn(emptyState(), "c1", [u("Do it")], receipt(), 10);
+    const interrupted = settleConversationTurn(started, "c1", "turn-1", "interrupted", 200, "Stopped by user");
+    expect(interrupted.conversations[0]?.activeTurn).toMatchObject({ state: "interrupted", error: "Stopped by user", updatedAt: 200 });
+    expect(clearConversationTurn(interrupted, "c1", "stale", 300)).toEqual(interrupted);
+    expect(clearConversationTurn(interrupted, "c1", "turn-1", 300).conversations[0]?.activeTurn).toBeUndefined();
   });
 });

@@ -403,4 +403,16 @@ describe("note_create with ontology", () => {
     expect(read).toContain('source: "claude-mcp"');
     expect(read).toContain('tags:\n  - "claude"');
   });
+
+  it("describes the written frontmatter even when the metadata cache lags the write", async () => {
+    const { vt, app } = await ontologyTools();
+    await vt.call("note_create", { title: "Lagging", content: "body", type: "person", properties: { role: "engineer" } });
+    const file = app.vault.getMarkdownFiles().find((f) => f.basename === "Lagging")!;
+    // Real Obsidian updates the cache asynchronously: freeze it at the pre-write frontmatter.
+    const stale = app.metadataCache.getFileCache(file);
+    app.metadataCache.getFileCache = () => stale;
+    const msg = await vt.call("update_frontmatter", { path: file.path, fields: { banana: 1 } });
+    expect(msg).toContain("Conformance:");
+    expect(msg).toContain("banana");
+  });
 });

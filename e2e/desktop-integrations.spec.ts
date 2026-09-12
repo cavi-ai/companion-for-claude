@@ -9,7 +9,7 @@ test("Desktop integrations opens through Obsidian's real Node runtime boundary",
     const settingsPage = await harness.openSettings();
 
     const settings = settingsPage.locator(".vertical-tab-content");
-    const open = settings.getByRole("button", { name: "Desktop integrations", exact: true });
+    const open = settings.getByRole("button", { name: "Set up", exact: true });
     await expect(open).toBeVisible();
     await open.click();
 

@@ -7,6 +7,9 @@ export default defineConfig({
     include: ["test/**/*.test.ts"],
     setupFiles: ["./test/setup.ts"],
     globals: false,
+    // The full suite performs several dynamic-import integration tests. Capping
+    // workers avoids CPU contention that made their 5s assertions flaky in CI.
+    maxWorkers: 2,
   },
   resolve: {
     alias: {

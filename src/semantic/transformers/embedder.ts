@@ -19,6 +19,7 @@ export class TransformersEmbedder implements Embedder {
   private tracker = new RequestTracker();
   private loaded: Promise<void> | null = null;
   private _backend: string | null = null;
+  private inferenceChain: Promise<void> = Promise.resolve();
 
   constructor(
     private createWorker: () => WorkerLike,
@@ -41,12 +42,16 @@ export class TransformersEmbedder implements Embedder {
 
   async embed(texts: string[]): Promise<number[][]> {
     await this.ensureLoaded();
-    // terminate() may race the await continuation: don't resurrect a worker
-    // with an un-loaded embed.
-    if (!this.loaded) throw new Error("embedding worker terminated");
-    const req = this.tracker.create<number[][]>();
-    this.post({ id: req.id, type: "embed", texts });
-    return req.promise;
+    const result = this.inferenceChain.catch(() => {}).then(async () => {
+      // terminate() may race either await continuation: don't resurrect a
+      // worker with an un-loaded embed.
+      if (!this.loaded) throw new Error("embedding worker terminated");
+      const req = this.tracker.create<number[][]>();
+      this.post({ id: req.id, type: "embed", texts });
+      return req.promise;
+    });
+    this.inferenceChain = result.then(() => undefined, () => undefined);
+    return result;
   }
 
   /** Kill the worker (unload / engine switch). Safe to call repeatedly. */

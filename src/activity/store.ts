@@ -1,6 +1,7 @@
 export type ActivityState = "running" | "succeeded" | "needs-attention" | "paused" | "cancelled";
 
 export type ActivityKind =
+  | "chat-turn"
   | "source-enrichment"
   | "semantic-index"
   | "embedding-download"
@@ -10,7 +11,7 @@ export type ActivityKind =
 export interface ActivityRecoveryAction {
   id: string;
   label: string;
-  kind: "retry" | "settings" | "download" | "degrade" | "copy-details";
+  kind: "retry" | "settings" | "download" | "degrade" | "copy-details" | "open" | "stop" | "resume";
 }
 
 export interface ActivityDetail {

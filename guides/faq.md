@@ -110,7 +110,7 @@ No. Three separate gates:
 
 - **Edits** use word-level inline review when the note is open and the red/green modal otherwise. Only accepted hunks are written — and that path stays available even with write tools off, because reviewing the diff *is* the approval.
 - **Write tools** (create, append, move, Canvas, Bases, research records) each ask for confirmation before running. Decline and Claude is told, then carries on.
-- **Plan Mode** — the **Plan** toggle in the composer hands Claude the read-only tool set only, whatever your settings say. Use it when you want a proposal, not an action.
+- **Plan Mode** — the Plan segment of the Ask / Plan / Act mode control in the composer hands Claude the read-only tool set only, whatever your settings say. Use it when you want a proposal, not an action.
 
 If Claude is asked to write with writes off, it's instructed to say so plainly
 rather than pasting note content into chat as though it had been saved. See

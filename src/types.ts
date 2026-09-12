@@ -236,6 +236,8 @@ export interface PluginSettings {
   sourceCaptureEnabled: boolean;
   /** Auto-enrich files as they appear in the inbox folder (vs. manual command only). */
   sourceEnrichOnCreate: boolean;
+  /** Append one line per enrichment phase to a diagnostics log, to find where a crash happened. */
+  enrichmentDiagnostics: boolean;
   /** One-time consent for auto-enriching inbox files with the utility model ("ask" until the user chooses). */
   sourceCaptureConsent: "ask" | "allow" | "deny";
   /** Folder the Web Clipper writes to and Companion watches. */
@@ -365,6 +367,7 @@ export const DEFAULT_SETTINGS: PluginSettings = {
 
   sourceCaptureEnabled: true,
   sourceEnrichOnCreate: true,
+  enrichmentDiagnostics: false,
   sourceCaptureConsent: "ask",
   sourceInboxFolder: "Clippings",
   clipOrganizedFolder: "Library",

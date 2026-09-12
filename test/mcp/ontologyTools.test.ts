@@ -31,7 +31,7 @@ beforeEach(async () => {
     parseYaml,
   });
   await registry.load();
-  app.vault.seed("People/Ada.md", "# Ada", { frontmatter: { type: "person" } });
+  app.vault.seed("People/Ada.md", "---\ntype: person\n---\n# Ada", { frontmatter: { type: "person" } });
   tools = new VaultTools(app as never, { allowWrites: true, defaultFolder: "Claude", ontology: () => registry, ontologyFolder: () => FOLDER });
 });
 
@@ -79,7 +79,7 @@ describe("conformance line on writes", () => {
   it("reports issues for a typed note after append, update, patch, and frontmatter writes", async () => {
     const append = await tools.call("note_append", { path: "People/Ada.md", content: "More." });
     expect(append).toMatch(/\nConformance: (ok|\d+ issue\(s\): .+)$/);
-    const update = await tools.call("note_update", { path: "People/Ada.md", content: "# Ada\n\nNew body." });
+    const update = await tools.call("note_update", { path: "People/Ada.md", content: "---\ntype: person\n---\n# Ada\n\nNew body." });
     expect(update).toMatch(/\nConformance: /);
     const patch = await tools.call("note_patch", { path: "People/Ada.md", target: { kind: "document" }, op: "append", content: "Tail." });
     expect(patch).toMatch(/\nConformance: /);

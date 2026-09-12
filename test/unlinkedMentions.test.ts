@@ -66,6 +66,30 @@ And \`Weekly Review\` inline. But GTD in prose.`;
     const bigContent = many.map((c) => c.basename).join(" ");
     expect(findUnlinkedMentions(bigContent, many, "X.md").length).toBeLessThanOrEqual(20);
   });
+
+  it("normalizes a note once regardless of candidate count", () => {
+    const content = "A long mobile note about Weekly Review. ".repeat(2_000);
+    const many: LinkCandidate[] = Array.from({ length: 500 }, (_, i) => ({
+      path: `Topic ${i}.md`,
+      basename: `Topic ${i}`,
+      aliases: [],
+    }));
+    let noteNormalizations = 0;
+    const originalToLowerCase = String.prototype.toLowerCase;
+
+    String.prototype.toLowerCase = function (this: string): string {
+      if (this.length === content.length) noteNormalizations += 1;
+      return originalToLowerCase.call(this);
+    };
+
+    try {
+      findUnlinkedMentions(content, many, "X.md");
+    } finally {
+      String.prototype.toLowerCase = originalToLowerCase;
+    }
+
+    expect(noteNormalizations).toBe(1);
+  });
 });
 
 describe("linkMention", () => {

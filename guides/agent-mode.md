@@ -27,7 +27,7 @@ arguments, and a preview of what came back (green for success, flagged for error
 Chips are recorded with the conversation, so reopening an old chat shows the same
 trace.
 
-<!-- screenshot: ../assets/agent-tool-chips.png — pending capture -->
+![Agent mode showing vault search and note read tool calls, with one result expanded](../assets/agent-tool-chips.png)
 
 ## What Claude can do
 
@@ -109,7 +109,7 @@ open, Companion renders word-level additions and removals directly in the
 editor with per-hunk controls; otherwise it opens the red/green review modal.
 Only accepted hunks are written, and Claude is told which ones those were.
 
-<!-- screenshot: ../assets/diff-review.png — pending capture -->
+![Per-hunk edit review with independent accept and reject controls](../assets/diff-review.png)
 
 `propose_note_edit` is not classified as a write tool, so it remains available
 with *Allow write tools* off. Each replacement must match the note exactly once,
@@ -117,7 +117,7 @@ so Claude includes surrounding lines to disambiguate.
 
 ## Plan Mode
 
-The **Plan** button in the composer enables Plan Mode for the conversation.
+The Ask / Plan / Act mode control in the composer switches to Plan for the conversation.
 
 While it is on:
 
@@ -125,7 +125,7 @@ While it is on:
 - `propose_note_edit` isn't offered either, so the turn ends in a plan rather than an edit proposal.
 - Claude is instructed to explore first (search and read the relevant notes), then propose concrete ordered steps naming the vault paths involved.
 
-Turn it off to execute. Plan Mode is per-conversation and never persisted; a
+Switch the mode control to Act to execute. Plan Mode is per-conversation and never persisted; a
 fresh chat starts with it off.
 
 The write tools are withheld from the request rather than discouraged by prompt.
@@ -180,8 +180,8 @@ characters, oldest dropped first.
 | Web search tool | Off | Adds `web_search` (engine: DuckDuckGo keyless, or Brave with an API key). |
 | Web fetch tool | Off | Adds `web_fetch` — read one public page per explicit call. |
 
-Plan Mode has no setting — it's the **Plan** toggle in the composer, per
-conversation.
+Plan Mode has no setting — it's the Plan segment of the Ask / Plan / Act mode
+control in the composer, per conversation.
 
 The agent runs in Companion chat through the direct API, Claude Code CLI, or a
 tool-capable local model. The [MCP bridge](claude-code-bridge.md) exposes the

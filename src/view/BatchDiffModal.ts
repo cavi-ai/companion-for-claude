@@ -38,6 +38,7 @@ export class BatchDiffModal extends Modal {
     this.titleEl.setText("Review suggested links");
     const { contentEl } = this;
     contentEl.addClass("cc-batch-diff-modal");
+    contentEl.addClass("cc-diff-modal");
 
     const toolbar = contentEl.createDiv({ cls: "cc-batch-diff-toolbar" });
     this.countEl = toolbar.createSpan({ cls: "cc-batch-diff-count" });

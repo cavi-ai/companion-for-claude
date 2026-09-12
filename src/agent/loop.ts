@@ -50,6 +50,22 @@ export function providerTurnRunner(deps: AgentTurnDeps): AgentTurnRunner {
 
 const ARGS_SUMMARY_MAX = 120;
 const RESULT_PREVIEW_MAX = 400;
+const SUMMARY_KEYS = ["query", "path", "title", "field", "value", "url", "project"] as const;
+
+/** The subset of input keys toolChipLabel actually reads — small enough to store in full, so replay renders the same chip as live. */
+function pick(input: unknown, keys: readonly string[]): Record<string, unknown> | undefined {
+  if (input === null || typeof input !== "object") return undefined;
+  const record = input as Record<string, unknown>;
+  const out: Record<string, unknown> = {};
+  let found = false;
+  for (const key of keys) {
+    if (key in record) {
+      out[key] = record[key];
+      found = true;
+    }
+  }
+  return found ? out : undefined;
+}
 
 export async function runAgentTurn(deps: AgentTurnDeps, req: CompletionRequest, handlers: AgentTurnHandlers): Promise<AgentTurnResult> {
   const messages: ApiMessage[] = [...req.messages];
@@ -110,10 +126,11 @@ export async function runAgentTurn(deps: AgentTurnDeps, req: CompletionRequest, 
 }
 
 export function toTraceEntry(block: ToolUseBlock, result: ToolResultBlock): ToolTraceEntry {
+  const reduced = pick(block.input, SUMMARY_KEYS);
   const args = JSON.stringify(block.input);
   return {
     name: block.name,
-    argsSummary: args.length > ARGS_SUMMARY_MAX ? `${args.slice(0, ARGS_SUMMARY_MAX)}…` : args,
+    argsSummary: reduced ? JSON.stringify(reduced) : args.length > ARGS_SUMMARY_MAX ? `${args.slice(0, ARGS_SUMMARY_MAX)}…` : args,
     resultPreview: result.content.length > RESULT_PREVIEW_MAX ? `${result.content.slice(0, RESULT_PREVIEW_MAX)}…` : result.content,
     ok: !result.is_error,
   };

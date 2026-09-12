@@ -1,6 +1,6 @@
 {
   "name": "claude-companion",
-  "version": "0.28.0",
+  "version": "0.29.0",
   "description": "Chat with Claude inside your Obsidian vault, generate beautiful interactive artifacts, and sync them back into your notes.",
   "main": "main.js",
   "type": "module",
@@ -36,16 +36,6 @@
     "skills:build": "node tools/build-skill-registry.mjs",
     "skills:verify": "node tools/verify-skill-registry.mjs"
   },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "esbuild"
-    ],
-    "overrides": {
-      "sharp": "^0.35.3",
-      "adm-zip": "^0.6.0",
-      "@xmldom/xmldom": "^0.9.12"
-    }
-  },
   "keywords": [
     "obsidian",
     "obsidian-plugin",
@@ -55,14 +45,14 @@
   ],
   "license": "MIT",
   "devDependencies": {
-    "@codemirror/state": "6.7.3",
+    "@codemirror/state": "6.7.4",
     "@codemirror/view": "6.43.11",
     "@eslint/js": "^10.0.1",
     "@playwright/test": "^1.62.1",
     "@typescript/native": "npm:typescript@^7.0.2",
     "@types/node": "^26.4.1",
     "esbuild": "0.28.2",
-    "eslint": "^10.9.1",
+    "eslint": "^10.10.0",
     "eslint-plugin-obsidianmd": "^0.4.2",
     "globals": "^17.12.0",
     "linkedom": "^0.18.13",
@@ -75,7 +65,7 @@
   },
   "dependencies": {
     "@huggingface/transformers": "^4.2.0",
-    "defuddle": "^0.19.2",
+    "defuddle": "^0.19.3",
     "pdfjs-dist": "~6.2.108"
   }
 }

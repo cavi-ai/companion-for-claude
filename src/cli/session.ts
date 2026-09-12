@@ -29,6 +29,8 @@ export interface CliSessionDeps {
 
 const STDERR_TAIL = 500;
 const CLOSE_GRACE_MS = 3000;
+const INTERRUPT_TERM_MS = 1500;
+const INTERRUPT_KILL_MS = 3000;
 
 /** The stream-json line for the request's last user message (text, image, document blocks). */
 export function userMessageLine(req: CompletionRequest, transcript: string | null): string {
@@ -56,6 +58,7 @@ export class ClaudeCliSession implements AgentTurnRunner {
   private closed = false;
   private firstMessage = true;
   private exitWaiters: Array<() => void> = [];
+  private shutdownTimers: number[] = [];
 
   constructor(private readonly deps: CliSessionDeps) {}
 
@@ -90,15 +93,22 @@ export class ClaudeCliSession implements AgentTurnRunner {
   interrupt(): void {
     const child = this.child;
     if (!child) return;
-    // SIGINT ends the Claude Code process, and its --session-id cannot be reused; the next turn gets a new session.
+    // Settle locally first: a process that ignores SIGINT must never strand Chat.
     this.closed = true;
+    if (this.active) this.active.settle({ text: this.text(this.active), trace: this.active.trace, aborted: true });
     child.kill("SIGINT");
+    this.clearShutdownTimers();
+    this.shutdownTimers = [
+      window.setTimeout(() => { if (this.child === child) child.kill("SIGTERM"); }, INTERRUPT_TERM_MS),
+      window.setTimeout(() => { if (this.child === child) child.kill("SIGKILL"); }, INTERRUPT_KILL_MS),
+    ];
   }
 
   async close(): Promise<void> {
     this.closed = true;
     const child = this.child;
     if (!child) return;
+    this.clearShutdownTimers();
     this.child = null;
     if (this.active) this.active.settle({ text: this.text(this.active), trace: this.active.trace, aborted: true });
     const exited = new Promise<void>((resolve) => this.exitWaiters.push(resolve));
@@ -123,6 +133,7 @@ export class ClaudeCliSession implements AgentTurnRunner {
 
   private onExit(message: string): void {
     this.closed = true; // a process that died for any reason ends the session
+    this.clearShutdownTimers();
     if (this.child) this.child = null;
     for (const w of this.exitWaiters.splice(0)) w();
     const turn = this.active;
@@ -145,8 +156,8 @@ export class ClaudeCliSession implements AgentTurnRunner {
       this.id = ev.sessionId;
       const down = ev.mcp.find((m) => m.status !== "connected");
       if (down && turn) {
-        this.interrupt();
         turn.settle({ text: this.text(turn), trace: turn.trace, error: new Error(`MCP bridge not connected (${down.name}: ${down.status})`) });
+        this.interrupt();
       }
       return;
     }
@@ -197,5 +208,10 @@ export class ClaudeCliSession implements AgentTurnRunner {
         return;
       }
     }
+  }
+
+  private clearShutdownTimers(): void {
+    for (const timer of this.shutdownTimers) window.clearTimeout(timer);
+    this.shutdownTimers = [];
   }
 }

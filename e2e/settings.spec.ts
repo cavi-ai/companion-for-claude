@@ -32,7 +32,7 @@ test("settings tab renders, controls respond, dependent rows follow", async () =
         .locator(".setting-item-control input, .setting-item-control select, .setting-item-control textarea, .setting-item-control .checkbox-container")
         .count(),
     ).toBeGreaterThan(5);
-    await expect(tab.locator("button", { hasText: "Desktop integrations" })).toBeVisible();
+    await expect(tab.getByRole("button", { name: "Set up", exact: true })).toBeVisible();
 
     // Authentication is a control definition; its value gates which credential
     // row is visible, so switching it must swap the field in place.

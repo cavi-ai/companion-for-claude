@@ -1,4 +1,4 @@
-import { App, TFile, normalizePath, getAllTags, requestUrl } from "obsidian";
+import { App, TFile, normalizePath, getAllTags, requestUrl, parseYaml } from "obsidian";
 import type { McpToolDef } from "./protocol";
 import { tokenize } from "../context/search";
 import { fuseKeywordAndSemantic, keywordVaultSearch, type SemanticSearch } from "../context/hybridSearch";
@@ -10,6 +10,7 @@ import { validateProposal } from "../ontology/propose";
 import type { OntologyRegistry } from "../ontology/registry";
 import type { ResolvedType } from "../ontology/types";
 import { replaceSection } from "./edit";
+import { readFrontmatter } from "./frontmatterRead";
 import { applyPatch, type PatchTarget } from "./patch";
 import { buildCanvas, serializeCanvas, type ProposedCanvasNode, type ProposedCanvasEdge } from "../canvas/jsonCanvas";
 import { buildBaseFile, type ProposedBase } from "../bases/baseFile";
@@ -626,10 +627,16 @@ export class VaultTools {
   }
 
   /** Advisory conformance of a typed note after a write; empty when nothing applies. */
-  private conformanceLine(file: TFile): string {
+  private async conformanceLine(file: TFile): Promise<string> {
     const registry = this.opts.ontology?.() ?? null;
     if (!registry || registry.resolved().size === 0) return "";
-    const fm = this.app.metadataCache.getFileCache(file)?.frontmatter as Record<string, unknown> | undefined;
+    let fm: Record<string, unknown> | null;
+    try {
+      // The metadata cache updates asynchronously; the file on disk is already written.
+      fm = readFrontmatter(await this.app.vault.read(file), (yaml) => parseYaml(yaml) as unknown);
+    } catch {
+      return "";
+    }
     if (!fm || typeof fm.type !== "string") return "";
     const r = conform(fm, registry.resolve(fm.type), (target) => this.lookupTargetType(registry, target));
     if (r.issues.length === 0) return "\nConformance: ok";
@@ -656,7 +663,7 @@ export class VaultTools {
     const existing = this.app.vault.getAbstractFileByPath(p);
     if (existing instanceof TFile) {
       await this.app.vault.append(existing, `\n${content}\n`);
-      return `Appended to: ${existing.path}${this.conformanceLine(existing)}`;
+      return `Appended to: ${existing.path}${await this.conformanceLine(existing)}`;
     }
     const file = await this.app.vault.create(p, `${content}\n`);
     return `Created and wrote: ${file.path}`;
@@ -668,10 +675,10 @@ export class VaultTools {
       const current = await this.app.vault.cachedRead(file);
       const next = replaceSection(current, section, content);
       await this.app.vault.modify(file, next);
-      return `Updated section "${section}" in ${file.path}${this.conformanceLine(file)}`;
+      return `Updated section "${section}" in ${file.path}${await this.conformanceLine(file)}`;
     }
     await this.app.vault.modify(file, content);
-    return `Updated ${file.path}${this.conformanceLine(file)}`;
+    return `Updated ${file.path}${await this.conformanceLine(file)}`;
   }
 
   private async patch(path: string, target: unknown, op: string, content: string): Promise<string> {
@@ -690,7 +697,7 @@ export class VaultTools {
         const list = isUnknownArray(existing) ? [...existing] : [];
         fm[key] = op === "append" ? [...list, content] : [content, ...list];
       });
-      return `Patched frontmatter "${key}" of ${file.path} (${op})${this.conformanceLine(file)}`;
+      return `Patched frontmatter "${key}" of ${file.path} (${op})${await this.conformanceLine(file)}`;
     }
     const patchTarget: PatchTarget | null =
       t.kind === "heading" ? { kind: "heading", heading: str(t.heading) }
@@ -701,7 +708,7 @@ export class VaultTools {
     const current = await this.app.vault.cachedRead(file);
     await this.app.vault.modify(file, applyPatch(current, { target: patchTarget, op, content }));
     const where = patchTarget.kind === "heading" ? `section "${patchTarget.heading}"` : patchTarget.kind === "block" ? `block ^${patchTarget.id}` : "the document";
-    return `Patched ${where} in ${file.path} (${op})${this.conformanceLine(file)}`;
+    return `Patched ${where} in ${file.path} (${op})${await this.conformanceLine(file)}`;
   }
 
   private async updateFrontmatter(path: string, tags: string[], fields: unknown): Promise<string> {
@@ -723,7 +730,7 @@ export class VaultTools {
       }
       for (const [k, v] of Object.entries(scalars)) fm[k] = v;
     });
-    return `Updated frontmatter of ${file.path}${this.conformanceLine(file)}`;
+    return `Updated frontmatter of ${file.path}${await this.conformanceLine(file)}`;
   }
 
   private async frontmatterQuery(field: string, value: string | undefined): Promise<string> {

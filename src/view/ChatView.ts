@@ -18,6 +18,7 @@ import { type ChatControls, defaultChatControls, shapeRequest } from "../claude/
 import { shouldFallbackToLocal, fallbackReason } from "../providers/fallback";
 import type { CompletionRequest } from "../providers/types";
 import { SlashMenu } from "./SlashMenu";
+import { ModeControl, type ChatMode } from "./ModeControl";
 import { type SlashCommand, runNativeSlashCommand, SLASH_COMMANDS, parseSlashQuery, workflowSlashCommands, templateSlashCommand, WORKFLOW_ACTION_PREFIX, skillSlashCommands, SKILL_ACTION_PREFIX } from "./slashCommands";
 import { substitutePlaceholders } from "../templates/promptTemplates";
 import { detectPageUrl, pageLabel, type AttachedPage } from "../context/urlContext";
@@ -33,6 +34,7 @@ import { type AtItem, buildAtItems, activeAtQuery } from "../context/atMention";
 import { extractArtifact, saveArtifactNote, saveChatNote, savePlanNote } from "../artifacts/artifactStore";
 import { extractTasks } from "../build/spec";
 import { errorHint, type ErrorHintProvider } from "../providers/errorHints";
+import { chipLabel } from "./toolChipLabel";
 import { needsCredentialSetup } from "../providers/setupState";
 import { mergeDetectedModels } from "../providers/localModels";
 import { addUsage, contextGauge, EMPTY_SESSION, estimateTokens, formatCost, formatTokens, sessionCost, type SessionUsage } from "../usage/tokens";
@@ -46,13 +48,6 @@ import { ComposerContextManager } from "./ComposerContextManager";
 import { buildContextManagerModel, type AutomaticContextKey } from "./contextManagerModel";
 
 export const CHAT_VIEW_TYPE = "claude-companion-chat";
-
-/** Compact one-line chip label: tool name + trimmed args (empty args omitted). */
-function chipLabel(name: string, args: string): string {
-  const a = args === "{}" ? "" : args;
-  const trimmed = a.length > 80 ? `${a.slice(0, 80)}…` : a;
-  return trimmed ? `${name} ${trimmed}` : name;
-}
 
 /** Truncate a tool result for the expandable chip body. */
 function previewText(text: string): string {
@@ -88,11 +83,14 @@ export class ChatView extends ItemView {
   private modelLabelEl!: HTMLElement;
   private backendPillEl!: HTMLElement;
   private writeGrantPillEl!: HTMLElement;
-  private writesToggleEl: HTMLButtonElement | null = null;
+  modeControl: ModeControl | null = null;
   private usageEl!: HTMLElement;
   private gaugeFillEl!: HTMLElement;
   private streaming = false;
   private abort: AbortController | null = null;
+  private currentTurn: { conversationId: string; turnId: string } | null = null;
+  private unregisterCurrentTurn: (() => void) | null = null;
+  private resumeCliSessionId: string | null = null;
   private session: SessionUsage = { ...EMPTY_SESSION };
   /** Usage for the in-flight turn; folded into the session once on completion. */
   private _turnUsage: TokenUsage | null = null;
@@ -151,8 +149,7 @@ export class ChatView extends ItemView {
     void (async () => {
       const router = this.plugin.router();
       this.agentCapable = this.plugin.settings.agentModeEnabled && (await router.chatToolCapable());
-      this.updateWritesToggle();
-      this.updatePlanToggle();
+      this.updateModeControl();
       const el = this.reasoningEl;
       if (!el) return;
       const reasoning = await router.chatReasoningActive(this.controls.thinking);
@@ -169,7 +166,6 @@ export class ChatView extends ItemView {
       el.setAttr("title", el.getAttr("aria-label") ?? "");
     })();
   }
-  private planToggleEl: HTMLButtonElement | null = null;
   private renderVersions = new WeakMap<HTMLElement, number>();
 
   constructor(
@@ -239,29 +235,30 @@ export class ChatView extends ItemView {
       });
     } else {
       // One-shot actions (left group). These DO something on click.
-      this.iconButton(actions, "plus", "New chat", () => this.clearChat());
-      this.iconButton(actions, "history", "Resume a past conversation", () => this.openHistory());
+      const primary = actions.createDiv({ cls: "cc-header-actions-primary" });
+      this.iconButton(primary, "plus", "New chat", () => this.clearChat());
+      this.iconButton(primary, "history", "Resume a past conversation", () => this.openHistory());
       // Workflows moved into the single slash surface: "/workflows" opens the
       // browsable picker, and each workflow is also its own "/" command.
-      this.iconButton(actions, "save", "Save chat to vault", () => void this.saveChat());
+      this.iconButton(primary, "save", "Save chat to vault", () => void this.saveChat());
       if (this.plugin.settings.memoryEnabled) {
         // "import" reads as a one-shot pull-in, not a toggle — capture brings a
         // Claude Code session's transcript into the vault.
-        this.iconButton(actions, "import", "Capture a Claude Code session into memory", () => void this.plugin.openSessionPicker());
+        this.iconButton(primary, "import", "Capture a Claude Code session into memory", () => void this.plugin.openSessionPicker());
       }
-      // Divider: everything to the right is a stateful toggle/status (clay = on),
-      // so the engage/disengage controls read apart from the actions above.
-      actions.createDiv({ cls: "cc-actions-sep" });
-      this.renderIngestToggle(actions);
+      // State group: stateful toggle/status controls (clay = on), so engage/
+      // disengage reads apart from the one-shot actions above.
+      const state = actions.createDiv({ cls: "cc-header-actions-state" });
+      this.renderIngestToggle(state);
       // MCP bridge status + menu now lives in the header (the old chip/status row
       // is gone — context is attached with "@" in the composer instead).
-      this.mcpStatusEl = actions.createEl("button", { cls: "cc-icon-btn cc-mcp-btn", attr: { "aria-label": "MCP bridge controls" } });
+      this.mcpStatusEl = state.createEl("button", { cls: "cc-icon-btn cc-mcp-btn", attr: { "aria-label": "MCP bridge controls" } });
       setIcon(this.mcpStatusEl, "plug-zap");
       this.mcpStatusEl.addEventListener("click", (evt) => this.openMcpMenu(evt));
       // Quick options joins this row rather than owning a header of its own, and
       // replaces the gear: its own sheet already offers "Open all settings".
       this.disposeChrome = renderCompanionChrome(root, "chat", "Chat", this.plugin.companionChrome(), {
-        host: actions,
+        host: state,
         compact: true,
       });
     }
@@ -417,7 +414,7 @@ export class ChatView extends ItemView {
 
   /** Replace the panel contents with a stored conversation and render it. */
   loadConversation(conversation: Conversation): void {
-    this.abort?.abort();
+    void this.stopCurrentTurn();
     this.streaming = false;
     this.setSending(false);
     this.session = { ...EMPTY_SESSION };
@@ -427,6 +424,7 @@ export class ChatView extends ItemView {
       this.renderEmptyState();
     } else {
       for (const m of this.messages) this.renderStoredMessage(m);
+      if (conversation.activeTurn) this.renderInterruptedTurn(conversation);
     }
     this.updateUsageBar();
     this.scrollToBottom();
@@ -456,7 +454,7 @@ export class ChatView extends ItemView {
 
   /** Clear the panel to its empty state without altering stored history. */
   resetToEmpty(): void {
-    this.abort?.abort();
+    void this.stopCurrentTurn();
     this.streaming = false;
     this.setSending(false);
     this.messages = [];
@@ -543,7 +541,7 @@ export class ChatView extends ItemView {
     this.templateReloadGeneration++;
     this.disposeChrome?.(false);
     this.disposeChrome = null;
-    this.abort?.abort();
+    await this.stopCurrentTurn();
     this.clearThinkingStatus();
     if (this.contextStatusInterval !== null) {
       window.clearInterval(this.contextStatusInterval);
@@ -556,7 +554,7 @@ export class ChatView extends ItemView {
     const { model: resolvedModel } = this.plugin.router().chatProvider();
     const caps = this.plugin.router().chatCapabilities();
     const chosen = modelLabel(this.controls?.model ?? this.plugin.settings.model);
-    const label = caps.local ? `${resolvedModel} · local` : caps.cli ? `${chosen} · Claude Code` : chosen;
+    const label = caps.local ? `${modelLabel(resolvedModel)} · local` : chosen;
     this.modelLabelEl.setText(label);
     if (this.usageEl) this.updateUsageBar();
   }
@@ -836,45 +834,25 @@ export class ChatView extends ItemView {
     void this.appendLocalModelOptions(select);
     void this.appendCustomModelOptions(select);
 
-    // "Act on vault" — the discoverable switch for whether Claude can create /
-    // edit notes in chat (agent writes). Only meaningful for Claude (Ollama has
-    // no vault tools), so it hides itself on local sessions. Each write still
-    // asks for confirmation; this just controls whether the tools are offered.
-    const writes = this.controlsEl.createEl("button", {
-      cls: "cc-ctl cc-ctl-toggle cc-writes-toggle",
-      attr: { "aria-label": "Act on vault — let Claude create and edit notes (each change asks first)" },
-    });
-    writes.createSpan({ cls: "cc-writes-toggle-icon" });
-    setIcon(writes.querySelector(".cc-writes-toggle-icon") as HTMLElement, "pencil");
-    writes.createSpan({ text: "Act on vault" });
-    writes.addEventListener("click", () => void this.toggleAgentWrites());
-    this.writesToggleEl = writes;
-    this.updateWritesToggle();
-
-    // "Plan" — Plan Mode: the agent explores with read-only tools and ends the
-    // turn with a proposed plan instead of attempting any writes. Same visibility
-    // rules as "Act on vault" (Claude + agent mode only).
-    const plan = this.controlsEl.createEl("button", {
-      cls: "cc-ctl cc-ctl-toggle cc-writes-toggle cc-plan-toggle",
-      attr: { "aria-label": "Plan Mode — Claude explores your vault read-only and proposes a plan before changing anything" },
-    });
-    plan.createSpan({ cls: "cc-writes-toggle-icon" });
-    setIcon(plan.querySelector(".cc-writes-toggle-icon") as HTMLElement, "map");
-    plan.createSpan({ text: "Plan" });
-    plan.addEventListener("click", () => this.togglePlanMode());
-    this.planToggleEl = plan;
-    this.updatePlanToggle();
-
     // Reasoning indicator: lit when the current backend thinks before
     // answering (Claude thinking on, or a local model with thinking metadata).
     const reasoning = this.controlsEl.createEl("button", {
-      cls: "cc-ctl cc-ctl-toggle cc-reasoning-indicator",
+      cls: "cc-ctl cc-reasoning-indicator",
       attr: { "aria-label": "Reasoning status", tabindex: "-1" },
     });
-    reasoning.createSpan({ cls: "cc-writes-toggle-icon" });
-    setIcon(reasoning.querySelector(".cc-writes-toggle-icon") as HTMLElement, "brain");
+    setIcon(reasoning, "brain");
     this.reasoningEl = reasoning;
     this.refreshCapabilityIndicators();
+
+    // Ask / Plan / Act — one segmented control for whether Claude can create /
+    // edit notes in chat. Only meaningful for Claude (Ollama has no vault
+    // tools), so it hides itself on local sessions. Each write still asks for
+    // confirmation; Act just controls whether the tools are offered.
+    this.modeControl = new ModeControl(this.controlsEl, {
+      initial: this.currentMode(),
+      onChange: (m) => this.applyMode(m),
+    });
+    this.updateModeControl();
 
     // Knobs (thinking / effort / temp / max) live in a popover behind a single
     // "tune" button, so the footer stays clean and Send is never buried.
@@ -1122,16 +1100,19 @@ export class ChatView extends ItemView {
   /** First-run card: connect to Claude without leaving the chat panel. */
   private renderSetupCard(parent: HTMLElement): void {
     const card = parent.createDiv({ cls: "cc-setup-card" });
+    const cliSignedIn = this.plugin.router().claudeCli.hasCredentials();
+    const storage = this.plugin.secrets().available()
+      ? "It’s kept in your device’s secret storage, not in this vault — nothing else leaves your machine."
+      : "It’s stored in this vault’s plugin data — nothing else leaves your machine.";
     card.createDiv({ cls: "cc-setup-title", text: "Connect to Claude" });
     card.createDiv({
       cls: "cc-setup-sub",
-      text: this.plugin.secrets().available()
-        ? "Add your Anthropic API key to start chatting. It’s kept in your device’s secret storage, not in this vault — nothing else leaves your machine."
-        : "Add your Anthropic API key to start chatting. It’s stored in this vault’s plugin data — nothing else leaves your machine.",
+      text: cliSignedIn
+        ? `Claude Code is signed in on this computer. Use it for chat on your subscription, or add an Anthropic API key. ${storage}`
+        : `Add your Anthropic API key to start chatting. ${storage}`,
     });
-    if (this.plugin.router().claudeCli.hasCredentials()) {
+    if (cliSignedIn) {
       const cli = card.createDiv({ cls: "cc-setup-cli" });
-      cli.createDiv({ cls: "cc-setup-cli-text", text: "Claude Code is installed and signed in on this computer. Use it instead of an API key — chat runs on your subscription." });
       const useCli = cli.createEl("button", { cls: "mod-cta cc-setup-cli-use", text: "Use Claude Code sign-in" });
       useCli.addEventListener("click", () => void (async () => {
         this.plugin.settings.chatBackend = "claude-cli";
@@ -1250,7 +1231,7 @@ export class ChatView extends ItemView {
     this.session = { ...EMPTY_SESSION };
     // Plan Mode is per-conversation — a fresh chat starts with it off.
     this.planMode = false;
-    this.updatePlanToggle();
+    this.updateModeControl();
     // The previous conversation is already auto-saved; detach so the next turn
     // begins a fresh session.
     void this.plugin.startNewConversation();
@@ -1281,7 +1262,7 @@ export class ChatView extends ItemView {
 
   private async onSend(): Promise<void> {
     if (this.streaming) {
-      this.abort?.abort();
+      await this.stopCurrentTurn();
       return;
     }
     const text = this.inputEl.value.trim();
@@ -1466,7 +1447,7 @@ export class ChatView extends ItemView {
     this._lastBuffer = ""; // never let a previous turn's partial leak into this one
     void this.refreshBackendPill();
     const router = this.plugin.router();
-    const { provider } = router.chatProvider();
+    const { provider, model } = router.chatProvider();
     const backend = router.chatBackend;
     const caps = router.chatCapabilities();
     if (backend === "claude-cli" && !caps.cli && !router.anthropic.hasCredentials()) {
@@ -1485,15 +1466,44 @@ export class ChatView extends ItemView {
     }
 
     this.messages.push({ role: "user", content: userText, ...(display !== undefined ? { display } : {}) });
+    let turn: { conversationId: string; turnId: string };
+    try {
+      turn = await this.plugin.beginActiveConversationTurn(this.messages, {
+        backend,
+        model: this.turnModelOverride ?? model,
+        mode: this.currentMode(),
+      });
+    } catch (error) {
+      this.messages.pop();
+      if (this.inputEl) {
+        this.inputEl.value = userText;
+        this.autosizeInput();
+      }
+      new Notice(`Couldn't save this request, so it was not started: ${error instanceof Error ? error.message : String(error)}`);
+      return;
+    }
+    this.currentTurn = turn;
+    this.abort = new AbortController();
+    const controller = this.abort;
+    this.unregisterCurrentTurn = this.plugin.registerActiveChatTurn(turn.conversationId, turn.turnId, () => {
+      controller.abort();
+      if (this.currentTurn?.turnId === turn.turnId) {
+        this.currentTurn = null;
+        this.unregisterCurrentTurn = null;
+        this.setSending(false);
+      }
+    });
+    this.setSending(true);
+    this._turnUsage = null;
     this.renderMessage("user", display ?? userText, { command: display !== undefined });
 
     // Agent mode: the model pulls vault context itself via tools. Gated on the
     // provider actually round-tripping tool_use (Claude, and local models whose
     // metadata reports "tools") — local-only setups get the same agent.
     const toolCapable = await router.chatToolCapable();
+    if (controller.signal.aborted) return;
     this.agentCapable = this.plugin.settings.agentModeEnabled && toolCapable;
-    this.updateWritesToggle();
-    this.updatePlanToggle();
+    this.updateModeControl();
     const agentActive = this.agentCapable;
     if (this.plugin.settings.agentModeEnabled && !toolCapable && caps.local) {
       new Notice(`The selected local model doesn't support tools, so the agent is off. Pick a tool-capable model (e.g. llama3.1, qwen3) in settings → Local models.`, 8000);
@@ -1514,7 +1524,11 @@ export class ChatView extends ItemView {
       this.attachedPaths,
       this.attachedPages,
     );
-    const apiMessages: ApiMessage[] = toApiMessages(compactArtifactsInHistory(this.messages));
+    if (controller.signal.aborted) return;
+    // A resumed Claude Code session already owns its history. Sending the whole
+    // conversation again can repeat the interrupted request and duplicate writes.
+    const wireMessages = this.resumeCliSessionId ? this.messages.slice(-1) : compactArtifactsInHistory(this.messages);
+    const apiMessages: ApiMessage[] = toApiMessages(wireMessages);
     if (ctx.text) {
       const last = apiMessages[apiMessages.length - 1];
       if (last && typeof last.content === "string") last.content = `${ctx.text}\n\n---\n\n${last.content}`;
@@ -1526,6 +1540,7 @@ export class ChatView extends ItemView {
     // see them — textContent() drops non-text blocks on the Ollama path.
     if (this.attachedMedia.length > 0) {
       const blocks = await this.mediaBlocks();
+      if (controller.signal.aborted) return;
       const last = apiMessages[apiMessages.length - 1];
       if (blocks.length > 0 && last && typeof last.content === "string") {
         last.content = [...blocks, { type: "text", text: last.content }];
@@ -1539,9 +1554,6 @@ export class ChatView extends ItemView {
     }
 
     const { bubble, body } = this.createAssistantBubble();
-    this.setSending(true);
-    this.abort = new AbortController();
-    this._turnUsage = null;
 
     // Attempt #1 on the primary backend (Claude unless backend is "local"/"custom").
     const startedOnLocal = caps.local;
@@ -1562,12 +1574,12 @@ export class ChatView extends ItemView {
         if (err2) {
           // Keep whatever streamed before the failure — persist it like an
           // abort, then append the error below it.
-          this.finishAssistant(this._lastBuffer || null, bubble);
-          this.renderError(body, err2.message ?? "Request failed", "ollama");
+          await this.finishAssistant(this._lastBuffer || null, bubble, undefined, "interrupted");
+          this.renderError(body, err2.message ?? "Request failed", fb.provider.id);
           this.restoreMediaAfterFailure();
         }
       } else {
-        this.finishAssistant(this._lastBuffer || null, bubble);
+        await this.finishAssistant(this._lastBuffer || null, bubble, undefined, "interrupted");
         this.renderError(body, err1.message ?? "Request failed", caps.cli ? "claude-cli" : startedOnLocal ? "ollama" : "anthropic");
         this.restoreMediaAfterFailure();
       }
@@ -1578,9 +1590,9 @@ export class ChatView extends ItemView {
     if (this.streaming) {
       if (this._lastBuffer && hasIncompleteHtmlArtifactFence(this._lastBuffer)) {
         this.renderInterruptedArtifact(body);
-        this.finishAssistant(null, bubble);
+        await this.finishAssistant(null, bubble, undefined, "interrupted");
       } else {
-        this.finishAssistant(this._lastBuffer || null, bubble);
+        await this.finishAssistant(this._lastBuffer || null, bubble, undefined, "interrupted");
       }
     }
   }
@@ -1657,8 +1669,8 @@ export class ChatView extends ItemView {
           onDone: (full) => {
             if (settled) return;
             settled = true;
-            void renderer.finalize(full).then(() => {
-              this.finishAssistant(full, bubble);
+            void renderer.finalize(full).then(async () => {
+              await this.finishAssistant(full, bubble);
               resolve(null);
             }).catch((error: unknown) => {
               resolve({ message: error instanceof Error ? error.message : String(error) });
@@ -1766,7 +1778,12 @@ export class ChatView extends ItemView {
       const message = error instanceof Error ? error.message : String(error);
       return { message, ...(status !== undefined ? { status } : {}) };
     }
-    this.finishAssistant(result.text.trim().length > 0 ? result.text : null, bubble, result.trace);
+    await this.finishAssistant(
+      result.text.trim().length > 0 ? result.text : null,
+      bubble,
+      result.trace,
+      result.aborted ? "interrupted" : "completed",
+    );
     return null;
   }
 
@@ -1775,7 +1792,7 @@ export class ChatView extends ItemView {
     const caps = this.plugin.router().chatCapabilities();
     if (!caps.cli) return providerTurnRunner(deps);
     if (!this.agentCapable) request.tools = [];
-    const conversationId = this.plugin.activeConversationId();
+    const conversationId = this.currentTurn?.conversationId ?? this.plugin.activeConversationId();
     this.abort?.signal.addEventListener("abort", () => this.plugin.interruptCliTurn(conversationId), { once: true });
     return this.plugin.cliTurnRunner({
       conversationId,
@@ -1783,7 +1800,8 @@ export class ChatView extends ItemView {
       agentMode: this.agentCapable,
       model: request.model,
       deps: { confirmWrite: (b) => this.confirmAgentWrite(b), proposeEdit: (b) => this.proposeAgentEdit(b) },
-      transcript: transcriptText(this.messages.slice(0, -1)),
+      transcript: this.resumeCliSessionId ? "" : transcriptText(this.messages.slice(0, -1)),
+      ...(this.resumeCliSessionId ? { resumeSessionId: this.resumeCliSessionId } : {}),
     });
   }
 
@@ -1867,45 +1885,47 @@ export class ChatView extends ItemView {
     this.containerEl.style.setProperty("--cc-chat-font", `${this.plugin.settings.chatFontSize}px`);
   }
 
-  /**
-   * Reflect the "Act on vault" toggle: hidden when the session can't act (local
-   * model, or agent mode off — no vault tools either way), lit when writes are on.
-   */
-  private updateWritesToggle(): void {
-    const el = this.writesToggleEl;
-    if (!el) return;
-    const canAct = this.agentCapable;
-    el.toggleClass("is-hidden", !canAct);
-    el.toggleClass("is-active", this.plugin.settings.agentAllowWrites);
-    el.setAttr("aria-pressed", String(this.plugin.settings.agentAllowWrites));
+  /** Displayed mode: Plan wins over Act, otherwise Act iff writes are allowed. */
+  private currentMode(): ChatMode {
+    return this.planMode ? "plan" : this.plugin.settings.agentAllowWrites ? "act" : "ask";
   }
 
-  /** Flip whether Claude may create/edit notes in chat (each write still confirms). */
-  private async toggleAgentWrites(): Promise<void> {
-    const on = !this.plugin.settings.agentAllowWrites;
-    this.plugin.settings.agentAllowWrites = on;
-    await this.plugin.saveSettings();
-    this.updateWritesToggle();
-    quickNotice(on ? "Act on vault: on — I'll create and edit notes (each change asks first)." : "Act on vault: off — chat only, I won't change your vault.");
+  /** Reflect the mode control: hidden when the session can't act, state from currentMode(). */
+  private updateModeControl(): void {
+    this.modeControl?.setVisible(this.agentCapable);
+    this.modeControl?.set(this.currentMode());
   }
 
-  /**
-   * Reflect Plan Mode: same visibility rules as "Act on vault", lit while on.
-   * While lit the turn is read-only and ends in a proposed plan.
-   */
-  private updatePlanToggle(): void {
-    const el = this.planToggleEl;
-    if (!el) return;
-    el.toggleClass("is-hidden", !this.agentCapable);
-    el.toggleClass("is-active", this.planMode);
-    el.setAttr("aria-pressed", String(this.planMode));
-  }
-
-  /** Flip Plan Mode for this conversation (never persisted). */
-  private togglePlanMode(): void {
-    this.planMode = !this.planMode;
-    this.updatePlanToggle();
-    quickNotice(this.planMode ? "Plan Mode: on — I'll explore read-only and propose a plan, no writes." : "Plan Mode: off.");
+  /** Apply an Ask / Plan / Act switch: writes setting + Plan Mode, the matching notice, then persist if writes changed. */
+  private async applyMode(mode: ChatMode): Promise<void> {
+    // Plan leaves the writes setting untouched — only Ask/Act set it.
+    const previousWrites = this.plugin.settings.agentAllowWrites;
+    const previousPlanMode = this.planMode;
+    let writesChanged = false;
+    if (mode !== "plan") {
+      const writesOn = mode === "act";
+      writesChanged = this.plugin.settings.agentAllowWrites !== writesOn;
+      this.plugin.settings.agentAllowWrites = writesOn;
+    }
+    this.planMode = mode === "plan";
+    this.updateModeControl();
+    quickNotice(
+      mode === "act"
+        ? "Act on vault: on — I'll create and edit notes (each change asks first)."
+        : mode === "plan"
+          ? "Plan Mode: on — I'll explore read-only and propose a plan, no writes."
+          : "Act on vault: off — chat only, I won't change your vault.",
+    );
+    if (writesChanged) {
+      try {
+        await this.plugin.saveSettings();
+      } catch (e) {
+        this.plugin.settings.agentAllowWrites = previousWrites;
+        this.planMode = previousPlanMode;
+        this.updateModeControl();
+        quickNotice(`Couldn't save the mode: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
   }
 
   /** Live tool chips for the in-flight agent turn, inserted above the answer body. */
@@ -1922,7 +1942,7 @@ export class ChatView extends ItemView {
     return {
       start: (block: ToolUseBlock): void => {
         const chip = ensure().createEl("details", { cls: "cc-tool-chip is-running" });
-        chip.createEl("summary", { cls: "cc-tool-chip-summary", text: chipLabel(block.name, JSON.stringify(block.input)) });
+        chip.createEl("summary", { cls: "cc-tool-chip-summary", text: chipLabel(block.name, block.input) });
         open.set(block.id, chip);
         this.scrollToBottom();
       },
@@ -1952,20 +1972,40 @@ export class ChatView extends ItemView {
     bubble.createDiv({ cls: "cc-agent-notice", text });
   }
 
-  private finishAssistant(full: string | null, bubble: HTMLElement, trace?: ToolTraceEntry[]): void {
+  private async finishAssistant(
+    full: string | null,
+    bubble: HTMLElement,
+    trace?: ToolTraceEntry[],
+    outcome: "completed" | "interrupted" = "completed",
+  ): Promise<void> {
     // Idempotent per bubble: onDone and the abort-safety net can both reach here
     // for the same turn — only the first call commits the message + action bar.
     if (bubble.dataset.ccFinished === "1") return;
     bubble.dataset.ccFinished = "1";
     this.clearThinkingStatus(); // covers no-text / error / abort turns
-    this.setSending(false);
-    this.abort = null;
     if (full && full.trim().length > 0) {
       this.messages.push({ role: "assistant", content: full, ...(trace && trace.length > 0 ? { toolTrace: trace } : {}) });
       this.addAssistantActions(bubble, full);
     }
-    // Persist the turn so the conversation survives a restart (best-effort).
-    void this.plugin.saveActiveConversation(this.messages);
+    const turn = this.currentTurn;
+    try {
+      if (turn) {
+        if (outcome === "completed") await this.plugin.completeActiveConversationTurn(turn.conversationId, turn.turnId, this.messages);
+        else await this.plugin.interruptActiveConversationTurn(turn.conversationId, turn.turnId, this.messages);
+      } else {
+        await this.plugin.saveActiveConversation(this.messages);
+      }
+    } catch (error) {
+      new Notice(`The response is visible, but it could not be saved: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      if (turn && this.currentTurn?.turnId === turn.turnId) {
+        this.unregisterCurrentTurn?.();
+        this.unregisterCurrentTurn = null;
+        this.currentTurn = null;
+      }
+      this.setSending(false);
+      this.abort = null;
+    }
     // Fold this turn's usage into the session exactly once. The API emits usage
     // on both message_start and message_delta; counting each event would double
     // the request count and inflate output tokens.
@@ -1975,6 +2015,36 @@ export class ChatView extends ItemView {
     }
     this.updateUsageBar();
     this.scrollToBottom();
+  }
+
+  private async stopCurrentTurn(): Promise<void> {
+    const turn = this.currentTurn;
+    if (!turn) {
+      this.abort?.abort();
+      return;
+    }
+    await this.plugin.stopActiveChatTurn(turn.conversationId, turn.turnId);
+  }
+
+  async resumeInterruptedTurn(conversation: Conversation): Promise<void> {
+    const receipt = conversation.activeTurn;
+    if (!receipt || (receipt.state !== "interrupted" && receipt.state !== "failed")) return;
+    this.resumeCliSessionId = receipt.cliSessionId ?? conversation.cliSessionId ?? null;
+    try {
+      await this.run(
+        "Inspect the current vault state, report what the interrupted task already completed, and continue only unfinished work. Do not repeat completed writes.",
+        "Resume interrupted task",
+      );
+    } finally {
+      this.resumeCliSessionId = null;
+    }
+  }
+
+  private renderInterruptedTurn(conversation: Conversation): void {
+    const row = this.messagesEl.createDiv({ cls: "cc-agent-notice cc-interrupted-turn" });
+    row.createSpan({ text: "This task was interrupted. Review any partial changes before resuming." });
+    const resume = row.createEl("button", { text: "Resume", cls: "mod-cta" });
+    resume.addEventListener("click", () => void this.resumeInterruptedTurn(conversation));
   }
 
   // ---------- rendering ----------
@@ -2218,6 +2288,7 @@ export class ChatView extends ItemView {
     const items: ActionModalItem[] = [
       { title: "Source inbox", icon: "inbox", run: () => void this.plugin.activateInboxView() },
       { title: "Related notes", icon: "link", run: () => void this.plugin.activateRelatedView() },
+      { title: "Research Desk", icon: "flask-conical", run: () => void this.plugin.activateResearchDesk() },
       { title: "New chat", icon: "plus", run: () => this.clearChat() },
       { title: "History", icon: "history", run: () => this.openHistory() },
       { title: "Save chat to vault", icon: "save", run: () => void this.saveChat() },
@@ -2229,8 +2300,8 @@ export class ChatView extends ItemView {
     const canAct = this.plugin.settings.agentModeEnabled && this.plugin.router().chatCapabilities().agentActions;
     if (canAct) {
       items.push(
-        { title: "Act on vault", icon: "pencil-line", checked: this.plugin.settings.agentAllowWrites, separatorBefore: true, run: () => void this.toggleAgentWrites() },
-        { title: "Plan mode", icon: "list-todo", checked: this.planMode, run: () => this.togglePlanMode() },
+        { title: "Act on vault", icon: "pencil-line", checked: this.plugin.settings.agentAllowWrites, separatorBefore: true, run: () => void this.applyMode(this.plugin.settings.agentAllowWrites ? "ask" : "act") },
+        { title: "Plan mode", icon: "list-todo", checked: this.planMode, run: () => void this.applyMode(this.planMode ? (this.plugin.settings.agentAllowWrites ? "act" : "ask") : "plan") },
       );
     }
     if (this.plugin.settings.memoryEnabled) {

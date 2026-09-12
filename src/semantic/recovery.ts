@@ -3,6 +3,7 @@ import { classifyEndpoint, sanitizeEndpointForDisplay } from "../providers/endpo
 
 export type EmbeddingFailureCategory =
   | "builtin-model-missing"
+  | "input-too-large"
   | "ollama-unreachable"
   | "model-missing"
   | "custom-endpoint-unreachable"
@@ -50,6 +51,17 @@ export function classifyEmbeddingFailure(error: unknown, context: EmbeddingFailu
       actions: [
         action("download-builtin", "Download built-in model", "download"),
         action("embedding-settings", "Open embedding settings", "settings"),
+      ],
+    };
+  }
+  if (lower.includes("exceeds the semantic indexing limit")) {
+    return {
+      category: "input-too-large",
+      message: "This file is too large to index safely on this device. It remains available to keyword search.",
+      technicalDetails,
+      actions: [
+        action("embedding-settings", "Open embedding settings", "settings"),
+        action("copy-details", "Copy technical details", "copy-details"),
       ],
     };
   }

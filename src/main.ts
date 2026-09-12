@@ -107,7 +107,12 @@ import {
   deleteConversation as removeConversation,
   setActive,
   touch,
+  startConversationTurn,
+  settleConversationTurn,
+  clearConversationTurn,
+  type ChatTurnMode,
 } from "./conversations/store";
+import { ChatTurnLifecycle } from "./chat/turnLifecycle";
 import type { ChatMessage } from "./types";
 import { normalizePath, TFile, TFolder, type Editor } from "obsidian";
 import { enrichCapture, type EnrichDeps } from "./sources/enrich";
@@ -137,6 +142,7 @@ import { classifyEmbeddingFailure, type EmbeddingRecovery } from "./semantic/rec
 import { clipperSetupFor, type ClipperSetupViewModel } from "./sources/clipperSetup";
 import { verifyClipperNote } from "./sources/clipperVerification";
 import { KeyedSerialQueue } from "./sources/keyedSerialQueue";
+import { EnrichDiagnostics } from "./sources/enrichDiagnostics";
 import { ClipperSetupModal } from "./view/ClipperSetupModal";
 import { DesktopIntegrationCoordinator, type DesktopIntegrationRuntime } from "./integrations/desktopCoordinator";
 import { DesktopIntegrationsModal, type DesktopIntegrationsController } from "./view/DesktopIntegrationsModal";
@@ -154,6 +160,9 @@ const ARTIFACT_MAX_TOKENS = 32000;
  * though extraction sends only the first 8,000 characters to the model.
  */
 const MOBILE_SOURCE_NOTE_MAX_BYTES = 5 * 1024 * 1024;
+/** PDFs expand substantially during parsing; reject large mobile semantic
+ * inputs before the native vault bridge creates its first binary copy. */
+const MOBILE_SEMANTIC_PDF_MAX_BYTES = 10 * 1024 * 1024;
 
 /** Shape of this plugin's persisted data.json (settings + chat history). */
 interface PersistedData {
@@ -194,8 +203,27 @@ export default class ClaudeCompanionPlugin extends Plugin {
   override settings: PluginSettings = DEFAULT_SETTINGS;
   private _activity?: ActivityStore;
   get activity(): ActivityStore { return this._activity ??= new ActivityStore(); }
+  private _enrichDiagnostics?: EnrichDiagnostics;
+  /** Opt-in phase log for batch enrichment; lazy getter so partial test harnesses (no onload) never touch it unless enabled. */
+  get enrichDiagnostics(): EnrichDiagnostics {
+    return this._enrichDiagnostics ??= new EnrichDiagnostics(
+      {
+        append: async (path, text) => {
+          const dir = path.slice(0, path.lastIndexOf("/"));
+          if (dir && !(await this.app.vault.adapter.exists(dir))) await this.app.vault.adapter.mkdir(dir);
+          await this.app.vault.adapter.append(path, text);
+        },
+        now: () => Date.now(),
+        isMobile: Platform.isMobile,
+        path: "Claude/enrichment-diagnostics.log",
+      },
+      () => this.settings.enrichmentDiagnostics,
+    );
+  }
   private convState: ConversationState = emptyState();
   private convSeq = 0;
+  private _chatTurnLifecycle?: ChatTurnLifecycle;
+  private chatTurnLifecycle(): ChatTurnLifecycle { return this._chatTurnLifecycle ??= new ChatTurnLifecycle(); }
   private researchDeskPreferences: ResearchDeskPreferenceMap = {};
   private buildRuns: Record<string, BuildRun> = {};
   private activeBuildRunId: string | null = null;
@@ -249,6 +277,7 @@ export default class ClaudeCompanionPlugin extends Plugin {
   /** Debounce timer for incremental re-index on note changes. */
   private reindexTimer: number | null = null;
   private reindexQueue = new Set<string>();
+  private reindexSuspended = 0;
   private enrichTimers = new Map<string, number>();
   /** Debounced Clipper arrivals waiting for one-at-a-time utility processing. */
   private enrichPending = new Map<string, TFile>();
@@ -591,7 +620,7 @@ export default class ClaudeCompanionPlugin extends Plugin {
       app: this.app,
       complete: async (system, user, opts) => {
         this.assertUtilityLifecycleActive(lifecycleGeneration);
-        return (
+        const text = (
           await router.completeResolved(selection, {
             system,
             user,
@@ -600,6 +629,8 @@ export default class ClaudeCompanionPlugin extends Plugin {
             ...(opts?.disableThinking ? { thinking: { type: "disabled" as const } } : {}),
           })
         ).text;
+        this.enrichDiagnostics.log("response-received", { chars: text.length });
+        return text;
       },
       overrides: this.settings.sourceSchemaOverrides,
       baseTags: this.settings.sourceBaseTags,
@@ -979,6 +1010,7 @@ export default class ClaudeCompanionPlugin extends Plugin {
   private async drainEnrichQueue(): Promise<void> {
     if (this.enrichQueueRunning || this.utilityLifecycleEnded) return;
     this.enrichQueueRunning = true;
+    const release = this.suspendReindex();
     try {
       while (!this.utilityLifecycleEnded) {
         const next = this.enrichPending.entries().next().value;
@@ -1010,6 +1042,7 @@ export default class ClaudeCompanionPlugin extends Plugin {
         }
       }
     } finally {
+      release();
       this.enrichQueueRunning = false;
       if (!this.utilityLifecycleEnded && this.enrichPending.size > 0) void this.drainEnrichQueue();
     }
@@ -1119,12 +1152,14 @@ export default class ClaudeCompanionPlugin extends Plugin {
       : undefined;
     try {
       const raw = prefetchedContent ?? await this.app.vault.cachedRead(file);
+      this.enrichDiagnostics.log("item-start", { path: file.path, bytes: raw.length });
       const capture =
         file.extension === "md"
           ? { kind: "markdown" as const, path: file.path, basename: file.basename, content: raw, url: parseClipUrl(raw) }
           : { kind: "datafile" as const, path: file.path, basename: file.basename, ext: file.extension, content: raw };
       selection = await this.router().utilitySelection();
       const res = await enrichCapture(this.enrichDeps(selection, lifecycleGeneration), capture);
+      this.enrichDiagnostics.log("write-done", { path: res.file.path });
       this.assertUtilityLifecycleActive(lifecycleGeneration);
       this.markEnrichRecentlyWritten(res.file.path, lifecycleGeneration);
       if (activityId) {
@@ -1848,6 +1883,32 @@ export default class ClaudeCompanionPlugin extends Plugin {
   }
 
   async runActivityRecovery(activityId: string, actionId: string): Promise<void> {
+    if (activityId.startsWith("chat-turn:")) {
+      const conversationId = activityId.slice("chat-turn:".length);
+      const conversation = this.convState.conversations.find(({ id }) => id === conversationId);
+      if (!conversation) throw new Error("That conversation no longer exists.");
+      if (actionId === "stop-chat-turn") {
+        if (!conversation.activeTurn) return;
+        await this.stopActiveChatTurn(conversationId, conversation.activeTurn.id);
+        return;
+      }
+      await this.setActiveConversation(conversationId);
+      const view = await this.activateView();
+      view?.loadConversation(this.getActiveConversation() ?? conversation);
+      if (actionId === "resume-chat-turn") {
+        const active = this.getActiveConversation();
+        if (view && active) await view.resumeInterruptedTurn(active);
+      }
+      return;
+    }
+    if (actionId === "copy-diagnostics") {
+      const logPath = "Claude/enrichment-diagnostics.log";
+      if (!(await this.app.vault.adapter.exists(logPath))) throw new Error("No enrichment diagnostics log exists yet — turn on the toggle in Settings → Source capture and run Enrich all again.");
+      const text = await this.app.vault.adapter.read(logPath);
+      if (!navigator.clipboard?.writeText) throw new Error("Clipboard access is unavailable on this device.");
+      await navigator.clipboard.writeText(text.slice(-8192));
+      return;
+    }
     if (actionId === "copy-details") {
       const details = this.activity.snapshot().records.find(({ id }) => id === activityId)?.technicalDetails;
       if (!details) throw new Error("No technical details are available for this activity.");
@@ -1875,6 +1936,7 @@ export default class ClaudeCompanionPlugin extends Plugin {
     this.convState = isNamespacedData(raw)
       ? fromPersisted({ conversations: (raw).conversations, activeId: (raw).activeConversationId })
       : emptyState();
+    this.restoreChatTurnActivities();
     this.researchDeskPreferences = normalizeDeskPreferenceMap(isNamespacedData(raw) ? (raw).researchDeskPreferences : undefined);
     const runs = restoreBuildRuns(isNamespacedData(raw) ? raw.buildRuns : undefined);
     this.buildRuns = Object.fromEntries(runs.map((run) => [run.id, run]));
@@ -1969,6 +2031,115 @@ export default class ClaudeCompanionPlugin extends Plugin {
       console.error("[Claude Companion] failed to save conversation", e);
     }
     return updated.id;
+  }
+
+  async beginActiveConversationTurn(
+    messages: ChatMessage[],
+    input: { backend: string; model: string; mode: ChatTurnMode },
+  ): Promise<{ conversationId: string; turnId: string }> {
+    const previousState = this.convState;
+    const conversationId = this.activeConversationId();
+    const turnId = crypto.randomUUID();
+    const now = Date.now();
+    this.convState = startConversationTurn(this.convState, conversationId, messages, {
+      id: turnId,
+      state: "running",
+      backend: input.backend,
+      model: input.model,
+      mode: input.mode,
+      userMessageIndex: messages.length - 1,
+      createdAt: now,
+      updatedAt: now,
+    }, this.settings.maxConversations);
+    try {
+      await this.persist();
+    } catch (error) {
+      this.convState = previousState;
+      throw error;
+    }
+    const title = this.getActiveConversation()?.title ?? "Chat request";
+    const activityId = this.chatActivityId(conversationId);
+    this.activity.start({ id: activityId, kind: "chat-turn", title });
+    this.activity.update(activityId, {
+      currentItem: input.backend === "claude-cli" ? "Claude Code is working" : "Response is running",
+      recovery: [
+        { id: "open-chat", label: "Open Chat", kind: "open" },
+        { id: "stop-chat-turn", label: "Stop", kind: "stop" },
+      ],
+    });
+    return { conversationId, turnId };
+  }
+
+  registerActiveChatTurn(conversationId: string, turnId: string, stop: () => void): () => void {
+    return this.chatTurnLifecycle().register(conversationId, turnId, stop);
+  }
+
+  async stopActiveChatTurn(conversationId: string, turnId: string): Promise<void> {
+    const turn = this.convState.conversations.find(({ id }) => id === conversationId)?.activeTurn;
+    if (!turn || turn.id !== turnId || turn.state === "interrupted") return;
+    this.convState = settleConversationTurn(this.convState, conversationId, turnId, "interrupted", Date.now(), "Stopped by user");
+    this.activity.update(this.chatActivityId(conversationId), {
+      state: "paused",
+      currentItem: "Interrupted — review any partial changes before resuming",
+      recovery: [
+        { id: "open-chat", label: "Open Chat", kind: "open" },
+        { id: "resume-chat-turn", label: "Resume", kind: "resume" },
+      ],
+    });
+    try {
+      await this.persist();
+    } finally {
+      this.chatTurnLifecycle().stop(conversationId, turnId);
+    }
+  }
+
+  async completeActiveConversationTurn(conversationId: string, turnId: string, messages: ChatMessage[]): Promise<void> {
+    const conversation = this.convState.conversations.find(({ id }) => id === conversationId);
+    if (!conversation?.activeTurn || conversation.activeTurn.id !== turnId || conversation.activeTurn.state !== "running") return;
+    const previousState = this.convState;
+    this.convState = saveConversation(this.convState, touch(conversation, messages, Date.now()), this.settings.maxConversations);
+    this.convState = clearConversationTurn(this.convState, conversationId, turnId, Date.now());
+    try {
+      await this.persist();
+    } catch (error) {
+      this.convState = previousState;
+      throw error;
+    }
+    this.activity.dismiss(this.chatActivityId(conversationId));
+  }
+
+  async interruptActiveConversationTurn(conversationId: string, turnId: string, messages: ChatMessage[], error = "Interrupted"): Promise<void> {
+    const conversation = this.convState.conversations.find(({ id }) => id === conversationId);
+    if (!conversation?.activeTurn || conversation.activeTurn.id !== turnId) return;
+    this.convState = saveConversation(this.convState, touch(conversation, messages, Date.now()), this.settings.maxConversations);
+    this.convState = settleConversationTurn(this.convState, conversationId, turnId, "interrupted", Date.now(), error);
+    await this.persist();
+    this.activity.update(this.chatActivityId(conversationId), {
+      state: "paused",
+      currentItem: "Interrupted — review any partial changes before resuming",
+      recovery: [
+        { id: "open-chat", label: "Open Chat", kind: "open" },
+        { id: "resume-chat-turn", label: "Resume", kind: "resume" },
+      ],
+    });
+  }
+
+  private chatActivityId(conversationId: string): string { return `chat-turn:${conversationId}`; }
+
+  private restoreChatTurnActivities(): void {
+    for (const conversation of this.convState.conversations) {
+      if (!conversation.activeTurn) continue;
+      const id = this.chatActivityId(conversation.id);
+      this.activity.start({ id, kind: "chat-turn", title: conversation.title });
+      this.activity.update(id, {
+        state: conversation.activeTurn.state === "failed" ? "needs-attention" : "paused",
+        currentItem: conversation.activeTurn.error ?? "Interrupted — review any partial changes before resuming",
+        recovery: [
+          { id: "open-chat", label: "Open Chat", kind: "open" },
+          { id: "resume-chat-turn", label: "Resume", kind: "resume" },
+        ],
+      });
+    }
   }
 
   /** The active conversation id, creating and persisting one when the chat is fresh. */
@@ -2797,7 +2968,7 @@ export default class ClaudeCompanionPlugin extends Plugin {
     return { server, port: addr.port, token };
   }
 
-  async cliTurnRunner(opts: { conversationId: string; planMode: boolean; agentMode: boolean; model: string; deps: InteractiveToolDeps; transcript: string }): Promise<AgentTurnRunner> {
+  async cliTurnRunner(opts: { conversationId: string; planMode: boolean; agentMode: boolean; model: string; deps: InteractiveToolDeps; transcript: string; resumeSessionId?: string }): Promise<AgentTurnRunner> {
     const cli = this.router().claudeCli;
     const executable = cli.executable();
     if (!executable) throw new Error(cli.probe() ? "Claude Code is not signed in. Run `claude auth login` in a terminal." : "Claude Code not found.");
@@ -2807,7 +2978,7 @@ export default class ClaudeCompanionPlugin extends Plugin {
     const allowedTools = opts.agentMode ? cliAllowedTools(this.agentTools().definitions(), opts.planMode) : [];
     const signature = JSON.stringify({ model: opts.model, planMode: opts.planMode, agentMode: opts.agentMode, allowedTools, writes: this.settings.agentAllowWrites });
     const existing = this.cliSessions.get(opts.conversationId);
-    if (existing && existing.signature === signature && !existing.session.isClosed()) {
+    if (!opts.resumeSessionId && existing && existing.signature === signature && !existing.session.isClosed()) {
       existing.lastUsed = Date.now();
       return existing.session;
     }
@@ -2823,8 +2994,15 @@ export default class ClaudeCompanionPlugin extends Plugin {
     try {
       const started = await this.createChatBridge({ deps: opts.deps, readOnly: opts.planMode, tools: opts.agentMode });
       bridge = started.server;
-      const sessionId = crypto.randomUUID();
-      const argv = buildClaudeArgv({ model: opts.model, systemPromptFile: promptFile, mcpConfigJson: mcpConfigJson(started.port, started.token), allowedTools, maxTurns: this.settings.agentMaxIterations, sessionId });
+      const sessionId = opts.resumeSessionId ?? crypto.randomUUID();
+      const argv = buildClaudeArgv({
+        model: opts.model,
+        systemPromptFile: promptFile,
+        mcpConfigJson: mcpConfigJson(started.port, started.token),
+        allowedTools,
+        maxTurns: this.settings.agentMaxIterations,
+        ...(opts.resumeSessionId ? { resumeSessionId: opts.resumeSessionId } : { sessionId }),
+      });
       const session = new ClaudeCliSession({ spawn: () => runtime.spawn(executable, argv, cwd), ...(opts.transcript ? { transcript: opts.transcript } : {}) });
       this.cliSessions.set(opts.conversationId, { session, bridge, signature, promptFile, lastUsed: Date.now() });
       await this.setConversationCliSession(opts.conversationId, sessionId);
@@ -2859,7 +3037,11 @@ export default class ClaudeCompanionPlugin extends Plugin {
   async setConversationCliSession(conversationId: string, sessionId: string): Promise<void> {
     this.convState = {
       ...this.convState,
-      conversations: this.convState.conversations.map((c) => (c.id === conversationId ? withCliSession(c, sessionId) : c)),
+      conversations: this.convState.conversations.map((c) => {
+        if (c.id !== conversationId) return c;
+        const updated = withCliSession(c, sessionId);
+        return updated.activeTurn ? { ...updated, activeTurn: { ...updated.activeTurn, cliSessionId: sessionId, updatedAt: Date.now() } } : updated;
+      }),
     };
     await this.persist();
   }
@@ -3007,7 +3189,7 @@ export default class ClaudeCompanionPlugin extends Plugin {
     this._indexer = new SemanticIndexer({
       embeddingModel: model,
       listMarkdown: (): IndexFile[] =>
-        this.app.vault.getMarkdownFiles().map((f) => ({ path: f.path, mtime: f.stat.mtime })),
+        this.app.vault.getMarkdownFiles().map((f) => ({ path: f.path, mtime: f.stat.mtime, size: f.stat.size })),
       read: async (p: string) => {
         const f = this.app.vault.getAbstractFileByPath(p);
         return f instanceof TFile ? this.app.vault.cachedRead(f) : "";
@@ -3015,7 +3197,7 @@ export default class ClaudeCompanionPlugin extends Plugin {
       ...(this.settings.semanticIndexPdfs
         ? {
             listPdf: (): IndexFile[] =>
-              this.app.vault.getFiles().filter((f) => f.extension === "pdf").map((f) => ({ path: f.path, mtime: f.stat.mtime })),
+              this.app.vault.getFiles().filter((f) => f.extension === "pdf").map((f) => ({ path: f.path, mtime: f.stat.mtime, size: f.stat.size })),
             readPdfPages: async (p: string) => {
               const f = this.app.vault.getAbstractFileByPath(p);
               if (!(f instanceof TFile)) return null;
@@ -3038,6 +3220,11 @@ export default class ClaudeCompanionPlugin extends Plugin {
         }
         return embedder.embed(input);
       },
+      ...(Platform.isMobile && this.settings.embeddingEngine === "builtin" ? { embedBatchSize: 1 } : {}),
+      onPhase: (phase, fields) => this.enrichDiagnostics.log(phase, fields),
+      ...(Platform.isMobile
+        ? { maxInputBytes: (p: string) => p.toLowerCase().endsWith(".pdf") ? MOBILE_SEMANTIC_PDF_MAX_BYTES : MOBILE_SOURCE_NOTE_MAX_BYTES }
+        : {}),
       load: async () => {
         try {
           if (await adapter.exists(path)) return JSON.parse(await adapter.read(path)) as IndexData;
@@ -3047,7 +3234,11 @@ export default class ClaudeCompanionPlugin extends Plugin {
         return null;
       },
       save: async (data: IndexData) => {
-        await adapter.write(path, JSON.stringify(data));
+        this.enrichDiagnostics.log("serialize-start", { notes: Object.keys(data.notes).length });
+        const json = JSON.stringify(data);
+        this.enrichDiagnostics.log("save-start", { bytes: json.length });
+        await adapter.write(path, json);
+        this.enrichDiagnostics.log("save-done", { bytes: json.length });
       },
     });
     this.indexerModel = model;
@@ -3278,8 +3469,23 @@ export default class ClaudeCompanionPlugin extends Plugin {
     this.reindexTimer = window.setTimeout(() => void this.flushReindex(), 1500);
   }
 
+  /** Hold reindexing during a batch; the last release flushes once for every queued note. */
+  suspendReindex(): () => void {
+    this.reindexSuspended++;
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      this.reindexSuspended--;
+      if (this.reindexSuspended === 0 && this.reindexQueue.size > 0) void this.flushReindex();
+    };
+  }
+
   private async flushReindex(): Promise<void> {
-    this.reindexTimer = null;
+    // A suspend-triggered flush can run ahead of the debounce timer; cancel it so it
+    // doesn't fire again later against an already-drained queue.
+    if (this.reindexTimer !== null) { window.clearTimeout(this.reindexTimer); this.reindexTimer = null; }
+    if (this.reindexSuspended > 0) return;
     const ix = this.indexer();
     if (!ix) {
       this.reindexQueue.clear();
@@ -3297,15 +3503,36 @@ export default class ClaudeCompanionPlugin extends Plugin {
     }
     const paths = Array.from(this.reindexQueue);
     this.reindexQueue.clear();
-    for (const p of paths) {
+    this.enrichDiagnostics.log("reindex-flush-start", { n: paths.length });
+    const entries = paths.flatMap((p) => {
       const f = this.app.vault.getAbstractFileByPath(p);
-      if (f instanceof TFile) {
-        try {
-          await ix.updateNote(p, f.stat.mtime);
-        } catch {
-          /* transient embed failure — picked up on next change or rebuild */
-        }
-      }
+      return f instanceof TFile ? [{ path: p, mtime: f.stat.mtime, size: f.stat.size }] : [];
+    });
+    if (entries.length === 0) return;
+    let failures: Array<{ path: string; error: unknown }>;
+    try {
+      failures = await ix.updateNotes(
+        entries,
+        Platform.isMobile ? { yieldBetween: () => new Promise<void>((resolve) => window.setTimeout(resolve, 0)) } : {},
+      );
+    } catch (error) {
+      this.enrichDiagnostics.log("reindex-flush-rejected", { n: entries.length });
+      failures = entries.map(({ path }) => ({ path, error }));
+    }
+    for (const { path: p, error } of failures) {
+      console.error(`[Claude Companion] semantic reindex failed for ${p}`, error);
+      const recovery = this.embeddingRecovery(error);
+      const activityId = this.activity.start({
+        id: `semantic-index:incremental:${p}`,
+        kind: "semantic-index",
+        title: "Semantic index needs attention",
+      });
+      this.activity.fail(activityId, {
+        failed: 1,
+        technicalDetails: recovery.technicalDetails,
+        recovery: recovery.actions,
+        details: [{ label: p, message: recovery.message, state: "error" }],
+      });
     }
   }
 
@@ -3313,10 +3540,30 @@ export default class ClaudeCompanionPlugin extends Plugin {
 
   async activateView(): Promise<ChatView | null> {
     const { workspace } = this.app;
-    let leaf: WorkspaceLeaf | null = workspace.getLeavesOfType(CHAT_VIEW_TYPE)[0] ?? null;
-    if (!leaf) {
-      leaf = workspace.getRightLeaf(false);
-      if (leaf) await leaf.setViewState({ type: CHAT_VIEW_TYPE, active: true });
+    let leaf: WorkspaceLeaf | null;
+    if (Platform.isMobile) {
+      // Mobile's right split is a drawer, not the full-width main workspace.
+      // Reuse only a Chat leaf outside that drawer so repeated activation keeps
+      // the same conversation without accumulating duplicate main tabs.
+      const rightSplit = workspace.rightSplit;
+      leaf = workspace.getLeavesOfType(CHAT_VIEW_TYPE).find((candidate) => {
+        let parent: unknown = candidate.parent;
+        while (parent) {
+          if (parent === rightSplit) return false;
+          parent = (parent as { parent?: unknown }).parent;
+        }
+        return true;
+      }) ?? null;
+      if (!leaf) {
+        leaf = workspace.getLeaf("tab");
+        await leaf.setViewState({ type: CHAT_VIEW_TYPE, active: true });
+      }
+    } else {
+      leaf = workspace.getLeavesOfType(CHAT_VIEW_TYPE)[0] ?? null;
+      if (!leaf) {
+        leaf = workspace.getRightLeaf(false);
+        if (leaf) await leaf.setViewState({ type: CHAT_VIEW_TYPE, active: true });
+      }
     }
     if (leaf) {
       await workspace.revealLeaf(leaf);
@@ -3625,7 +3872,10 @@ export default class ClaudeCompanionPlugin extends Plugin {
     const inferred = active ? inferResearchProjectPath(active.path, frontmatter) : undefined;
     const { workspace } = this.app;
     let leaf: WorkspaceLeaf | null = workspace.getLeavesOfType(RESEARCH_DESK_VIEW_TYPE)[0] ?? null;
-    if (!leaf) { leaf = workspace.getRightLeaf(false); if (leaf) await leaf.setViewState({ type: RESEARCH_DESK_VIEW_TYPE, active: true }); }
+    if (!leaf) {
+      leaf = workspace.getRightLeaf(false) ?? workspace.getLeaf(true);
+      if (leaf) await leaf.setViewState({ type: RESEARCH_DESK_VIEW_TYPE, active: true });
+    }
     if (leaf?.view instanceof ResearchDeskView) {
       const selected = leaf.view.getProjectPath();
       const next = projectPathForActivation(projectPath, inferred, selected);
@@ -3641,7 +3891,7 @@ export default class ClaudeCompanionPlugin extends Plugin {
     const { workspace } = this.app;
     let leaf: WorkspaceLeaf | null = workspace.getLeavesOfType(RESEARCH_WORKBENCH_VIEW_TYPE)[0] ?? null;
     if (!leaf) {
-      leaf = workspace.getRightLeaf(false);
+      leaf = workspace.getRightLeaf(false) ?? workspace.getLeaf(true);
       if (leaf) await leaf.setViewState({ type: RESEARCH_WORKBENCH_VIEW_TYPE, active: true });
     }
     if (leaf?.view instanceof ResearchWorkbenchView) {

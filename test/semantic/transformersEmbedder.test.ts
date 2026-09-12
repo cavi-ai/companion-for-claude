@@ -65,6 +65,26 @@ describe("TransformersEmbedder", () => {
     expect(workers).toHaveLength(1);
   });
 
+  it("runs only one built-in inference request at a time", async () => {
+    const { e, workers } = make();
+    const first = e.embed(["first"]);
+    const second = e.embed(["second"]);
+    const w = workers[0]!;
+
+    w.reply({ id: w.sent[0]!.id, type: "result", vectors: [], backend: "wasm" });
+    await vi.waitFor(() => expect(w.sent.some((message) => message.type === "embed")).toBe(true));
+    expect(w.sent.filter((message) => message.type === "embed")).toHaveLength(1);
+
+    const firstRequest = w.sent.find((message) => message.type === "embed")!;
+    w.reply({ id: firstRequest.id, type: "result", vectors: [[1]] });
+    await vi.waitFor(() => expect(w.sent.filter((message) => message.type === "embed")).toHaveLength(2));
+    const secondRequest = w.sent.filter((message) => message.type === "embed")[1]!;
+    w.reply({ id: secondRequest.id, type: "result", vectors: [[2]] });
+
+    await expect(first).resolves.toEqual([[1]]);
+    await expect(second).resolves.toEqual([[2]]);
+  });
+
   it("download() forwards progress and resolves when the load completes", async () => {
     const { e, workers } = make();
     const seen: number[] = [];

@@ -43,7 +43,7 @@ and for pointing direct API traffic at a gateway.
 Open the panel from the sparkles ribbon icon (*Open Companion for Claude*) or the
 command palette (*Open chat panel*).
 
-![The Companion chat panel with vault context attached](../obsidian-plugin/assets/chat-panel.png)
+![The Companion chat panel with a completed vault-grounded answer](../obsidian-plugin/assets/chat-panel.png)
 
 Above the composer is a row of **Context** chips. Toggle one on and its content
 rides along with your next message:
@@ -72,8 +72,6 @@ under *Settings → Companion for Claude → Behavior*.
 
 Type `/` in the composer to open the slash palette — 24 built-in commands plus
 your workflows, fuzzy-searchable.
-
-<!-- screenshot: ../assets/slash-palette.png — pending capture -->
 
 Pick **`/artifact`** with a note open. Claude replies with a fenced
 `claude-html` block, and Companion renders it **inline in the chat, inside a
@@ -104,7 +102,7 @@ Agent mode is **on by default**. It's what lets Claude search and read your vaul
 on its own mid-answer instead of relying only on the chips you pre-attached. Each
 step it takes shows up as a tool chip you can expand.
 
-<!-- screenshot: ../assets/agent-tool-chips.png — pending capture -->
+![Agent mode showing vault search and note read tool calls, with one result expanded](../assets/agent-tool-chips.png)
 
 Under *Settings → Companion for Claude → Agent (act on your vault)*:
 

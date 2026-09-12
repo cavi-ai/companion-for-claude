@@ -123,6 +123,8 @@ export function mountActivityIndicator(
 
   const render = (snapshot: ActivitySnapshot): void => {
     if (disposed) return;
+    const restoreIndicatorFocus = typeof document !== "undefined"
+      && host.querySelector(".cc-activity-indicator") === document.activeElement;
     host.empty();
     const dominant = dominantActivity(snapshot.records);
     if (!dominant) return;
@@ -155,6 +157,7 @@ export function mountActivityIndicator(
       expanded = !expanded;
       render(snapshot);
     });
+    if (restoreIndicatorFocus) indicator.focus();
 
     host.createDiv({
       cls: "cc-activity-live",
@@ -165,7 +168,7 @@ export function mountActivityIndicator(
     if (expanded) {
       const drawer = host.createDiv({
         cls: "cc-activity-drawer",
-        attr: { "aria-label": "Companion activity details" },
+        attr: { role: "region", "aria-label": "Companion activity details" },
       });
       for (const record of snapshot.records) renderRecord(drawer, record);
     }

@@ -60,6 +60,7 @@ export class SlashMenu {
 
   /** Commit the current selection. */
   choose(): void {
+    if (!this.open) return;
     const cmd = this.matches[this.selected];
     if (cmd) {
       this.hide();
@@ -70,7 +71,7 @@ export class SlashMenu {
   private render(): void {
     this.listEl.empty();
     this.matches.forEach((cmd, i) => {
-      const row = this.listEl.createDiv({ cls: "cc-slash-item" });
+      const row = this.listEl.createEl("button", { cls: "cc-slash-item", attr: { type: "button" } });
       row.toggleClass("is-selected", i === this.selected);
       // Full description as a native hover tooltip — the inline `.cc-slash-desc`
       // is single-line and ellipsis-truncated, so hovering reveals the rest.
@@ -82,12 +83,16 @@ export class SlashMenu {
         this.selected = i;
         this.render();
       });
-      row.addEventListener("mousedown", (e) => {
-        // mousedown (not click) so we beat the textarea's blur.
-        e.preventDefault();
+      const select = (e: Event) => {
+        // Pointer/mouse down (not click) beats the textarea's blur. `choose`
+        // ignores the compatibility mouse event that may follow pointerdown.
+        if (e.type !== "click") e.preventDefault();
         this.selected = i;
         this.choose();
-      });
+      };
+      row.addEventListener("pointerdown", select);
+      row.addEventListener("mousedown", select);
+      row.addEventListener("click", select);
     });
   }
 

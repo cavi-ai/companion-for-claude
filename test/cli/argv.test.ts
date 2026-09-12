@@ -26,11 +26,16 @@ describe("buildClaudeArgv", () => {
     expect(argv[argv.indexOf("--allowedTools") + 1]).toBe("mcp__obsidian-vault__vault_search,mcp__obsidian-vault__note_read");
   });
 
-  it("never emits --bare, --resume, or a permissions bypass", () => {
+  it("never emits --bare or a permissions bypass", () => {
     const argv = buildClaudeArgv(input);
     expect(argv).not.toContain("--bare");
-    expect(argv).not.toContain("--resume");
     expect(argv.some((a) => a.includes("dangerously"))).toBe(false);
+  });
+
+  it("resumes exactly one saved UUID instead of minting a new session", () => {
+    const argv = buildClaudeArgv({ ...input, sessionId: undefined, resumeSessionId: input.sessionId });
+    expect(argv[argv.indexOf("--resume") + 1]).toBe(input.sessionId);
+    expect(argv).not.toContain("--session-id");
   });
 
   it("omits --allowedTools when nothing is allow-listed", () => {
@@ -45,6 +50,12 @@ describe("buildClaudeArgv", () => {
   it("rejects a non-UUID session id and a non-positive turn cap", () => {
     expect(() => buildClaudeArgv({ ...input, sessionId: "abc" })).toThrow(/UUID/);
     expect(() => buildClaudeArgv({ ...input, maxTurns: 0 })).toThrow(/maxTurns/);
+  });
+
+  it("requires exactly one valid new or resumed session id", () => {
+    expect(() => buildClaudeArgv({ ...input, resumeSessionId: input.sessionId })).toThrow(/exactly one/i);
+    expect(() => buildClaudeArgv({ ...input, sessionId: undefined })).toThrow(/exactly one/i);
+    expect(() => buildClaudeArgv({ ...input, sessionId: undefined, resumeSessionId: "bad" })).toThrow(/UUID/);
   });
 });
 

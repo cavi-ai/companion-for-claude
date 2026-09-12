@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { modelLabel } from "../src/claude/models";
 import { launchObsidianHarness } from "./obsidianHarness";
 
 const MODELS = ["mlx-community/Qwen3-8B-4bit", "lmstudio/gemma-3-12b"];
@@ -37,7 +38,8 @@ test("the chat picker lists every model the local endpoint serves", async () => 
       const settings = app.plugins.plugins["claude-companion"]!.settings;
       return `${settings.chatBackend}|${settings.openaiCompatModel}`;
     })).toBe(`custom|${MODELS[1]}`);
-    await expect(page.locator(".cc-model").first()).toContainText(MODELS[1]!);
+    // The header shows the formatted label; the picker keeps the raw id.
+    await expect(page.locator(".cc-model").first()).toContainText(modelLabel(MODELS[1]!));
   } finally {
     await harness.close();
   }

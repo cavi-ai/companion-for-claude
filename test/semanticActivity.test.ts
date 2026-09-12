@@ -78,4 +78,52 @@ describe("semantic activity", () => {
     expect(runActivityRecovery).toHaveBeenCalledWith(expect.stringContaining("semantic-related:"), "retry-index");
     expect(plugin.activity.snapshot().records[0]?.state).toBe("needs-attention");
   });
+
+  it("passes the current file size into incremental indexing", async () => {
+    const app = new App();
+    const file = app.vault.seed("Research/active.md", "Active note");
+    const updateNotes = vi.fn().mockResolvedValue([]);
+    const plugin = Object.create(ClaudeCompanionPlugin.prototype) as ClaudeCompanionPlugin;
+    Object.assign(plugin as unknown as Record<string, unknown>, {
+      app,
+      settings: { ...structuredClone(DEFAULT_SETTINGS), semanticEnabled: true },
+      reindexQueue: new Set([file.path]),
+      reindexTimer: null,
+      indexer: () => ({ updateNotes }),
+      canEmbedWithoutDownload: async () => true,
+    });
+
+    await (plugin as unknown as { flushReindex(): Promise<void> }).flushReindex();
+
+    expect(updateNotes).toHaveBeenCalledWith(
+      [{ path: file.path, mtime: file.stat.mtime, size: file.stat.size }],
+      {},
+    );
+  });
+
+  it("records incremental indexing failures for recovery", async () => {
+    const app = new App();
+    const file = app.vault.seed("Research/active.md", "Active note");
+    const plugin = Object.create(ClaudeCompanionPlugin.prototype) as ClaudeCompanionPlugin;
+    Object.assign(plugin as unknown as Record<string, unknown>, {
+      app,
+      settings: { ...structuredClone(DEFAULT_SETTINGS), semanticEnabled: true },
+      reindexQueue: new Set([file.path]),
+      reindexTimer: null,
+      indexer: () => ({
+        updateNotes: vi.fn().mockResolvedValue([{ path: file.path, error: new Error("Embedding failed") }]),
+      }),
+      canEmbedWithoutDownload: async () => true,
+    });
+
+    await (plugin as unknown as { flushReindex(): Promise<void> }).flushReindex();
+
+    expect(plugin.activity.snapshot().records[0]).toMatchObject({
+      id: `semantic-index:incremental:${file.path}`,
+      kind: "semantic-index",
+      state: "needs-attention",
+      failed: 1,
+      details: [{ label: file.path, state: "error" }],
+    });
+  });
 });

@@ -68,8 +68,15 @@ test("Build Runner keeps controls inside a compact mobile viewport", async ({}, 
   const harness = await launchObsidianHarness({ fakeClaudeCode: true });
   const { page } = harness;
   try {
-    await page.evaluate(() => window.resizeTo(390, 844));
+    await page.setViewportSize({ width: 390, height: 844 });
     await expect.poll(() => page.evaluate(() => window.innerWidth)).toBeLessThanOrEqual(420);
+    await page.evaluate(() => {
+      const workspace = (window as unknown as {
+        app: { workspace: { rightSplit: { setSize?(px: number): void }; onLayoutChange(): void } };
+      }).app.workspace;
+      workspace.rightSplit.setSize?.(390);
+      workspace.onLayoutChange();
+    });
     await page.evaluate(async () => {
       const app = (window as unknown as { app: {
         vault: { getAbstractFileByPath(path: string): unknown };

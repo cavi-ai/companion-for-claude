@@ -43,5 +43,9 @@ export function resolveModelId(model: string, customModel: string): string {
 }
 
 export function modelLabel(id: string): string {
-  return CLAUDE_MODELS.find((m) => m.id === id)?.label ?? id;
+  const known = CLAUDE_MODELS.find((m) => m.id === id)?.label;
+  if (known) return known;
+  const words = id.split(/[-_/]+/).filter(Boolean);
+  if (words.length > 1 && /^\d{8}$/.test(words[words.length - 1] ?? "")) words.pop();
+  return words.map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
 }

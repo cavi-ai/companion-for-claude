@@ -1,9 +1,9 @@
 {
   "id": "claude-companion",
   "name": "Companion for Claude",
-  "version": "0.28.0",
+  "version": "0.29.0",
   "minAppVersion": "1.13.0",
-  "description": "Chat with Claude using your notes as context. Agent mode with reviewable edits, interactive HTML artifacts, evidence-backed research, local-model fallback, and an MCP bridge so Claude Code works on the same vault.",
+  "description": "Claude in your vault: chat over your notes, approve agent edits hunk by hunk, type Web Clipper clips into source notes, take research from sources to cited drafts, search on device, render artifacts, bridge over MCP. Claude Code, API key, or Ollama.",
   "author": "Sasan Sotoodehfar",
   "authorUrl": "https://cavi-ai.xyz",
   "isDesktopOnly": false

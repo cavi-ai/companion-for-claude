@@ -44,4 +44,17 @@ describe("classifyEmbeddingFailure", () => {
     expect(recovery.category).toBe("index-storage-failure");
     expect(recovery.actions.map(({ id }) => id)).toContain("retry-index");
   });
+
+  it("does not offer a futile retry for a device input-size limit", () => {
+    const recovery = classifyEmbeddingFailure(
+      new Error("large.pdf exceeds the semantic indexing limit (11 bytes; maximum 10)."),
+      { engine: "builtin", isMobile: true },
+    );
+
+    expect(recovery).toMatchObject({
+      category: "input-too-large",
+      message: expect.stringContaining("keyword search"),
+    });
+    expect(recovery.actions.map(({ id }) => id)).not.toContain("retry-index");
+  });
 });

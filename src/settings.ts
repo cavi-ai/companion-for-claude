@@ -9,6 +9,7 @@ import { dispatchSetupSteps, repliesSetupSteps } from "./cloud/setup";
 import { BUILTIN_EMBEDDING_MODELS, builtinModelById } from "./semantic/transformers/model";
 import { ChoiceModal } from "./view/ChoiceModal";
 import { normalizeDiscoverySettings, type McpServerConfig, type PluginSettings } from "./types";
+import { needsCredentialSetup } from "./providers/setupState";
 
 /** Text controls hand back a string; anything else is an empty field. */
 function asText(v: unknown): string {
@@ -232,12 +233,23 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
       {
         name: "Step 1 — connect to Claude",
         // The one mandatory step, called out while it's missing.
-        visible: () => !this.plugin.router().anthropic.hasCredentials(),
+        visible: () => {
+          const router = this.plugin.router();
+          return needsCredentialSetup({
+            backend: router.chatBackend,
+            hasAnthropicCredential: router.anthropic.hasCredentials(),
+            hasClaudeCli: router.claudeCli.hasCredentials(),
+          });
+        },
         render: (setting) => {
           const callout = setting.settingEl.createDiv({ cls: "cc-connect-callout" });
           const p = callout.createEl("p");
-          p.appendText("Add an Anthropic API key below to start chatting. Create one at ");
-          p.createEl("a", { text: "console.anthropic.com", href: "https://console.anthropic.com/settings/keys" });
+          if (this.plugin.router().chatBackend === "claude-cli") {
+            p.appendText("Claude Code is not signed in on this computer. Run `claude auth login` in a terminal, or add an Anthropic API key below. ");
+          } else {
+            p.appendText("Add an Anthropic API key below to start chatting. Create one at ");
+            p.createEl("a", { text: "console.anthropic.com", href: "https://console.anthropic.com/settings/keys" });
+          }
           p.appendText(` — ${this.storageBlurb().replace(/^S/, "s")}`);
         },
       },
@@ -246,10 +258,7 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
         desc: "Install the CAVI marketplace plugin and merge the Claude Desktop config.",
         aliases: ["marketplace", "claude desktop", "obsidian-agent"],
         render: (setting) => {
-          setting.addButton((btn) => {
-            btn.buttonEl.addClass("cc-settings-desktop-integrations");
-            btn.setButtonText("Desktop integrations").onClick(() => this.plugin.openDesktopIntegrations());
-          });
+          setting.addButton((btn) => btn.setButtonText("Set up").onClick(() => this.plugin.openDesktopIntegrations()));
         },
       },
     ];
@@ -557,6 +566,7 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
       { name: "About source capture", desc: "Point the Obsidian Web Clipper (and dropped CSVs) at an inbox folder; Companion types each new file into a schema-validated source note. Extraction uses your utility model (local if enabled)." },
       { name: "Enable source capture", desc: "Master switch for watching the inbox and the “Enrich note as source” command.", control: { type: "toggle", key: "sourceCaptureEnabled" } },
       { name: "Auto-enrich on create", desc: "Type files automatically as they appear in the inbox (otherwise use the command).", control: { type: "toggle", key: "sourceEnrichOnCreate" } },
+      { name: "Enrichment diagnostics log", desc: "Append one line per enrichment phase to Claude/enrichment-diagnostics.log (paths and counts only, never note content). Turn on to diagnose a crash during Enrich all.", control: { type: "toggle", key: "enrichmentDiagnostics" } },
       { name: "Inbox folder", desc: "Folder the Web Clipper writes to and Companion watches.", control: { type: "text", key: "sourceInboxFolder", placeholder: "Clippings" } },
       { name: "Organized folder", desc: "Where “Organize clippings” moves reviewed clips — one subfolder per inferred topic/project.", control: { type: "text", key: "clipOrganizedFolder", placeholder: "Library" } },
       { name: "Base tags", desc: "Comma-separated tags added to every enriched source note.", control: { type: "text", key: "sourceBaseTags" } },

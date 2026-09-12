@@ -9,7 +9,7 @@ test("ephemeral Companion feedback appears immediately and clears within 2.5 sec
       const app = (window as unknown as { app: { commands: { executeCommandById(id: string): Promise<void> } } }).app;
       await app.commands.executeCommandById("claude-companion:open-chat");
     });
-    const plan = page.getByLabel("Plan Mode — Claude explores your vault read-only and proposes a plan before changing anything");
+    const plan = page.getByRole("radio", { name: "Plan — read-only exploration, proposes a plan" });
     await expect(plan).toBeVisible();
 
     const started = Date.now();

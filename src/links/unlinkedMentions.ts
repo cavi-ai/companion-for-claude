@@ -35,6 +35,7 @@ const MAX_MENTIONS = 20;
  */
 export function findUnlinkedMentions(content: string, candidates: LinkCandidate[], selfPath: string): Mention[] {
   const masked = maskNonProse(content);
+  const lowerMasked = masked.toLowerCase();
   const mentions: Mention[] = [];
 
   for (const c of candidates) {
@@ -46,7 +47,7 @@ export function findUnlinkedMentions(content: string, candidates: LinkCandidate[
     let best: Mention | null = null;
     for (const { name, viaAlias } of names) {
       if (name.trim().length < MIN_NAME_LENGTH) continue;
-      const idx = findWholeWord(masked, name);
+      const idx = findWholeWord(masked, lowerMasked, name);
       if (idx === -1) continue;
       if (best === null || idx < best.start) {
         const surface = content.slice(idx, idx + name.length);
@@ -78,7 +79,7 @@ export function linkMention(content: string, m: Mention): string {
   let start = m.start;
   if (content.slice(start, m.end) !== m.surface) {
     const masked = maskNonProse(content);
-    const first = findWholeWord(masked, m.surface);
+    const first = findWholeWord(masked, masked.toLowerCase(), m.surface);
     if (first === -1) throw new Error("The note changed — the mention no longer applies.");
     start = first;
   }
@@ -94,8 +95,7 @@ function isWordChar(ch: string | undefined): boolean {
 }
 
 /** First case-insensitive whole-word occurrence of `name` in `text` (masked). */
-function findWholeWord(text: string, name: string): number {
-  const lower = text.toLowerCase();
+function findWholeWord(text: string, lower: string, name: string): number {
   const needle = name.toLowerCase();
   let from = 0;
   for (;;) {

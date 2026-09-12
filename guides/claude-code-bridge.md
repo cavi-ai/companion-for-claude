@@ -85,7 +85,7 @@ Obsidian has to be open — the bridge only runs while the app does.
 
 *Settings → Companion for Claude → Agent bridge — MCP server (desktop)*
 
-<!-- screenshot: ../assets/mcp-bridge-settings.png — pending capture -->
+![MCP bridge settings with loopback address, masked token, and running status](../assets/mcp-bridge-settings.png)
 
 | Setting | Default | Notes |
 |---|---|---|

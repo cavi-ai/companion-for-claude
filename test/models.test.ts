@@ -22,10 +22,23 @@ describe("modelLabel", () => {
   it("returns the friendly label for known ids", () => {
     expect(modelLabel("claude-sonnet-5")).toBe("Claude Sonnet 5");
   });
-  it("echoes unknown ids verbatim", () => {
-    expect(modelLabel("claude-future-9")).toBe("claude-future-9");
-  });
   it("has a label for every curated model", () => {
     for (const m of CLAUDE_MODELS) expect(modelLabel(m.id)).toBe(m.label);
+  });
+});
+
+describe("modelLabel formatting", () => {
+  it("keeps catalog labels", () => {
+    expect(modelLabel(CLAUDE_MODELS[0].id)).toBe(CLAUDE_MODELS[0].label);
+  });
+  it("formats unknown ids instead of leaking the slug", () => {
+    expect(modelLabel("e2e-model")).toBe("E2e Model");
+    expect(modelLabel("claude-sonnet-5")).toBe("Claude Sonnet 5");
+    expect(modelLabel("claude-opus-4-1-20250805")).toBe("Claude Opus 4 1");
+    expect(modelLabel("qwen2.5-coder:7b")).toBe("Qwen2.5 Coder:7b");
+    expect(modelLabel("meta/llama-3.1-8b")).toBe("Meta Llama 3.1 8b");
+  });
+  it("returns an empty id unchanged", () => {
+    expect(modelLabel("")).toBe("");
   });
 });
