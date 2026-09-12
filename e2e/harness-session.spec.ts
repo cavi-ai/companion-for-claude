@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures";
 import { launchObsidianHarness } from "./obsidianHarness";
 
 test("ordinary scenarios reuse one Obsidian process with isolated vault state", async () => {

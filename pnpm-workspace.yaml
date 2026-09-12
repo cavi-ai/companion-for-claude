@@ -1,0 +1,8 @@
+onlyBuiltDependencies:
+  - esbuild
+
+overrides:
+  sharp: ^0.35.4
+  onnxruntime-node: "-"
+  onnxruntime-common: 1.24.3
+  "@xmldom/xmldom": ^0.9.12

@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures";
 import { launchObsidianHarness } from "./obsidianHarness";
 
 test("Build creates documents and runs tasks in native stable controls without copy-paste", async ({}, testInfo) => {

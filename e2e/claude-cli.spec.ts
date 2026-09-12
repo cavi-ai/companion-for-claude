@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures";
 import { launchObsidianHarness } from "./obsidianHarness";
 
 test("chat runs on the Claude Code backend with no API key and reuses the process across sends", async () => {

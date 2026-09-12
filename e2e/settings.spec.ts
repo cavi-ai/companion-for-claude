@@ -1,4 +1,5 @@
-import { test, expect, type Locator } from "@playwright/test";
+import type { Locator } from "@playwright/test";
+import { test, expect } from "./fixtures";
 import { launchObsidianHarness, type ObsidianHarness } from "./obsidianHarness";
 
 // Settings-tab regression suite. Since 0.27.1 the tab is declarative

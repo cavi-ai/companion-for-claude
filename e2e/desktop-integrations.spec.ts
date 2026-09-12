@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures";
 import { launchObsidianHarness } from "./obsidianHarness";
 
 test("Desktop integrations opens through Obsidian's real Node runtime boundary", async () => {

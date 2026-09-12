@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures";
 import { modelLabel } from "../src/claude/models";
 import { launchObsidianHarness } from "./obsidianHarness";
 

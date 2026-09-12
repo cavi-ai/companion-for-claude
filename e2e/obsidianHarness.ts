@@ -328,6 +328,13 @@ interface PhysicalObsidianHarness extends ObsidianHarness {
 let pooledHarness: PhysicalObsidianHarness | null = null;
 let pooledLeaseActive = false;
 
+export async function shutdownSharedObsidianHarness(): Promise<void> {
+  const physical = pooledHarness;
+  pooledHarness = null;
+  pooledLeaseActive = false;
+  await physical?.shutdown();
+}
+
 function needsStandaloneProcess(options: ObsidianHarnessOptions): boolean {
   // These scenarios assert startup or process-death behavior. Reusing the
   // ordinary worker process would remove the lifecycle boundary under test.

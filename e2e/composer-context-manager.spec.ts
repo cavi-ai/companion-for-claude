@@ -1,5 +1,6 @@
 import { mkdir } from "node:fs/promises";
-import { expect, test, type Locator, type Page } from "@playwright/test";
+import type { Locator, Page } from "@playwright/test";
+import { expect, test } from "./fixtures";
 import { launchObsidianHarness, type ObsidianHarness } from "./obsidianHarness";
 
 const OUTPUT = "/private/tmp/claude-companion-context-e2e-results";

@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures";
 import { launchObsidianHarness, type ObsidianHarness } from "./obsidianHarness";
 
 test.describe.configure({ mode: "serial" });

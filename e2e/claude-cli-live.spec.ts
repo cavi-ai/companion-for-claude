@@ -3,7 +3,8 @@ import { readFile, readdir, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { expect, test, type Page } from "@playwright/test";
+import type { Page } from "@playwright/test";
+import { expect, test } from "./fixtures";
 import { launchObsidianHarness } from "./obsidianHarness";
 
 // Real Claude Code, real subscription: opt in with CC_E2E_LIVE=1. Never runs in CI.

@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures";
 import { launchObsidianHarness } from "./obsidianHarness";
 
 test("ephemeral Companion feedback appears immediately and clears within 2.5 seconds", async () => {
