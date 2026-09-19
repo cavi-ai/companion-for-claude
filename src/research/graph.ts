@@ -1,3 +1,4 @@
+import { stableSerialize } from "../hashing";
 import type { ParseIssue } from "./parse";
 import type {
   ClaimRecord,
@@ -44,15 +45,6 @@ function freezeRecord<T extends ResearchRecord>(record: T): Readonly<T> {
 
 export function compareCodeUnits(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
-}
-
-function stableSerialize(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(stableSerialize).join(",")}]`;
-  if (value && typeof value === "object") {
-    const entries = Object.entries(value).sort(([left], [right]) => compareCodeUnits(left, right));
-    return `{${entries.map(([key, item]) => `${JSON.stringify(key)}:${stableSerialize(item)}`).join(",")}}`;
-  }
-  return JSON.stringify(value) ?? "undefined";
 }
 
 function uniquePaths(paths: string[]): string[] {

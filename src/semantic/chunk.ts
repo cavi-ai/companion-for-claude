@@ -4,6 +4,8 @@
 // (we don't embed YAML), and each chunk carries its nearest heading so the
 // embedding keeps topical context even when the body is split mid-section.
 
+import { fnv1a32 } from "../hashing";
+
 export interface Chunk {
   /** Position of this chunk within the note (stable ordering). */
   ord: number;
@@ -26,12 +28,7 @@ export function stripFrontmatter(md: string): string {
  * collision resistance — so this avoids the async crypto.subtle API.
  */
 export function contentHash(text: string): string {
-  let h = 0x811c9dc5;
-  for (let i = 0; i < text.length; i++) {
-    h ^= text.charCodeAt(i);
-    h = Math.imul(h, 0x01000193);
-  }
-  return (h >>> 0).toString(36);
+  return fnv1a32(text).toString(36);
 }
 
 export interface ChunkOptions {

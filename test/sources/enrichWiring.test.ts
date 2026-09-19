@@ -393,12 +393,12 @@ describe("source enrichment wiring", () => {
   it("gates auto-tag utility completion through the same mobile consent boundary", async () => {
     Platform.isMobile = true;
     Platform.isDesktop = false;
-    const { app, plugin, router } = mobilePlugin();
+    const { router } = mobilePlugin();
     const ollamaComplete = vi.spyOn(router.ollama, "complete").mockResolvedValue("unsafe");
     const claudeComplete = vi.spyOn(router.anthropic, "complete").mockResolvedValue("unsafe");
     const opened = vi.spyOn(ChoiceModal.prototype, "open");
 
-    const pending = summarizeAndTag(app, router, "Private note content.", []);
+    const pending = summarizeAndTag(router, "Private note content.", []);
     await settle();
 
     expect(opened).toHaveBeenCalledTimes(1);

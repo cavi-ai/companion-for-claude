@@ -366,6 +366,7 @@ export class ItemView {
 }
 let lastOpenedModal: Modal | undefined;
 export function getLastOpenedModal(): Modal | undefined { return lastOpenedModal; }
+function markOpened(modal: Modal): void { lastOpenedModal = modal; }
 export class Modal {
   containerEl = new FakeElement() as unknown as HTMLElement;
   modalEl = new FakeElement() as unknown as HTMLElement;
@@ -373,7 +374,7 @@ export class Modal {
   contentEl = new FakeElement() as unknown as HTMLElement;
   closed = false;
   constructor(public app: App) {}
-  open(): void { lastOpenedModal = this; this.onOpen(); }
+  open(): void { markOpened(this); this.onOpen(); }
   close(): void { this.closed = true; this.onClose(); }
   onOpen(): void {}
   onClose(): void {}

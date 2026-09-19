@@ -52,6 +52,17 @@ export function estimateTokens(text: string): number {
   return Math.ceil(text.length / 3.7);
 }
 
+/**
+ * Token estimate for a character count, without materializing a string of that
+ * length. The pre-send gauge reserves a vault-context allowance as a number of
+ * characters; `estimateTokens("x".repeat(n))` allocated a string up to the whole
+ * context budget on every keystroke.
+ */
+export function estimateTokensForChars(charCount: number): number {
+  if (charCount <= 0) return 0;
+  return Math.ceil(charCount / 3.7);
+}
+
 export interface ContextGauge {
   used: number;
   window: number;

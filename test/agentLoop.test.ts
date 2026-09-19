@@ -141,6 +141,28 @@ describe("runAgentTurn", () => {
     expect(calls).toHaveLength(1);
   });
 
+  it("passes the turn's abort signal to each tool execution", async () => {
+    const ac = new AbortController();
+    const { deps: d } = deps([{ toolUses: [use("t1")], stopReason: "tool_use" }, { text: "done", stopReason: "end_turn" }]);
+    const execute = vi.fn(async (b: ToolUseBlock) => okResult(b.id));
+    d.execute = execute;
+    d.signal = ac.signal;
+    await runAgentTurn(d, baseReq, { onText: vi.fn() });
+    expect(execute).toHaveBeenCalledWith(expect.objectContaining({ id: "t1" }), ac.signal);
+  });
+
+  it("turns a throwing executor into an is_error result and continues the turn", async () => {
+    const { deps: d, calls } = deps([{ toolUses: [use("t1")], stopReason: "tool_use" }, { text: "recovered", stopReason: "end_turn" }]);
+    d.execute = vi.fn(async () => {
+      throw new Error("executor exploded");
+    });
+    const r = await runAgentTurn(d, baseReq, { onText: vi.fn() });
+    // The turn completes (no throw) and the failure rides back as a tool error.
+    expect(r.text).toContain("recovered");
+    expect(r.trace[0]).toMatchObject({ ok: false, resultPreview: "executor exploded" });
+    expect((calls[1]!.messages[2]!.content as ToolResultBlock[])[0]).toMatchObject({ is_error: true, content: "executor exploded" });
+  });
+
   it("surfaces a mid-loop stream error and keeps prior text", async () => {
     const { deps: d } = deps([
       { text: "Working. ", toolUses: [use("t1")], stopReason: "tool_use" },
@@ -218,6 +240,12 @@ describe("toTraceEntry", () => {
   it("summarizes args and previews the result", () => {
     const entry = toTraceEntry(use("t1"), okResult("t1", "x".repeat(500)));
     expect(entry).toEqual({ name: "vault_search", argsSummary: '{"query":"x"}', resultPreview: `${"x".repeat(400)}…`, ok: true });
+  });
+
+  it("never throws on a circular tool input", () => {
+    const input: Record<string, unknown> = { query: "x" };
+    input.self = input;
+    expect(() => toTraceEntry({ type: "tool_use", id: "t1", name: "vault_search", input }, okResult("t1"))).not.toThrow();
   });
 
   it("stores a parseable reduced summary for a write call with a large content field, so replay renders the same chip as live", () => {

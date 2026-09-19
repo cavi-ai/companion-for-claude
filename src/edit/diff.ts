@@ -349,6 +349,11 @@ function splitLines(text: string): string[] {
 function lineDiff(a: string[], b: string[]): DiffLine[] {
   const n = a.length;
   const m = b.length;
+  // `changedRegions` caps its own table, but this path (a whole-line-expanded
+  // hunk) has no cap: a large rewrite would allocate an O(n·m) table on the
+  // main thread and freeze the UI. Fall back to a coarse prefix/del/add/suffix
+  // rendering, which preserves the visible change without the DP table.
+  if (n * m > MAX_DIFF_CELLS) return coarseLineDiff(a, b);
   // DP table of LCS lengths.
   const dp: number[][] = Array.from({ length: n + 1 }, () => new Array<number>(m + 1).fill(0));
   for (let i = n - 1; i >= 0; i--) {
@@ -375,6 +380,24 @@ function lineDiff(a: string[], b: string[]): DiffLine[] {
   while (i < n) out.push({ kind: "del", text: a[i++]! });
   while (j < m) out.push({ kind: "add", text: b[j++]! });
   return out;
+}
+
+/** O(n+m) fallback for regions too large for the LCS table: shared prefix/suffix as context. */
+function coarseLineDiff(a: string[], b: string[]): DiffLine[] {
+  let start = 0;
+  while (start < a.length && start < b.length && a[start] === b[start]) start++;
+  let aEnd = a.length;
+  let bEnd = b.length;
+  while (aEnd > start && bEnd > start && a[aEnd - 1] === b[bEnd - 1]) {
+    aEnd--;
+    bEnd--;
+  }
+  return [
+    ...a.slice(0, start).map((text): DiffLine => ({ kind: "context", text })),
+    ...a.slice(start, aEnd).map((text): DiffLine => ({ kind: "del", text })),
+    ...b.slice(start, bEnd).map((text): DiffLine => ({ kind: "add", text })),
+    ...a.slice(aEnd).map((text): DiffLine => ({ kind: "context", text })),
+  ];
 }
 
 function excerpt(s: string): string {

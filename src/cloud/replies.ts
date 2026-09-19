@@ -115,6 +115,14 @@ export function parseFileResponse(status: number, bodyText: string): FetchedFile
   if (!json || typeof json !== "object") throw new Error("Unexpected file response from GitHub.");
   const content = typeof json.content === "string" ? json.content : "";
   const encoding = typeof json.encoding === "string" ? json.encoding : "";
+  // GitHub omits `content` (encoding "none", empty body) for files over ~1 MB.
+  // Returning "" here silently created an empty note in the vault; fail loudly
+  // instead so the user knows the reply didn't come through.
+  if (encoding !== "base64" && content === "") {
+    throw new Error(
+      `GitHub returned no content for ${asStr(json.path) || "the reply"} (the file is too large for the Contents API, or the response was empty).`,
+    );
+  }
   const text = encoding === "base64" ? decodeBase64Utf8(content) : content;
   return { path: asStr(json.path), sha: asStr(json.sha), text };
 }

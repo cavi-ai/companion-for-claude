@@ -4,7 +4,7 @@
 
 import { Platform, requestUrl } from "obsidian";
 import { McpClientSession, type McpTransport } from "./client";
-import { parseExternalToolName, type ExternalServerTools } from "./external";
+import { parseExternalToolName, sanitizeServerName, type ExternalServerTools } from "./external";
 import { createHttpMcpTransport } from "./httpTransport";
 import type { McpToolDef } from "./protocol";
 import type { McpServerConfig } from "../types";
@@ -48,7 +48,9 @@ export class ExternalMcpManager {
     }
     const session = new McpClientSession(transport);
     const tools = await session.listTools();
-    return { session, tools, exposedAs: config.name.trim() };
+    // `exposedAs` is the sanitized segment the model actually calls
+    // (mcp__<exposedAs>__<tool>), so `call()` can match the parsed name back.
+    return { session, tools, exposedAs: sanitizeServerName(config.name.trim()) };
   }
 
   private async ensure(config: McpServerConfig): Promise<Connected | null> {

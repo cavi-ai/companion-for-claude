@@ -57,9 +57,13 @@ export function shapeRequest(
       shape.thinking = { type: "adaptive" };
       shape.thinkingDisplay = controls.showThinking ? "summarized" : "omitted";
     } else if (caps.thinking === "budget") {
-      // Older models: a fixed budget that must be < max_tokens (min 1024).
-      const budget = Math.max(1024, Math.min(Math.floor(maxTokens * 0.5), maxTokens - 1));
-      shape.thinking = { type: "enabled", budget_tokens: budget };
+      // Older models: a fixed budget that must satisfy 1024 ≤ budget < max_tokens.
+      // When max_tokens leaves no room for a valid budget, omit thinking entirely
+      // rather than send a request the API rejects with HTTP 400.
+      if (maxTokens > 1024) {
+        const budget = Math.min(Math.max(1024, Math.floor(maxTokens * 0.5)), maxTokens - 1);
+        shape.thinking = { type: "enabled", budget_tokens: budget };
+      }
     }
     // caps.thinking === "none": thinking unsupported — emit nothing.
   } else if (caps.thinking === "adaptive") {

@@ -416,7 +416,7 @@ export default class ClaudeCompanionPlugin extends Plugin {
           },
           suggestTags: async (content) => {
             try {
-              const { tags } = await summarizeAndTag(this.app, this.router(), content, existingVaultTags(this.app));
+              const { tags } = await summarizeAndTag(this.router(), content, existingVaultTags(this.app));
               return tags;
             } catch (e) {
               console.warn("[companion] source tagging failed", e);
@@ -2753,7 +2753,7 @@ export default class ClaudeCompanionPlugin extends Plugin {
     let tagResult: { title: string; tags: string[]; summary: string } | null = null;
     if (options.rename || options.frontmatter) {
       try {
-        tagResult = await summarizeAndTag(this.app, this.router(), content, existingVaultTags(this.app));
+        tagResult = await summarizeAndTag(this.router(), content, existingVaultTags(this.app));
       } catch (e) {
         if (e instanceof UtilityUnavailableError) throw e;
         // Tagging is best-effort — links/lint still run.
@@ -4322,18 +4322,28 @@ export default class ClaudeCompanionPlugin extends Plugin {
       const listRes = await requestUrl({ url: list.url, method: list.method, headers: list.headers, throw: false });
       const files = parseDirListing(listRes.status, listRes.text).filter((f) => isMarkdown(f.name));
       let pulled = 0;
+      let failed = 0;
       for (const f of files) {
         if (this.app.vault.getAbstractFileByPath(normalizePath(f.path))) continue; // don't clobber local notes
-        const fileReq = buildContentsRequest(cfg, f.path);
-        const fileRes = await requestUrl({ url: fileReq.url, method: fileReq.method, headers: fileReq.headers, throw: false });
-        const got = parseFileResponse(fileRes.status, fileRes.text);
-        const dir = f.path.includes("/") ? f.path.slice(0, f.path.lastIndexOf("/")) : "";
-        if (dir) await this.ensureFolder(dir);
-        await this.app.vault.create(normalizePath(f.path), got.text);
-        pulled++;
+        // One unreadable/oversized reply must not abort the whole sync; count it
+        // and keep pulling the rest.
+        try {
+          const fileReq = buildContentsRequest(cfg, f.path);
+          const fileRes = await requestUrl({ url: fileReq.url, method: fileReq.method, headers: fileReq.headers, throw: false });
+          const got = parseFileResponse(fileRes.status, fileRes.text);
+          const dir = f.path.includes("/") ? f.path.slice(0, f.path.lastIndexOf("/")) : "";
+          if (dir) await this.ensureFolder(dir);
+          await this.app.vault.create(normalizePath(f.path), got.text);
+          pulled++;
+        } catch (error) {
+          failed++;
+          console.warn("[companion] cloud reply skipped", f.path, error);
+        }
       }
       pending.hide();
-      new Notice(pulled > 0 ? `Pulled ${pulled} cloud repl${pulled === 1 ? "y" : "ies"} into the vault.` : "No new cloud replies.", 7000);
+      const pulledMsg = pulled > 0 ? `Pulled ${pulled} cloud repl${pulled === 1 ? "y" : "ies"} into the vault.` : "No new cloud replies.";
+      const failedMsg = failed > 0 ? ` ${failed} couldn't be pulled (see console).` : "";
+      new Notice(pulledMsg + failedMsg, 7000);
     } catch (e) {
       pending.hide();
       const msg = e instanceof Error ? e.message : String(e);

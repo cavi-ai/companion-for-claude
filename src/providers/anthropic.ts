@@ -5,6 +5,7 @@ import { withCacheControl } from "../claude/cache";
 import { PING_MODEL } from "../claude/models";
 import { capabilitiesFor } from "../claude/capabilities";
 import { type CompletionRequest, type Provider, type ProviderStatus, ProviderError, isAbort } from "./types";
+import { readStreamBody } from "./streamBody";
 import { type AuthInputs, type AuthMode, type ResolvedAuth, resolveAuth, resolveAuthBaseUrl, authHeaders, messagesUrl, buildSystem } from "./auth";
 
 export interface AnthropicConsentIdentity {
@@ -176,13 +177,7 @@ export class AnthropicProvider implements Provider {
           const text = await res.text().catch(() => "");
           throw new ProviderError(extractApiError(text, res.status), res.status);
         }
-        const reader = res.body.getReader();
-        const decoder = new TextDecoder();
-        for (;;) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          consume(decoder.decode(value, { stream: true }));
-        }
+        await readStreamBody(res.body, consume);
       }
       // Flush a final complete event that arrived in the last chunk without a
       // trailing newline (otherwise its stop_reason/usage would be dropped).

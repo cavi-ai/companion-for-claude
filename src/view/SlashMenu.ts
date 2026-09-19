@@ -13,7 +13,7 @@ export class SlashMenu {
   private open = false;
 
   constructor(
-    private parent: HTMLElement,
+    parent: HTMLElement,
     private commands: SlashCommand[],
     private onChoose: (cmd: SlashCommand) => void,
   ) {

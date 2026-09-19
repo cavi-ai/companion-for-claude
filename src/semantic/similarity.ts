@@ -22,17 +22,6 @@ export interface Ranked {
   score: number;
 }
 
-/** Top-k items by cosine against a query vector (descending). */
-export function topKByVector(
-  query: number[],
-  items: { id: string; vector: number[] }[],
-  k: number,
-): Ranked[] {
-  const scored = items.map((it) => ({ id: it.id, score: cosineSimilarity(query, it.vector) }));
-  scored.sort((a, b) => b.score - a.score);
-  return scored.slice(0, Math.max(0, k));
-}
-
 /**
  * Reciprocal-rank fusion of several ranked lists into one. Rank position (not
  * raw score) drives the blend, so a keyword list and a cosine list combine

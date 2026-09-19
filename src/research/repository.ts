@@ -1,3 +1,4 @@
+import { hasPathTraversal } from "../paths";
 import { buildProjectSnapshot, compareCodeUnits, type ProjectSnapshot } from "./graph";
 import { canonicalSourceId, findDuplicate } from "./identity";
 import { parseResearchCandidate, parseResearchRecord, type ResearchNoteInput } from "./parse";
@@ -104,7 +105,7 @@ const LAYOUT = {
 } as const;
 
 function safePath(path: string): string {
-  if (!path || path.startsWith("/") || /[\\\0\r\n]/.test(path) || path.split("/").some((part) => !part || part === "." || part === "..")) {
+  if (!path || /[\\\0\r\n]/.test(path) || hasPathTraversal(path) || path.split("/").some((part) => !part || part === ".")) {
     throw new Error(`Unsafe research path: ${path}`);
   }
   return path;

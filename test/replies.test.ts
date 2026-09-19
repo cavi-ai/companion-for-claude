@@ -94,6 +94,12 @@ describe("parseFileResponse", () => {
   it("throws on a non-2xx status", () => {
     expect(() => parseFileResponse(404, "{}")).toThrow(/not found/i);
   });
+  it("throws instead of returning empty text when GitHub omits the content", () => {
+    // >1 MB files come back with encoding "none" and no content; the old code
+    // silently created an empty note.
+    const body = JSON.stringify({ path: "Big.md", sha: "s", encoding: "none" });
+    expect(() => parseFileResponse(200, body)).toThrow(/no content.*Big\.md/i);
+  });
 });
 
 describe("decodeBase64Utf8", () => {

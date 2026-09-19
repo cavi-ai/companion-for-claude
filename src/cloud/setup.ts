@@ -2,7 +2,7 @@
 // a live checklist the settings tab can tick step by step. Pure — the settings
 // UI renders it, tests drive it directly.
 
-import { type CloudDispatchConfig, configError as dispatchConfigError } from "./routines";
+import { type CloudDispatchConfig, fireUrlError, configError as dispatchConfigError } from "./routines";
 import { type RepliesConfig, configError as repliesConfigError, parseRepo } from "./replies";
 
 export interface SetupStep {
@@ -20,22 +20,9 @@ const step = (key: string, label: string, ok: boolean, detail?: string): SetupSt
   ...(detail !== undefined ? { detail } : {}),
 });
 
-/** The fire URL should look like the Routines API endpoint, not just any https URL. */
-export function fireUrlError(fireUrl: string): string | null {
-  const raw = fireUrl.trim();
-  if (!raw) return "No routine endpoint set — paste your routine's “fire” URL in settings.";
-  let url: URL;
-  try {
-    url = new URL(raw);
-  } catch {
-    return "Routine endpoint is not a valid URL.";
-  }
-  if (url.protocol !== "https:") return "Routine endpoint must be an https:// URL.";
-  if (!/\/claude_code\/routines\/[^/]+\/fire\/?$/.test(url.pathname)) {
-    return "URL doesn't look like a routine “fire” endpoint (…/v1/claude_code/routines/<id>/fire) — copy it from the routine's page in the Claude Code web UI.";
-  }
-  return null;
-}
+// `fireUrlError` lives in routines.ts (next to configError, which now shares it)
+// and is re-exported here so the setup checklist's import site is unchanged.
+export { fireUrlError };
 
 export function dispatchSetupSteps(cfg: CloudDispatchConfig): SetupStep[] {
   const urlErr = fireUrlError(cfg.fireUrl);

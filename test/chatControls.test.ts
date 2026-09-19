@@ -31,6 +31,16 @@ describe("shapeRequest — thinking", () => {
     expect(b).toBeGreaterThanOrEqual(1024);
     expect(b).toBeLessThan(8000);
   });
+  it("budget model at the floor → budget still < max_tokens", () => {
+    const b = (shapeRequest(ctl({ model: "claude-sonnet-4-5", thinking: true, maxTokens: 1025 }), 4096).thinking as { budget_tokens: number }).budget_tokens;
+    expect(b).toBeGreaterThanOrEqual(1024);
+    expect(b).toBeLessThan(1025);
+  });
+  it("budget model with max_tokens too small → omits thinking instead of sending an invalid budget", () => {
+    // budget_tokens must be ≥ 1024 and < max_tokens, so nothing valid fits at ≤ 1024.
+    expect(shapeRequest(ctl({ model: "claude-sonnet-4-5", thinking: true, maxTokens: 1024 }), 4096).thinking).toBeUndefined();
+    expect(shapeRequest(ctl({ model: "claude-sonnet-4-5", thinking: true, maxTokens: 512 }), 4096).thinking).toBeUndefined();
+  });
   it("unknown model → no thinking field even when toggled on", () => {
     const s = shapeRequest(ctl({ model: "my-local-llama", thinking: true }), 4096);
     expect(s.thinking).toBeUndefined();

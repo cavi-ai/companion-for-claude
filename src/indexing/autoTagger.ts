@@ -41,7 +41,7 @@ const TAG_SYSTEM =
  * Summarize + tag a document. Routes to the local (utility) provider when
  * enabled — keeping this cheap, bulk work off the Anthropic bill.
  */
-export async function summarizeAndTag(app: App, router: ProviderRouter, content: string, existing: string[]): Promise<TagResult> {
+export async function summarizeAndTag(router: ProviderRouter, content: string, existing: string[]): Promise<TagResult> {
   const existingLine = existing.length > 0 ? `Existing tags (prefer these when relevant): ${existing.join(", ")}\n\n` : "";
   const body = content.length > 8000 ? content.slice(0, 8000) + "\n…[truncated]" : content;
 

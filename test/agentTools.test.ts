@@ -3,6 +3,7 @@ import { toAnthropicTools, executeTool, isWriteTool, readOnlyAnthropicTools, TOO
 import type { McpToolDef } from "../src/mcp/protocol";
 import type { ToolUseBlock } from "../src/providers/types";
 import { VaultTools } from "../src/mcp/vaultTools";
+import { VAULT_WRITE_TOOLS } from "../src/mcp/writeTools";
 import { App } from "obsidian";
 
 const defs: McpToolDef[] = [
@@ -189,6 +190,21 @@ describe("propose_note_edit routing", () => {
     expect(PROPOSE_EDIT_TOOL.name).toBe("propose_note_edit");
     const schema = PROPOSE_EDIT_TOOL.input_schema as { required?: string[] };
     expect(schema.required).toEqual(["path", "edits"]);
+  });
+});
+
+describe("write-tool registry completeness", () => {
+  it("classifies every advertised write tool as a write tool", () => {
+    // The registry and the agent gate must agree with what the vault catalog
+    // actually advertises. A new write tool added to the catalog but not to
+    // VAULT_WRITE_TOOLS would be callable without the confirmation gate.
+    // `ontology_propose` is only advertised when an ontology is wired, so it is
+    // the one registry entry this keyless catalog legitimately omits.
+    const advertised = new VaultTools(new App() as never, { allowWrites: true, defaultFolder: "Claude" }).definitions();
+    const writeNames = new Set(advertised.map(({ name }) => name).filter((name) => VAULT_WRITE_TOOLS.has(name)));
+    const expected = new Set([...VAULT_WRITE_TOOLS].filter((name) => name !== "ontology_propose"));
+    expect(writeNames).toEqual(expected);
+    for (const name of writeNames) expect(isWriteTool(name)).toBe(true);
   });
 });
 

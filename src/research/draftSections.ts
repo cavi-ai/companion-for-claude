@@ -1,3 +1,5 @@
+import { fnv1aHex } from "../hashing";
+
 export interface DraftSectionEnvelope {
   id: string;
   claimPaths: string[];
@@ -29,12 +31,7 @@ export interface DraftSectionParseResult {
 const START = /<!-- cavi:draft-section version=1 meta=([^\s]+) fingerprint=([a-z0-9-]+) -->\n/g;
 
 function fingerprintText(value: string): string {
-  let hash = 0x811c9dc5;
-  for (let index = 0; index < value.length; index += 1) {
-    hash ^= value.charCodeAt(index);
-    hash = Math.imul(hash, 0x01000193);
-  }
-  return `fnv1a-${(hash >>> 0).toString(16).padStart(8, "0")}`;
+  return `fnv1a-${fnv1aHex(value)}`;
 }
 
 function validString(value: unknown): value is string {

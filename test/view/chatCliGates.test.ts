@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { App, FakeElement, getLastOpenedModal, getNoticeMessages, WorkspaceLeaf } from "../fakes/obsidian";
+import { App, FakeElement, clearNotices, getLastOpenedModal, getNoticeMessages, WorkspaceLeaf } from "../fakes/obsidian";
 import { ChatView } from "../../src/view/ChatView";
 import { DEFAULT_SETTINGS, type PluginSettings } from "../../src/types";
 import type ClaudeCompanionPlugin from "../../src/main";
@@ -8,6 +8,31 @@ import { defaultChatControls } from "../../src/claude/chatControls";
 
 const CLI: ChatCapabilities = { agentActions: true, claudeControls: false, metered: false, local: false, cli: true };
 const API: ChatCapabilities = { agentActions: true, claudeControls: true, metered: true, local: false, cli: false };
+const NOT_CLI: ChatCapabilities = { agentActions: false, claudeControls: false, metered: false, local: false, cli: false };
+
+/** Plugin stub for the blocked-send re-probe gate in ChatView.run(): a mutable sign-in state that `refresh()` can flip. */
+function gatePluginStub(initiallySignedIn: boolean, refreshSignsIn: boolean): { plugin: ClaudeCompanionPlugin; refresh: ReturnType<typeof vi.fn> } {
+  const state = { signedIn: initiallySignedIn };
+  const refresh = vi.fn(async () => {
+    state.signedIn = refreshSignsIn;
+    return { ok: state.signedIn };
+  });
+  const plugin = {
+    settings: { ...structuredClone(DEFAULT_SETTINGS), chatBackend: "claude-cli" },
+    router: () => ({
+      chatBackend: "claude-cli",
+      chatProvider: () =>
+        state.signedIn
+          ? { provider: { id: "claude-cli", hasCredentials: () => true }, model: DEFAULT_SETTINGS.model }
+          : { provider: { id: "anthropic", hasCredentials: () => false }, model: DEFAULT_SETTINGS.model },
+      chatCapabilities: () => (state.signedIn ? CLI : NOT_CLI),
+      claudeCli: { hasCredentials: () => state.signedIn, available: () => true, refresh },
+      anthropic: { hasCredentials: () => false },
+    }),
+    secrets: () => ({ available: () => false }),
+  } as unknown as ClaudeCompanionPlugin;
+  return { plugin, refresh };
+}
 
 function pluginStub(settings: Partial<PluginSettings>, caps: ChatCapabilities, cliSignedIn: boolean): ClaudeCompanionPlugin & { cliTurnRunner: ReturnType<typeof vi.fn>; saveSettings: ReturnType<typeof vi.fn> } {
   const runner = { run: vi.fn(async () => ({ text: "", trace: [] })) };
@@ -105,6 +130,72 @@ describe("ChatView on the claude-cli backend", () => {
     (view as unknown as { renderSetupCard(parent: HTMLElement): void }).renderSetupCard(host);
     const sub = (host as unknown as FakeElement).querySelector(".cc-setup-sub");
     expect(sub?.textContent).toMatch(/^Claude Code is signed in on this computer/);
+  });
+
+  it("re-probes once on a blocked send and proceeds when the CLI is now signed in", async () => {
+    clearNotices();
+    const { plugin, refresh } = gatePluginStub(false, true);
+    const view = new ChatView(new WorkspaceLeaf(new App()), plugin);
+    await (view as unknown as { run(text: string): Promise<void> }).run("hello");
+    expect(refresh).toHaveBeenCalledTimes(1);
+    expect(getNoticeMessages().some((m) => m.includes("not signed in"))).toBe(false);
+    // Past the gate, the unstubbed persistence call fails — proof the send was not blocked.
+    expect(getNoticeMessages().some((m) => m.includes("Couldn't save this request"))).toBe(true);
+  });
+
+  it("shows the existing not-signed-in Notice when the re-probe still fails, calling refresh exactly once", async () => {
+    clearNotices();
+    const { plugin, refresh } = gatePluginStub(false, false);
+    const view = new ChatView(new WorkspaceLeaf(new App()), plugin);
+    await (view as unknown as { run(text: string): Promise<void> }).run("hello");
+    expect(refresh).toHaveBeenCalledTimes(1);
+    expect(getNoticeMessages().some((m) => m === "Claude Code is not signed in — run `claude auth login`, or add an API key in Companion settings.")).toBe(true);
+  });
+
+  it("never re-probes on a normal send when the CLI is already signed in", async () => {
+    clearNotices();
+    const { plugin, refresh } = gatePluginStub(true, true);
+    const view = new ChatView(new WorkspaceLeaf(new App()), plugin);
+    await (view as unknown as { run(text: string): Promise<void> }).run("hello");
+    expect(refresh).not.toHaveBeenCalled();
+  });
+
+  it("background-probes the setup card once and renders the CLI button after it flips signed in, never stacking probes", async () => {
+    const state = { signedIn: false };
+    let resolveRefresh!: () => void;
+    const refresh = vi.fn(
+      () =>
+        new Promise<{ ok: boolean }>((resolve) => {
+          resolveRefresh = () => {
+            state.signedIn = true;
+            resolve({ ok: true });
+          };
+        }),
+    );
+    const plugin = {
+      settings: { ...structuredClone(DEFAULT_SETTINGS), chatBackend: "claude", apiKey: "" },
+      router: () => ({
+        chatBackend: "claude",
+        claudeCli: { hasCredentials: () => state.signedIn, available: () => true, refresh },
+        anthropic: { hasCredentials: () => false },
+      }),
+      secrets: () => ({ available: () => false }),
+    } as unknown as ClaudeCompanionPlugin;
+    const view = new ChatView(new WorkspaceLeaf(new App()), plugin);
+    const host = new FakeElement() as unknown as HTMLElement;
+    const seam = view as unknown as { messagesEl: HTMLElement; renderSetupCard(parent: HTMLElement): void };
+    seam.messagesEl = host;
+
+    seam.renderSetupCard(host);
+    expect(refresh).toHaveBeenCalledTimes(1);
+    expect((host as unknown as FakeElement).querySelectorAll("button").some((b) => b.textContent === "Use Claude Code sign-in")).toBe(false);
+
+    resolveRefresh();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect((host as unknown as FakeElement).querySelectorAll("button").some((b) => b.textContent === "Use Claude Code sign-in")).toBe(true);
+    expect(refresh).toHaveBeenCalledTimes(1);
   });
 });
 

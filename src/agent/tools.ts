@@ -4,16 +4,19 @@
 
 import type { McpToolDef } from "../mcp/protocol";
 import type { AnthropicToolDef, ToolResultBlock, ToolUseBlock } from "../providers/types";
+import { VAULT_WRITE_TOOLS } from "../mcp/writeTools";
 import { RESEARCH_WRITE_TOOLS } from "../research/tools";
 
 /** Cap on a single tool result sent back to the model (spec §7, Franco-approved). */
 export const TOOL_RESULT_MAX_CHARS = 8000;
 
-/** The vault tools that mutate the vault; everything else is read-only. */
-const WRITE_TOOLS = new Set(["note_create", "note_append", "note_update", "note_patch", "update_frontmatter", "note_move", "canvas_create", "base_create", "ontology_propose", ...RESEARCH_WRITE_TOOLS]);
-
+/**
+ * The vault tools that mutate the vault; everything else is read-only. Composed
+ * from the two canonical registries so it can't drift from the MCP server's own
+ * gating (mcp/vaultTools.ts uses the same sets).
+ */
 export function isWriteTool(name: string): boolean {
-  return WRITE_TOOLS.has(name);
+  return VAULT_WRITE_TOOLS.has(name) || RESEARCH_WRITE_TOOLS.has(name);
 }
 
 /** Map MCP tool definitions to the Anthropic Messages API shape. */

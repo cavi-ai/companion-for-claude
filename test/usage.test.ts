@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { estimateTokens, limitsFor, DEFAULT_LIMITS, contextGauge, addUsage, EMPTY_SESSION, sessionCost, formatTokens, formatCost, type SessionUsage } from "../src/usage/tokens";
+import { estimateTokens, estimateTokensForChars, limitsFor, DEFAULT_LIMITS, contextGauge, addUsage, EMPTY_SESSION, sessionCost, formatTokens, formatCost, type SessionUsage } from "../src/usage/tokens";
 import { mergeUsage, parseSseChunk } from "../src/claude/sse";
 
 describe("estimateTokens", () => {
@@ -8,6 +8,14 @@ describe("estimateTokens", () => {
   });
   it("scales with length (~3.7 chars/token)", () => {
     expect(estimateTokens("x".repeat(37))).toBe(10);
+  });
+});
+
+describe("estimateTokensForChars", () => {
+  it("matches estimateTokens without allocating the string", () => {
+    expect(estimateTokensForChars(0)).toBe(0);
+    expect(estimateTokensForChars(37)).toBe(10);
+    expect(estimateTokensForChars(40_000)).toBe(estimateTokens("x".repeat(40_000)));
   });
 });
 

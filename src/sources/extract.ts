@@ -40,7 +40,7 @@ export function extractionJsonSchema(asked: SourceTypeSchema["fields"]): Record<
   return { type: "object", properties, required };
 }
 
-function buildSystem(schema: SourceTypeSchema, asked: SourceTypeSchema["fields"]): string {
+function buildSystem(asked: SourceTypeSchema["fields"]): string {
   const lines = asked.map((f) => `- ${f.key} (${f.type}${f.required ? ", required" : ""}): ${f.description}`);
   return (
     "You extract structured metadata from a source document. " +
@@ -73,7 +73,7 @@ export async function extractFields(
   const reduced = reducedSchema(schema, prefilled);
   const asked = reduced.fields.filter((f) => f.source === "model");
   if (asked.length === 0) return { fields: { ...prefilled, ...derived } };
-  const system = buildSystem(reduced, asked);
+  const system = buildSystem(asked);
   const base = `SOURCE CONTENT:\n\n${content.length > MAX_CONTENT ? content.slice(0, MAX_CONTENT) + "\n…[truncated]" : content}`;
   const opts: ExtractCompletionOpts = { maxTokens: EXTRACT_MAX_TOKENS, responseSchema: extractionJsonSchema(asked), disableThinking: true };
   let lastErrors: string[] = ["no reply"];

@@ -1,4 +1,3 @@
-import { existsSync, readFileSync } from "node:fs";
 import { describe, it, expect } from "vitest";
 import { OllamaEmbedder, embedderId, migrateEmbeddingEngine } from "../../src/semantic/embedder";
 import { BUILTIN_EMBEDDING_MODEL } from "../../src/semantic/transformers/model";
@@ -51,19 +50,6 @@ describe("OllamaEmbedder", () => {
   });
 });
 
-describe("worker bundle", () => {
-  // CI runs typecheck→lint→test→build, so the artifact doesn't exist yet
-  // there; local post-build runs assert esbuild pass 1 produced a sane bundle.
-  const artifact = new URL("../../.build/embed-worker.txt", import.meta.url);
-  it.skipIf(!existsSync(artifact))("esbuild pass 1 produced the inlined worker artifact", () => {
-    const src = readFileSync(artifact, "utf8");
-    // transformers.js is inside, not CDN-loaded — the bundle can't be tiny.
-    expect(src.length).toBeGreaterThan(400_000);
-    // Both prod (minified) and dev pass-1 outputs start with the strict-mode
-    // pragma esbuild hoists out of the bundled ESM (verified empirically).
-    expect(src.startsWith('"use strict";')).toBe(true);
-    // esbuild must have lowered import.meta away — inside a Blob-URL iife
-    // worker a surviving import.meta.url would be a runtime landmine.
-    expect(src).not.toContain("import.meta");
-  });
-});
+// The worker-bundle assertion lives in `tools/verify-worker-bundle.mjs`, run by
+// CI after `pnpm run build`. It used to sit here behind skipIf(!existsSync(...)),
+// but tests run before build, so it never executed in automation.

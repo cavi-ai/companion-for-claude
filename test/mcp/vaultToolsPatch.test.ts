@@ -60,6 +60,12 @@ describe("note_patch", () => {
     await expect(tools.call("note_patch", { path: "Plan.md", target: { kind: "heading", heading: "Nope" }, op: "append", content: "x" })).rejects.toThrow("Section not found: Nope");
   });
 
+  it("rejects setting a Companion-managed frontmatter key", async () => {
+    await expect(tools.call("note_patch", { path: "Plan.md", target: { kind: "frontmatter", key: "type" }, op: "replace", content: "claim" })).rejects.toThrow(/managed by Companion/);
+    await expect(tools.call("note_patch", { path: "Plan.md", target: { kind: "frontmatter", key: "review_state" }, op: "replace", content: "reviewed" })).rejects.toThrow(/managed by Companion/);
+    expect((await frontmatter()).type).toBeUndefined();
+  });
+
   it("is gated by allowWrites", async () => {
     tools.setOptions({ allowWrites: false, defaultFolder: "Claude" });
     await expect(tools.call("note_patch", { path: "Plan.md", target: { kind: "document" }, op: "append", content: "x" })).rejects.toThrow(/Write tools are disabled/);

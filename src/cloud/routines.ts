@@ -35,16 +35,31 @@ export interface RoutineFireResult {
   sessionUrl: string | null;
 }
 
-/** Validate dispatch config; returns a human-readable error, or null when OK. */
-export function configError(cfg: CloudDispatchConfig): string | null {
-  if (!cfg.fireUrl.trim()) return "No routine endpoint set — paste your routine's “fire” URL in settings.";
+/**
+ * The fire URL should look like the Routines API endpoint, not just any https
+ * URL. Shared by configError (dispatch-time gate) and the setup checklist so a
+ * syntactically-valid-but-wrong endpoint can't pass one and fail the other.
+ */
+export function fireUrlError(fireUrl: string): string | null {
+  const raw = fireUrl.trim();
+  if (!raw) return "No routine endpoint set — paste your routine's “fire” URL in settings.";
   let url: URL;
   try {
-    url = new URL(cfg.fireUrl.trim());
+    url = new URL(raw);
   } catch {
     return "Routine endpoint is not a valid URL.";
   }
   if (url.protocol !== "https:") return "Routine endpoint must be an https:// URL.";
+  if (!/\/claude_code\/routines\/[^/]+\/fire\/?$/.test(url.pathname)) {
+    return "URL doesn't look like a routine “fire” endpoint (…/v1/claude_code/routines/<id>/fire) — copy it from the routine's page in the Claude Code web UI.";
+  }
+  return null;
+}
+
+/** Validate dispatch config; returns a human-readable error, or null when OK. */
+export function configError(cfg: CloudDispatchConfig): string | null {
+  const urlError = fireUrlError(cfg.fireUrl);
+  if (urlError) return urlError;
   if (!cfg.token.trim()) return "No routine token set — generate one in the Claude Code web UI and paste it in settings.";
   if (!cfg.betaHeader.trim()) return "Missing the anthropic-beta header required by the Routines API.";
   return null;
@@ -96,7 +111,7 @@ export function composeDispatchText(instruction: string, context?: string): stri
 
 /** Turn an error status + body into an actionable, specific message. */
 function fireErrorMessage(status: number, bodyText: string): string {
-  const detail = extractApiError(bodyText);
+  const detail = extractApiErrorDetail(bodyText);
   const suffix = detail ? ` — ${detail}` : "";
   switch (status) {
     case 401:
@@ -113,8 +128,12 @@ function fireErrorMessage(status: number, bodyText: string): string {
   }
 }
 
-/** Pull a message out of an Anthropic-style error body, if present. */
-function extractApiError(bodyText: string): string | null {
+/**
+ * Pull a detail message out of an Anthropic-style error body, if present.
+ * Named distinctly from claude/sse.ts's `extractApiError`, which formats a
+ * full status-bearing message rather than returning a bare detail.
+ */
+function extractApiErrorDetail(bodyText: string): string | null {
   try {
     const j = JSON.parse(bodyText) as { error?: { message?: string }; message?: string };
     return j.error?.message ?? j.message ?? null;

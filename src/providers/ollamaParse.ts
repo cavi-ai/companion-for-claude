@@ -15,7 +15,14 @@ export interface OllamaLineResult {
   error?: string;
   /** Function calls the model asked for (arrive in final chunks on tool-capable models). */
   toolCalls?: OllamaToolCall[];
+  /** Prompt tokens for the turn, on the final (`done:true`) line. */
+  promptEvalCount?: number;
+  /** Generated tokens for the turn, on the final (`done:true`) line. */
+  evalCount?: number;
 }
+
+const nonNegativeInt = (value: unknown): number | undefined =>
+  typeof value === "number" && Number.isFinite(value) && value >= 0 ? Math.floor(value) : undefined;
 
 export function parseOllamaLine(line: string): OllamaLineResult {
   const trimmed = line.trim();
@@ -24,6 +31,8 @@ export function parseOllamaLine(line: string): OllamaLineResult {
     message?: { content?: string; tool_calls?: Array<{ function?: { name?: unknown; arguments?: unknown } }> };
     done?: boolean;
     error?: string;
+    prompt_eval_count?: unknown;
+    eval_count?: unknown;
   };
   try {
     obj = JSON.parse(trimmed) as typeof obj;
@@ -37,5 +46,14 @@ export function parseOllamaLine(line: string): OllamaLineResult {
     const args = call.function?.arguments;
     return [{ name, input: args && typeof args === "object" && !Array.isArray(args) ? (args as Record<string, unknown>) : {} }];
   });
-  return { text: obj.message?.content ?? "", done: obj.done === true, ...(toolCalls.length > 0 ? { toolCalls } : {}) };
+  // Token counts ride only the final line, where Ollama reports the whole turn.
+  const promptEvalCount = obj.done === true ? nonNegativeInt(obj.prompt_eval_count) : undefined;
+  const evalCount = obj.done === true ? nonNegativeInt(obj.eval_count) : undefined;
+  return {
+    text: obj.message?.content ?? "",
+    done: obj.done === true,
+    ...(toolCalls.length > 0 ? { toolCalls } : {}),
+    ...(promptEvalCount !== undefined ? { promptEvalCount } : {}),
+    ...(evalCount !== undefined ? { evalCount } : {}),
+  };
 }

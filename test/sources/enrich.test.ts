@@ -79,7 +79,7 @@ describe("enrichCapture — markdown clip", () => {
   it("enriches CRLF Markdown through the atomic write path without changing a body byte", async () => {
     const app = new App();
     const before = "---\r\ntitle: CRLF capture\r\nsite: Example\r\n---\r\n\r\n# Body\r\n\r\nTrailing spaces.  \r\n";
-    const file = app.vault.seed("Clippings/crlf.md", before);
+    app.vault.seed("Clippings/crlf.md", before);
     const complete = async () => JSON.stringify({ summary: "A concise summary." });
 
     const res = await enrichCapture(deps(app, complete), {

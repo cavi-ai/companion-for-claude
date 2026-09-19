@@ -199,3 +199,107 @@ describe("ClaudeCliSession", () => {
     expect(s.isClosed()).toBe(true);
   });
 });
+
+describe("ClaudeCliSession idle watchdog", () => {
+  it("notices once after 60s of silence", async () => {
+    vi.useFakeTimers();
+    try {
+      const { s, children } = session();
+      const notices: string[] = [];
+      const turn = s.run(req, { onText: () => {}, onNotice: (n) => notices.push(n) });
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(notices).toEqual(["Claude Code has been silent for 60s — still waiting. Stop to cancel."]);
+      feed(children[0]!, init + result("done"));
+      await turn;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("resets on stdout bytes, including a line the parser does not recognize", async () => {
+    vi.useFakeTimers();
+    try {
+      const { s, children } = session();
+      const notices: string[] = [];
+      const turn = s.run(req, { onText: () => {}, onNotice: (n) => notices.push(n) });
+      await vi.advanceTimersByTimeAsync(50_000);
+      feed(children[0]!, '{"type":"nonsense_event_kind"}\n');
+      await vi.advanceTimersByTimeAsync(50_000); // 100s since start, only 50s since the reset
+      expect(notices).toEqual([]);
+      await vi.advanceTimersByTimeAsync(10_000); // 60s since the reset
+      expect(notices).toEqual(["Claude Code has been silent for 60s — still waiting. Stop to cancel."]);
+      feed(children[0]!, init + result("done"));
+      await turn;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("resets on stderr bytes", async () => {
+    vi.useFakeTimers();
+    try {
+      const { s, children } = session();
+      const notices: string[] = [];
+      const turn = s.run(req, { onText: () => {}, onNotice: (n) => notices.push(n) });
+      await vi.advanceTimersByTimeAsync(50_000);
+      children[0]!.stderr.emit("data", Buffer.from("some diagnostic\n"));
+      await vi.advanceTimersByTimeAsync(50_000);
+      expect(notices).toEqual([]);
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(notices).toEqual(["Claude Code has been silent for 60s — still waiting. Stop to cancel."]);
+      feed(children[0]!, init + result("done"));
+      await turn;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("pauses while a tool is pending, then re-arms once it resolves", async () => {
+    vi.useFakeTimers();
+    try {
+      const { s, children } = session();
+      const notices: string[] = [];
+      const turn = s.run(req, { onText: () => {}, onNotice: (n) => notices.push(n) });
+      feed(children[0]!, init
+        + '{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"vault_search","input":{}}]}}\n');
+      await vi.advanceTimersByTimeAsync(10 * 60_000);
+      expect(notices).toEqual([]);
+      expect(s.isBusy()).toBe(true);
+      feed(children[0]!, '{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"ok","is_error":false}]}}\n');
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(notices).toEqual(["Claude Code has been silent for 60s — still waiting. Stop to cancel."]);
+      feed(children[0]!, result("done"));
+      await turn;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("aborts after 5 minutes of silence, interrupting the child and closing the session", async () => {
+    vi.useFakeTimers();
+    try {
+      const { s, children } = session();
+      const turn = s.run(req, { onText: () => {} });
+      await vi.advanceTimersByTimeAsync(5 * 60_000);
+      const r = await turn;
+      expect(r.error?.message).toMatch(/no output for 5 minutes/);
+      expect(children[0]!.signals).toContain("SIGINT");
+      expect(s.isClosed()).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("clears the watchdog after a normal result, leaving no pending timers", async () => {
+    vi.useFakeTimers();
+    try {
+      const { s, children } = session();
+      const turn = s.run(req, { onText: () => {} });
+      feed(children[0]!, init + result("pong"));
+      await turn;
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

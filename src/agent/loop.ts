@@ -9,8 +9,12 @@ import type { ApiMessage, CompletionRequest, ContentBlock, ToolResultBlock, Tool
 export interface AgentTurnDeps {
   /** Provider streaming call (AnthropicProvider.stream). */
   stream(req: CompletionRequest, handlers: StreamHandlers): Promise<void>;
-  /** Executes one tool call (agent/tools.executeTool, wired to VaultTools). */
-  execute(block: ToolUseBlock): Promise<ToolResultBlock>;
+  /**
+   * Executes one tool call (agent/tools.executeTool, wired to VaultTools).
+   * `signal` is the turn's abort signal so a long-running tool can stop when the
+   * user hits Stop; tools that can't observe it still run to completion.
+   */
+  execute(block: ToolUseBlock, signal?: AbortSignal): Promise<ToolResultBlock>;
   /** Loop cap (settings.agentMaxIterations). */
   maxIterations: number;
   signal?: AbortSignal;
@@ -105,7 +109,15 @@ export async function runAgentTurn(deps: AgentTurnDeps, req: CompletionRequest, 
     for (const block of toolUses) {
       if (deps.signal?.aborted) return { text: joined(), trace, aborted: true };
       handlers.onToolStart?.(block);
-      const result = await deps.execute(block);
+      let result: ToolResultBlock;
+      try {
+        result = await deps.execute(block, deps.signal);
+      } catch (err) {
+        // The executor is contracted to never throw (executeTool maps errors to
+        // is_error results), but a mis-wired or custom executor must not kill the
+        // turn with no AgentTurnResult: surface it as a tool error and continue.
+        result = { type: "tool_result", tool_use_id: block.id, content: err instanceof Error ? err.message : String(err), is_error: true };
+      }
       handlers.onToolResult?.(block, result);
       trace.push(toTraceEntry(block, result));
       results.push(result);
@@ -127,11 +139,20 @@ export async function runAgentTurn(deps: AgentTurnDeps, req: CompletionRequest, 
 
 export function toTraceEntry(block: ToolUseBlock, result: ToolResultBlock): ToolTraceEntry {
   const reduced = pick(block.input, SUMMARY_KEYS);
-  const args = JSON.stringify(block.input);
+  const args = safeJson(block.input);
   return {
     name: block.name,
-    argsSummary: reduced ? JSON.stringify(reduced) : args.length > ARGS_SUMMARY_MAX ? `${args.slice(0, ARGS_SUMMARY_MAX)}…` : args,
+    argsSummary: reduced ? safeJson(reduced) : args.length > ARGS_SUMMARY_MAX ? `${args.slice(0, ARGS_SUMMARY_MAX)}…` : args,
     resultPreview: result.content.length > RESULT_PREVIEW_MAX ? `${result.content.slice(0, RESULT_PREVIEW_MAX)}…` : result.content,
     ok: !result.is_error,
   };
+}
+
+/** `JSON.stringify` that never throws — a circular/odd input must not abort the turn. */
+function safeJson(value: unknown): string {
+  try {
+    return JSON.stringify(value) ?? String(value);
+  } catch {
+    return String(value);
+  }
 }

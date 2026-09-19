@@ -178,6 +178,10 @@ const BROWSER_APP: Record<string, string> = {
  * hand it to the OS shell.
  */
 export async function openArtifactExternally(html: string, title: string, target: ArtifactOpenTarget = "default"): Promise<void> {
+  // The in-app frame is sandboxed; the external browser is not. Wrap the file in
+  // the same CSP so an artifact that is inert in Obsidian can't call out to the
+  // network (or submit forms) once it's opened in a real browser tab.
+  const guarded = withCsp(html);
   try {
     const req = (window as { require?: (m: string) => unknown }).require;
     if (!req) throw new Error("native modules unavailable");
@@ -197,7 +201,7 @@ export async function openArtifactExternally(html: string, title: string, target
     await sweepStaleArtifacts(fs, path, dir);
     const safe = (title || "artifact").replace(/[^a-z0-9-_]+/gi, "-").slice(0, 60) || "artifact";
     const file = path.join(dir, `companion-${safe}-${Date.now()}.html`);
-    await fs.promises.writeFile(file, html, "utf8");
+    await fs.promises.writeFile(file, guarded, "utf8");
 
     const appName = target !== "default" && target !== "obsidian" ? BROWSER_APP[target] : undefined;
     if (appName && os.platform() === "darwin") {
@@ -217,7 +221,9 @@ export async function openArtifactExternally(html: string, title: string, target
     if (err) throw new Error(err);
   } catch (e) {
     try {
-      window.open(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`, "_blank");
+      // `noopener` strips the opener reference so the page can't reach back into
+      // the app window; the CSP still applies to the data: document.
+      window.open(`data:text/html;charset=utf-8,${encodeURIComponent(guarded)}`, "_blank", "noopener,noreferrer");
     } catch {
       new Notice(`Couldn't open the artifact externally: ${e instanceof Error ? e.message : String(e)}`);
     }

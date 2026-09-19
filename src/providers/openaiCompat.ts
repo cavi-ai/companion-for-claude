@@ -1,6 +1,7 @@
 import { requestUrl } from "obsidian";
 import type { StreamHandlers } from "../types";
 import { type ApiMessage, type CompletionRequest, type Provider, type ProviderStatus, ProviderError, isAbort, textContent } from "./types";
+import { readStreamBody } from "./streamBody";
 
 /**
  * Provider for any OpenAI-compatible local endpoint — LM Studio, mlx-lm,
@@ -61,14 +62,10 @@ export class OpenAICompatProvider implements Provider {
       if (!res.ok || !res.body) {
         throw new ProviderError(`Endpoint error ${res.status} at ${this.base()}. Is the server running?`, res.status);
       }
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
       let buffer = "";
       let full = "";
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
+      const consume = (chunk: string): void => {
+        buffer += chunk;
         let nl: number;
         while ((nl = buffer.indexOf("\n")) !== -1) {
           const line = buffer.slice(0, nl).trim();
@@ -88,7 +85,8 @@ export class OpenAICompatProvider implements Provider {
             handlers.onText(delta);
           }
         }
-      }
+      };
+      await readStreamBody(res.body, consume);
       handlers.onDone?.(full);
     } catch (err) {
       if (isAbort(err)) return;

@@ -1,4 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
+
+const { requestUrlMock } = vi.hoisted(() => ({ requestUrlMock: vi.fn() }));
+vi.mock("obsidian", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("obsidian")>();
+  return { ...actual, requestUrl: requestUrlMock };
+});
+
 import { ExternalMcpManager } from "../../src/mcp/externalManager";
 import type { McpServerConfig } from "../../src/types";
 
@@ -26,6 +33,8 @@ function connection(label: string) {
     },
   };
 }
+
+const namedConfig = (name: string, url: string): McpServerConfig => ({ ...config(url), name });
 
 function replaceConnect(manager: ExternalMcpManager, implementation: (config: McpServerConfig) => Promise<ReturnType<typeof connection>>) {
   const seam = manager as unknown as { connect(config: McpServerConfig): Promise<ReturnType<typeof connection>> };
@@ -123,5 +132,77 @@ describe("ExternalMcpManager lifecycle", () => {
 
     await expect(manager.call("mcp__docs__search", {})).resolves.toBe("tested");
     expect(discovered.session.close).toHaveBeenCalledOnce();
+  });
+});
+
+describe("ExternalMcpManager name routing", () => {
+  /** Serve initialize, tools/list and tools/call over the injected HTTP surface. */
+  function serveMcp(): void {
+    requestUrlMock.mockImplementation(async (req: { body: string }) => {
+      const message = JSON.parse(req.body) as { id?: number; method: string };
+      if (message.method === "notifications/initialized") return { status: 202, headers: {}, text: "" };
+      let result: unknown;
+      if (message.method === "initialize") result = { protocolVersion: "2024-11-05", capabilities: {}, serverInfo: { name: "fake", version: "1" } };
+      else if (message.method === "tools/list") result = { tools: [{ name: "search", description: "Search", inputSchema: { type: "object" } }] };
+      else result = { content: [{ type: "text", text: "hit" }], isError: false };
+      return {
+        status: 200,
+        headers: { "content-type": "application/json" },
+        text: JSON.stringify({ jsonrpc: "2.0", id: message.id ?? null, result }),
+      };
+    });
+  }
+
+  it("routes a call for a server whose configured name needs sanitizing", async () => {
+    serveMcp();
+    const manager = new ExternalMcpManager(() => [namedConfig("My Server", "https://one.test/mcp")]);
+
+    const servers = await manager.servers();
+    expect(servers[0]?.server).toBe("My-Server");
+    // The model calls the sanitized name; it must route back, not throw "not connected".
+    await expect(manager.call("mcp__My-Server__search", { q: "x" })).resolves.toBe("hit");
+  });
+
+  it("routes a server whose name contains the __ separator without ambiguity", async () => {
+    serveMcp();
+    const manager = new ExternalMcpManager(() => [namedConfig("my__server", "https://one.test/mcp")]);
+
+    const servers = await manager.servers();
+    expect(servers[0]?.server).toBe("my_server");
+    await expect(manager.call("mcp__my_server__search", {})).resolves.toBe("hit");
+  });
+
+  it("times out a tool call whose server never replies, instead of hanging the turn", async () => {
+    vi.useFakeTimers();
+    try {
+      requestUrlMock.mockImplementation(async (req: { body: string }) => {
+        const message = JSON.parse(req.body) as { id?: number; method: string };
+        if (message.method === "notifications/initialized") return { status: 202, headers: {}, text: "" };
+        if (message.method === "initialize") {
+          return {
+            status: 200,
+            headers: { "content-type": "application/json" },
+            text: JSON.stringify({ jsonrpc: "2.0", id: message.id, result: { protocolVersion: "2024-11-05", capabilities: {}, serverInfo: { name: "fake", version: "1" } } }),
+          };
+        }
+        if (message.method === "tools/list") {
+          return {
+            status: 200,
+            headers: { "content-type": "application/json" },
+            text: JSON.stringify({ jsonrpc: "2.0", id: message.id, result: { tools: [{ name: "search", description: "Search", inputSchema: { type: "object" } }] } }),
+          };
+        }
+        return new Promise(() => {}); // tools/call: server accepts but never replies
+      });
+      const manager = new ExternalMcpManager(() => [namedConfig("docs", "https://one.test/mcp")]);
+      await manager.servers();
+
+      const pending = manager.call("mcp__docs__search", {});
+      const assertion = expect(pending).rejects.toThrow(/did not reply to tools\/call within 60s/);
+      await vi.advanceTimersByTimeAsync(60_000);
+      await assertion;
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

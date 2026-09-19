@@ -1,3 +1,4 @@
+import { fnv1aHex } from "../hashing";
 import { isStaleEvidence, isTrustedEvidence, type ProjectClaim, type ProjectSnapshot } from "./graph";
 import type { EvidenceRecord, EvidenceRelation } from "./types";
 import { buildFrontmatter } from "../indexing/frontmatter";
@@ -65,10 +66,8 @@ function claim(snapshot: ProjectSnapshot, path: string): ProjectClaim {
 }
 
 function sectionId(path: string): string {
-  let hash = 0x811c9dc5;
-  for (let index = 0; index < path.length; index += 1) { hash ^= path.charCodeAt(index); hash = Math.imul(hash, 0x01000193); }
   const name = (path.replace(/\.md$/i, "").split("/").pop() ?? "section").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "section";
-  return `${name}-${(hash >>> 0).toString(16).padStart(8, "0")}`;
+  return `${name}-${fnv1aHex(path)}`;
 }
 
 function outlineEnvelope(snapshot: ProjectSnapshot, item: ProjectClaim): DraftSectionEnvelope {

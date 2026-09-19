@@ -100,6 +100,19 @@ describe("parseOllamaLine", () => {
     expect(r.done).toBe(true);
     expect(r.text).toBe("");
   });
+  it("surfaces token counts from the final line only", () => {
+    const mid = parseOllamaLine('{"message":{"content":"hi"},"done":false,"prompt_eval_count":12,"eval_count":3}');
+    expect(mid.promptEvalCount).toBeUndefined();
+    expect(mid.evalCount).toBeUndefined();
+    const final = parseOllamaLine('{"done":true,"prompt_eval_count":12,"eval_count":34}');
+    expect(final.promptEvalCount).toBe(12);
+    expect(final.evalCount).toBe(34);
+  });
+  it("ignores malformed token counts", () => {
+    const r = parseOllamaLine('{"done":true,"prompt_eval_count":"x","eval_count":-4}');
+    expect(r.promptEvalCount).toBeUndefined();
+    expect(r.evalCount).toBeUndefined();
+  });
   it("ignores blank and malformed lines", () => {
     expect(parseOllamaLine("")).toEqual({ text: "", done: false });
     expect(parseOllamaLine("{partial")).toEqual({ text: "", done: false });

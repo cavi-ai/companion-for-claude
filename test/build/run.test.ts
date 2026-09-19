@@ -13,8 +13,6 @@ class Deferred<T> {
   reject!: (reason?: unknown) => void;
 }
 
-const flush = async (): Promise<void> => { await Promise.resolve(); await Promise.resolve(); };
-
 function harness(cancelMode: "immediate" | "after-current" = "immediate") {
   const pending: Deferred<BuildTaskExecution>[] = [];
   const calls: Array<{ index: number; signal: AbortSignal; emit: (line: string) => void }> = [];

@@ -63,6 +63,24 @@ describe("diffToEdits", () => {
     const plan = planEdits(oldLines.join("\n"), edits);
     expect(applyPlan(oldLines.join("\n"), plan, plan.hunks.map(() => true))).toBe(newLines.join("\n"));
   });
+
+  it("renders a coarse diff for a region too large for the LCS table instead of allocating O(n·m)", () => {
+    // A single hunk whose old/new line counts exceed the DP cap (n*m > 4M).
+    // 2100 x 2100 ≈ 4.41M cells. Shared head/tail stay context; only the middle
+    // falls back, so the UI never freezes on a large rewrite.
+    const head = Array.from({ length: 10 }, (_, i) => `head ${i}`);
+    const tail = Array.from({ length: 10 }, (_, i) => `tail ${i}`);
+    const oldMiddle = Array.from({ length: 2100 }, (_, i) => `old ${i}`);
+    const newMiddle = Array.from({ length: 2100 }, (_, i) => `new ${i}`);
+    const before = [...head, ...oldMiddle, ...tail].join("\n") + "\n";
+    const after = [...head, ...newMiddle, ...tail].join("\n") + "\n";
+    const plan = planEdits(before, [{ old_str: before.trimEnd(), new_str: after.trimEnd() }]);
+    const lines = plan.hunks[0]!.lines;
+    expect(lines.some((l) => l.kind === "context")).toBe(true);
+    expect(lines.some((l) => l.kind === "del")).toBe(true);
+    expect(lines.some((l) => l.kind === "add")).toBe(true);
+    expect(applyPlan(before, plan, [true])).toBe(after);
+  });
 });
 
 

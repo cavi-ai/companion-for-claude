@@ -2,6 +2,8 @@
 // utility-model prompt and the parser for its reply. Kept separate from the
 // Obsidian glue so it can be unit-tested directly.
 
+import { normalizeTags } from "./frontmatter";
+
 export interface FrontmatterSuggestion {
   /** Best-fitting ontology type, when a type list was offered and one fit. */
   type?: string;
@@ -37,14 +39,9 @@ export function parseFrontmatterSuggestion(raw: string): FrontmatterSuggestion {
   };
   const typeRaw = field("TYPE");
   const type = typeRaw && typeRaw !== "-" ? typeRaw : undefined;
-  const tags = Array.from(
-    new Set(
-      field("TAGS")
-        .split(",")
-        .map((t) => t.trim().replace(/^#/, "").toLowerCase().replace(/\s+/g, "-"))
-        .filter((t) => t.length > 0),
-    ),
-  );
+  // Share the canonical normalizer so these tags match what every other write
+  // path produces (numeric guard, multi-hyphen collapse, unicode letters).
+  const tags = normalizeTags(field("TAGS").split(","));
   const summary = field("SUMMARY");
   return { ...(type ? { type } : {}), tags, summary };
 }

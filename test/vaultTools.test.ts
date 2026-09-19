@@ -217,6 +217,69 @@ describe("note_update", () => {
     const { vt } = tools(false);
     await expect(vt.call("note_update", { path: "Notes/Beta.md", content: "x" })).rejects.toThrow(/disabled/);
   });
+
+  describe("Companion-managed frontmatter keys, whole-note path", () => {
+    function fmTools() {
+      const app = new App();
+      app.vault.seed("R/E.md", "---\ntype: evidence\nreview_state: reviewed\n---\n\n# E\n");
+      app.vault.seed("M/Digest.md", "---\nsession_id: abc\n---\n\n# Digest\n");
+      const vt = new VaultTools(app as never, { allowWrites: true, defaultFolder: "Claude" });
+      return { app, vt };
+    }
+
+    it("rejects a changed reserved key and leaves the file unmodified", async () => {
+      const { app, vt } = fmTools();
+      const before = await app.vault.cachedRead(app.vault.getAbstractFileByPath("R/E.md") as never);
+      await expect(
+        vt.call("note_update", { path: "R/E.md", content: "---\ntype: evidence\nreview_state: rejected\n---\n\n# E\n" }),
+      ).rejects.toThrow(/managed by Companion/);
+      const after = await app.vault.cachedRead(app.vault.getAbstractFileByPath("R/E.md") as never);
+      expect(after).toBe(before);
+    });
+
+    it("rejects removing the frontmatter block entirely", async () => {
+      const { vt } = fmTools();
+      await expect(vt.call("note_update", { path: "R/E.md", content: "# E\nno frontmatter\n" })).rejects.toThrow(/managed by Companion/);
+    });
+
+    it("rejects adding a reserved key to a note that had none", async () => {
+      const { vt } = tools();
+      await expect(
+        vt.call("note_update", { path: "Notes/Beta.md", content: "---\ntype: claim\n---\n\n# Beta\n" }),
+      ).rejects.toThrow(/managed by Companion/);
+    });
+
+    it("allows a body-only change with byte-identical frontmatter", async () => {
+      const { vt } = fmTools();
+      await vt.call("note_update", {
+        path: "R/E.md",
+        content: "---\ntype: evidence\nreview_state: reviewed\n---\n\n# E\nnew body\n",
+      });
+      const read = await vt.call("note_read", { path: "R/E.md" });
+      expect(read).toContain("new body");
+    });
+
+    it("allows changing a non-reserved key while reserved keys stay equal", async () => {
+      const { vt } = fmTools();
+      await vt.call("note_update", {
+        path: "R/E.md",
+        content: "---\ntype: evidence\nreview_state: reviewed\nsummary: updated\n---\n\n# E\n",
+      });
+      const read = await vt.call("note_read", { path: "R/E.md" });
+      expect(read).toContain("summary: updated");
+    });
+
+    it("still allows a section update on a note with reserved keys", async () => {
+      const { vt } = fmTools();
+      await vt.call("note_update", {
+        path: "M/Digest.md",
+        content: "---\nsession_id: abc\n---\n\n# Digest\n\n## Log\nstart\n",
+      });
+      await vt.call("note_update", { path: "M/Digest.md", section: "Log", content: "updated" });
+      const read = await vt.call("note_read", { path: "M/Digest.md" });
+      expect(read).toContain("## Log\n\nupdated\n");
+    });
+  });
 });
 
 describe("update_frontmatter", () => {
@@ -236,6 +299,22 @@ describe("update_frontmatter", () => {
     app.vault.seed("Notes/Tagged.md", "# Tagged\n");
     const vt = new VaultTools(app as never, { allowWrites: false, defaultFolder: "Claude" });
     await expect(vt.call("update_frontmatter", { path: "Notes/Tagged.md", tags: ["x"] })).rejects.toThrow(/disabled/);
+  });
+
+  it("refuses to overwrite Companion-managed identity keys", async () => {
+    const app = new App();
+    app.vault.seed("R/E.md", "---\ntype: evidence\nreview_state: reviewed\n---\n\n# E\n");
+    app.vault.seed("M/Digest.md", "---\nsession_id: abc\n---\n\n# Digest\n");
+    const vt = new VaultTools(app as never, { allowWrites: true, defaultFolder: "Claude" });
+
+    await expect(vt.call("update_frontmatter", { path: "R/E.md", fields: { type: "claim" } })).rejects.toThrow(/managed by Companion/);
+    await expect(vt.call("update_frontmatter", { path: "R/E.md", fields: { review_state: "rejected" } })).rejects.toThrow(/managed by Companion/);
+    await expect(vt.call("update_frontmatter", { path: "M/Digest.md", fields: { session_id: "xyz" } })).rejects.toThrow(/managed by Companion/);
+    // Reserved keys are untouched, and ordinary keys still work.
+    await vt.call("update_frontmatter", { path: "R/E.md", fields: { status: "active" } });
+    const read = await vt.call("note_read", { path: "R/E.md" });
+    expect(read).toContain('type: "evidence"');
+    expect(read).toContain('status: "active"');
   });
 });
 

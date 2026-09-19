@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { externalAnthropicTools, externalToolName, parseExternalToolName } from "../../src/mcp/external";
+import { describe, expect, it, vi } from "vitest";
+import { externalAnthropicTools, externalToolName, parseExternalToolName, sanitizeServerName } from "../../src/mcp/external";
 import { createHttpMcpTransport, extractReply, parseSseMessages, type HttpResponseLike } from "../../src/mcp/httpTransport";
 import type { JsonRpcRequest } from "../../src/mcp/protocol";
 
@@ -11,6 +11,14 @@ describe("external tool namespacing", () => {
     expect(parseExternalToolName("vault_search")).toBeNull();
     expect(parseExternalToolName("mcp__noversion")).toBeNull();
     expect(parseExternalToolName("mcp__s__")).toBeNull();
+  });
+
+  it("sanitizes server names to a stable, unambiguous segment", () => {
+    expect(sanitizeServerName("My Server!")).toBe("My-Server");
+    // `__` is the name/tool separator, so runs are collapsed to keep the split unique.
+    expect(sanitizeServerName("my__server")).toBe("my_server");
+    expect(sanitizeServerName("  ")).toBe("server");
+    expect(parseExternalToolName(externalToolName("my__server", "tool"))).toEqual({ server: "my_server", tool: "tool" });
   });
 
   it("prefixes defs with the server name in name and description", () => {
@@ -83,5 +91,112 @@ describe("createHttpMcpTransport", () => {
 
     const noReply = createHttpMcpTransport("https://mcp.test/", {}, async () => ({ status: 200, headers: { "content-type": "application/json" }, body: "{}" }));
     await expect(noReply.send({ jsonrpc: "2.0", id: 1, method: "ping" })).rejects.toThrow(/no matching reply/i);
+  });
+
+  it("times out a request the server never answers", async () => {
+    vi.useFakeTimers();
+    try {
+      const hung = createHttpMcpTransport("https://mcp.test/", {}, () => new Promise(() => {}));
+      const pending = hung.send({ jsonrpc: "2.0", id: 1, method: "tools/call" });
+      const assertion = expect(pending).rejects.toThrow(/did not reply to tools\/call within 60s/);
+      await vi.advanceTimersByTimeAsync(60_000);
+      await assertion;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("times out a notification the server never accepts", async () => {
+    vi.useFakeTimers();
+    try {
+      const hung = createHttpMcpTransport("https://mcp.test/", {}, () => new Promise(() => {}));
+      const pending = hung.send({ jsonrpc: "2.0", method: "notifications/initialized" });
+      const assertion = expect(pending).rejects.toThrow(/did not reply to notifications\/initialized within 60s/);
+      await vi.advanceTimersByTimeAsync(60_000);
+      await assertion;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("discards a reply that arrives after the timeout, including its session id", async () => {
+    vi.useFakeTimers();
+    try {
+      let resolveHttp!: (r: HttpResponseLike) => void;
+      const httpDo = vi.fn(() => new Promise<HttpResponseLike>((resolve) => { resolveHttp = resolve; }));
+      const transport = createHttpMcpTransport("https://mcp.test/", {}, httpDo);
+      const pending = transport.send({ jsonrpc: "2.0", id: 1, method: "tools/call" });
+      const assertion = expect(pending).rejects.toThrow(/did not reply/);
+      await vi.advanceTimersByTimeAsync(60_000);
+      await assertion;
+
+      resolveHttp({
+        status: 200,
+        headers: { "mcp-session-id": "late-session" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, result: {} }),
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+
+      httpDo.mockClear();
+      httpDo.mockImplementation(async () => ({ status: 202, headers: {}, body: "" }));
+      await transport.send({ jsonrpc: "2.0", method: "notifications/x" });
+      expect(httpDo.mock.calls[0]?.[0]?.headers["mcp-session-id"]).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not surface a late rejection as an unhandled rejection", async () => {
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => unhandled.push(reason);
+    process.on("unhandledRejection", onUnhandled);
+    vi.useFakeTimers();
+    try {
+      let rejectHttp!: (e: Error) => void;
+      const httpDo = vi.fn(() => new Promise<HttpResponseLike>((_resolve, reject) => { rejectHttp = reject; }));
+      const transport = createHttpMcpTransport("https://mcp.test/", {}, httpDo);
+      const pending = transport.send({ jsonrpc: "2.0", id: 1, method: "tools/call" });
+      const assertion = expect(pending).rejects.toThrow(/did not reply/);
+      await vi.advanceTimersByTimeAsync(60_000);
+      await assertion;
+      vi.useRealTimers();
+
+      rejectHttp(new Error("late network failure"));
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
+  });
+
+  it("resolves before the deadline and clears its timer", async () => {
+    vi.useFakeTimers();
+    try {
+      const transport = createHttpMcpTransport("https://mcp.test/", {}, async () => ({
+        status: 200,
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, result: {} }),
+      }));
+      await transport.send({ jsonrpc: "2.0", id: 1, method: "ping" });
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("close() rejects in-flight sends and clears their timers", async () => {
+    vi.useFakeTimers();
+    try {
+      const transport = createHttpMcpTransport("https://mcp.test/", {}, () => new Promise(() => {}));
+      const pending = transport.send({ jsonrpc: "2.0", id: 1, method: "tools/call" });
+      const assertion = expect(pending).rejects.toThrow(/connection closed/);
+      await transport.close?.();
+      await assertion;
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

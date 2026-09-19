@@ -25,12 +25,18 @@ export interface CliSessionDeps {
   spawn: CliSpawn;
   /** Prepended to the first user message of a fresh process. */
   transcript?: string;
+  /** Silence before a "still waiting" notice; the watchdog is paused while a tool is pending. */
+  idleNoticeMs?: number;
+  /** Silence before the turn is aborted as unresponsive. */
+  idleAbortMs?: number;
 }
 
 const STDERR_TAIL = 500;
 const CLOSE_GRACE_MS = 3000;
 const INTERRUPT_TERM_MS = 1500;
 const INTERRUPT_KILL_MS = 3000;
+const IDLE_NOTICE_MS = 60_000;
+const IDLE_ABORT_MS = 300_000;
 
 /** The stream-json line for the request's last user message (text, image, document blocks). */
 export function userMessageLine(req: CompletionRequest, transcript: string | null): string {
@@ -59,6 +65,8 @@ export class ClaudeCliSession implements AgentTurnRunner {
   private firstMessage = true;
   private exitWaiters: Array<() => void> = [];
   private shutdownTimers: number[] = [];
+  private idleNoticeTimer: number | null = null;
+  private idleAbortTimer: number | null = null;
 
   constructor(private readonly deps: CliSessionDeps) {}
 
@@ -82,6 +90,7 @@ export class ClaudeCliSession implements AgentTurnRunner {
     return new Promise<AgentTurnResult>((resolve) => {
       const turn: ActiveTurn = { handlers, settle: (r) => this.finish(turn, r, resolve), segments: [], current: "", trace: [], pending: new Map() };
       this.active = turn;
+      this.armIdleWatchdog();
       const line = userMessageLine(req, this.firstMessage ? this.deps.transcript ?? null : null);
       this.firstMessage = false;
       child.stdin.write(line, (err) => {
@@ -106,6 +115,7 @@ export class ClaudeCliSession implements AgentTurnRunner {
 
   async close(): Promise<void> {
     this.closed = true;
+    this.clearIdleTimers();
     const child = this.child;
     if (!child) return;
     this.clearShutdownTimers();
@@ -122,9 +132,11 @@ export class ClaudeCliSession implements AgentTurnRunner {
   private attach(child: CliChild): CliChild {
     child.stdout.on("data", (chunk) => {
       for (const ev of this.parser.push(String(chunk))) this.onEvent(ev);
+      this.armIdleWatchdog(); // any bytes are life, including lines the parser drops
     });
     child.stderr.on("data", (chunk) => {
       this.stderrTail = `${this.stderrTail}${String(chunk)}`.slice(-STDERR_TAIL);
+      this.armIdleWatchdog();
     });
     child.on("error", (err) => this.onExit(`Claude Code failed to start: ${err.message}`));
     child.on("exit", (code) => this.onExit(`Claude Code exited (code ${code ?? "?"}).${this.stderrTail.trim() ? ` ${this.stderrTail.trim()}` : ""}`));
@@ -134,6 +146,7 @@ export class ClaudeCliSession implements AgentTurnRunner {
   private onExit(message: string): void {
     this.closed = true; // a process that died for any reason ends the session
     this.clearShutdownTimers();
+    this.clearIdleTimers();
     if (this.child) this.child = null;
     for (const w of this.exitWaiters.splice(0)) w();
     const turn = this.active;
@@ -146,6 +159,7 @@ export class ClaudeCliSession implements AgentTurnRunner {
 
   private finish(turn: ActiveTurn, result: AgentTurnResult, resolve: (r: AgentTurnResult) => void): void {
     if (this.active !== turn) return;
+    this.clearIdleTimers();
     this.active = null;
     resolve(result);
   }
@@ -213,5 +227,28 @@ export class ClaudeCliSession implements AgentTurnRunner {
   private clearShutdownTimers(): void {
     for (const timer of this.shutdownTimers) window.clearTimeout(timer);
     this.shutdownTimers = [];
+  }
+
+  private clearIdleTimers(): void {
+    if (this.idleNoticeTimer !== null) window.clearTimeout(this.idleNoticeTimer);
+    if (this.idleAbortTimer !== null) window.clearTimeout(this.idleAbortTimer);
+    this.idleNoticeTimer = null;
+    this.idleAbortTimer = null;
+  }
+
+  /** (Re)arms the idle watchdog from now; paused (no timers) whenever a tool result is pending. */
+  private armIdleWatchdog(): void {
+    this.clearIdleTimers();
+    const turn = this.active;
+    if (!turn || turn.pending.size > 0) return;
+    const noticeMs = this.deps.idleNoticeMs ?? IDLE_NOTICE_MS;
+    const abortMs = this.deps.idleAbortMs ?? IDLE_ABORT_MS;
+    this.idleNoticeTimer = window.setTimeout(() => {
+      turn.handlers.onNotice?.(`Claude Code has been silent for ${Math.round(noticeMs / 1000)}s — still waiting. Stop to cancel.`);
+    }, noticeMs);
+    this.idleAbortTimer = window.setTimeout(() => {
+      turn.settle({ text: this.text(turn), trace: turn.trace, error: new Error(`Claude Code produced no output for ${Math.round(abortMs / 60_000)} minutes, so the session was stopped. Send again to start a new one.`) });
+      this.interrupt();
+    }, abortMs);
   }
 }

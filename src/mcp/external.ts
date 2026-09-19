@@ -12,11 +12,25 @@ export interface ExternalServerTools {
 }
 
 const PREFIX = "mcp__";
-const sanitize = (value: string): string => value.replace(/[^a-zA-Z0-9_-]+/g, "-").replace(/^-+|-+$/g, "") || "server";
+
+/**
+ * Normalize a configured server name into the `mcp__<server>__` segment.
+ * Exported so the manager stores the exact string `parseExternalToolName`
+ * returns: routing must compare against this, not the raw setting. Collapsing
+ * `__` runs keeps the single `__` separator unambiguous on the way back.
+ */
+export function sanitizeServerName(value: string): string {
+  return (
+    value
+      .replace(/[^a-zA-Z0-9_-]+/g, "-")
+      .replace(/_{2,}/g, "_")
+      .replace(/^[_-]+|[_-]+$/g, "") || "server"
+  );
+}
 
 /** mcp__<server>__<tool> — the name the model sees and calls. */
 export function externalToolName(server: string, tool: string): string {
-  return `${PREFIX}${sanitize(server)}__${tool}`;
+  return `${PREFIX}${sanitizeServerName(server)}__${tool}`;
 }
 
 /** Split an external name back into (server, tool); null for non-external names. */

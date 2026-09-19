@@ -124,91 +124,6 @@ body.theme-light {
   color: var(--cc-accent);
 }
 
-/* ---------- context chips ---------- */
-.cc-chips {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-  padding: 7px 12px;
-  border-bottom: 1px solid var(--background-modifier-border);
-}
-.cc-chip-controls,
-.cc-context-status {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 5px;
-}
-.cc-chip {
-  font-size: var(--cc-text-xs);
-  font-family: var(--cc-mono);
-  letter-spacing: 0.02em;
-  padding: 2px 8px;
-  border-radius: 999px;
-  border: 1px solid var(--background-modifier-border);
-  background: var(--background-secondary);
-  color: var(--text-muted);
-  cursor: pointer;
-  box-shadow: none;
-}
-.cc-chip.is-active {
-  background: var(--cc-clay);
-  border-color: var(--cc-clay);
-  color: #fff;
-}
-.cc-status-pill {
-  max-width: 100%;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-family: var(--cc-mono);
-  font-size: var(--cc-text-2xs);
-  line-height: 1.2;
-  padding: 2px 8px;
-  /* Match the context chips' pill shape so the two stacked rows share one
-     visual language (was 5px rounded-rect). */
-  border-radius: 999px;
-  border: 1px solid var(--background-modifier-border);
-  background: transparent;
-  color: var(--text-muted);
-}
-.cc-status-button {
-  cursor: pointer;
-  box-shadow: none;
-  /* It's a <button> among <span> pills — strip Obsidian's button defaults
-     (min-height / padding / font) so it matches the sibling pills exactly. */
-  -webkit-appearance: none;
-  appearance: none;
-  height: auto;
-  min-height: 0;
-  line-height: 1.2;
-  padding: 2px 8px;
-  font-size: var(--cc-text-2xs);
-  font-family: var(--cc-mono);
-}
-.cc-status-button:hover {
-  background: var(--background-modifier-hover);
-  color: var(--text-normal);
-}
-/* A caret marks the MCP pill as a button that opens a menu (the sibling pills
-   are static status). textContent is set via setText(), so ::after survives. */
-.cc-status-button::after {
-  content: "⌄";
-  margin-left: 4px;
-  opacity: 0.6;
-  font-size: var(--cc-text-xs);
-  line-height: 1;
-  vertical-align: top;
-}
-.cc-status-pill.is-on {
-  color: var(--text-normal);
-  border-color: color-mix(in srgb, var(--cc-clay) 45%, var(--background-modifier-border));
-}
-.cc-status-pill.is-warn {
-  color: var(--text-warning);
-}
-
 /* ---------- messages ---------- */
 .cc-messages {
   flex: 1 1 auto;
@@ -299,15 +214,6 @@ body.theme-light {
 }
 .cc-body > :last-child {
   margin-bottom: 0;
-}
-.cc-cursor {
-  color: var(--cc-clay);
-  animation: cc-blink 1s steps(2) infinite;
-}
-@keyframes cc-blink {
-  50% {
-    opacity: 0;
-  }
 }
 .cc-thinking-status {
   display: inline-flex;
@@ -507,17 +413,6 @@ body.theme-light {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-.cc-send-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 8px;
-}
-/* Usage gauge + totals sit on the left of the footer; Send hugs the right. */
-.cc-send-row .cc-usage {
-  flex: 1 1 auto;
-  min-width: 0;
 }
 .cc-send {
   padding: 6px 18px;
@@ -1215,10 +1110,6 @@ body:not(.is-mobile) .cc-composer-bar { container-type: inline-size; }
   50% { box-shadow: 0 0 0 4px transparent; }
 }
 
-/* ---- streaming cursor: soft blink ---- */
-.cc-cursor { animation: cc-blink 1s step-start infinite; color: var(--cc-clay); }
-@keyframes cc-blink { 50% { opacity: 0; } }
-
 /* ---- per-code-block copy button ---- */
 pre.cc-has-copy { position: relative; }
 .cc-code-copy {
@@ -1464,23 +1355,6 @@ pre.cc-has-copy:hover .cc-code-copy { opacity: 1; }
 }
 
 /* ----- session memory ----- */
-.cc-ingest-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 5px 7px;
-  border-radius: 6px;
-  font-size: var(--font-ui-smaller);
-  line-height: 1;
-  color: var(--text-muted);
-  cursor: pointer;
-}
-.cc-ingest-toggle:hover {
-  background: var(--background-modifier-hover);
-}
-.cc-ingest-toggle input {
-  margin: 0;
-}
 .cc-memory-view .cc-memory-row {
   display: flex;
   align-items: center;
@@ -1879,9 +1753,6 @@ pre.cc-has-copy:hover .cc-code-copy { opacity: 1; }
   flex-wrap: wrap;
 }
 .cc-header-actions {
-  flex-wrap: wrap;
-}
-.cc-send-row {
   flex-wrap: wrap;
 }
 
@@ -2720,8 +2591,7 @@ pre.cc-has-copy:hover .cc-code-copy { opacity: 1; }
 .cc-research-modal-field > textarea,
 .cc-research-modal-field > select { width: 100%; }
 .cc-research-modal-field > textarea { min-height: 4.5rem; resize: vertical; }
-.cc-research-evidence-excerpt,
-.cc-research-evidence-interpretation {
+.cc-research-evidence-excerpt {
   padding: var(--size-4-3);
   border: 1px solid var(--background-modifier-border);
   border-radius: var(--radius-m);

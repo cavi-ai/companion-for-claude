@@ -1,11 +1,11 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { hasAnthropicEnvCredential, readAnthropicEnv } from "../../src/providers/env";
 
-const KEYS = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL"] as const;
+type EnvKey = "ANTHROPIC_API_KEY" | "ANTHROPIC_AUTH_TOKEN" | "ANTHROPIC_BASE_URL";
 const host = globalThis as { process?: { env?: Record<string, string | undefined> } };
 const realProcess = host.process;
 
-function setEnv(values: Partial<Record<(typeof KEYS)[number], string>>): void {
+function setEnv(values: Partial<Record<EnvKey, string>>): void {
   host.process = { env: { ...values } };
 }
 

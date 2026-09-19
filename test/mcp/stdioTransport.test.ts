@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createStdioMcpTransport } from "../../src/mcp/stdioTransport";
 
 class FakeStdin extends EventEmitter {
@@ -158,5 +158,25 @@ describe("createStdioMcpTransport", () => {
     const transport = await createStdioMcpTransport("node", []);
     await transport.close();
     expect(child.killed).toBe(true);
+  });
+
+  it("rejects in-flight requests when the transport is closed", async () => {
+    const transport = await createStdioMcpTransport("node", []);
+    const pending = transport.send({ jsonrpc: "2.0", id: 1, method: "x" });
+    await transport.close();
+    await expect(pending).rejects.toThrow(/closed/);
+  });
+
+  it("rejects a request the server never answers instead of hanging forever", async () => {
+    vi.useFakeTimers();
+    try {
+      const transport = await createStdioMcpTransport("node", []);
+      const pending = transport.send({ jsonrpc: "2.0", id: 1, method: "tools/call" });
+      const assertion = expect(pending).rejects.toThrow(/did not reply.*within 60s/);
+      await vi.advanceTimersByTimeAsync(60_000);
+      await assertion;
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

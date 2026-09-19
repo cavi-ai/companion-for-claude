@@ -62,31 +62,72 @@ export function extractReply(body: string, contentType: string, id: string | num
   }
 }
 
-export function createHttpMcpTransport(url: string, headers: Record<string, string>, http: HttpDo): McpTransport {
+export function createHttpMcpTransport(
+  url: string,
+  headers: Record<string, string>,
+  http: HttpDo,
+  timeoutMs = 60_000,
+): McpTransport {
   let sessionId: string | undefined;
+  const inFlight = new Set<() => void>();
+
   return {
-    async send(message) {
-      const response = await http({
-        url,
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          accept: "application/json, text/event-stream",
-          ...headers,
-          ...(sessionId ? { "mcp-session-id": sessionId } : {}),
-        },
-        body: JSON.stringify(message),
+    send(message) {
+      return new Promise<JsonRpcResponse | null>((resolve, reject) => {
+        let settled = false;
+        let timer = 0;
+
+        const finish = (fn: () => void): void => {
+          if (settled) return;
+          settled = true;
+          window.clearTimeout(timer);
+          inFlight.delete(onClose);
+          fn();
+        };
+
+        const onClose = (): void => finish(() => reject(new Error("MCP server connection closed.")));
+
+        timer = window.setTimeout(() => {
+          finish(() => reject(new Error(`MCP server did not reply to ${String(message.method)} within ${timeoutMs / 1000}s.`)));
+        }, timeoutMs);
+        inFlight.add(onClose);
+
+        http({
+          url,
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            accept: "application/json, text/event-stream",
+            ...headers,
+            ...(sessionId ? { "mcp-session-id": sessionId } : {}),
+          },
+          body: JSON.stringify(message),
+        }).then(
+          (response) => {
+            if (settled) return; // requestUrl can't be aborted; a reply after the deadline is discarded, never adopted
+            finish(() => {
+              const sid = header(response.headers, "mcp-session-id");
+              if (sid) sessionId = sid;
+              if (response.status === 202 || response.status === 204) { resolve(null); return; } // notification accepted
+              if (response.status < 200 || response.status >= 300) {
+                reject(new Error(`MCP server responded ${response.status} — check the server URL and that it's running.`));
+                return;
+              }
+              if (message.id === undefined || message.id === null) { resolve(null); return; }
+              const reply = extractReply(response.body, header(response.headers, "content-type") ?? "application/json", message.id);
+              if (reply === null) { reject(new Error("MCP server returned no matching reply (malformed response).")); return; }
+              resolve(reply);
+            });
+          },
+          (err) => {
+            if (settled) return; // late rejection: discarded, and always handled here so it never surfaces as unhandled
+            finish(() => reject(err instanceof Error ? err : new Error(String(err))));
+          },
+        );
       });
-      const sid = header(response.headers, "mcp-session-id");
-      if (sid) sessionId = sid;
-      if (response.status === 202 || response.status === 204) return null; // notification accepted
-      if (response.status < 200 || response.status >= 300) {
-        throw new Error(`MCP server responded ${response.status} — check the server URL and that it's running.`);
-      }
-      if (message.id === undefined || message.id === null) return null;
-      const reply = extractReply(response.body, header(response.headers, "content-type") ?? "application/json", message.id);
-      if (reply === null) throw new Error("MCP server returned no matching reply (malformed response).");
-      return reply;
+    },
+    async close() {
+      for (const onClose of Array.from(inFlight)) onClose();
     },
   };
 }
