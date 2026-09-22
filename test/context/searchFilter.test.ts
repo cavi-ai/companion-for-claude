@@ -14,6 +14,8 @@ describe("normalizeProjectRef", () => {
     expect(normalizeProjectRef("[[Research/Alpha/Project.md]]")).toBe("research/alpha/project");
     expect(normalizeProjectRef("[[Research/Alpha/Project|Alpha]]")).toBe("research/alpha/project");
     expect(normalizeProjectRef("Alpha")).toBe("alpha");
+    expect(normalizeProjectRef("[[Research/Alpha/Project#Scope]]")).toBe("research/alpha/project");
+    expect(normalizeProjectRef("[[Research/Alpha/Project.md|Alpha]]")).toBe("research/alpha/project");
   });
 });
 

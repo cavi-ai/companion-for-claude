@@ -69,7 +69,6 @@ describe("SimilarBasesView", () => {
     expect(el.querySelectorAll(".cc-similar-link").map((l) => l.textContent)).toEqual(["D"]);
   });
 
-  // F1: a standalone base tab makes getActiveFile() the .base file; the anchor must stick.
   it("keeps ranking the last note's neighbours when the base tab itself becomes active", async () => {
     const calls: string[] = [];
     let active = "A.md";
@@ -83,7 +82,33 @@ describe("SimilarBasesView", () => {
     expect(el.querySelectorAll(".cc-similar-link").map((l) => l.textContent)).toEqual(["B"]);
   });
 
-  // F2: rank within the base — the view passes an accept predicate and a k of limit+1.
+  it("follows the anchor note when it is renamed", async () => {
+    const calls: string[] = [];
+    let active = "A.md";
+    const related = vi.fn(async (p: string) => { calls.push(p); return [{ path: "B.md", score: 0.9 }]; });
+    const { view } = makeView({ active: "A.md", related });
+    Object.assign(view.app.workspace, { getActiveFile: () => ({ path: active }) });
+    view.onload();
+    await view.refresh();
+    active = "Books.base";
+    view.app.vault.trigger("rename", { path: "Notes/A2.md" }, "A.md");
+    await view.refresh();
+    expect(calls.at(-1)).toBe("Notes/A2.md");
+  });
+
+  it("drops the anchor when the anchor note is deleted", async () => {
+    let active = "A.md";
+    const related = vi.fn(async () => [{ path: "B.md", score: 0.9 }]);
+    const { view, el } = makeView({ active: "A.md", related });
+    Object.assign(view.app.workspace, { getActiveFile: () => ({ path: active }) });
+    view.onload();
+    await view.refresh();
+    active = "Books.base";
+    view.app.vault.trigger("delete", { path: "A.md" });
+    await view.refresh();
+    expect(el.querySelector(".cc-similar-empty")?.textContent).toContain("Open a note");
+  });
+
   it("asks related() for base members only, rejecting the anchor and out-of-base hits", async () => {
     const related = vi.fn(async () => [{ path: "C.md", score: 0.9 }]);
     const { view } = makeView({ active: "A.md", related });
@@ -95,7 +120,6 @@ describe("SimilarBasesView", () => {
     expect(accept("C.md")).toBe(true);
   });
 
-  // F3: a rejected related() must not throw out of refresh() or leave stale content.
   it("renders the no-neighbours state and does not reject when related() rejects", async () => {
     const related = vi.fn(async () => { throw new Error("boom"); });
     const { view, el } = makeView({ active: "A.md", related });
@@ -103,7 +127,6 @@ describe("SimilarBasesView", () => {
     expect(el.querySelector(".cc-similar-empty")?.textContent).toContain("No neighbours yet");
   });
 
-  // F4: a NullValue property must not render as literal text.
   it("skips a property whose value is a NullValue", async () => {
     const related = vi.fn(async () => [{ path: "B.md", score: 0.9 }]);
     const { view, el } = makeView({ active: "A.md", related });

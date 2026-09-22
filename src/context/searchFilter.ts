@@ -1,5 +1,7 @@
 // Frontmatter and tag filters for vault_search; pure, no Obsidian imports.
 
+import { parseWikilink } from "../ontology/relations";
+
 export interface SearchFilter {
   type?: string;
   project?: string;
@@ -29,8 +31,7 @@ export function parseSearchFilter(args: Record<string, unknown>): SearchFilter |
 }
 
 export function normalizeProjectRef(v: string): string {
-  const link = v.trim().match(/^\[\[([^\]|]+?)(?:\|[^\]]*)?\]\]$/);
-  return (link?.[1] ?? v).trim().replace(/\.md$/i, "").toLowerCase();
+  return (parseWikilink(v) ?? v.trim()).replace(/\.md$/i, "").toLowerCase();
 }
 
 /** `want` matches `have` itself (or a /-bounded suffix), or have's parent dir (or a /-bounded suffix of it). */

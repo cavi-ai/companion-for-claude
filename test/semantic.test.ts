@@ -121,7 +121,7 @@ describe("SemanticStore", () => {
     expect(rel[0].path).toBe("B.md"); // nearest to A's centroid
 
     const accepted = store.related("A.md", 1, (p) => p !== "B.md");
-    expect(accepted.map((r) => r.path)).toEqual(["C.md"]); // globally-nearest B.md rejected
+    expect(accepted.map((r) => r.path)).toEqual(["C.md"]);
   });
 
   it("load: rejects stale version or model mismatch", () => {

@@ -21,6 +21,16 @@ export class SimilarBasesView extends BasesView {
 
   override onload(): void {
     this.registerEvent(this.app.workspace.on("active-leaf-change", () => void this.refresh()));
+    this.registerEvent(this.app.vault.on("rename", (file, oldPath) => {
+      if (oldPath !== this.anchor) return;
+      this.anchor = file.path;
+      void this.refresh();
+    }));
+    this.registerEvent(this.app.vault.on("delete", (file) => {
+      if (file.path !== this.anchor) return;
+      this.anchor = null;
+      void this.refresh();
+    }));
   }
 
   onDataUpdated(): void {
