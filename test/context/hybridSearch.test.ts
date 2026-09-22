@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { App } from "obsidian";
 import { fuseKeywordAndSemantic, keywordVaultSearch } from "../../src/context/hybridSearch";
 
@@ -18,6 +18,16 @@ describe("keywordVaultSearch", () => {
     app.vault.seed("b.md", "apple");
     expect((await keywordVaultSearch(app, "apple", "a.md")).map((h) => h.path)).toEqual(["b.md"]);
     expect(await keywordVaultSearch(app, "   ")).toEqual([]);
+  });
+
+  it("skips a file an accept predicate rejects before reading it", async () => {
+    const app = new App();
+    app.vault.seed("a.md", "apple");
+    app.vault.seed("b.md", "apple");
+    const readSpy = vi.spyOn(app.vault, "cachedRead");
+    const hits = await keywordVaultSearch(app, "apple", null, (path) => path !== "a.md");
+    expect(hits.map((h) => h.path)).toEqual(["b.md"]);
+    expect(readSpy).not.toHaveBeenCalledWith(expect.objectContaining({ path: "a.md" }));
   });
 });
 

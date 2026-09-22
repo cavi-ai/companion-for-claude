@@ -4,7 +4,8 @@ export function safeWebUrl(value: unknown): string | undefined {
   try {
     const url = new URL(value.trim());
     return url.protocol === "https:" || url.protocol === "http:" ? url.toString() : undefined;
-  } catch {
+  } catch (e) {
+    console.debug("Claude Companion: safe URL parse failed", e);
     return undefined;
   }
 }

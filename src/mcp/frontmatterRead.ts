@@ -12,7 +12,8 @@ export function readFrontmatter(content: string, parse: (yaml: string) => unknow
     const parsed = parse(lines.slice(0, end).join("\n"));
     if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return null;
     return parsed as Record<string, unknown>;
-  } catch {
+  } catch (e) {
+    console.debug("Claude Companion: frontmatter YAML parse failed", e);
     return null;
   }
 }

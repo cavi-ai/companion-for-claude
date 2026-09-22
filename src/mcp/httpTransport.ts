@@ -38,8 +38,8 @@ export function parseSseMessages(body: string): unknown[] {
     if (!data) continue;
     try {
       messages.push(JSON.parse(data));
-    } catch {
-      // A non-JSON event payload is not a protocol message — ignore it.
+    } catch (e) {
+      console.debug("Claude Companion: MCP SSE event JSON parse failed", e);
     }
   }
   return messages;
@@ -57,7 +57,8 @@ export function extractReply(body: string, contentType: string, id: string | num
   try {
     const reply = JSON.parse(body) as JsonRpcResponse;
     return reply && reply.jsonrpc === "2.0" ? reply : null;
-  } catch {
+  } catch (e) {
+    console.debug("Claude Companion: MCP HTTP response JSON parse failed", e);
     return null;
   }
 }

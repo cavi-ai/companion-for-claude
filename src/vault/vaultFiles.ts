@@ -1,7 +1,7 @@
 // Small vault-file helpers shared by artifactStore, memory notes, the MCP
 // vault tools, and main.ts — one implementation instead of four copies.
 
-import { App, normalizePath } from "obsidian";
+import { App, normalizePath, TFile } from "obsidian";
 
 /** Create `folder` (and any missing parents) segment by segment; races are tolerated. */
 export async function ensureVaultFolder(app: App, folder: string): Promise<void> {
@@ -35,4 +35,14 @@ export async function uniqueNotePath(app: App, folder: string, safeBase: string,
     i++;
   }
   return path;
+}
+
+/** Overwrite the file at `path` when it exists, otherwise create it. */
+export async function writeOrReplaceFile(app: App, path: string, content: string): Promise<TFile> {
+  const existing = app.vault.getAbstractFileByPath(path);
+  if (existing instanceof TFile) {
+    await app.vault.modify(existing, content);
+    return existing;
+  }
+  return app.vault.create(path, content);
 }

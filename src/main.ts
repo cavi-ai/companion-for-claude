@@ -1,15 +1,16 @@
-import { App, FileSystemAdapter, MarkdownView, Modal, Notice, parseYaml, Platform, Plugin, requestUrl, WorkspaceLeaf } from "obsidian";
+import { App, FileSystemAdapter, MarkdownView, Notice, parseYaml, Platform, Plugin, requestUrl, WorkspaceLeaf } from "obsidian";
 import { ChatView, CHAT_VIEW_TYPE } from "./view/ChatView";
 import { MemoryView, MEMORY_VIEW_TYPE } from "./view/MemoryView";
 import { InboxView, INBOX_VIEW_TYPE } from "./view/InboxView";
 import { RelatedView, RELATED_VIEW_TYPE } from "./view/RelatedView";
 import { ResearchWorkbenchView, RESEARCH_WORKBENCH_VIEW_TYPE, ProjectCreateModal, QUESTION_INSTRUCTION, type ResearchWorkbenchTab } from "./view/ResearchWorkbenchView";
 import { ResearchDeskView, RESEARCH_DESK_VIEW_TYPE } from "./view/ResearchDeskView";
-import { BuildView, BUILD_VIEW_TYPE, type BuildViewDependencies } from "./view/BuildView";
+import { BuildView, BUILD_VIEW_TYPE } from "./view/BuildView";
+import { SimilarBasesView, SIMILAR_BASES_VIEW_TYPE } from "./view/SimilarBasesView";
 import { normalizeDeskPreferenceMap, type ResearchDeskPreferenceMap } from "./research/deskPreferences";
 import { ResearchRepository } from "./research/repository";
 import { createResearchRepository } from "./research/repositoryFactory";
-import { ensureVaultFolder } from "./vault/vaultFiles";
+import { ensureVaultFolder, writeOrReplaceFile } from "./vault/vaultFiles";
 import { IntelligenceCoordinator } from "./research/intelligenceCoordinator";
 import { DiscoveryCoordinator } from "./discovery/coordinator";
 import { DraftCoordinator } from "./research/draftCoordinator";
@@ -24,8 +25,9 @@ import { inferResearchProjectPath, isResearchProjectChange, projectPathForActiva
 import { SessionPicker } from "./view/SessionPicker";
 import { WorkflowPicker } from "./view/WorkflowPicker";
 import { WORKFLOWS, type Workflow } from "./workflows/catalog";
-import { listSessionsForVault, type SessionMeta } from "./memory/sessions";
-import { ingestSession, ingestConversation } from "./memory/ingest";
+import type { SessionMeta } from "./memory/sessions";
+import { MemoryController } from "./memory/controller";
+import { McpBridgeController } from "./mcp/bridgeController";
 import { ClaudeCompanionSettingTab } from "./settings";
 import { companionCommands, type CommandActions } from "./commands/definitions";
 import { ProviderRouter, type ProviderSelection, type RuntimeUtilitySelection, type UtilityFallbackConsentContext } from "./providers/router";
@@ -35,7 +37,6 @@ import { DEFAULT_SETTINGS, normalizeDiscoverySettings, type PluginSettings, type
 import { DESIGN_SYSTEM_PROMPT, PLANNING_INSTRUCTION } from "./artifacts/designSystem";
 import { AGENT_INSTRUCTION, PLAN_MODE_INSTRUCTION } from "./agent/prompt";
 import { findUnlinkedMentions, linkMention, type LinkCandidate } from "./links/unlinkedMentions";
-import { selectDigests, buildConsolidationPrompt, parseConsolidation, renderMemoryNote, MEMORY_NOTE_BASENAME, type DigestSource } from "./memory/consolidate";
 import { mentionEdits } from "./links/suggest";
 import { planEdits, applyPlan, diffToEdits, type EditPlan } from "./edit/diff";
 import { inlineDiffExtension, reviewInline } from "./editor/inlineDiffExtension";
@@ -48,8 +49,9 @@ import { BatchDiffModal } from "./view/BatchDiffModal";
 import { RewriteModal } from "./view/RewriteModal";
 import { renderArtifactInline, ArtifactModal, openArtifactExternally } from "./artifacts/renderInline";
 import type { McpHttpServer } from "./mcp/server";
-import { VaultTools, type VaultToolsOptions } from "./mcp/vaultTools";
-import { catalogPromptProvider, vaultResourceProvider } from "./mcp/providers";
+import { VaultTools, SEMANTIC_OFF_MESSAGE, type VaultToolsOptions } from "./mcp/vaultTools";
+import { catalogPromptProvider, composeResourceProviders, substrateResourceProvider, vaultResourceProvider } from "./mcp/providers";
+import { MEMORY_NOTE_BASENAME } from "./memory/consolidate";
 import { ExternalMcpManager } from "./mcp/externalManager";
 import { externalAnthropicTools } from "./mcp/external";
 import type { AnthropicToolDef, ProviderId } from "./providers/types";
@@ -62,63 +64,44 @@ import { EnrichOptionsModal, EnrichReviewModal, type EnrichDecision, type Enrich
 import { sanitizeFileName } from "./artifacts/parse";
 import { OrganizeReviewModal } from "./view/OrganizeReviewModal";
 import { stripFrontmatter } from "./semantic/chunk";
-import { generateToken, resolveMcpToken } from "./mcp/clientConfig";
+import { generateToken } from "./mcp/clientConfig";
 import type { AgentTurnRunner } from "./agent/loop";
 import { ClaudeCliSession } from "./cli/session";
 import { buildClaudeArgv, mcpConfigJson } from "./cli/argv";
 import { CLI_HIDDEN_TOOLS, cliAllowedTools, interactiveTools, type InteractiveToolDeps } from "./cli/bridgeTools";
 import { createNodeCliRuntime, type ClaudeCliRuntime } from "./cli/runtime";
 import { ClaudeCliProvider } from "./providers/claudeCli";
-import { excludeSessions } from "./memory/sessions";
-import { extractTasks, specBody, type SpecInput } from "./build/spec";
-import { trackerNoteBody } from "./build/tracker";
-import { BuildRunCoordinator, createBuildRun, restoreBuildRuns, type BuildRun, type BuildTaskExecutor } from "./build/run";
-import { DesktopBuildExecutor } from "./build/desktopExecutor";
-import { CloudBuildExecutor, type CloudBuildHttpRequest } from "./build/cloudExecutor";
-import { type CloudDispatchConfig, buildFireRequest, parseFireResponse, composeDispatchText, configError } from "./cloud/routines";
-import { type RepliesConfig, buildContentsRequest, parseDirListing, parseFileResponse, isMarkdown, configError as repliesConfigError } from "./cloud/replies";
-import { buildFrontmatter, normalizeTags } from "./indexing/frontmatter";
+import { type BuildRun } from "./build/run";
+import { BuildController } from "./build/controller";
+import { CloudController } from "./cloud/controller";
+import { CloudDispatchModal } from "./view/CloudDispatchModal";
+import { normalizeTags } from "./indexing/frontmatter";
 import { existingVaultTags } from "./indexing/autoTagger";
 import { frontmatterSuggestSystem, parseFrontmatterSuggestion } from "./indexing/frontmatterSuggest";
 import { FrontmatterModal } from "./view/FrontmatterModal";
-import { SemanticIndexer, type IndexFile } from "./semantic/indexer";
-import { extractPdfPages } from "./semantic/pdf";
-import type { IndexData } from "./semantic/store";
-import { OllamaEmbedder, embedderId, type Embedder } from "./semantic/embedder";
-import { builtinModelById } from "./semantic/transformers/model";
+import { SemanticIndexer } from "./semantic/indexer";
+import { SemanticController } from "./semantic/controller";
 import { isNamespacedData, resolveSettings } from "./settingsLoad";
 import { createSecretStore, hydrate, stripVerifiedSecrets, syncSecrets, type SecretField, type SecretStore } from "./secrets/store";
 import { migrateSecrets, migrationNotice } from "./secrets/migrate";
 import { needsCredentialSetup } from "./providers/setupState";
 import { pendingFirstRunPrompts, type FirstRunState } from "./onboarding/firstRun";
-import { clearCachedModel, hasCachedModel } from "./semantic/transformers/cache";
-import { TransformersEmbedder, type WorkerLike } from "./semantic/transformers/embedder";
-import { createEmbedWorker } from "./semantic/transformers/workerSource";
+import type { TransformersEmbedder } from "./semantic/transformers/embedder";
+import { builtinModelById } from "./semantic/transformers/model";
 import {
   type Conversation,
   type ConversationState,
   emptyState,
   fromPersisted,
-  getActive,
-  newConversation,
-  withCliSession,
   cliSessionIds,
-  saveConversation,
-  deleteConversation as removeConversation,
-  setActive,
-  touch,
-  startConversationTurn,
-  settleConversationTurn,
-  clearConversationTurn,
   type ChatTurnMode,
 } from "./conversations/store";
-import { ChatTurnLifecycle } from "./chat/turnLifecycle";
+import { ConversationsController } from "./conversations/controller";
 import type { ChatMessage } from "./types";
 import { normalizePath, TFile, TFolder, type Editor } from "obsidian";
-import { enrichCapture, type EnrichDeps } from "./sources/enrich";
 import { inboxItems } from "./sources/inbox";
-import { shouldEnrich } from "./sources/watcher";
 import { parseClipUrl } from "./sources/detect";
+import { SourceEnrichmentController, sourceActivityDetail, type EnrichRunOutcome } from "./sources/controller";
 import { getSchema } from "./sources/registry";
 import { clipperTemplateFor, clipperTemplateFileName, serializeClipperTemplate, clipperFingerprint } from "./sources/clipperTemplate";
 import type { SourceType } from "./sources/types";
@@ -138,14 +121,14 @@ import { reviewInboxBatchLinks } from "./links/inboxBatchReview";
 import { ActivityStore } from "./activity/store";
 import type { CompanionChromeDependencies } from "./view/companionChrome";
 import type { QuickOptionAction, QuickOptionChange, QuickOptionsState } from "./view/quickOptions";
-import { classifyEmbeddingFailure, type EmbeddingRecovery } from "./semantic/recovery";
+import type { EmbeddingRecovery } from "./semantic/recovery";
 import { clipperSetupFor, type ClipperSetupViewModel } from "./sources/clipperSetup";
 import { verifyClipperNote } from "./sources/clipperVerification";
-import { KeyedSerialQueue } from "./sources/keyedSerialQueue";
 import { EnrichDiagnostics } from "./sources/enrichDiagnostics";
 import { ClipperSetupModal } from "./view/ClipperSetupModal";
 import { DesktopIntegrationCoordinator, type DesktopIntegrationRuntime } from "./integrations/desktopCoordinator";
 import { DesktopIntegrationsModal, type DesktopIntegrationsController } from "./view/DesktopIntegrationsModal";
+import { ConfirmModal } from "./view/ConfirmModal";
 import { OBSIDIAN_GENERAL_SETTINGS_TAB, claudeDesktopConfigPath, type DesktopPlatform } from "./integrations/desktop";
 
 /** Output-token ceiling for artifact-producing flows (plans, artifacts, workflows),
@@ -174,11 +157,6 @@ interface PersistedData {
   activeBuildRunId?: string | null;
 }
 
-type EnrichRunOutcome =
-  | { status: "enriched" }
-  | { status: "skipped"; reason: string }
-  | { status: "failed"; error: Error };
-
 type UtilityFallbackConsentKey = Pick<UtilityFallbackConsentContext, "identity" | "destinationFingerprint">;
 
 function sameUtilityFallbackConsentContext(
@@ -186,17 +164,6 @@ function sameUtilityFallbackConsentContext(
   right: UtilityFallbackConsentKey | null | undefined,
 ): boolean {
   return !!right && left.identity === right.identity && left.destinationFingerprint === right.destinationFingerprint;
-}
-
-function sourceActivityDetail(value: string): string {
-  return value
-    .replace(/\b([a-z][a-z0-9+.-]*:\/\/)[^/\s?#]*@/gi, "$1")
-    .replace(/\bBearer\s+\S+/gi, "[redacted]")
-    .replace(/\b(?:api[_-]?key|token|password)\s*[=:]\s*\S+/gi, "[redacted]")
-    .replace(/[\r\n\t]+/g, " ")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 500);
 }
 
 export default class ClaudeCompanionPlugin extends Plugin {
@@ -221,15 +188,49 @@ export default class ClaudeCompanionPlugin extends Plugin {
     );
   }
   private convState: ConversationState = emptyState();
-  private convSeq = 0;
-  private _chatTurnLifecycle?: ChatTurnLifecycle;
-  private chatTurnLifecycle(): ChatTurnLifecycle { return this._chatTurnLifecycle ??= new ChatTurnLifecycle(); }
+  private _conversations?: ConversationsController;
+  private conversations(): ConversationsController {
+    return (this._conversations ??= new ConversationsController({
+      state: { get: () => this.convState, set: (next) => { this.convState = next; } },
+      persist: () => this.persist(),
+      activity: () => this.activity,
+      settings: () => this.settings,
+    }));
+  }
   private researchDeskPreferences: ResearchDeskPreferenceMap = {};
-  private buildRuns: Record<string, BuildRun> = {};
-  private activeBuildRunId: string | null = null;
-  private buildCoordinators = new Map<string, BuildRunCoordinator>();
-  private buildRunListeners = new Set<(run: BuildRun) => void>();
-  private buildTrackerWriteChains = new Map<string, Promise<void>>();
+  private _build: BuildController | null = null;
+  private build(): BuildController {
+    return (this._build ??= new BuildController({
+      settings: () => this.settings,
+      persist: () => this.persist(),
+      isMobile: Platform.isMobile,
+      vault: {
+        cachedRead: (path) => {
+          const file = this.app.vault.getAbstractFileByPath(path);
+          return file instanceof TFile ? this.app.vault.cachedRead(file) : Promise.reject(new Error(`File not found: ${path}`));
+        },
+        processFile: async (path, fn) => {
+          const file = this.app.vault.getAbstractFileByPath(path);
+          if (file instanceof TFile) await this.app.vault.process(file, fn);
+        },
+      },
+      writeFile: async (path, content) => { await writeOrReplaceFile(this.app, path, content); },
+      ensureFolder: (folder) => ensureVaultFolder(this.app, folder),
+      openFile: async (path) => {
+        const file = this.app.vault.getAbstractFileByPath(path);
+        if (file instanceof TFile) await this.app.workspace.getLeaf(false).openFile(file);
+      },
+      normalizePath,
+      notice: (msg, timeout) => new Notice(msg, timeout),
+      confirm: (opts) => new Promise<boolean>((resolve) => {
+        new ConfirmModal(this.app, { ...opts, onResolve: resolve }).open();
+      }),
+      cloud: () => this.cloud(),
+      vaultBasePath: () => this.vaultBasePath(),
+      desktopProcess: () => (window as { process?: { platform?: string; env?: Record<string, string | undefined> } }).process,
+      desktopRuntimeLoader: () => this._desktopRuntimeLoader(),
+    }));
+  }
   /** data.json contains several domains; serialize snapshots so an older write cannot land last. */
   private persistChain: Promise<void> = Promise.resolve();
   /** Credentials live here, not in data.json. Lazy so tests can construct the plugin. */
@@ -243,7 +244,6 @@ export default class ClaudeCompanionPlugin extends Plugin {
   private _discoveryCoordinator: DiscoveryCoordinator | null = null;
   private _viewIntelligenceCoordinators?: Set<IntelligenceCoordinator>;
   private _viewDiscoveryCoordinators?: Set<DiscoveryCoordinator>;
-  private mcpServer: McpHttpServer | null = null;
   private cliSessions = new Map<string, { session: ClaudeCliSession; bridge: McpHttpServer; signature: string; promptFile: string; lastUsed: number }>();
   private cliPromptFiles = new Set<string>();
   private _cliRuntime: ClaudeCliRuntime | null | undefined;
@@ -254,43 +254,159 @@ export default class ClaudeCompanionPlugin extends Plugin {
   }> = () => import("./integrations/desktopRuntime");
   private _externalMcp: ExternalMcpManager | null = null;
   private _mcpServersSnapshot = "[]";
-  private vaultTools: VaultTools | null = null;
   /** Chat-scoped vault tools (agent mode) — separate instance and write gate from the MCP bridge. */
   private agentVaultTools: VaultTools | null = null;
-  /** Serializes overlapping syncMcpServer() calls (settings fire it per keystroke). */
-  private mcpSyncChain: Promise<void> = Promise.resolve();
-  /** Invalidates an MCP bridge that finishes starting after plugin shutdown. */
   private mcpLifecycleGeneration = 0;
   private mcpLifecycleEnded = false;
-  /** Signature of the currently-running MCP server, to skip needless restarts. */
-  private mcpSignature: string | null = null;
-  /** Lazily-built semantic index (local embeddings); null until first use. */
-  private _indexer: SemanticIndexer | null = null;
-  /** Built-in engine's worker-backed embedder; created lazily, torn down on unload/engine switch. */
-  private _builtinEmbedder: TransformersEmbedder | null = null;
-  /** Memoized "built-in model is in the local cache" (only flips false→true; downloads are additive). */
-  private _builtinModelCached = false;
-  /** One Notice per session when incremental reindex is paused awaiting the model download. */
-  private reindexPausedNotified = false;
-  /** Embedding model the live indexer was built for (rebuild on change). */
-  private indexerModel: string | null = null;
-  /** Debounce timer for incremental re-index on note changes. */
-  private reindexTimer: number | null = null;
-  private reindexQueue = new Set<string>();
-  private reindexSuspended = 0;
-  private enrichTimers = new Map<string, number>();
-  /** Debounced Clipper arrivals waiting for one-at-a-time utility processing. */
-  private enrichPending = new Map<string, TFile>();
-  private enrichQueueRunning = false;
-  /** Shared admission lane for automatic, Inbox, and organizer enrichment. */
-  private _enrichmentCoordinator: KeyedSerialQueue<string, EnrichRunOutcome> | undefined;
-  private enrichRecentlyWritten = new Set<string>();
-  private enrichRecentlyWrittenExpiryTimers = new Map<string, number>();
+  private _mcpBridge: McpBridgeController | null = null;
+  private memoryNotePath(): string {
+    return normalizePath(`${this.settings.memoryFolder}/${MEMORY_NOTE_BASENAME}.md`);
+  }
+  private mcpBridge(): McpBridgeController {
+    return (this._mcpBridge ??= new McpBridgeController({
+      settings: () => this.settings,
+      saveSettings: () => this.saveSettings(),
+      isMobile: Platform.isMobile,
+      isLifecycleEnded: () => this.mcpLifecycleEnded,
+      lifecycleGeneration: () => this.mcpLifecycleGeneration ?? 0,
+      buildToolOptions: () => ({
+        allowWrites: this.settings.mcpAllowWrites,
+        defaultFolder: this.settings.mcpWriteFolder,
+        semantic: (q: string, k: number, accept?: (path: string) => boolean) => this.semanticSearch(q, k, accept),
+        related: async (p: string, k: number) => {
+          if (!this.settings.semanticEnabled) throw new Error(SEMANTIC_OFF_MESSAGE);
+          return this.relatedForTools(p, k);
+        },
+        ontology: () => this.ontology(),
+        ontologyFolder: () => this.settings.ontologyFolder,
+        zotero: () => this.zoteroLibrary(),
+        ...this.webToolImpls(),
+      }),
+      createTools: (opts) => new VaultTools(this.app, opts),
+      createServer: async (tools, port, token) => {
+        const { McpHttpServer } = await import("./mcp/server");
+        return new McpHttpServer(
+          {
+            port,
+            token,
+            serverInfo: { name: "obsidian-vault", version: "0.2.0" },
+            resources: composeResourceProviders(
+              substrateResourceProvider(this.app, { call: (n, a) => (tools as unknown as VaultTools).call(n, a), memoryPath: () => this.memoryNotePath() }),
+              vaultResourceProvider(this.app),
+            ),
+            prompts: catalogPromptProvider(() => this.promptTemplates()),
+          },
+          tools as unknown as VaultTools,
+          (level, message) => { if (level === "error") console.error("[Claude Companion MCP]", message); },
+        );
+      },
+      notice: (msg) => new Notice(msg),
+    }));
+  }
+  private _semantic: SemanticController | null = null;
+  private semantic(): SemanticController {
+    return (this._semantic ??= new SemanticController({
+      settings: () => this.settings,
+      saveSettings: () => this.saveSettings(),
+      manifestDir: this.manifest.dir ?? `.obsidian/plugins/${this.manifest.id}`,
+      manifestId: this.manifest.id,
+      activity: () => this.activity,
+      enrichDiagnostics: () => this.enrichDiagnostics,
+      router: () => this.router(),
+      isMobile: Platform.isMobile,
+      vault: {
+        adapterExists: (p) => this.app.vault.adapter.exists(p),
+        adapterRead: (p) => this.app.vault.adapter.read(p),
+        adapterWrite: (p, d) => this.app.vault.adapter.write(p, d),
+        getMarkdownFiles: () => this.app.vault.getMarkdownFiles().map((f) => ({ path: f.path, mtime: f.stat.mtime, size: f.stat.size })),
+        getPdfFiles: () => this.app.vault.getFiles().filter((f) => f.extension === "pdf").map((f) => ({ path: f.path, mtime: f.stat.mtime, size: f.stat.size })),
+        getAbstractFileByPath: (p) => {
+          const f = this.app.vault.getAbstractFileByPath(p);
+          return f instanceof TFile ? { path: f.path, stat: { mtime: f.stat.mtime, size: f.stat.size } } : null;
+        },
+        cachedRead: (p) => {
+          const f = this.app.vault.getAbstractFileByPath(p);
+          return f instanceof TFile ? this.app.vault.cachedRead(f) : Promise.resolve("");
+        },
+        readBinary: (p) => {
+          const f = this.app.vault.getAbstractFileByPath(p);
+          if (!(f instanceof TFile)) return Promise.reject(new Error(`Not a file: ${p}`));
+          return this.app.vault.readBinary(f);
+        },
+      },
+      notice: (msg, timeout) => new Notice(msg, timeout),
+      openChoiceModal: (opts) => new ChoiceModal(this.app, opts).open(),
+      mobileSourceNoteMaxBytes: MOBILE_SOURCE_NOTE_MAX_BYTES,
+      mobilePdfMaxBytes: MOBILE_SEMANTIC_PDF_MAX_BYTES,
+    }));
+  }
+  private _enrichment: SourceEnrichmentController | null = null;
+  private enrichment(): SourceEnrichmentController {
+    return (this._enrichment ??= new SourceEnrichmentController({
+      settings: () => this.settings,
+      saveSettings: () => this.saveSettings(),
+      isMobile: Platform.isMobile,
+      mobileSourceNoteMaxBytes: MOBILE_SOURCE_NOTE_MAX_BYTES,
+      enrichApp: this.app,
+      vault: {
+        cachedRead: (path) => {
+          const f = this.app.vault.getAbstractFileByPath(path);
+          return f instanceof TFile ? this.app.vault.cachedRead(f) : Promise.resolve("");
+        },
+      },
+      activity: () => this.activity,
+      enrichDiagnostics: () => this.enrichDiagnostics,
+      router: () => this.router(),
+      suspendReindex: () => this.suspendReindex(),
+      isUtilityLifecycleActive: (g) => this.isUtilityLifecycleActive(g),
+      assertUtilityLifecycleActive: (g) => this.assertUtilityLifecycleActive(g),
+      utilityLifecycleEnded: () => this.utilityLifecycleEnded,
+      utilityLifecycleGeneration: () => this.utilityLifecycleGeneration ?? 0,
+      notice: (msg, timeout) => new Notice(msg, timeout),
+      openChoiceModal: (opts) => { const m = new ChoiceModal(this.app, opts); m.open(); return m; },
+    }));
+  }
+  private _memory: MemoryController | null = null;
+  memory(): MemoryController {
+    return (this._memory ??= new MemoryController({
+      settings: () => this.settings,
+      isMobile: Platform.isMobile,
+      ingestApp: this.app,
+      vaultBasePath: () => this.vaultBasePath(),
+      vault: {
+        markdownFilesUnder: (prefix) => this.app.vault.getMarkdownFiles()
+          .filter((f) => f.path.startsWith(`${prefix}/`))
+          .map((f) => ({ path: f.path, mtime: f.stat.mtime })),
+        readContent: async (path) => {
+          const f = this.app.vault.getAbstractFileByPath(path);
+          return f instanceof TFile ? this.app.vault.cachedRead(f) : null;
+        },
+        writeContent: async (path, content) => {
+          const f = this.app.vault.getAbstractFileByPath(path);
+          if (f instanceof TFile) await this.app.vault.modify(f, content);
+          else await this.app.vault.create(path, content);
+        },
+      },
+      router: () => this.router(),
+      excludedSessionIds: () => this.conversations().list().flatMap(cliSessionIds),
+      getActiveConversation: () => this.getActiveConversation(),
+      nodeSessionReader: async () => {
+        const { nodeSessionReader, defaultProjectsRoot } = await import("./memory/nodeReader");
+        return { reader: nodeSessionReader, defaultProjectsRoot };
+      },
+      notice: (msg, timeout) => new Notice(msg, timeout),
+      refreshMemoryView: () => this.refreshMemoryView(),
+      openFile: async (path) => {
+        const f = this.app.vault.getAbstractFileByPath(path);
+        if (f instanceof TFile) await this.app.workspace.getLeaf(false).openFile(f);
+      },
+      openSessionPicker: (sessions, onPick) => new SessionPicker(this.app, sessions, onPick).open(),
+      normalizePath,
+    }));
+  }
   private clipperVerificationTimers = new Map<string, number>();
   private utilityLifecycleEnded = false;
   private utilityLifecycleGeneration = 0;
-  private sourceCaptureConsentModal: ChoiceModal<"allow" | "deny"> | null = null;
-  private sourceCaptureConsentInFlight: Promise<boolean> | null = null;
   /** Mobile loopback → Claude consent, scoped to one exact source/destination context. */
   private mobileUtilityFallbackApproval: UtilityFallbackConsentKey & { decision: UtilityFallbackApproval } | undefined;
   /** Coalesces concurrent automatic enrichments onto one consent decision. */
@@ -307,15 +423,29 @@ export default class ClaudeCompanionPlugin extends Plugin {
   /** Debounces research-only metadata changes without reacting to unrelated vault notes. */
   private researchRefreshTimer: number | null = null;
   private researchRefreshChanges: Array<{ path: string; oldPath?: string }> = [];
+  /** Teardown callbacks registered by extracted controllers; run in reverse order on unload. */
+  private disposables?: Array<() => void>;
+  /** Listeners notified after every successful saveSettings() (per-domain reactions). */
+  private settingsListeners?: Set<() => void>;
+
+  /** Register a teardown callback run by onunload (reverse registration order). */
+  registerDisposable(dispose: () => void): void {
+    (this.disposables ??= []).push(dispose);
+  }
+
+  /** Subscribe to successful settings saves. Returns an unsubscribe function. */
+  onSettingsChanged(listener: () => void): () => void {
+    const listeners = (this.settingsListeners ??= new Set());
+    listeners.add(listener);
+    return () => listeners.delete(listener);
+  }
 
   override async onload(): Promise<void> {
     this.mcpLifecycleGeneration = (this.mcpLifecycleGeneration ?? 0) + 1;
     this.mcpLifecycleEnded = false;
     this.utilityLifecycleGeneration = (this.utilityLifecycleGeneration ?? 0) + 1;
     this.utilityLifecycleEnded = false;
-    this._enrichmentCoordinator = new KeyedSerialQueue<string, EnrichRunOutcome>();
-    this.sourceCaptureConsentModal = null;
-    this.sourceCaptureConsentInFlight = null;
+    this._enrichment?.resetLifecycle();
     this.mobileUtilityFallbackApproval = undefined;
     this.mobileUtilityFallbackConsentInFlight = null;
     this.mobileUtilityFallbackModal = null;
@@ -363,7 +493,7 @@ export default class ClaudeCompanionPlugin extends Plugin {
     this.registerView(MEMORY_VIEW_TYPE, (leaf: WorkspaceLeaf) => new MemoryView(leaf, this));
     this.registerView(INBOX_VIEW_TYPE, (leaf: WorkspaceLeaf) => new InboxView(leaf, this));
     this.registerView(RELATED_VIEW_TYPE, (leaf: WorkspaceLeaf) => new RelatedView(leaf, this));
-    this.registerView(BUILD_VIEW_TYPE, (leaf: WorkspaceLeaf) => new BuildView(leaf, this.buildViewDependencies()));
+    this.registerView(BUILD_VIEW_TYPE, (leaf: WorkspaceLeaf) => new BuildView(leaf, this.build().viewDependencies()));
     this.registerView(RESEARCH_DESK_VIEW_TYPE, (leaf: WorkspaceLeaf) => new ResearchDeskView(leaf, this.researchRepository(), {
       chrome: this.companionChrome(),
       preferencesFor: (projectPath) => this.researchDeskPreferences[projectPath] ?? { dismissedActionIds: [] },
@@ -404,7 +534,7 @@ export default class ClaudeCompanionPlugin extends Plugin {
           }),
           saveAsset: async (projectPath, name, data) => {
             const folder = `${projectPath.slice(0, -"/Project.md".length)}/Sources/assets`;
-            await this.ensureFolder(folder);
+            await ensureVaultFolder(this.app, folder);
             let path = normalizePath(`${folder}/${name}`);
             if (this.app.vault.getAbstractFileByPath(path)) {
               const base = name.replace(/\.[^.]+$/, "");
@@ -428,6 +558,15 @@ export default class ClaudeCompanionPlugin extends Plugin {
         };
       })(),
     ));
+    this.registerBasesView(SIMILAR_BASES_VIEW_TYPE, {
+      name: "Similar notes",
+      icon: "sparkles",
+      factory: (controller, containerEl) => new SimilarBasesView(controller, containerEl, {
+        semanticEnabled: () => this.settings.semanticEnabled,
+        related: (path, k, accept) => this.relatedForTools(path, k, accept),
+      }),
+      options: () => [{ type: "slider", key: "limit", displayName: "Results", min: 5, max: 50, step: 1, default: 20 }],
+    });
   }
 
   /** Inline interactive artifacts, rendered from claude-html fences. */
@@ -473,7 +612,7 @@ export default class ClaudeCompanionPlugin extends Plugin {
       this.registerEvent(this.app.vault.on("modify", (f) => { if (f instanceof TFile && (f.extension === "md" || (f.extension === "pdf" && this.settings.semanticIndexPdfs))) this.queueReindex(f.path); }));
       this.registerEvent(this.app.vault.on("create", (f) => { if (f instanceof TFile && (f.extension === "md" || (f.extension === "pdf" && this.settings.semanticIndexPdfs))) this.queueReindex(f.path); }));
       this.registerEvent(this.app.vault.on("create", (f) => {
-        if (f instanceof TFile && (f.extension === "md" || f.extension === "csv") && this.settings.sourceCaptureEnabled && this.settings.sourceEnrichOnCreate) this.queueEnrich(f);
+        if (f instanceof TFile && (f.extension === "md" || f.extension === "csv") && this.settings.sourceCaptureEnabled && this.settings.sourceEnrichOnCreate) this.enrichment().queueEnrich(f);
       }));
       this.registerEvent(this.app.vault.on("create", (f) => {
         if (f instanceof TFile && f.extension === "md") this.queueClipperVerification(f);
@@ -591,10 +730,10 @@ export default class ClaudeCompanionPlugin extends Plugin {
       reviewLinkSuggestions: () => void this.reviewLinkSuggestions(),
       openWorkflowPicker: () => void this.openWorkflowPicker(),
       createPromptTemplate: () => void this.createPromptTemplate(),
-      openSessionPicker: () => void this.openSessionPicker(),
+      openSessionPicker: () => void this.memory().openSessionPicker(),
       openMemoryView: () => void this.activateMemoryView(),
-      consolidateMemory: () => void this.consolidateMemory(),
-      enrichNoteAsSource: (file) => void this.runEnrich(file),
+      consolidateMemory: () => void this.memory().consolidateMemory(),
+      enrichNoteAsSource: (file) => void this.enrichment().runEnrich(file),
       openSourceInbox: () => void this.activateInboxView(),
       exportClipperTemplates: () => void this.exportClipperTemplates(),
       seedOntology: () => void this.seedOntology(),
@@ -609,40 +748,6 @@ export default class ClaudeCompanionPlugin extends Plugin {
     view?.refreshModelLabel();
     const how = this.settings.semanticEnabled ? "semantic + keyword" : "keyword";
     new Notice(`Vault search is on (${how}) — ask your question in the chat panel.`);
-  }
-
-  private enrichDeps(
-    selection: ProviderSelection,
-    lifecycleGeneration = this.utilityLifecycleGeneration ?? 0,
-  ): EnrichDeps {
-    const router = this.router();
-    return {
-      app: this.app,
-      complete: async (system, user, opts) => {
-        this.assertUtilityLifecycleActive(lifecycleGeneration);
-        const text = (
-          await router.completeResolved(selection, {
-            system,
-            user,
-            ...(opts?.maxTokens !== undefined ? { maxTokens: opts.maxTokens } : {}),
-            ...(opts?.responseSchema ? { responseFormat: "json" as const, responseSchema: opts.responseSchema } : {}),
-            ...(opts?.disableThinking ? { thinking: { type: "disabled" as const } } : {}),
-          })
-        ).text;
-        this.enrichDiagnostics.log("response-received", { chars: text.length });
-        return text;
-      },
-      overrides: this.settings.sourceSchemaOverrides,
-      baseTags: this.settings.sourceBaseTags,
-      enrichedBy: selection.provider.id === "anthropic" ? "claude" : "local",
-      now: () => new Date().toISOString(),
-      assertActive: () => this.assertUtilityLifecycleActive(lifecycleGeneration),
-    };
-  }
-
-  /** Resolve enrichment once so completion and provenance cannot disagree. */
-  private async resolvedEnrichDeps(): Promise<EnrichDeps> {
-    return this.enrichDeps(await this.router().utilitySelection());
   }
 
   /** Plugin-owned runtime/privacy hook used by every router utility completion. */
@@ -844,10 +949,10 @@ export default class ClaudeCompanionPlugin extends Plugin {
     const opts = { path: this.settings.sourceInboxFolder, tags: this.settings.sourceBaseTags };
     const types: SourceType[] = ["article", "video", "dataset"];
     const schemas = types.map((t) => getSchema(t, this.settings.sourceSchemaOverrides));
-    await this.ensureFolder(folder);
+    await ensureVaultFolder(this.app, folder);
     for (const schema of schemas) {
       const template = clipperTemplateFor(schema, opts);
-      await this.writeOrReplace(normalizePath(`${folder}/${clipperTemplateFileName(template)}`), serializeClipperTemplate(template));
+      await writeOrReplaceFile(this.app, normalizePath(`${folder}/${clipperTemplateFileName(template)}`), serializeClipperTemplate(template));
     }
     this.settings.clipperTemplateFingerprint = clipperFingerprint(schemas, opts);
     await this.saveSettings();
@@ -890,8 +995,8 @@ export default class ClaudeCompanionPlugin extends Plugin {
       },
       saveJson: async (setup) => {
         const folder = "Claude/Clipper templates";
-        await this.ensureFolder(folder);
-        await this.writeOrReplace(normalizePath(`${folder}/companion-${setup.type}-clipper.json`), setup.json);
+        await ensureVaultFolder(this.app, folder);
+        await writeOrReplaceFile(this.app, normalizePath(`${folder}/companion-${setup.type}-clipper.json`), setup.json);
         new Notice(`Saved ${setup.templateName} JSON to ${folder}.`, 4000);
       },
     }).open();
@@ -986,220 +1091,6 @@ export default class ClaudeCompanionPlugin extends Plugin {
     return clipperFingerprint(schemas, opts) !== saved;
   }
 
-  private queueEnrich(file: TFile): void {
-    if (this.utilityLifecycleEnded) return;
-    const path = file.path;
-    const prev = this.enrichTimers.get(path);
-    if (prev) window.clearTimeout(prev);
-    this.enrichTimers.set(
-      path,
-      window.setTimeout(() => {
-        this.enrichTimers.delete(path);
-        if (this.utilityLifecycleEnded) return;
-        this.enrichPending.set(path, file);
-        void this.drainEnrichQueue();
-      }, 1500),
-    );
-  }
-
-  /**
-   * Clipper and agent imports can create many notes in one event-loop turn.
-   * Keep their model calls and vault rewrites serial so a burst cannot multiply
-   * renderer memory, and isolate an unreadable/deleted file from later clips.
-   */
-  private async drainEnrichQueue(): Promise<void> {
-    if (this.enrichQueueRunning || this.utilityLifecycleEnded) return;
-    this.enrichQueueRunning = true;
-    const release = this.suspendReindex();
-    try {
-      while (!this.utilityLifecycleEnded) {
-        const next = this.enrichPending.entries().next().value;
-        if (!next) break;
-        const [path, file] = next;
-        this.enrichPending.delete(path);
-        try {
-          await this.enrichFile(file);
-        } catch (error) {
-          if (!this.isUtilityLifecycleActive(this.utilityLifecycleGeneration ?? 0)) continue;
-          const detail = sourceActivityDetail(error instanceof Error ? error.message : String(error));
-          console.warn("[companion] automatic source enrichment failed", error);
-          const activityId = this.activity.start({
-            id: `source-enrichment:auto:${path}`,
-            kind: "source-enrichment",
-            title: `Enriching ${file.basename}`,
-            total: 1,
-          });
-          this.activity.fail(activityId, {
-            completed: 1,
-            failed: 1,
-            technicalDetails: detail,
-            details: [{ label: path, message: detail, state: "error" }],
-            recovery: [
-              { id: "review-inbox-failures", label: "Open Source Inbox", kind: "retry" },
-              { id: "utility-settings", label: "Open utility settings", kind: "settings" },
-            ],
-          });
-        }
-      }
-    } finally {
-      release();
-      this.enrichQueueRunning = false;
-      if (!this.utilityLifecycleEnded && this.enrichPending.size > 0) void this.drainEnrichQueue();
-    }
-  }
-
-  private enrichFile(file: TFile, notify = true): Promise<EnrichRunOutcome> {
-    const lifecycleGeneration = this.utilityLifecycleGeneration ?? 0;
-    const coordinator = this._enrichmentCoordinator ??= new KeyedSerialQueue<string, EnrichRunOutcome>();
-    return coordinator.run(file.path, async () => {
-      if (!this.isUtilityLifecycleActive(lifecycleGeneration)) {
-        return {
-          status: "failed",
-          error: new Error("Companion unloaded before source enrichment started; no content was sent."),
-        };
-      }
-      return this.performEnrichFile(file, notify);
-    });
-  }
-
-  private async performEnrichFile(file: TFile, notify = true): Promise<EnrichRunOutcome> {
-    const sizeFailure = this.mobileSourceSizeFailure(file);
-    if (sizeFailure) return sizeFailure;
-    const content = file.extension === "md" ? await this.app.vault.cachedRead(file) : "";
-    if (!shouldEnrich({ path: file.path, ext: file.extension, content, inboxFolder: this.settings.sourceInboxFolder, recentlyWritten: this.enrichRecentlyWritten })) {
-      return { status: "skipped", reason: `${file.basename} is not eligible for source enrichment.` };
-    }
-    if (this.settings.sourceCaptureConsent === "deny") {
-      return { status: "skipped", reason: "automatic source enrichment is set to manual only." };
-    }
-    if (this.settings.sourceCaptureConsent !== "allow" && !(await this.askSourceCaptureConsent())) {
-      return { status: "skipped", reason: "automatic source enrichment was not approved." };
-    }
-    return this.runEnrich(file, notify, file.extension === "md" ? content : undefined);
-  }
-
-  private mobileSourceSizeFailure(file: TFile): Extract<EnrichRunOutcome, { status: "failed" }> | null {
-    if (!Platform.isMobile || file.stat.size <= MOBILE_SOURCE_NOTE_MAX_BYTES) return null;
-    return {
-      status: "failed",
-      error: new Error(
-        `${file.basename} exceeds the 5 MiB mobile enrichment limit. Reduce the clip before enriching it.`,
-      ),
-    };
-  }
-
-  /**
-   * One-time consent before the first automatic enrichment: auto-enrich sends
-   * each new inbox file to the utility model, so we ask before doing it
-   * unprompted. Declining turns off auto-enrich (the manual command stays).
-   */
-  private async askSourceCaptureConsent(): Promise<boolean> {
-    if (this.settings.sourceCaptureConsent === "allow") return true;
-    if (this.settings.sourceCaptureConsent === "deny" || this.utilityLifecycleEnded) return false;
-    if (this.sourceCaptureConsentInFlight) return this.sourceCaptureConsentInFlight;
-    const lifecycleGeneration = this.utilityLifecycleGeneration ?? 0;
-    const consent = new Promise<boolean>((resolve, reject) => {
-      const modal = new ChoiceModal<"allow" | "deny">(this.app, {
-        title: "Enrich clips automatically?",
-        message:
-          `Source capture can type each new file in ${this.settings.sourceInboxFolder}/ into a schema-validated source note. ` +
-          "This sends the file's content to your utility model (Claude, unless you enable the local model in settings).",
-        buttons: [
-          { label: "Enrich automatically", value: "allow", cta: true },
-          { label: "Manual only", value: "deny" },
-        ],
-        fallback: "deny",
-        onChoice: (c) => {
-          this.sourceCaptureConsentModal = null;
-          if (!this.isUtilityLifecycleActive(lifecycleGeneration)) { resolve(false); return; }
-          const previousConsent = this.settings.sourceCaptureConsent;
-          const previousAutoEnrich = this.settings.sourceEnrichOnCreate;
-          this.settings.sourceCaptureConsent = c;
-          if (c === "deny") this.settings.sourceEnrichOnCreate = false;
-          void this.saveSettings().then(
-            () => resolve(this.isUtilityLifecycleActive(lifecycleGeneration) && c === "allow"),
-            (error: unknown) => {
-              this.settings.sourceCaptureConsent = previousConsent;
-              this.settings.sourceEnrichOnCreate = previousAutoEnrich;
-              reject(error instanceof Error ? error : new Error(String(error)));
-            },
-          );
-        },
-      });
-      this.sourceCaptureConsentModal = modal;
-      modal.open();
-    });
-    this.sourceCaptureConsentInFlight = consent;
-    void consent.then(
-      () => { if (this.sourceCaptureConsentInFlight === consent) this.sourceCaptureConsentInFlight = null; },
-      () => { if (this.sourceCaptureConsentInFlight === consent) this.sourceCaptureConsentInFlight = null; },
-    );
-    return consent;
-  }
-
-  private async runEnrich(file: TFile, notify = true, prefetchedContent?: string): Promise<EnrichRunOutcome> {
-    const sizeFailure = this.mobileSourceSizeFailure(file);
-    if (sizeFailure) return sizeFailure;
-    let selection: ProviderSelection | undefined;
-    const lifecycleGeneration = this.utilityLifecycleGeneration ?? 0;
-    const activityId = notify
-      ? this.activity.start({
-          id: `source-enrichment:${file.path}`,
-          kind: "source-enrichment",
-          title: `Enriching ${file.basename}`,
-          total: 1,
-        })
-      : undefined;
-    try {
-      const raw = prefetchedContent ?? await this.app.vault.cachedRead(file);
-      this.enrichDiagnostics.log("item-start", { path: file.path, bytes: raw.length });
-      const capture =
-        file.extension === "md"
-          ? { kind: "markdown" as const, path: file.path, basename: file.basename, content: raw, url: parseClipUrl(raw) }
-          : { kind: "datafile" as const, path: file.path, basename: file.basename, ext: file.extension, content: raw };
-      selection = await this.router().utilitySelection();
-      const res = await enrichCapture(this.enrichDeps(selection, lifecycleGeneration), capture);
-      this.enrichDiagnostics.log("write-done", { path: res.file.path });
-      this.assertUtilityLifecycleActive(lifecycleGeneration);
-      this.markEnrichRecentlyWritten(res.file.path, lifecycleGeneration);
-      if (activityId) {
-        this.activity.finish(activityId, {
-          completed: 1,
-          total: 1,
-          succeeded: 1,
-          details: [{ label: res.file.path, message: `Typed as ${res.type}`, state: "success" }],
-        });
-      }
-      return { status: "enriched" };
-    } catch (e) {
-      if (!this.isUtilityLifecycleActive(lifecycleGeneration)) {
-        return { status: "failed", error: e instanceof Error ? e : new Error(String(e)) };
-      }
-      if (!(e instanceof UtilityUnavailableError)) console.warn("[companion] source enrichment failed", e);
-      const message = e instanceof Error ? e.message : String(e);
-      const detail = e instanceof UtilityUnavailableError
-        ? message
-        : selection
-          ? errorHint(message, selection.provider.id, selection.endpoint) ?? message
-          : message;
-      if (activityId) {
-        const safeDetail = sourceActivityDetail(detail);
-        this.activity.fail(activityId, {
-          completed: 1,
-          total: 1,
-          failed: 1,
-          technicalDetails: safeDetail,
-          details: [{ label: file.path, message: safeDetail, state: "error" }],
-          recovery: [
-            { id: "review-inbox-failures", label: "Open Source Inbox", kind: "retry" },
-            { id: "utility-settings", label: "Open utility settings", kind: "settings" },
-          ],
-        });
-      }
-      return { status: "failed", error: e instanceof Error ? e : new Error(String(e)) };
-    }
-  }
-
   private isUtilityLifecycleActive(generation: number): boolean {
     return !this.utilityLifecycleEnded && (this.utilityLifecycleGeneration ?? 0) === generation;
   }
@@ -1208,18 +1099,6 @@ export default class ClaudeCompanionPlugin extends Plugin {
     if (!this.isUtilityLifecycleActive(generation)) {
       throw new Error("Companion unloaded while utility work was in flight; the result was discarded without writing.");
     }
-  }
-
-  private markEnrichRecentlyWritten(path: string, lifecycleGeneration = this.utilityLifecycleGeneration ?? 0): void {
-    if (!this.isUtilityLifecycleActive(lifecycleGeneration)) return;
-    this.enrichRecentlyWritten.add(path);
-    const previous = this.enrichRecentlyWrittenExpiryTimers.get(path);
-    if (previous !== undefined) window.clearTimeout(previous);
-    const timer = window.setTimeout(() => {
-      this.enrichRecentlyWrittenExpiryTimers.delete(path);
-      this.enrichRecentlyWritten.delete(path);
-    }, 5000);
-    this.enrichRecentlyWrittenExpiryTimers.set(path, timer);
   }
 
   /**
@@ -1246,7 +1125,7 @@ export default class ClaudeCompanionPlugin extends Plugin {
       for (const file of files) {
         const content = await this.app.vault.cachedRead(file);
         if (!/^source_enriched:\s*true\s*$/m.test(content)) {
-          const outcome = await this.enrichFile(file);
+          const outcome = await this.enrichment().enrichFile(file);
           if (outcome.status !== "enriched") {
             const detail = outcome.status === "failed" ? outcome.error.message : outcome.reason;
             new Notice(`Organizing stopped — ${detail}`);
@@ -1304,7 +1183,7 @@ export default class ClaudeCompanionPlugin extends Plugin {
             const file = this.app.vault.getAbstractFileByPath(move.from);
             if (!(file instanceof TFile)) continue;
             const dir = move.to.slice(0, move.to.lastIndexOf("/"));
-            await this.ensureFolder(dir);
+            await ensureVaultFolder(this.app, dir);
             await this.app.fileManager.renameFile(file, move.to);
             moved++;
           }
@@ -1458,7 +1337,7 @@ export default class ClaudeCompanionPlugin extends Plugin {
       for (const file of files) {
         const content = await this.app.vault.cachedRead(file);
         if (/^source_enriched:\s*true\s*$/m.test(content)) continue;
-        const outcome = await this.runEnrich(file, false);
+        const outcome = await this.enrichment().runEnrich(file, false);
         if (outcome.status === "failed") throw outcome.error;
         if (outcome.status === "skipped") throw new Error(outcome.reason);
       }
@@ -1503,7 +1382,7 @@ export default class ClaudeCompanionPlugin extends Plugin {
 
       const triagePath = normalizePath(`${folder}/Triage.md`);
       const board = renderTriageNote(groups, new Map(notes.map((n) => [n.path, n])), new Date().toISOString());
-      this.markEnrichRecentlyWritten(triagePath);
+      this.enrichment().markEnrichRecentlyWritten(triagePath);
       const existing = this.app.vault.getAbstractFileByPath(triagePath);
       if (existing instanceof TFile) await this.app.vault.modify(existing, board);
       else await this.app.vault.create(triagePath, board);
@@ -1561,23 +1440,18 @@ export default class ClaudeCompanionPlugin extends Plugin {
   }
 
   override onunload(): void {
+    for (const dispose of [...(this.disposables ?? [])].reverse()) dispose();
+    this.disposables = [];
+    this.settingsListeners?.clear();
     void this.closeCliSessions();
     this._activity?.dispose();
     this.utilityLifecycleEnded = true;
     this.utilityLifecycleGeneration = (this.utilityLifecycleGeneration ?? 0) + 1;
-    this.sourceCaptureConsentModal?.close();
-    this.sourceCaptureConsentModal = null;
+    this._enrichment?.destroy();
     this.mobileUtilityFallbackApproval = undefined;
     this.mobileUtilityFallbackModal?.close();
     this.mobileUtilityFallbackModal = null;
     this.mobileUtilityFallbackConsentInFlight = null;
-    for (const timer of this.enrichTimers?.values() ?? []) window.clearTimeout(timer);
-    this.enrichTimers?.clear();
-    this.enrichPending?.clear();
-    this._enrichmentCoordinator = undefined;
-    for (const timer of this.enrichRecentlyWrittenExpiryTimers?.values() ?? []) window.clearTimeout(timer);
-    this.enrichRecentlyWrittenExpiryTimers?.clear();
-    this.enrichRecentlyWritten?.clear();
     for (const timer of this.clipperVerificationTimers?.values() ?? []) window.clearTimeout(timer);
     this.clipperVerificationTimers?.clear();
     this._intelligenceCoordinator?.cancel();
@@ -1591,18 +1465,13 @@ export default class ClaudeCompanionPlugin extends Plugin {
     this._viewIntelligenceCoordinators?.clear();
     for (const coordinator of this._viewDiscoveryCoordinators ?? []) { coordinator.cancel(); coordinator.clearCache(); }
     this._viewDiscoveryCoordinators?.clear();
-    for (const coordinator of this.buildCoordinators?.values() ?? []) void coordinator.dispose();
-    this.buildCoordinators?.clear();
-    this.buildRunListeners?.clear();
+    this._build?.destroy();
     this.mcpLifecycleEnded = true;
     this.mcpLifecycleGeneration = (this.mcpLifecycleGeneration ?? 0) + 1;
-    void this.mcpServer?.stop();
-    this.mcpServer = null;
+    this._mcpBridge?.destroy();
     void this._externalMcp?.close();
     this._externalMcp = null;
-    this._builtinEmbedder?.terminate();
-    this._builtinEmbedder = null;
-    if (this.reindexTimer !== null) window.clearTimeout(this.reindexTimer);
+    this._semantic?.destroy();
     if (this._ontologyReloadTimer !== null) window.clearTimeout(this._ontologyReloadTimer);
     if (this.researchRefreshTimer !== null) window.clearTimeout(this.researchRefreshTimer);
     if (this.inboxBadgeTimer !== null) window.clearTimeout(this.inboxBadgeTimer);
@@ -1673,8 +1542,7 @@ export default class ClaudeCompanionPlugin extends Plugin {
       semanticEnabled: this.settings.semanticEnabled,
       embeddingEngine: this.settings.embeddingEngine,
       embeddingModel,
-      embeddingHealth: this.settings.semanticEnabled ? (this._indexer ? "Ready" : "Index not built yet") : "Disabled",
-      indexHealth: this._indexer ? "Ready" : "Not built yet",
+      ...this.semantic().indexerHealth(),
       memoryEnabled: this.settings.memoryEnabled,
       memoryFolder: this.settings.memoryFolder,
       memoryAutoConsolidate: this.settings.memoryAutoConsolidate,
@@ -1727,7 +1595,7 @@ export default class ClaudeCompanionPlugin extends Plugin {
       case "embedding-settings": this.openCompanionSettings(); return;
       case "rebuild-index":
       case "retry-index": await this.rebuildSemanticIndex(); return;
-      case "consolidate-memory": await this.consolidateMemory(); return;
+      case "consolidate-memory": await this.memory().consolidateMemory(); return;
       case "clippings-inbox": await this.activateInboxView(); return;
       case "review-inbox-failures": await this.activateInboxView(); return;
       case "utility-settings": this.openCompanionSettings(); return;
@@ -1822,7 +1690,8 @@ export default class ClaudeCompanionPlugin extends Plugin {
     if (!Platform.isMobile) {
       try {
         configPath = claudeDesktopConfigPath(platform, env.HOME || env.USERPROFILE || "", { APPDATA: env.APPDATA });
-      } catch {
+      } catch (e) {
+        console.debug("Claude Companion: could not resolve Desktop config path", e);
         configPath = undefined;
       }
     }
@@ -1870,22 +1739,13 @@ export default class ClaudeCompanionPlugin extends Plugin {
   }
 
   embeddingRecovery(error: unknown): EmbeddingRecovery {
-    const endpoint = this.settings.embeddingEngine === "ollama"
-      ? this.settings.ollamaHost
-      : this.settings.embeddingEngine === "custom"
-        ? this.settings.openaiCompatHost
-        : undefined;
-    return classifyEmbeddingFailure(error, {
-      engine: this.settings.embeddingEngine,
-      isMobile: Platform.isMobile,
-      ...(endpoint ? { endpoint } : {}),
-    });
+    return this.semantic().embeddingRecovery(error);
   }
 
   async runActivityRecovery(activityId: string, actionId: string): Promise<void> {
     if (activityId.startsWith("chat-turn:")) {
       const conversationId = activityId.slice("chat-turn:".length);
-      const conversation = this.convState.conversations.find(({ id }) => id === conversationId);
+      const conversation = this.conversations().list().find(({ id }) => id === conversationId);
       if (!conversation) throw new Error("That conversation no longer exists.");
       if (actionId === "stop-chat-turn") {
         if (!conversation.activeTurn) return;
@@ -1936,12 +1796,12 @@ export default class ClaudeCompanionPlugin extends Plugin {
     this.convState = isNamespacedData(raw)
       ? fromPersisted({ conversations: (raw).conversations, activeId: (raw).activeConversationId })
       : emptyState();
-    this.restoreChatTurnActivities();
+    this.conversations().restoreTurnActivities();
     this.researchDeskPreferences = normalizeDeskPreferenceMap(isNamespacedData(raw) ? (raw).researchDeskPreferences : undefined);
-    const runs = restoreBuildRuns(isNamespacedData(raw) ? raw.buildRuns : undefined);
-    this.buildRuns = Object.fromEntries(runs.map((run) => [run.id, run]));
-    const savedActive = isNamespacedData(raw) ? raw.activeBuildRunId : null;
-    this.activeBuildRunId = typeof savedActive === "string" && this.buildRuns[savedActive] ? savedActive : runs.at(-1)?.id ?? null;
+    this.build().restoreState(
+      isNamespacedData(raw) ? raw.buildRuns : undefined,
+      isNamespacedData(raw) ? raw.activeBuildRunId : null,
+    );
 
     // Any plaintext credential still in data.json moves to the secret store now,
     // then the file is rewritten without it. Must run after buildRuns is restored:
@@ -1967,8 +1827,7 @@ export default class ClaudeCompanionPlugin extends Plugin {
       conversations: this.convState.conversations,
       activeConversationId: this.convState.activeId,
       researchDeskPreferences: this.researchDeskPreferences,
-      buildRuns: Object.values(this.buildRuns ?? {}),
-      activeBuildRunId: this.activeBuildRunId,
+      ...this.build().serializeState(),
     })) as PersistedData;
     const result = (this.persistChain ?? Promise.resolve()).catch(() => {}).then(() => this.saveData(data));
     this.persistChain = result.catch(() => {});
@@ -1987,186 +1846,63 @@ export default class ClaudeCompanionPlugin extends Plugin {
       this._mcpServersSnapshot = serversJson;
       if (this._externalMcp) void this._externalMcp.close();
     }
-    // Rebuild the indexer if the embedding engine/model or enabled state changed.
-    const activeEmbedder = embedderId(this.settings.embeddingEngine, this.settings.embeddingModel, this.settings.builtinEmbeddingModel, this.settings.openaiCompatEmbeddingModel);
-    if (this.indexerModel !== activeEmbedder || (!this.settings.semanticEnabled && this._indexer)) {
-      this.invalidateIndexer();
-    }
-    // Engine no longer builtin → don't leave its worker idling.
-    if (this.settings.embeddingEngine !== "builtin" && this._builtinEmbedder) {
-      this._builtinEmbedder.terminate();
-      this._builtinEmbedder = null;
-    }
+    this._semantic?.onSettingsChanged();
     this.refreshViews();
     await this.syncMcpServer();
+    for (const listener of this.settingsListeners ?? []) listener();
   }
 
   // ---------- conversation history ----------
 
-  private nextConversationId(): string {
-    return `c${Date.now().toString(36)}-${(this.convSeq++).toString(36)}`;
-  }
-
   listConversations(): Conversation[] {
-    return this.convState.conversations;
+    return this.conversations().list();
   }
 
   getActiveConversation(): Conversation | null {
-    return getActive(this.convState);
+    return this.conversations().getActive();
   }
 
-  /**
-   * Persist the current message list into the active conversation, creating one
-   * on first save. Returns the active conversation id (or null when there is
-   * nothing to save). Best-effort: a save failure never blocks the chat.
-   */
   async saveActiveConversation(messages: ChatMessage[]): Promise<string | null> {
-    if (messages.length === 0) return this.convState.activeId;
-    const base = getActive(this.convState) ?? newConversation(this.nextConversationId(), Date.now());
-    const updated = touch(base, messages, Date.now());
-    this.convState = saveConversation(this.convState, updated, this.settings.maxConversations);
-    try {
-      await this.persist();
-    } catch (e) {
-      console.error("[Claude Companion] failed to save conversation", e);
-    }
-    return updated.id;
+    return this.conversations().saveActive(messages);
   }
 
   async beginActiveConversationTurn(
     messages: ChatMessage[],
     input: { backend: string; model: string; mode: ChatTurnMode },
   ): Promise<{ conversationId: string; turnId: string }> {
-    const previousState = this.convState;
-    const conversationId = this.activeConversationId();
-    const turnId = crypto.randomUUID();
-    const now = Date.now();
-    this.convState = startConversationTurn(this.convState, conversationId, messages, {
-      id: turnId,
-      state: "running",
-      backend: input.backend,
-      model: input.model,
-      mode: input.mode,
-      userMessageIndex: messages.length - 1,
-      createdAt: now,
-      updatedAt: now,
-    }, this.settings.maxConversations);
-    try {
-      await this.persist();
-    } catch (error) {
-      this.convState = previousState;
-      throw error;
-    }
-    const title = this.getActiveConversation()?.title ?? "Chat request";
-    const activityId = this.chatActivityId(conversationId);
-    this.activity.start({ id: activityId, kind: "chat-turn", title });
-    this.activity.update(activityId, {
-      currentItem: input.backend === "claude-cli" ? "Claude Code is working" : "Response is running",
-      recovery: [
-        { id: "open-chat", label: "Open Chat", kind: "open" },
-        { id: "stop-chat-turn", label: "Stop", kind: "stop" },
-      ],
-    });
-    return { conversationId, turnId };
+    return this.conversations().beginTurn(messages, input);
   }
 
   registerActiveChatTurn(conversationId: string, turnId: string, stop: () => void): () => void {
-    return this.chatTurnLifecycle().register(conversationId, turnId, stop);
+    return this.conversations().registerTurn(conversationId, turnId, stop);
   }
 
   async stopActiveChatTurn(conversationId: string, turnId: string): Promise<void> {
-    const turn = this.convState.conversations.find(({ id }) => id === conversationId)?.activeTurn;
-    if (!turn || turn.id !== turnId || turn.state === "interrupted") return;
-    this.convState = settleConversationTurn(this.convState, conversationId, turnId, "interrupted", Date.now(), "Stopped by user");
-    this.activity.update(this.chatActivityId(conversationId), {
-      state: "paused",
-      currentItem: "Interrupted — review any partial changes before resuming",
-      recovery: [
-        { id: "open-chat", label: "Open Chat", kind: "open" },
-        { id: "resume-chat-turn", label: "Resume", kind: "resume" },
-      ],
-    });
-    try {
-      await this.persist();
-    } finally {
-      this.chatTurnLifecycle().stop(conversationId, turnId);
-    }
+    return this.conversations().stopTurn(conversationId, turnId);
   }
 
   async completeActiveConversationTurn(conversationId: string, turnId: string, messages: ChatMessage[]): Promise<void> {
-    const conversation = this.convState.conversations.find(({ id }) => id === conversationId);
-    if (!conversation?.activeTurn || conversation.activeTurn.id !== turnId || conversation.activeTurn.state !== "running") return;
-    const previousState = this.convState;
-    this.convState = saveConversation(this.convState, touch(conversation, messages, Date.now()), this.settings.maxConversations);
-    this.convState = clearConversationTurn(this.convState, conversationId, turnId, Date.now());
-    try {
-      await this.persist();
-    } catch (error) {
-      this.convState = previousState;
-      throw error;
-    }
-    this.activity.dismiss(this.chatActivityId(conversationId));
+    return this.conversations().completeTurn(conversationId, turnId, messages);
   }
 
   async interruptActiveConversationTurn(conversationId: string, turnId: string, messages: ChatMessage[], error = "Interrupted"): Promise<void> {
-    const conversation = this.convState.conversations.find(({ id }) => id === conversationId);
-    if (!conversation?.activeTurn || conversation.activeTurn.id !== turnId) return;
-    this.convState = saveConversation(this.convState, touch(conversation, messages, Date.now()), this.settings.maxConversations);
-    this.convState = settleConversationTurn(this.convState, conversationId, turnId, "interrupted", Date.now(), error);
-    await this.persist();
-    this.activity.update(this.chatActivityId(conversationId), {
-      state: "paused",
-      currentItem: "Interrupted — review any partial changes before resuming",
-      recovery: [
-        { id: "open-chat", label: "Open Chat", kind: "open" },
-        { id: "resume-chat-turn", label: "Resume", kind: "resume" },
-      ],
-    });
+    return this.conversations().interruptTurn(conversationId, turnId, messages, error);
   }
 
-  private chatActivityId(conversationId: string): string { return `chat-turn:${conversationId}`; }
-
-  private restoreChatTurnActivities(): void {
-    for (const conversation of this.convState.conversations) {
-      if (!conversation.activeTurn) continue;
-      const id = this.chatActivityId(conversation.id);
-      this.activity.start({ id, kind: "chat-turn", title: conversation.title });
-      this.activity.update(id, {
-        state: conversation.activeTurn.state === "failed" ? "needs-attention" : "paused",
-        currentItem: conversation.activeTurn.error ?? "Interrupted — review any partial changes before resuming",
-        recovery: [
-          { id: "open-chat", label: "Open Chat", kind: "open" },
-          { id: "resume-chat-turn", label: "Resume", kind: "resume" },
-        ],
-      });
-    }
-  }
-
-  /** The active conversation id, creating and persisting one when the chat is fresh. */
   activeConversationId(): string {
-    const active = getActive(this.convState);
-    if (active) return active.id;
-    const fresh = newConversation(this.nextConversationId(), Date.now());
-    this.convState = saveConversation(this.convState, fresh, this.settings.maxConversations);
-    return fresh.id;
+    return this.conversations().activeId();
   }
 
-  /** Switch the active conversation (e.g. from the history picker). */
   async setActiveConversation(id: string): Promise<Conversation | null> {
-    this.convState = setActive(this.convState, id);
-    await this.persist();
-    return getActive(this.convState);
+    return this.conversations().setActive(id);
   }
 
-  /** Start a fresh conversation (the current one is already auto-saved). */
   async startNewConversation(): Promise<void> {
-    this.convState = setActive(this.convState, null);
-    await this.persist();
+    return this.conversations().startNew();
   }
 
   async deleteConversation(id: string): Promise<void> {
-    this.convState = removeConversation(this.convState, id);
-    await this.persist();
+    return this.conversations().delete(id);
   }
 
   private async browseConversations(): Promise<void> {
@@ -2191,113 +1927,24 @@ export default class ClaudeCompanionPlugin extends Plugin {
 
   // ---------- MCP bridge ----------
 
-  /**
-   * Start, stop, or restart the MCP server to match current settings. Serialized
-   * (the settings UI calls saveSettings → this on every keystroke, un-awaited)
-   * and idempotent (skips a restart when the running server already matches), so
-   * overlapping syncs can't EADDRINUSE the fixed port and silently drop the bridge.
-   */
   syncMcpServer(): Promise<void> {
-    this.mcpSyncChain = this.mcpSyncChain.catch(() => {}).then(() => this.applyMcpServer());
-    return this.mcpSyncChain;
+    return this.mcpBridge().sync();
   }
 
-  /** The bearer token the server validates against: env var wins over stored. */
   private resolvedMcpToken(): string {
-    const env = (window as { process?: { env?: Record<string, string | undefined> } }).process?.env ?? {};
-    return resolveMcpToken(env, this.settings.mcpToken).token;
-  }
-
-  /** Desired server signature for the current settings, or null when it shouldn't run. */
-  private mcpDesiredSignature(): string | null {
-    const s = this.settings;
-    if (Platform.isMobile || !s.mcpEnabled) return null;
-    return JSON.stringify({ port: s.mcpPort, token: this.resolvedMcpToken(), writes: s.mcpAllowWrites, folder: s.mcpWriteFolder });
-  }
-
-  private async applyMcpServer(): Promise<void> {
-    const lifecycleGeneration = this.mcpLifecycleGeneration ?? 0;
-    const desired = this.mcpDesiredSignature();
-    // Already running with the same config → nothing to do (avoids churning the
-    // port on unrelated settings changes).
-    if (desired !== null && this.mcpServer?.isRunning() && desired === this.mcpSignature) return;
-
-    if (this.mcpServer) {
-      await this.mcpServer.stop();
-      this.mcpServer = null;
-      this.mcpSignature = null;
-    }
-    // The MCP bridge runs only on desktop — it needs a Node http server, which
-    // Obsidian's mobile runtime lacks. The dynamic import below keeps that code
-    // (and its `http` dependency) from ever loading on mobile.
-    if (desired === null) return;
-
-    const s = this.settings;
-    const toolOpts = {
-      allowWrites: s.mcpAllowWrites,
-      defaultFolder: s.mcpWriteFolder,
-      semantic: (q: string, k: number) => this.semanticSearch(q, k),
-      ontology: () => this.ontology(),
-      ontologyFolder: () => this.settings.ontologyFolder,
-      zotero: () => this.zoteroLibrary(),
-      ...this.webToolImpls(),
-    };
-    if (!this.vaultTools) {
-      this.vaultTools = new VaultTools(this.app, toolOpts);
-    } else {
-      this.vaultTools.setOptions(toolOpts);
-    }
-
-    const { McpHttpServer } = await import("./mcp/server");
-    const server = new McpHttpServer(
-      {
-        port: s.mcpPort,
-        token: this.resolvedMcpToken(),
-        serverInfo: { name: "obsidian-vault", version: "0.2.0" },
-        resources: vaultResourceProvider(this.app),
-        prompts: catalogPromptProvider(() => this.promptTemplates()),
-      },
-      this.vaultTools,
-      (level, message) => { if (level === "error") console.error("[Claude Companion MCP]", message); },
-    );
-    try {
-      await server.start();
-      if (
-        this.mcpLifecycleEnded
-        || (this.mcpLifecycleGeneration ?? 0) !== lifecycleGeneration
-        || this.mcpDesiredSignature() !== desired
-      ) {
-        await server.stop();
-        return;
-      }
-      this.mcpServer = server;
-      this.mcpSignature = desired;
-    } catch (e) {
-      new Notice(`MCP bridge failed to start on port ${s.mcpPort}: ${e instanceof Error ? e.message : String(e)}`);
-    }
+    return this.mcpBridge().resolvedToken();
   }
 
   mcpRunning(): boolean {
-    return this.mcpServer?.isRunning() ?? false;
+    return this.mcpBridge().running();
   }
 
   mcpStats(): { running: boolean; port: number | null; activeRequests: number; handledRequests: number } {
-    const stats = this.mcpServer?.stats() ?? { activeRequests: 0, handledRequests: 0 };
-    return {
-      running: this.mcpRunning(),
-      port: this.mcpServer?.address()?.port ?? null,
-      activeRequests: stats.activeRequests,
-      handledRequests: stats.handledRequests,
-    };
+    return this.mcpBridge().stats();
   }
 
   async setMcpEnabled(enabled: boolean): Promise<void> {
-    this.settings.mcpEnabled = enabled;
-    // Only mint a stored token when neither the env var nor a stored token exists.
-    if (enabled && !this.resolvedMcpToken()) {
-      this.settings.mcpToken = generateToken();
-    }
-    await this.saveSettings();
+    return this.mcpBridge().setEnabled(enabled);
   }
 
   refreshViews(): void {
@@ -2418,51 +2065,9 @@ export default class ClaudeCompanionPlugin extends Plugin {
     for (const coordinator of this._viewDiscoveryCoordinators ?? []) coordinator.clearCache();
   }
 
-  /** The built-in engine's embedder (worker-backed); created lazily, torn down on unload. */
-  builtinEmbedder(): TransformersEmbedder {
-    const model = builtinModelById(this.settings.builtinEmbeddingModel);
-    // Model selection changed → swap the worker pipeline (and re-probe the cache).
-    if (this._builtinEmbedder && this._builtinEmbedder.id !== model.id) {
-      this._builtinEmbedder.terminate();
-      this._builtinEmbedder = null;
-      this._builtinModelCached = false;
-    }
-    // Runtime-compatible: WorkerLike is the DOM Worker surface the embedder uses;
-    // only the onmessage/onerror event-param types differ (narrower here).
-    if (!this._builtinEmbedder) this._builtinEmbedder = new TransformersEmbedder(() => createEmbedWorker() as unknown as WorkerLike, model);
-    return this._builtinEmbedder;
-  }
-
-  /** Whether the selected built-in model's weights are already in the local cache (a load needs no network). */
-  async builtinModelCached(): Promise<boolean> {
-    if (this._builtinModelCached) return true;
-    const repo = builtinModelById(this.settings.builtinEmbeddingModel).hfRepo;
-    if (await hasCachedModel(typeof caches !== "undefined" ? caches : undefined, repo)) this._builtinModelCached = true;
-    return this._builtinModelCached;
-  }
-
-  /**
-   * Delete the downloaded built-in model (+ ORT runtime) from the local cache
-   * and drop the loaded pipeline. Returns the number of cache entries deleted.
-   */
-  async clearBuiltinModel(): Promise<number> {
-    this._builtinEmbedder?.terminate();
-    this._builtinEmbedder = null;
-    const deleted = await clearCachedModel(typeof caches !== "undefined" ? caches : undefined);
-    this._builtinModelCached = false;
-    return deleted;
-  }
-
-  /**
-   * Consent gate for IMPLICIT embed paths (incremental reindex, query-time
-   * search): true when embedding cannot trigger a network download — Ollama
-   * engine, model already loaded, or weights already cached (loads offline).
-   * Explicit paths (rebuild command, settings Download button) have their own gates.
-   */
-  private async canEmbedWithoutDownload(): Promise<boolean> {
-    if (this.settings.embeddingEngine !== "builtin") return true;
-    return this.builtinEmbedder().backend() !== null || (await this.builtinModelCached());
-  }
+  builtinEmbedder(): TransformersEmbedder { return this.semantic().builtinEmbedder(); }
+  async builtinModelCached(): Promise<boolean> { return this.semantic().builtinModelCached(); }
+  async clearBuiltinModel(): Promise<number> { return this.semantic().clearBuiltinModel(); }
 
   /** Lazy ontology registry; null while the feature is disabled. IO is wired here; logic is pure. */
   ontology(): OntologyRegistry | null {
@@ -2488,7 +2093,7 @@ export default class ClaudeCompanionPlugin extends Plugin {
   /** Create the default ontology schema notes (never overwrites), then reload and report. */
   private async seedOntology(): Promise<void> {
     const folder = normalizePath(this.settings.ontologyFolder);
-    await this.ensureFolder(folder);
+    await ensureVaultFolder(this.app, folder);
     let created = 0;
     for (const f of seedFiles()) {
       const path = normalizePath(`${folder}/${f.fileName}`);
@@ -2778,8 +2383,8 @@ export default class ClaudeCompanionPlugin extends Plugin {
           temperature: 0.2,
         });
         body = parseLintResponse(text, body) ?? body;
-      } catch {
-        // Lint is best-effort — keep whatever the earlier steps produced.
+      } catch (e) {
+        console.debug("Claude Companion: lint pass failed, keeping prior result", e);
       }
     }
     const edits = diffToEdits(content, body);
@@ -2894,7 +2499,7 @@ export default class ClaudeCompanionPlugin extends Plugin {
             const file = this.app.vault.getAbstractFileByPath(move.from);
             if (!(file instanceof TFile)) continue;
             const dir = move.to.slice(0, move.to.lastIndexOf("/"));
-            await this.ensureFolder(dir);
+            await ensureVaultFolder(this.app, dir);
             await this.app.fileManager.renameFile(file, move.to);
             moved++;
           }
@@ -2921,7 +2526,11 @@ export default class ClaudeCompanionPlugin extends Plugin {
     const opts = {
       allowWrites: this.settings.agentAllowWrites,
       defaultFolder: this.settings.mcpWriteFolder,
-      semantic: (q: string, k: number) => this.semanticSearch(q, k),
+      semantic: (q: string, k: number, accept?: (path: string) => boolean) => this.semanticSearch(q, k, accept),
+      related: async (p: string, k: number) => {
+        if (!this.settings.semanticEnabled) throw new Error(SEMANTIC_OFF_MESSAGE);
+        return this.relatedForTools(p, k);
+      },
       ontology: () => this.ontology(),
       ontologyFolder: () => this.settings.ontologyFolder,
       zotero: () => this.zoteroLibrary(),
@@ -2952,7 +2561,10 @@ export default class ClaudeCompanionPlugin extends Plugin {
         port: 0,
         token,
         serverInfo: { name: "obsidian-vault", version: "0.2.0" },
-        resources: vaultResourceProvider(this.app),
+        resources: composeResourceProviders(
+          substrateResourceProvider(this.app, { call: (n, a) => this.agentTools().call(n, a), memoryPath: () => this.memoryNotePath() }),
+          vaultResourceProvider(this.app),
+        ),
         prompts: catalogPromptProvider(() => this.promptTemplates()),
       },
       registry,
@@ -3035,15 +2647,7 @@ export default class ClaudeCompanionPlugin extends Plugin {
   }
 
   async setConversationCliSession(conversationId: string, sessionId: string): Promise<void> {
-    this.convState = {
-      ...this.convState,
-      conversations: this.convState.conversations.map((c) => {
-        if (c.id !== conversationId) return c;
-        const updated = withCliSession(c, sessionId);
-        return updated.activeTurn ? { ...updated, activeTurn: { ...updated.activeTurn, cliSessionId: sessionId, updatedAt: Date.now() } } : updated;
-      }),
-    };
-    await this.persist();
+    return this.conversations().setCliSession(conversationId, sessionId);
   }
 
   /**
@@ -3126,9 +2730,8 @@ export default class ClaudeCompanionPlugin extends Plugin {
         const body = stripFrontmatter(await this.app.vault.cachedRead(f));
         const template = parseTemplateNote(f.path, f.basename, fm, body);
         if (template) out.push(template);
-      } catch {
-        // A transiently unreadable or vanished template must not remove every
-        // other slash command from the catalog.
+      } catch (e) {
+        console.debug("Claude Companion: skipping unreadable template", f.path, e);
       }
     }
     out.sort((a, b) => a.name.localeCompare(b.name));
@@ -3138,7 +2741,7 @@ export default class ClaudeCompanionPlugin extends Plugin {
   /** Scaffold a template note with the frontmatter schema and open it for editing. */
   async createPromptTemplate(): Promise<void> {
     const folder = normalizePath(this.settings.templatesFolder);
-    await this.ensureFolder(folder);
+    await ensureVaultFolder(this.app, folder);
     let path = normalizePath(`${folder}/My template.md`);
     for (let i = 2; this.app.vault.getAbstractFileByPath(path); i++) {
       path = normalizePath(`${folder}/My template ${i}.md`);
@@ -3164,377 +2767,18 @@ export default class ClaudeCompanionPlugin extends Plugin {
 
   // ---------- semantic index (local embeddings) ----------
 
-  /** Absolute-ish vault-relative path to the persisted index, in the plugin dir. */
-  private indexPath(): string {
-    return `${this.manifest.dir ?? `.obsidian/plugins/${this.manifest.id}`}/semantic-index.json`;
-  }
-
-  /**
-   * The live semantic indexer, or null when semantic search is off. Rebuilds the
-   * instance if the embedding model changed. IO is wired here; logic is pure.
-   */
-  indexer(): SemanticIndexer | null {
-    if (!this.settings.semanticEnabled) return null;
-    const model = embedderId(this.settings.embeddingEngine, this.settings.embeddingModel, this.settings.builtinEmbeddingModel, this.settings.openaiCompatEmbeddingModel);
-    if (this._indexer && this.indexerModel === model) return this._indexer;
-
-    const adapter = this.app.vault.adapter;
-    const path = this.indexPath();
-    const embedder: Embedder =
-      this.settings.embeddingEngine === "builtin"
-        ? this.builtinEmbedder()
-        : this.settings.embeddingEngine === "custom"
-          ? new OllamaEmbedder(model, (_m, input) => this.router().openaiCompat.embed(this.settings.openaiCompatEmbeddingModel, input))
-          : new OllamaEmbedder(this.settings.embeddingModel, (m, input) => this.router().ollama.embed(m, input));
-    this._indexer = new SemanticIndexer({
-      embeddingModel: model,
-      listMarkdown: (): IndexFile[] =>
-        this.app.vault.getMarkdownFiles().map((f) => ({ path: f.path, mtime: f.stat.mtime, size: f.stat.size })),
-      read: async (p: string) => {
-        const f = this.app.vault.getAbstractFileByPath(p);
-        return f instanceof TFile ? this.app.vault.cachedRead(f) : "";
-      },
-      ...(this.settings.semanticIndexPdfs
-        ? {
-            listPdf: (): IndexFile[] =>
-              this.app.vault.getFiles().filter((f) => f.extension === "pdf").map((f) => ({ path: f.path, mtime: f.stat.mtime, size: f.stat.size })),
-            readPdfPages: async (p: string) => {
-              const f = this.app.vault.getAbstractFileByPath(p);
-              if (!(f instanceof TFile)) return null;
-              try {
-                // Lazy: pdf.js and its inlined worker are the largest thing in the
-                // bundle, and a vault with no PDFs must never pay for them.
-                const { loadPdf } = await import("./semantic/pdfjs");
-                return await extractPdfPages(loadPdf, await this.app.vault.readBinary(f));
-              } catch {
-                return null; // encrypted/corrupt PDFs skip, they never abort a build
-              }
-            },
-          }
-        : {}),
-      embed: async (input: string[]) => {
-        // Belt-and-braces consent gate: no indexer path (build, update, query,
-        // related-notes fallback) may implicitly fetch weights from the network.
-        if (!(await this.canEmbedWithoutDownload())) {
-          throw new Error("Built-in embedding model not downloaded — download it in Companion settings.");
-        }
-        return embedder.embed(input);
-      },
-      ...(Platform.isMobile && this.settings.embeddingEngine === "builtin" ? { embedBatchSize: 1 } : {}),
-      onPhase: (phase, fields) => this.enrichDiagnostics.log(phase, fields),
-      ...(Platform.isMobile
-        ? { maxInputBytes: (p: string) => p.toLowerCase().endsWith(".pdf") ? MOBILE_SEMANTIC_PDF_MAX_BYTES : MOBILE_SOURCE_NOTE_MAX_BYTES }
-        : {}),
-      load: async () => {
-        try {
-          if (await adapter.exists(path)) return JSON.parse(await adapter.read(path)) as IndexData;
-        } catch {
-          /* corrupt/missing → rebuild from empty */
-        }
-        return null;
-      },
-      save: async (data: IndexData) => {
-        this.enrichDiagnostics.log("serialize-start", { notes: Object.keys(data.notes).length });
-        const json = JSON.stringify(data);
-        this.enrichDiagnostics.log("save-start", { bytes: json.length });
-        await adapter.write(path, json);
-        this.enrichDiagnostics.log("save-done", { bytes: json.length });
-      },
-    });
-    this.indexerModel = model;
-    return this._indexer;
-  }
-
-  /**
-   * One-time offer to download the on-device embedding model. Semantic search
-   * ships on, but no path may fetch weights implicitly — so the first run asks.
-   * Skips when the model is already loaded/cached or the engine is Ollama.
-   */
-  async promptSemanticModelIfNeeded(): Promise<void> {
-    if (this.settings.embeddingEngine !== "builtin") return;
-    if (this.settings.semanticModelPrompted) return;
-    if (this.builtinEmbedder().backend() !== null) return;
-    if (await this.builtinModelCached()) return; // loads on first use, offline
-    this.settings.semanticModelPrompted = true;
-    await this.saveSettings();
-    const model = builtinModelById(this.settings.builtinEmbeddingModel);
-    await new Promise<void>((resolve) => {
-      new ChoiceModal<"download" | "skip">(this.app, {
-        title: "Set up semantic search",
-        message:
-          "Companion can index your vault on-device so vault search and related notes work by meaning, not just keywords. " +
-          `This needs a one-time download (~${model.approxDownloadMB} MB from huggingface.co + ~23 MB ONNX runtime from cdn.jsdelivr.net; cached and fully offline afterwards). ` +
-          "Until then, search stays keyword-only.",
-        buttons: [
-          { label: `Download (~${model.approxDownloadMB} MB)`, value: "download", cta: true },
-          { label: "Not now", value: "skip" },
-        ],
-        fallback: "skip",
-        onChoice: (c) => {
-          if (c === "download") void this.downloadBuiltinModelAndIndex();
-          resolve();
-        },
-      }).open();
-    });
-  }
-
-  /** Download the built-in embedding model with progress, then build the index. */
-  private async downloadBuiltinModelAndIndex(): Promise<void> {
-    const model = builtinModelById(this.settings.builtinEmbeddingModel);
-    const activityId = this.activity.start({
-      id: `embedding-download:${model.id}`,
-      kind: "embedding-download",
-      title: "Downloading embedding model",
-      total: 100,
-    });
-    try {
-      await this.builtinEmbedder().download((progress) => this.activity.update(activityId, {
-        completed: progress.percent,
-        total: 100,
-        currentItem: progress.file,
-      }));
-      this.activity.finish(activityId, { completed: 100, succeeded: 1 });
-      await this.rebuildSemanticIndex();
-    } catch (error) {
-      const recovery = this.embeddingRecovery(error);
-      this.activity.fail(activityId, {
-        failed: 1,
-        technicalDetails: recovery.technicalDetails,
-        recovery: recovery.actions,
-        details: [{ label: model.hfRepo, message: recovery.message, state: "error" }],
-      });
-    }
-  }
-
-  /** Human-readable label for the active embedding engine/model (Notices, status copy). */
-  private embeddingLabel(): string {
-    if (this.settings.embeddingEngine === "builtin") {
-      return `built-in (${builtinModelById(this.settings.builtinEmbeddingModel).id.replace(/^builtin:/, "")})`;
-    }
-    if (this.settings.embeddingEngine === "custom") {
-      return `${this.settings.openaiCompatEmbeddingModel || "custom endpoint"}`;
-    }
-    return this.settings.embeddingModel;
-  }
-
-  /** Drop the cached indexer (after the embedding model / enabled state changes). */
-  invalidateIndexer(): void {
-    this._indexer = null;
-    this.indexerModel = null;
-  }
-
-  /** Semantic retriever for chat grounding. Returns [] when off or unavailable. */
-  async semanticSearch(query: string, k: number): Promise<{ path: string; text: string }[]> {
-    const ix = this.indexer();
-    if (!ix) return [];
-    if (!(await this.canEmbedWithoutDownload())) return []; // consent gate → keyword-only, same as other fallbacks
-    try {
-      const hits = await ix.search(query, k);
-      return hits.map((h) => ({ path: h.path, text: h.text }));
-    } catch {
-      return []; // Ollama down / model missing → keyword-only, no regression
-    }
-  }
-
-  /** Notes related to a given note (for the Related Notes panel). [] when off. */
-  async relatedNotes(path: string, k: number): Promise<{ path: string; score: number }[]> {
-    const ix = this.indexer();
-    if (!ix) return [];
-    const hits = await ix.related(path, k);
-    return hits.map((h) => ({ path: h.path, score: h.score }));
-  }
-
-  /** Full (re)build of the semantic index, with a progress toast. */
-  async rebuildSemanticIndex(): Promise<void> {
-    const modelId = embedderId(this.settings.embeddingEngine, this.settings.embeddingModel, this.settings.builtinEmbeddingModel, this.settings.openaiCompatEmbeddingModel);
-    const activityId = this.activity.start({
-      id: `semantic-index:${modelId}`,
-      kind: "semantic-index",
-      title: "Building semantic index",
-    });
-    if (!this.settings.semanticEnabled) {
-      this.activity.fail(activityId, {
-        failed: 1,
-        details: [{ label: "Semantic search", message: "Semantic search is turned off.", state: "error" }],
-        recovery: [{ id: "embedding-settings", label: "Open embedding settings", kind: "settings" }],
-      });
-      return;
-    }
-    if (this.settings.embeddingEngine === "ollama") {
-      if (!this.router().ollama.hasCredentials()) {
-        const recovery = this.embeddingRecovery(new Error("Ollama connection unavailable"));
-        this.activity.fail(activityId, {
-          failed: 1,
-          technicalDetails: recovery.technicalDetails,
-          recovery: recovery.actions,
-          details: [{ label: "Ollama", message: recovery.message, state: "error" }],
-        });
-        return;
-      }
-    } else if (!(await this.canEmbedWithoutDownload())) {
-      // Consent gate: embedding with no downloaded model would fetch weights
-      // implicitly. Cached weights pass — they load offline.
-      const recovery = this.embeddingRecovery(new Error("Built-in embedding model not downloaded"));
-      this.activity.fail(activityId, {
-        failed: 1,
-        technicalDetails: recovery.technicalDetails,
-        recovery: recovery.actions,
-        details: [{ label: "Built-in model", message: recovery.message, state: "error" }],
-      });
-      return;
-    }
-    const ix = this.indexer();
-    if (!ix) return;
-    let completed = 0;
-    let total: number | undefined;
-    try {
-      const res = await ix.build({
-        force: true,
-        onProgress: (done, nextTotal) => {
-          completed = done;
-          total = nextTotal;
-          this.activity.update(activityId, { completed: done, total: nextTotal });
-        },
-      });
-      const summary = `${res.indexed} embedded, ${res.skipped} skipped, ${res.removed} pruned`;
-      if (res.failureCount > 0) {
-        const recovery = this.embeddingRecovery(new Error(res.failures[0]?.message ?? "Embedding failed"));
-        this.activity.fail(activityId, {
-          completed: total ?? completed,
-          ...(total === undefined ? {} : { total }),
-          succeeded: res.indexed,
-          failed: res.failureCount,
-          details: res.failures.map(({ path, message }) => ({ path, message })).map(({ path, message }) => ({ label: path, message: classifyEmbeddingFailure(new Error(message), {
-            engine: this.settings.embeddingEngine,
-            isMobile: Platform.isMobile,
-            ...(this.settings.embeddingEngine === "ollama" ? { endpoint: this.settings.ollamaHost } : this.settings.embeddingEngine === "custom" ? { endpoint: this.settings.openaiCompatHost } : {}),
-          }).technicalDetails, state: "error" as const })),
-          technicalDetails: recovery.technicalDetails,
-          recovery: recovery.actions,
-        });
-      } else {
-        this.activity.finish(activityId, {
-          completed: total ?? completed,
-          ...(total === undefined ? {} : { total }),
-          succeeded: res.indexed,
-          details: [{ label: "Index ready", message: summary, state: "success" }],
-        });
-      }
-    } catch (error) {
-      console.error("[Claude Companion] semantic index build failed", error);
-      const recovery = this.embeddingRecovery(error);
-      this.activity.fail(activityId, {
-        failed: 1,
-        technicalDetails: recovery.technicalDetails,
-        recovery: recovery.actions,
-        details: [{ label: this.embeddingLabel(), message: recovery.message, state: "error" }],
-      });
-    }
-  }
-
-  /** Report the semantic index state in a Notice (on/off · counts · model · reach). */
-  async showSemanticIndexStatus(): Promise<void> {
-    if (!this.settings.semanticEnabled) {
-      new Notice("Semantic search is off — turn it on in Companion settings to index your vault.", 7000);
-      return;
-    }
-    const ix = this.indexer();
-    if (!ix) {
-      new Notice("Semantic index is unavailable.", 6000);
-      return;
-    }
-    try {
-      let reach: string;
-      let stats: { notes: number; chunks: number };
-      if (this.settings.embeddingEngine === "builtin") {
-        stats = await ix.stats();
-        const backend = this.builtinEmbedder().backend();
-        reach = backend ? `model ready (${backend === "webgpu" ? "WebGPU" : "WASM"})` : "model not downloaded — download it in settings";
-      } else {
-        const [s, localOk] = await Promise.all([ix.stats(), this.router().localAvailable()]);
-        stats = s;
-        reach = localOk ? "Ollama reachable" : "Ollama unreachable — searches fall back to keyword";
-      }
-      new Notice(`Semantic index · ${stats.notes} notes, ${stats.chunks} chunks · “${this.embeddingLabel()}” · ${reach}`, 9000);
-    } catch (e) {
-      new Notice(`Semantic index status unavailable: ${e instanceof Error ? e.message : String(e)}`, 8000);
-    }
-  }
-
-  /** Queue a single note for incremental re-embed (debounced ~1.5s). */
-  private queueReindex(path: string): void {
-    if (!this.settings.semanticEnabled) return;
-    this.reindexQueue.add(path);
-    if (this.reindexTimer !== null) window.clearTimeout(this.reindexTimer);
-    this.reindexTimer = window.setTimeout(() => void this.flushReindex(), 1500);
-  }
-
-  /** Hold reindexing during a batch; the last release flushes once for every queued note. */
-  suspendReindex(): () => void {
-    this.reindexSuspended++;
-    let released = false;
-    return () => {
-      if (released) return;
-      released = true;
-      this.reindexSuspended--;
-      if (this.reindexSuspended === 0 && this.reindexQueue.size > 0) void this.flushReindex();
-    };
-  }
-
-  private async flushReindex(): Promise<void> {
-    // A suspend-triggered flush can run ahead of the debounce timer; cancel it so it
-    // doesn't fire again later against an already-drained queue.
-    if (this.reindexTimer !== null) { window.clearTimeout(this.reindexTimer); this.reindexTimer = null; }
-    if (this.reindexSuspended > 0) return;
-    const ix = this.indexer();
-    if (!ix) {
-      this.reindexQueue.clear();
-      return;
-    }
-    if (!(await this.canEmbedWithoutDownload())) {
-      // Consent gate: drop the queue (notes re-queue on their next change) and
-      // say so once per session instead of spamming a Notice per save.
-      this.reindexQueue.clear();
-      if (!this.reindexPausedNotified) {
-        this.reindexPausedNotified = true;
-        new Notice("Semantic reindex paused — download the built-in model in settings.");
-      }
-      return;
-    }
-    const paths = Array.from(this.reindexQueue);
-    this.reindexQueue.clear();
-    this.enrichDiagnostics.log("reindex-flush-start", { n: paths.length });
-    const entries = paths.flatMap((p) => {
-      const f = this.app.vault.getAbstractFileByPath(p);
-      return f instanceof TFile ? [{ path: p, mtime: f.stat.mtime, size: f.stat.size }] : [];
-    });
-    if (entries.length === 0) return;
-    let failures: Array<{ path: string; error: unknown }>;
-    try {
-      failures = await ix.updateNotes(
-        entries,
-        Platform.isMobile ? { yieldBetween: () => new Promise<void>((resolve) => window.setTimeout(resolve, 0)) } : {},
-      );
-    } catch (error) {
-      this.enrichDiagnostics.log("reindex-flush-rejected", { n: entries.length });
-      failures = entries.map(({ path }) => ({ path, error }));
-    }
-    for (const { path: p, error } of failures) {
-      console.error(`[Claude Companion] semantic reindex failed for ${p}`, error);
-      const recovery = this.embeddingRecovery(error);
-      const activityId = this.activity.start({
-        id: `semantic-index:incremental:${p}`,
-        kind: "semantic-index",
-        title: "Semantic index needs attention",
-      });
-      this.activity.fail(activityId, {
-        failed: 1,
-        technicalDetails: recovery.technicalDetails,
-        recovery: recovery.actions,
-        details: [{ label: p, message: recovery.message, state: "error" }],
-      });
-    }
-  }
+  indexer(): SemanticIndexer | null { return this.semantic().indexer(); }
+  async promptSemanticModelIfNeeded(): Promise<void> { return this.semantic().promptSemanticModelIfNeeded(); }
+  private async downloadBuiltinModelAndIndex(): Promise<void> { return this.semantic().downloadBuiltinModelAndIndex(); }
+  invalidateIndexer(): void { this.semantic().invalidateIndexer(); }
+  async semanticSearch(query: string, k: number, accept?: (path: string) => boolean): Promise<{ path: string; text: string }[]> { return this.semantic().semanticSearch(query, k, accept); }
+  async relatedNotes(path: string, k: number): Promise<{ path: string; score: number }[]> { return this.semantic().relatedNotes(path, k); }
+  async relatedForTools(path: string, k: number, accept?: (path: string) => boolean): Promise<{ path: string; score: number }[]> { return this.semantic().relatedForTools(path, k, accept); }
+  async rebuildSemanticIndex(): Promise<void> { return this.semantic().rebuildSemanticIndex(); }
+  async showSemanticIndexStatus(): Promise<void> { return this.semantic().showSemanticIndexStatus(); }
+  private queueReindex(path: string): void { this.semantic().queueReindex(path); }
+  suspendReindex(): () => void { return this.semantic().suspendReindex(); }
+  private async canEmbedWithoutDownload(): Promise<boolean> { return this.semantic().canEmbedWithoutDownload(); }
 
   // ---------- view ----------
 
@@ -3590,7 +2834,7 @@ export default class ClaudeCompanionPlugin extends Plugin {
             ...(vm.nextAction ? { nextAction: vm.nextAction.label, nextReason: vm.nextAction.reason } : {}),
           },
         });
-      } catch { /* Fall back to the active note instead of blocking Chat. */ }
+      } catch (e) { console.debug("Claude Companion: research workspace resolution failed, using active note", e); }
     }
     return resolveCompanionWorkspace({ activeNote: { path: active.path, title: active.basename } });
   }
@@ -3608,25 +2852,8 @@ export default class ClaudeCompanionPlugin extends Plugin {
     return adapter instanceof FileSystemAdapter ? adapter.getBasePath() : null;
   }
 
-  /** List this vault's Claude Code sessions (newest first). Desktop-only. */
   async listVaultSessions(): Promise<SessionMeta[]> {
-    const base = this.vaultBasePath();
-    if (!base || Platform.isMobile) return [];
-    // node fs reader lives in the desktop-only module — load it lazily.
-    const { nodeSessionReader, defaultProjectsRoot } = await import("./memory/nodeReader");
-    return excludeSessions(await listSessionsForVault(nodeSessionReader, base, defaultProjectsRoot()), this.convState.conversations.flatMap(cliSessionIds));
-  }
-
-  private ingestDeps() {
-    return {
-      app: this.app,
-      read: async (path: string) => {
-        const { nodeSessionReader } = await import("./memory/nodeReader");
-        return nodeSessionReader.read(path);
-      },
-      folder: this.settings.memoryFolder,
-      baseTags: this.settings.memoryBaseTags,
-    };
+    return this.memory().listVaultSessions();
   }
 
   /** Open the workflows picker; run the chosen workflow in the chat. */
@@ -3645,137 +2872,28 @@ export default class ClaudeCompanionPlugin extends Plugin {
     await view.submitPrompt(wf.prompt, wf.name, ARTIFACT_MAX_TOKENS);
   }
 
-  /** Open the picker; ingest the chosen session. */
   async openSessionPicker(): Promise<void> {
-    if (!this.settings.memoryEnabled) {
-      new Notice("Session memory is disabled in settings.");
-      return;
-    }
-    const sessions = await this.listVaultSessions();
-    if (sessions.length === 0) {
-      new Notice(
-        "No Claude Code sessions found for this vault. Run the `claude` CLI from this vault's folder, then capture.",
-        8000,
-      );
-      return;
-    }
-    new SessionPicker(this.app, sessions, (session) => {
-      void this.captureSession(session);
-    }).open();
+    return this.memory().openSessionPicker();
   }
 
-  /** Ingest one session and report. */
   async captureSession(session: SessionMeta): Promise<void> {
-    try {
-      const res = await ingestSession(this.ingestDeps(), { id: session.id, path: session.path });
-      new Notice(`Captured session · ${res.redactions} secret${res.redactions === 1 ? "" : "s"} redacted`);
-      await this.refreshMemoryView();
-      await this.app.workspace.getLeaf(false).openFile(res.file);
-      if (this.settings.memoryAutoConsolidate) void this.consolidateMemory({ quiet: true });
-    } catch (e) {
-      console.error("[Claude Companion] session capture failed", e);
-      new Notice("Session capture failed — see console.");
-    }
+    return this.memory().captureSession(session);
   }
 
-  /**
-   * Merge recent session digests into the evolving "What Claude Knows" note
-   * (spec 2026-07-05 memory consolidation). Routes through the utility
-   * provider — local Ollama when enabled, else Claude. Idempotent: rewrites
-   * the same note each run from the newest digests + its previous content.
-   */
   async consolidateMemory(opts?: { quiet?: boolean }): Promise<void> {
-    const s = this.settings;
-    if (!s.memoryEnabled) {
-      new Notice("Turn on session memory in Companion settings first.");
-      return;
-    }
-    const folder = normalizePath(s.memoryFolder);
-    const files = this.app.vault.getMarkdownFiles().filter((f) => f.path.startsWith(`${folder}/`));
-    const sources: DigestSource[] = [];
-    for (const f of files) {
-      sources.push({ path: f.path, mtime: f.stat.mtime, content: await this.app.vault.cachedRead(f) });
-    }
-    const digests = selectDigests(sources);
-    if (digests.length === 0) {
-      if (!opts?.quiet) new Notice("No session digests to consolidate yet — capture a session first.");
-      return;
-    }
-
-    const memoryPath = normalizePath(`${folder}/${MEMORY_NOTE_BASENAME}.md`);
-    const existingFile = this.app.vault.getAbstractFileByPath(memoryPath);
-    const existing = existingFile instanceof TFile ? await this.app.vault.cachedRead(existingFile) : null;
-
-    if (!opts?.quiet) new Notice(`Consolidating ${digests.length} session digest${digests.length === 1 ? "" : "s"}…`);
-    try {
-      const { text: raw, provider } = await this.router().complete("utility", {
-        system: "You maintain concise, factual memory notes. Output markdown only.",
-        user: buildConsolidationPrompt(existing, digests.map((d) => d.content)),
-        maxTokens: 4000,
-        temperature: 0.2,
-      });
-      const body = parseConsolidation(raw);
-      const note = renderMemoryNote(body, {
-        updated: new Date().toISOString().slice(0, 10),
-        digestCount: digests.length,
-        baseTags: [...s.memoryBaseTags, "memory"],
-      });
-      if (existingFile instanceof TFile) await this.app.vault.modify(existingFile, note);
-      else await this.app.vault.create(memoryPath, note);
-      new Notice(`Memory consolidated → ${MEMORY_NOTE_BASENAME} (via ${provider.label}).`);
-    } catch (e) {
-      console.error("[Claude Companion] memory consolidation failed", e);
-      if (!opts?.quiet) new Notice(`Memory consolidation failed: ${e instanceof Error ? e.message : String(e)}`);
-    }
+    return this.memory().consolidateMemory(opts);
   }
 
-  /** Capture the most-recent CLI session for this vault. */
   async captureLatestSession(): Promise<void> {
-    const sessions = await this.listVaultSessions();
-    if (sessions.length === 0) {
-      new Notice("No Claude Code session found for this vault to ingest.");
-      return;
-    }
-    const latest = sessions[0];
-    if (!latest) return;
-    await this.captureSession(latest);
+    return this.memory().captureLatestSession();
   }
 
-  /**
-   * Capture the current in-app conversation into memory (adapter B). Idempotent
-   * by conversation id, so re-saving updates the same digest note. Best-effort.
-   */
   async captureConversation(messages: ChatMessage[]): Promise<void> {
-    if (!this.settings.memoryEnabled || messages.length === 0) return;
-    const conv = this.getActiveConversation();
-    try {
-      const meta = {
-        ...(conv?.id !== undefined ? { sessionId: conv.id } : {}),
-        model: this.settings.model,
-        ...(conv ? { startedAt: new Date(conv.createdAt).toISOString(), endedAt: new Date(conv.updatedAt).toISOString() } : {}),
-      };
-      const res = await ingestConversation(
-        { app: this.app, folder: this.settings.memoryFolder, baseTags: this.settings.memoryBaseTags },
-        messages,
-        meta,
-      );
-      new Notice(`Conversation captured to memory · ${res.redactions} secret${res.redactions === 1 ? "" : "s"} redacted`);
-      await this.refreshMemoryView();
-    } catch (e) {
-      console.error("[Claude Companion] conversation capture failed", e);
-      new Notice("Couldn't capture this conversation to memory — see console.");
-    }
+    return this.memory().captureConversation(messages);
   }
 
-  /** Re-ingest by session id (called from the sidebar). */
   async reingestSession(sessionId: string): Promise<void> {
-    const sessions = await this.listVaultSessions();
-    const match = sessions.find((s) => (s.sessionId ?? s.id) === sessionId);
-    if (!match) {
-      new Notice("Original session transcript not found on disk.");
-      return;
-    }
-    await this.captureSession(match);
+    return this.memory().reingestSession(sessionId);
   }
 
   async activateMemoryView(): Promise<void> {
@@ -3800,7 +2918,7 @@ export default class ClaudeCompanionPlugin extends Plugin {
 
   /** Inbox-view entry point: guard + consent + enrich, then refresh open inbox views. */
   async enrichInboxItem(file: TFile, options?: { inline?: boolean; refreshInboxViews?: boolean }): Promise<EnrichRunOutcome> {
-    const outcome = await this.enrichFile(file, !options?.inline);
+    const outcome = await this.enrichment().enrichFile(file, !options?.inline);
     if (options?.refreshInboxViews === false) return outcome;
     for (const leaf of this.app.workspace.getLeavesOfType(INBOX_VIEW_TYPE)) {
       if (leaf.view instanceof InboxView) {
@@ -3923,7 +3041,7 @@ export default class ClaudeCompanionPlugin extends Plugin {
 
   private researchRepository(): ResearchRepository {
     return createResearchRepository(this.app, {
-      ensureFolder: (folder) => this.ensureFolder(folder),
+      ensureFolder: (folder) => ensureVaultFolder(this.app, folder),
       includeBinary: true,
     });
   }
@@ -3999,79 +3117,20 @@ export default class ClaudeCompanionPlugin extends Plugin {
     }
   }
 
-  /** Turn a plan into durable build documents and a native, user-controlled run. */
   async handoffToBuild(planFile?: TFile): Promise<void> {
     const file = planFile ?? this.app.workspace.getActiveViewOfType(MarkdownView)?.file ?? null;
-    if (!(file instanceof TFile)) {
-      new Notice("Open a plan note first — a note with a task checklist (`- [ ]`) or numbered milestones.", 8000);
-      return;
-    }
-    const plan = await this.app.vault.cachedRead(file);
-    const tasks = extractTasks(plan);
-    // A "plan note" is one we can extract work items from. If we can't, don't
-    // dispatch a hollow build — tell the user exactly what's missing.
-    if (tasks.length === 0) {
-      new Notice(
-        `“${file.basename}” doesn't look like a plan — no task checklist (\`- [ ]\`) or numbered milestones found. ` +
-          `Run “Generate implementation plan” first, or add tasks, then build.`,
-        9000,
-      );
-      return;
-    }
-
-    const title = file.basename;
-    const folder = "Claude/Builds";
-
-    // Confirm note creation only. Execution never starts until Start is pressed.
-    const confirmed = await new Promise<boolean>((resolve) => {
-      new ConfirmModal(this.app, {
-        title: "Build from this plan?",
-        body:
-          `Detected ${tasks.length} task${tasks.length === 1 ? "" : "s"} in “${file.basename}”.\n\n` +
-          `This creates a build spec and tracker in “${folder}”, then opens Build Runner. Nothing runs until you press Start.`,
-        cta: "Create build",
-        onResolve: resolve,
-      }).open();
-    });
-    if (!confirmed) return;
-
-    await this.ensureFolder(folder);
-    const specPath = normalizePath(`${folder}/${title} — spec.md`);
-    const trackerPath = normalizePath(`${folder}/${title} — tracker.md`);
-
-    const input: SpecInput = { title, plan, specPath, trackerPath, tasks };
-
-    // Spec note.
-    const specFm = buildFrontmatter({ title: `${title} — spec`, created: new Date().toISOString().slice(0, 10), source: "claude-companion", type: "build-spec", tags: normalizeTags(["claude", "build", "spec"]) });
-    await this.writeOrReplace(specPath, `${specFm}\n\n${specBody(input)}`);
-
-    const run = createBuildRun({
-      id: `build-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
-      title,
-      specPath,
-      trackerPath,
-      transport: Platform.isMobile ? "cloud" : "desktop",
-      tasks,
-      now: Date.now(),
-    });
-
-    // Tracker note is durable Markdown; the native view owns interactive controls.
-    const trackerFm = buildFrontmatter({ title: `${title} — tracker`, created: new Date().toISOString().slice(0, 10), source: "claude-companion", type: "build-tracker", tags: normalizeTags(["claude", "build", "tracker"]) });
-    await this.writeOrReplace(trackerPath, `${trackerFm}\n\n${trackerNoteBody(run)}`);
-    this.buildRuns ??= {};
-    this.buildRuns[run.id] = run;
-    this.activeBuildRunId = run.id;
-    await this.persist();
-    await this.activateBuildView(run.id);
+    const runId = await this.build().handoffToBuild(
+      file instanceof TFile ? { path: file.path, basename: file.basename } : null,
+    );
+    if (runId) await this.activateBuildView(runId);
   }
 
   activeBuildRun(): BuildRun | null {
-    if (!this.activeBuildRunId) return null;
-    return this.buildRuns?.[this.activeBuildRunId] ?? null;
+    return this.build().activeBuildRun();
   }
 
   async activateBuildView(runId?: string): Promise<BuildView | null> {
-    if (runId && this.buildRuns?.[runId]) this.activeBuildRunId = runId;
+    if (runId) this.build().selectActiveRun(runId);
     const { workspace } = this.app;
     let leaf: WorkspaceLeaf | null = workspace.getLeavesOfType(BUILD_VIEW_TYPE)[0] ?? null;
     if (!leaf) {
@@ -4087,269 +3146,44 @@ export default class ClaudeCompanionPlugin extends Plugin {
     return null;
   }
 
-  private buildViewDependencies(): BuildViewDependencies {
-    return {
-      getRun: () => this.activeBuildRun(),
-      subscribe: (listener) => {
-        this.buildRunListeners ??= new Set();
-        this.buildRunListeners.add(listener);
-        return () => this.buildRunListeners.delete(listener);
-      },
-      start: () => this.runActiveBuild("start"),
-      pause: () => this.runActiveBuild("pause"),
-      resume: () => this.runActiveBuild("resume"),
-      cancel: () => this.runActiveBuild("cancel"),
-      openSpec: () => this.openActiveBuildFile("specPath"),
-      openTracker: () => this.openActiveBuildFile("trackerPath"),
-      openSession: () => {
-        const url = this.activeBuildRun()?.sessionUrl;
-        if (url) window.open(url, "_blank", "noopener,noreferrer");
-      },
-    };
-  }
-
-  private async openActiveBuildFile(field: "specPath" | "trackerPath"): Promise<void> {
-    const path = this.activeBuildRun()?.[field];
-    if (!path) return;
-    const file = this.app.vault.getAbstractFileByPath(path);
-    if (file instanceof TFile) await this.app.workspace.getLeaf(false).openFile(file);
-  }
-
-  private runActiveBuild(action: "start" | "pause" | "resume" | "cancel"): Promise<void> {
-    const run = this.activeBuildRun();
-    if (!run) return Promise.resolve();
-    const coordinator = this.buildCoordinatorFor(run);
-    return coordinator[action]();
-  }
-
-  private buildCoordinatorFor(run: BuildRun): BuildRunCoordinator {
-    this.buildCoordinators ??= new Map();
-    const existing = this.buildCoordinators.get(run.id);
-    if (existing) return existing;
-    const coordinator = new BuildRunCoordinator(run, {
-      executor: this.buildExecutor(run.transport),
-      persist: (snapshot) => this.persistBuildRun(snapshot),
-      onChange: (snapshot) => {
-        this.buildRunListeners ??= new Set();
-        for (const listener of this.buildRunListeners) listener(snapshot);
-      },
-    });
-    this.buildCoordinators.set(run.id, coordinator);
-    return coordinator;
-  }
-
-  private buildExecutor(transport: BuildRun["transport"]): BuildTaskExecutor {
-    if (transport === "cloud") {
-      let executor: CloudBuildExecutor | null = null;
-      return {
-        cancelMode: "after-current",
-        execute: async (input, signal, emit) => {
-          if (!this.settings.cloudDispatchEnabled) throw new Error("Cloud builds are off. Open Companion settings → Cloud session, enable dispatch, then Retry.");
-          const routineError = configError(this.cloudConfig());
-          if (routineError) throw new Error(`Cloud build setup is incomplete: ${routineError}`);
-          const replyError = repliesConfigError(this.replyConfig());
-          if (replyError) throw new Error(`Cloud build tracking is incomplete: ${replyError}`);
-          executor ??= new CloudBuildExecutor({
-            routine: this.cloudConfig(),
-            replies: this.replyConfig(),
-            http: { request: (request: CloudBuildHttpRequest) => this.buildHttpRequest(request) },
-          });
-          return executor.execute(input, signal, emit);
-        },
-      };
-    }
-
-    let executor: DesktopBuildExecutor | null = null;
-    return {
-      cancelMode: "immediate",
-      execute: async (input, signal, emit) => {
-        if (!executor) {
-          const vaultPath = this.vaultBasePath();
-          if (!vaultPath) throw new Error("This vault does not expose a desktop filesystem path. Move it to a local filesystem vault, then Retry.");
-          const processLike = (window as { process?: { platform?: string; env?: Record<string, string | undefined> } }).process;
-          const platform: DesktopPlatform = processLike?.platform === "darwin" || processLike?.platform === "win32" || processLike?.platform === "linux" ? processLike.platform : "unsupported";
-          const env = processLike?.env ?? {};
-          const homeDir = env.HOME || env.USERPROFILE || "";
-          if (!homeDir) throw new Error("The desktop home directory is unavailable. Open Desktop integrations for setup help.");
-          const module = await this._desktopRuntimeLoader();
-          const runtime = await module.createNodeDesktopRuntime(platform, homeDir, { APPDATA: env.APPDATA });
-          if (!runtime.resolveClaudeCodeExecutable) throw new Error("This Companion build cannot manage Claude Code. Update Companion, then Retry.");
-          const executable = await runtime.resolveClaudeCodeExecutable();
-          executor = new DesktopBuildExecutor({ process: module.createNodeManagedProcessPort(), executable, cwd: vaultPath });
-        }
-        return executor.execute(input, signal, emit);
-      },
-    };
-  }
-
-  private async buildHttpRequest(request: CloudBuildHttpRequest): Promise<{ status: number; text: string }> {
-    const response = await requestUrl({ url: request.url, method: request.method, headers: request.headers, ...(request.body ? { body: request.body } : {}), throw: false });
-    return { status: response.status, text: response.text };
-  }
-
-  private async persistBuildRun(run: BuildRun): Promise<void> {
-    this.buildRuns ??= {};
-    this.buildRuns[run.id] = run;
-    this.activeBuildRunId = run.id;
-    await this.persist();
-    this.buildTrackerWriteChains ??= new Map();
-    const previous = this.buildTrackerWriteChains.get(run.id) ?? Promise.resolve();
-    const write = previous.catch(() => {}).then(async () => {
-      const file = this.app.vault.getAbstractFileByPath(run.trackerPath);
-      if (!(file instanceof TFile)) return;
-      const trackerFm = buildFrontmatter({ title: `${run.title} — tracker`, created: new Date(run.createdAt).toISOString().slice(0, 10), source: "claude-companion", type: "build-tracker", tags: normalizeTags(["claude", "build", "tracker"]) });
-      await this.app.vault.process(file, () => `${trackerFm}\n\n${trackerNoteBody(run)}`);
-    });
-    this.buildTrackerWriteChains.set(run.id, write);
-    await write;
-    if (this.buildTrackerWriteChains.get(run.id) === write) this.buildTrackerWriteChains.delete(run.id);
-  }
-
-  private async ensureFolder(folder: string): Promise<void> {
-    await ensureVaultFolder(this.app, folder);
-  }
-
-  private async writeOrReplace(path: string, content: string): Promise<TFile> {
-    const existing = this.app.vault.getAbstractFileByPath(path);
-    if (existing instanceof TFile) {
-      await this.app.vault.modify(existing, content);
-      return existing;
-    }
-    return this.app.vault.create(path, content);
-  }
-
   // ---------- cloud session dispatch ----------
 
-  private cloudConfig(): CloudDispatchConfig {
-    return {
-      fireUrl: this.settings.cloudRoutineFireUrl,
-      token: this.settings.cloudRoutineToken,
-      betaHeader: this.settings.cloudRoutineBetaHeader,
-    };
+  private _cloud?: CloudController;
+  private cloud(): CloudController {
+    return (this._cloud ??= new CloudController({
+      settings: () => this.settings,
+      http: async (req) => {
+        const res = await requestUrl({ url: req.url, method: req.method, headers: req.headers, ...(req.body ? { body: req.body } : {}), throw: false });
+        return { status: res.status, text: res.text };
+      },
+      vault: {
+        fileExists: (path) => !!this.app.vault.getAbstractFileByPath(path),
+        create: async (path, content) => { await this.app.vault.create(path, content); },
+        ensureFolder: (folder) => ensureVaultFolder(this.app, folder),
+        normalizePath,
+      },
+      ui: {
+        notice: (msg, timeout) => new Notice(msg, timeout),
+        clipboard: (text) => navigator.clipboard.writeText(text),
+        activeSelection: () => {
+          const mdView = this.app.workspace.getActiveViewOfType(MarkdownView);
+          return { path: mdView?.file?.path, selection: mdView?.editor.getSelection().trim() || undefined };
+        },
+        promptInstruction: (context, onSubmit) => new CloudDispatchModal(this.app, context, onSubmit).open(),
+      },
+    }));
   }
 
-  /**
-   * Prompt for what a cloud session should do, attach light vault context
-   * (active note path + selection), and fire the configured routine. Desktop
-   * first (Phase 1) — de-risks the Routines API ahead of the mobile build.
-   */
   async dispatchCloudSession(): Promise<void> {
-    if (!this.settings.cloudDispatchEnabled) {
-      new Notice("Cloud session dispatch is off. Enable it in Companion settings → Cloud session.", 7000);
-      return;
-    }
-    const cfgErr = configError(this.cloudConfig());
-    if (cfgErr) {
-      new Notice(`Cloud session not configured: ${cfgErr}`, 9000);
-      return;
-    }
-    const mdView = this.app.workspace.getActiveViewOfType(MarkdownView);
-    const selection = mdView?.editor.getSelection().trim() ?? "";
-    const parts: string[] = [];
-    if (mdView?.file) parts.push(`Active note: ${mdView.file.path}`);
-    if (selection) parts.push(`Selected text:\n${selection}`);
-    const context = parts.length ? parts.join("\n\n") : undefined;
-
-    new CloudDispatchModal(this.app, context, (instruction) => void this.fireCloudSession(instruction, context)).open();
+    return this.cloud().dispatchSession();
   }
 
-  private async fireCloudSession(instruction: string, context?: string): Promise<void> {
-    const pending = new Notice("Dispatching cloud session…", 0);
-    try {
-      const req = buildFireRequest(this.cloudConfig(), composeDispatchText(instruction, context));
-      const res = await requestUrl({ url: req.url, method: req.method, headers: req.headers, body: req.body, throw: false });
-      const result = parseFireResponse(res.status, res.text);
-      pending.hide();
-      if (result.sessionUrl) {
-        await navigator.clipboard.writeText(result.sessionUrl).catch(() => {});
-        new Notice(`Cloud session started — link copied to clipboard:\n${result.sessionUrl}`, 12000);
-      } else {
-        new Notice("Cloud session fired. (No session link was returned.)", 8000);
-      }
-    } catch (e) {
-      pending.hide();
-      const msg = e instanceof Error ? e.message : String(e);
-      const hint = errorHint(msg, "anthropic");
-      new Notice(`Cloud dispatch failed: ${msg}${hint ? ` — ${hint}` : ""}`, 10000);
-    }
-  }
-
-  private replyConfig(): RepliesConfig {
-    return {
-      repo: this.settings.cloudReplyRepo,
-      branch: this.settings.cloudReplyBranch,
-      folder: this.settings.cloudReplyFolder,
-      token: this.settings.cloudReplyToken,
-    };
-  }
-
-  /**
-   * Live-verify the replies config: one read of the replies folder over the
-   * Contents API. Powers the settings "Test connection" button — read-only,
-   * no side effects, works on mobile.
-   */
   async testCloudReplies(): Promise<{ ok: boolean; message: string }> {
-    const cfg = this.replyConfig();
-    const cfgErr = repliesConfigError(cfg);
-    if (cfgErr) return { ok: false, message: cfgErr };
-    try {
-      const req = buildContentsRequest(cfg, cfg.folder);
-      const res = await requestUrl({ url: req.url, method: req.method, headers: req.headers, throw: false });
-      const files = parseDirListing(res.status, res.text);
-      return { ok: true, message: `Connected — ${files.length} file${files.length === 1 ? "" : "s"} in “${cfg.folder}” on ${cfg.branch}.` };
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      const hint = errorHint(msg, "anthropic");
-      return { ok: false, message: `${msg}${hint ? ` — ${hint}` : ""}` };
-    }
+    return this.cloud().testReplies();
   }
 
-  /**
-   * Fetch reply notes a cloud session wrote into the vault's GitHub repo and
-   * land any new ones in the vault — over HTTPS, so it works on mobile. Existing
-   * notes are left untouched (never clobbers local edits).
-   */
   async pullCloudReplies(): Promise<void> {
-    const cfg = this.replyConfig();
-    const cfgErr = repliesConfigError(cfg);
-    if (cfgErr) {
-      new Notice(`Cloud replies not configured: ${cfgErr}`, 9000);
-      return;
-    }
-    const pending = new Notice("Checking for cloud replies…", 0);
-    try {
-      const list = buildContentsRequest(cfg, cfg.folder);
-      const listRes = await requestUrl({ url: list.url, method: list.method, headers: list.headers, throw: false });
-      const files = parseDirListing(listRes.status, listRes.text).filter((f) => isMarkdown(f.name));
-      let pulled = 0;
-      let failed = 0;
-      for (const f of files) {
-        if (this.app.vault.getAbstractFileByPath(normalizePath(f.path))) continue; // don't clobber local notes
-        // One unreadable/oversized reply must not abort the whole sync; count it
-        // and keep pulling the rest.
-        try {
-          const fileReq = buildContentsRequest(cfg, f.path);
-          const fileRes = await requestUrl({ url: fileReq.url, method: fileReq.method, headers: fileReq.headers, throw: false });
-          const got = parseFileResponse(fileRes.status, fileRes.text);
-          const dir = f.path.includes("/") ? f.path.slice(0, f.path.lastIndexOf("/")) : "";
-          if (dir) await this.ensureFolder(dir);
-          await this.app.vault.create(normalizePath(f.path), got.text);
-          pulled++;
-        } catch (error) {
-          failed++;
-          console.warn("[companion] cloud reply skipped", f.path, error);
-        }
-      }
-      pending.hide();
-      const pulledMsg = pulled > 0 ? `Pulled ${pulled} cloud repl${pulled === 1 ? "y" : "ies"} into the vault.` : "No new cloud replies.";
-      const failedMsg = failed > 0 ? ` ${failed} couldn't be pulled (see console).` : "";
-      new Notice(pulledMsg + failedMsg, 7000);
-    } catch (e) {
-      pending.hide();
-      const msg = e instanceof Error ? e.message : String(e);
-      const hint = errorHint(msg, "anthropic");
-      new Notice(`Couldn't pull cloud replies: ${msg}${hint ? ` — ${hint}` : ""}`, 10000);
-    }
+    return this.cloud().pullReplies();
   }
 
   async generateArtifactFromContext(): Promise<void> {
@@ -4366,84 +3200,5 @@ export default class ClaudeCompanionPlugin extends Plugin {
       `Turn ${target} into an artifact`,
       ARTIFACT_MAX_TOKENS,
     );
-  }
-}
-
-/** A simple confirm/cancel dialog that resolves a boolean. */
-class ConfirmModal extends Modal {
-  private decided = false;
-  constructor(
-    app: App,
-    private opts: { title: string; body: string; cta: string; onResolve: (ok: boolean) => void },
-  ) {
-    super(app);
-  }
-
-  override onOpen(): void {
-    this.titleEl.setText(this.opts.title);
-    const p = this.contentEl.createEl("p", { cls: "setting-item-description" });
-    p.setCssStyles({ whiteSpace: "pre-wrap" });
-    p.setText(this.opts.body);
-    const row = this.contentEl.createDiv({ cls: "modal-button-container" });
-    row.createEl("button", { text: "Cancel" }).addEventListener("click", () => this.close());
-    const ok = row.createEl("button", { cls: "mod-cta", text: this.opts.cta });
-    ok.addEventListener("click", () => {
-      this.decided = true;
-      this.opts.onResolve(true);
-      this.close();
-    });
-  }
-
-  override onClose(): void {
-    if (!this.decided) this.opts.onResolve(false);
-  }
-}
-
-/** Minimal prompt for what a dispatched cloud session should do. */
-class CloudDispatchModal extends Modal {
-  private value = "";
-
-  constructor(
-    app: App,
-    private context: string | undefined,
-    private onSubmit: (instruction: string) => void,
-  ) {
-    super(app);
-  }
-
-  override onOpen(): void {
-    const { contentEl } = this;
-    contentEl.createEl("h3", { text: "Send to cloud Claude session" });
-    contentEl.createEl("p", {
-      cls: "setting-item-description",
-      text: "Fires your Claude Code routine in the cloud against your vault's repo. What should it do?",
-    });
-    if (this.context) {
-      contentEl.createEl("p", { cls: "setting-item-description", text: `Attaching — ${this.context.split("\n")[0]}` });
-    }
-
-    const ta = contentEl.createEl("textarea");
-    ta.rows = 5;
-    ta.setCssStyles({ width: "100%" });
-    ta.placeholder = "e.g. Summarize this week's meeting notes into a decisions log and open a PR.";
-    ta.addEventListener("input", () => (this.value = ta.value));
-    window.setTimeout(() => ta.focus(), 0);
-
-    const controls = contentEl.createDiv({ cls: "modal-button-container" });
-    const send = controls.createEl("button", { text: "Dispatch", cls: "mod-cta" });
-    send.addEventListener("click", () => {
-      const v = this.value.trim();
-      if (!v) {
-        new Notice("Type what the cloud session should do.");
-        return;
-      }
-      this.close();
-      this.onSubmit(v);
-    });
-    controls.createEl("button", { text: "Cancel" }).addEventListener("click", () => this.close());
-  }
-
-  override onClose(): void {
-    this.contentEl.empty();
   }
 }

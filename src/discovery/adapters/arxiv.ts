@@ -30,7 +30,8 @@ export class ArxivAdapter {
     let document: Document;
     try {
       document = new DOMParser().parseFromString(response.body, "application/xml");
-    } catch {
+    } catch (e) {
+      console.debug("Claude Companion: arXiv XML parse failed", e);
       throw malformed();
     }
     if (document.querySelector("parsererror") !== null || document.documentElement.localName !== "feed") throw malformed();

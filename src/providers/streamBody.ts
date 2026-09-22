@@ -33,8 +33,8 @@ export async function readStreamBody(
     // because a test double's reader may not implement `cancel`.
     try {
       await reader.cancel();
-    } catch {
-      /* already closed or cancel unavailable */
+    } catch (e) {
+      console.debug("Claude Companion: stream reader cancel failed", e);
     }
   }
 }

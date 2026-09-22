@@ -215,7 +215,8 @@ export class DiscoveryCoordinator {
       this.cache.set(current.key, { ...current, sequence, state, cachedAt: this.nowMs() });
       this.setCurrent(current.key, current.state.fingerprint, state, false);
       return state;
-    } catch {
+    } catch (e) {
+      console.debug("Claude Companion: discovery rerank failed", e);
       if (controller.signal.aborted || sequence !== this.sequence) {
         const state = validCopy(current.state, "stale");
         this.setCurrent(current.key, current.state.fingerprint, state, false);
@@ -244,7 +245,8 @@ export class DiscoveryCoordinator {
       try {
         const result = await this.deps.repository.importSource(snapshot.project.path, this.importInput(candidate));
         outcomes.push({ candidateId, status: result.kind, path: result.path });
-      } catch {
+      } catch (e) {
+        console.debug("Claude Companion: discovery candidate import failed", e);
         outcomes.push({ candidateId, status: "failed", message: safeFailure("import") });
       }
     }
@@ -317,7 +319,7 @@ export class DiscoveryCoordinator {
         try {
           const id = candidateId(item);
           grouped.set(id, [...(grouped.get(id) ?? []), item]);
-        } catch { /* Ignore results without a stable scholarly identity. */ }
+        } catch (e) { console.debug("Claude Companion: candidateId extraction failed", e); }
       }
       const groups = [...grouped.values()];
       const partial = new Set<DiscoveryAdapterId>();
@@ -330,7 +332,7 @@ export class DiscoveryCoordinator {
           const candidate = mergeAdapterWorks(works, snapshot.sources);
           if (relationship) candidate.relationship = { ...relationship, adapter: "openalex" };
           return this.dismissed.has(candidate.id) ? [] : [candidate];
-        } catch { return []; }
+        } catch (e) { console.debug("Claude Companion: mergeAdapterWorks failed", e); return []; }
       });
       const ranked = rankCandidates(query, candidates, (this.deps.now ?? (() => new Date()))());
       const status = sequence === this.sequence && key === this.desiredKey && !controller.signal.aborted ? "ready" : "stale";
@@ -341,7 +343,8 @@ export class DiscoveryCoordinator {
       }
       if (status === "ready") this.setCurrent(key, fingerprint, state, false);
       return state;
-    } catch {
+    } catch (e) {
+      console.debug("Claude Companion: discovery search request failed", e);
       if (controller.signal.aborted || sequence !== this.sequence || key !== this.desiredKey) {
         const cached = this.cache.get(key)?.state ?? previous;
         return cached ? validCopy(cached, "stale") : { status: "stale", query, ranked: [], deterministicOrder: [], partialAdapters: [], fingerprint };
@@ -363,7 +366,7 @@ export class DiscoveryCoordinator {
       return value ? [{ group, value }] : [];
     });
     await Promise.all(lookups.map(async ({ group, value }) => {
-      try { const result = await lookup(value); if (result) group.push(result); } catch { partial.add(adapter); }
+      try { const result = await lookup(value); if (result) group.push(result); } catch (e) { console.debug(`Claude Companion: ${adapter} enrichment lookup failed`, e); partial.add(adapter); }
     }));
   }
 

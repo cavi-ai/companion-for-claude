@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { App } from "obsidian";
-import { catalogPromptProvider, resourcePath, resourceUri, vaultResourceProvider } from "../../src/mcp/providers";
+import { catalogPromptProvider, composeResourceProviders, resourcePath, resourceUri, substrateResourceProvider, vaultResourceProvider } from "../../src/mcp/providers";
 import { WORKFLOWS } from "../../src/workflows/catalog";
 
 describe("resource uris", () => {
@@ -42,5 +42,61 @@ describe("catalogPromptProvider", () => {
     const template = await provider.get("template:standup", { selection: "S", active_note: "N" });
     expect(template?.messages[0]?.content.text).toBe("Summarize S in N");
     expect(await provider.get("nope", {})).toBeNull();
+  });
+});
+
+describe("substrateResourceProvider", () => {
+  const memoryPath = () => "Claude/Sessions/What Claude Knows.md";
+
+  it("lists ontology only when a type exists and memory only when the note exists", async () => {
+    const app = new App();
+    const empty = substrateResourceProvider(app as never, { call: async () => JSON.stringify({ types: [], note: "No ontology is seeded." }), memoryPath });
+    expect((await empty.list()).resources).toEqual([]);
+    expect(await empty.read("obsidian://ontology")).toBeNull();
+    expect(await empty.read("obsidian://memory")).toBeNull();
+
+    app.vault.seed(memoryPath(), "# What Claude Knows\n- terse");
+    const full = substrateResourceProvider(app as never, { call: async () => JSON.stringify({ types: [{ name: "person" }] }), memoryPath });
+    expect((await full.list()).resources.map((r) => r.uri)).toEqual(["obsidian://ontology", "obsidian://memory"]);
+    expect(await full.read("obsidian://memory")).toEqual({ uri: "obsidian://memory", mimeType: "text/markdown", text: "# What Claude Knows\n- terse" });
+    expect((await full.read("obsidian://ontology"))?.mimeType).toBe("application/json");
+  });
+
+  it("treats a throwing ontology_get as no ontology", async () => {
+    const p = substrateResourceProvider(new App() as never, { call: async () => { throw new Error("off"); }, memoryPath });
+    expect((await p.list()).resources).toEqual([]);
+  });
+
+  it("reads a research snapshot by encoded project path; unknown or malformed → null", async () => {
+    const call = vi.fn(async (_name: string, args: Record<string, unknown>) => {
+      if (args.project === "Research/My Alpha/Project.md") return '{"project":{}}';
+      throw new Error("Project not found");
+    });
+    const p = substrateResourceProvider(new App() as never, { call, memoryPath });
+    expect(await p.read("obsidian://research/Research/My%20Alpha/Project.md")).toEqual({ uri: "obsidian://research/Research/My%20Alpha/Project.md", mimeType: "application/json", text: '{"project":{}}' });
+    expect(call).toHaveBeenCalledWith("research_project_read", { project: "Research/My Alpha/Project.md" });
+    expect(await p.read("obsidian://research/Nope.md")).toBeNull();
+    expect(await p.read("obsidian://research/%E0%A4%A.md")).toBeNull();
+    expect(p.templates()).toEqual([{ uriTemplate: "obsidian://research/{project}", name: "research-project", description: "Research project snapshot by project note path", mimeType: "application/json" }]);
+  });
+});
+
+describe("composeResourceProviders", () => {
+  it("prepends fixed resources on the first page only and keeps vault paging", async () => {
+    const app = new App();
+    for (let i = 0; i < 205; i += 1) app.vault.seed(`N/${String(i).padStart(3, "0")}.md`, `# Note ${i}`);
+    app.vault.seed("Claude/Sessions/What Claude Knows.md", "m");
+    const composed = composeResourceProviders(
+      substrateResourceProvider(app as never, { call: async () => "{}", memoryPath: () => "Claude/Sessions/What Claude Knows.md" }),
+      vaultResourceProvider(app as never),
+    );
+    const first = await composed.list();
+    expect(first.resources[0]?.uri).toBe("obsidian://memory");
+    expect(first.resources).toHaveLength(201);
+    const second = await composed.list(first.nextCursor);
+    expect(second.resources.some((r) => r.uri === "obsidian://memory")).toBe(false);
+    expect(composed.templates().map((t) => t.uriTemplate)).toEqual(["obsidian://research/{project}", "obsidian://vault/{path}"]);
+    expect((await composed.read("obsidian://vault/N/001.md"))?.text).toBe("# Note 1");
+    expect((await composed.read("obsidian://memory"))?.text).toBe("m");
   });
 });

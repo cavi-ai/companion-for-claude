@@ -891,8 +891,9 @@ export class ChatView extends ItemView {
     let detected: string[];
     try {
       detected = await this.plugin.router().ollama.listModels();
-    } catch {
-      detected = []; // server unreachable — the configured model stays selectable
+    } catch (e) {
+      console.debug("Claude Companion: Ollama model listing failed", e);
+      detected = [];
     }
     const configured = this.plugin.settings.ollamaModel;
     const models = mergeDetectedModels(detected, configured);
@@ -912,8 +913,9 @@ export class ChatView extends ItemView {
     let detected: string[];
     try {
       detected = await this.plugin.router().openaiCompat.listModels();
-    } catch {
-      detected = []; // endpoint unreachable — the configured model stays selectable
+    } catch (e) {
+      console.debug("Claude Companion: custom endpoint model listing failed", e);
+      detected = [];
     }
     const configured = this.plugin.settings.openaiCompatModel;
     const models = mergeDetectedModels(detected, configured);
@@ -2544,7 +2546,8 @@ export class ChatView extends ItemView {
         ...(res.summary ? { summary: res.summary } : {}),
         ...(res.title ? { title: res.title } : {}),
       };
-    } catch {
+    } catch (e) {
+      console.debug("Claude Companion: auto-tag failed", e);
       return { tags: [] };
     }
   }

@@ -138,7 +138,8 @@ export class OllamaProvider implements Provider {
       if (res.status < 200 || res.status >= 300) return [];
       const data = res.json as { models?: Array<{ name: string }> };
       return (data.models ?? []).map((m) => m.name);
-    } catch {
+    } catch (e) {
+      console.debug("Claude Companion: failed to list Ollama models", e);
       return [];
     }
   }
@@ -169,8 +170,8 @@ export class OllamaProvider implements Provider {
           ok = true;
         }
       }
-    } catch {
-      /* unreachable → unknown */
+    } catch (e) {
+      console.debug("Claude Companion: Ollama capabilities check unreachable", e);
     }
     if (ok) {
       this.capsCache.set(key, caps);

@@ -49,7 +49,8 @@ export async function createStdioMcpTransport(command: string, args: string[]): 
       let message: JsonRpcResponse;
       try {
         message = JSON.parse(line) as JsonRpcResponse;
-      } catch {
+      } catch (e) {
+        console.debug("Claude Companion: stdio transport JSON parse failed", e);
         continue; // server logs on stdout are not protocol messages
       }
       if (message.id === undefined || message.id === null) continue; // server notification

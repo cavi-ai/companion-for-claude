@@ -2,6 +2,7 @@ import { App, TFile, normalizePath, getAllTags, requestUrl, parseYaml } from "ob
 import type { McpToolDef } from "./protocol";
 import { tokenize } from "../context/search";
 import { fuseKeywordAndSemantic, keywordVaultSearch, type SemanticSearch } from "../context/hybridSearch";
+import { describeFilter, hitMetadata, matchesSearchFilter, parseSearchFilter, type SearchFilter } from "../context/searchFilter";
 import { ensureVaultFolder } from "../vault/vaultFiles";
 import { buildFrontmatter, normalizeTags, type FrontmatterData } from "../indexing/frontmatter";
 import { conform } from "../ontology/conform";
@@ -55,7 +56,11 @@ export interface VaultToolsOptions {
   /** Web tools (read-only, explicit calls only); absent disables each. */
   webSearch?: ((query: string, count: number) => Promise<string>) | undefined;
   webFetch?: ((url: string) => Promise<string>) | undefined;
+  /** Semantic neighbours of a note; absent disables related_notes. */
+  related?: ((path: string, k: number) => Promise<{ path: string; score: number }[]>) | undefined;
 }
+
+export const SEMANTIC_OFF_MESSAGE = "Semantic search is off. Enable it in Companion settings → Semantic search.";
 
 /**
  * Vault tools exposed over MCP so Claude Code / Claude Desktop can read,
@@ -77,14 +82,29 @@ export class VaultTools {
     const defs: McpToolDef[] = [
       {
         name: "vault_search",
-        description: "Search the Obsidian vault by meaning and keyword (semantic when enabled, otherwise keyword). Returns matching notes with a snippet.",
+        description: "Search the Obsidian vault by meaning and keyword (semantic when enabled, otherwise keyword). Optional filters narrow by frontmatter type, research project, or tag. Returns matching notes with provenance fields and a snippet.",
         inputSchema: {
           type: "object",
           properties: {
             query: { type: "string", description: "Keywords to search for." },
             limit: { type: "number", description: "Max results (default 8)." },
+            type: { type: "string", description: "Only notes whose frontmatter `type` equals this (e.g. 'research-evidence')." },
+            project: { type: "string", description: "Only notes whose frontmatter `project` is this project note path (e.g. 'Research/Alpha/Project.md' or 'Alpha/Project')." },
+            tag: { type: "string", description: "Only notes with this tag or a nested child of it ('ml' matches #ml and #ml/vision)." },
           },
           required: ["query"],
+        },
+      },
+      {
+        name: "related_notes",
+        description: "List notes semantically similar to a note, from the local semantic index. Returns vault paths with a similarity score.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            path: { type: "string", description: "Vault-relative path of the note." },
+            limit: { type: "number", description: "Max results (default 8, max 25)." },
+          },
+          required: ["path"],
         },
       },
       {
@@ -290,12 +310,12 @@ export class VaultTools {
               filters: { description: "Global filters: a statement string, an array of statements (AND-ed), or one recursive {and|or|not: [...]} group." },
               views: {
                 type: "array",
-                description: "Views: {name, type? (table|cards|list|map), order? (property list like 'file.name'/'note.status'), groupBy? {property, direction}, limit?, filters?, summaries? (property → built-in aggregate like Sum/Average/Median or a custom summaries key)}.",
+                description: "Views: {name, type? (table|cards|list|map|companion-similar), order? (property list like 'file.name'/'note.status'), groupBy? {property, direction}, limit?, filters?, summaries? (property → built-in aggregate like Sum/Average/Median or a custom summaries key)}.",
                 items: {
                   type: "object",
                   properties: {
                     name: { type: "string" },
-                    type: { type: "string", enum: ["table", "cards", "list", "map"] },
+                    type: { type: "string", enum: ["table", "cards", "list", "map", "companion-similar"] },
                     order: { type: "array", items: { type: "string" } },
                     groupBy: {
                       type: "object",
@@ -396,7 +416,9 @@ export class VaultTools {
     if (VAULT_WRITE_TOOLS.has(name)) this.assertWrites();
     switch (name) {
       case "vault_search":
-        return this.search(str(args.query), num(args.limit, 8));
+        return this.search(str(args.query), num(args.limit, 8), parseSearchFilter(args));
+      case "related_notes":
+        return this.related(str(args.path), Math.min(Math.max(Math.trunc(num(args.limit, 8)), 1), 25));
       case "web_search": {
         if (!this.opts.webSearch) throw new Error("Web search is disabled. Enable it in Companion settings → Agent.");
         return this.opts.webSearch(str(args.query), Math.min(num(args.count, 5), 10));
@@ -480,28 +502,60 @@ export class VaultTools {
     });
   }
 
-  private async search(query: string, limit: number): Promise<string> {
+  private async search(query: string, limit: number, filter: SearchFilter | null): Promise<string> {
     const terms = tokenize(query);
-    const keyword = await keywordVaultSearch(this.app, query);
+    const accept = filter
+      ? (path: string): boolean => {
+          const meta = this.noteMeta(path);
+          return meta !== null && matchesSearchFilter(meta.frontmatter, meta.tags, filter);
+        }
+      : undefined;
+    const keyword = await keywordVaultSearch(this.app, query, null, accept);
 
     // Semantic pass (when enabled + index built); degrades to keyword on failure.
     let semantic: { path: string; text: string }[] = [];
     if (this.opts.semantic) {
       try {
-        semantic = await this.opts.semantic(query, limit);
-      } catch {
-        /* Ollama down / no index → keyword only */
+        semantic = await this.opts.semantic(query, limit, accept);
+      } catch (e) {
+        console.debug("Claude Companion: semantic search failed, falling back to keyword", e);
       }
     }
 
     if (keyword.length === 0 && semantic.length === 0) {
-      return terms.length === 0 && !this.opts.semantic ? "No searchable terms in query." : `No matches for "${query}".`;
+      if (terms.length === 0 && !this.opts.semantic) return "No searchable terms in query.";
+      return filter ? `No matches for "${query}" (${describeFilter(filter)}).` : `No matches for "${query}".`;
     }
 
     const fused = fuseKeywordAndSemantic(keyword, semantic, limit);
     const mode = semantic.length ? "semantic + keyword" : "keyword";
-    const body = fused.map((f) => `## ${f.path}\n${f.snippet}`).join("\n\n");
+    const body = fused
+      .map((f) => {
+        const meta = hitMetadata(this.noteMeta(f.path)?.frontmatter);
+        return `## ${f.path}\n${meta ? `${meta}\n` : ""}${f.snippet}`;
+      })
+      .join("\n\n");
     return `(${mode} search)\n\n${body}`;
+  }
+
+  private noteMeta(path: string): { frontmatter: Record<string, unknown> | undefined; tags: string[] } | null {
+    const file = this.app.vault.getAbstractFileByPath(path);
+    if (!(file instanceof TFile)) return null;
+    const cache = this.app.metadataCache.getFileCache(file);
+    return { frontmatter: cache?.frontmatter as Record<string, unknown> | undefined, tags: cache ? getAllTags(cache) ?? [] : [] };
+  }
+
+  private async related(path: string, limit: number): Promise<string> {
+    if (!this.opts.related) throw new Error(SEMANTIC_OFF_MESSAGE);
+    const file = this.resolveFile(assertVaultPath(path));
+    const hits = await this.opts.related(file.path, limit);
+    if (hits.length === 0) return `No related notes for ${file.path} (index empty or note not indexed).`;
+    return hits
+      .map((h) => {
+        const type = this.noteMeta(h.path)?.frontmatter?.type;
+        return `- ${h.path} (similarity ${h.score.toFixed(2)})${typeof type === "string" && type ? ` · type: ${type}` : ""}`;
+      })
+      .join("\n");
   }
 
   private async read(path: string): Promise<string> {
@@ -630,7 +684,8 @@ export class VaultTools {
     try {
       // The metadata cache updates asynchronously; the file on disk is already written.
       fm = readFrontmatter(await this.app.vault.read(file), (yaml) => parseYaml(yaml) as unknown);
-    } catch {
+    } catch (e) {
+      console.debug("Claude Companion: conformance frontmatter read failed", e);
       return "";
     }
     if (!fm || typeof fm.type !== "string") return "";

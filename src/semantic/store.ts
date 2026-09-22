@@ -139,9 +139,10 @@ export class SemanticStore {
    * of materializing every chunk + a parallel metadata map and sorting the whole
    * chunk set. Allocation is per-note (the result), not per-chunk.
    */
-  search(queryVec: number[], k: number): SearchHit[] {
+  search(queryVec: number[], k: number, accept?: (path: string) => boolean): SearchHit[] {
     const bestPerNote = new Map<string, SearchHit>();
     for (const [path, entry] of Object.entries(this.data.notes)) {
+      if (accept && !accept(path)) continue;
       let best: SearchHit | undefined;
       for (const c of entry.chunks) {
         const score = cosineSimilarity(queryVec, c.vector);
@@ -176,10 +177,10 @@ export class SemanticStore {
    * Notes most similar to the given note (by chunk-centroid), excluding the note
    * itself. Returns [] if the note isn't indexed.
    */
-  related(path: string, k: number): SearchHit[] {
+  related(path: string, k: number, accept?: (path: string) => boolean): SearchHit[] {
     const v = this.noteVector(path);
     if (!v) return [];
-    return this.search(v, k + 1)
+    return this.search(v, k + 1, accept)
       .filter((h) => h.path !== path)
       .slice(0, Math.max(0, k));
   }

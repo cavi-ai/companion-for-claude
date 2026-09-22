@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { App } from "obsidian";
 import { parse as parseYaml } from "yaml";
-import { VaultTools, assertVaultPath } from "../src/mcp/vaultTools";
+import { VaultTools, assertVaultPath, type SemanticSearch } from "../src/mcp/vaultTools";
 import { OntologyRegistry } from "../src/ontology/registry";
 import { schemaNoteContent, SEED_TYPES } from "../src/ontology/seed";
 
@@ -493,5 +493,108 @@ describe("note_create with ontology", () => {
     const msg = await vt.call("update_frontmatter", { path: file.path, fields: { banana: 1 } });
     expect(msg).toContain("Conformance:");
     expect(msg).toContain("banana");
+  });
+});
+
+describe("vault_search filters", () => {
+  function searchTools(semantic?: SemanticSearch) {
+    const app = new App();
+    app.vault.seed("Research/Alpha/Evidence/E1.md", "pelican pelican pelican", { frontmatter: { type: "research-evidence", project: "[[Research/Alpha/Project.md]]", review_state: "reviewed" }, tags: ["birds/coastal"] });
+    app.vault.seed("Research/Beta/Evidence/E2.md", "pelican", { frontmatter: { type: "research-evidence", project: "[[Research/Beta/Project.md]]" } });
+    app.vault.seed("Notes/Loose.md", "pelican pelican pelican pelican pelican");
+    return new VaultTools(app as never, { allowWrites: false, defaultFolder: "Claude", ...(semantic ? { semantic } : {}) });
+  }
+
+  it("type filter drops a higher-scoring untyped note", async () => {
+    const out = await searchTools().call("vault_search", { query: "pelican", type: "research-evidence" });
+    expect(out).toContain("## Research/Alpha/Evidence/E1.md");
+    expect(out).toContain("## Research/Beta/Evidence/E2.md");
+    expect(out).not.toContain("Notes/Loose.md");
+  });
+
+  it("project filter selects one project by path suffix or full path", async () => {
+    const bySuffix = await searchTools().call("vault_search", { query: "pelican", project: "Alpha/Project" });
+    expect(bySuffix).toContain("E1.md");
+    expect(bySuffix).not.toContain("E2.md");
+    const byPath = await searchTools().call("vault_search", { query: "pelican", project: "Research/Beta/Project.md" });
+    expect(byPath).toContain("E2.md");
+    expect(byPath).not.toContain("E1.md");
+  });
+
+  it("tag filter matches a nested child tag", async () => {
+    const out = await searchTools().call("vault_search", { query: "pelican", tag: "#birds" });
+    expect(out).toContain("E1.md");
+    expect(out).not.toContain("E2.md");
+    expect(out).not.toContain("Loose.md");
+  });
+
+  it("prints the provenance line only for notes that carry those fields", async () => {
+    const out = await searchTools().call("vault_search", { query: "pelican" });
+    expect(out).toContain("## Research/Alpha/Evidence/E1.md\ntype: research-evidence · project: [[Research/Alpha/Project.md]] · review_state: reviewed\n");
+    expect(out).toMatch(/## Notes\/Loose\.md\n(?!type:)/);
+  });
+
+  it("passes an accept predicate to semantic search when filtering, at the requested k", async () => {
+    const semantic = vi.fn(async () => [{ path: "Research/Beta/Evidence/E2.md", text: "beta chunk" }]);
+    const out = await searchTools(semantic).call("vault_search", { query: "pelican", limit: 4, type: "research-evidence" });
+    expect(semantic).toHaveBeenCalledWith("pelican", 4, expect.any(Function));
+    const accept = semantic.mock.calls[0]?.[2] as (path: string) => boolean;
+    expect(accept("Notes/Loose.md")).toBe(false);
+    expect(accept("Research/Beta/Evidence/E2.md")).toBe(true);
+    expect(out).not.toContain("Loose.md");
+    expect(out).toContain("E2.md");
+  });
+
+  it("keeps the requested semantic k and passes no predicate when unfiltered", async () => {
+    const semantic = vi.fn(async () => []);
+    await searchTools(semantic).call("vault_search", { query: "pelican", limit: 4 });
+    const call = semantic.mock.calls[0];
+    expect(call?.[0]).toBe("pelican");
+    expect(call?.[1]).toBe(4);
+    expect(call?.length === 2 || call?.[2] === undefined).toBe(true);
+  });
+
+  it("names the active filters when nothing matches", async () => {
+    expect(await searchTools().call("vault_search", { query: "pelican", type: "nope" })).toBe('No matches for "pelican" (type: nope).');
+  });
+});
+
+describe("related_notes", () => {
+  function relatedTools(related?: (p: string, k: number) => Promise<{ path: string; score: number }[]>) {
+    const app = new App();
+    app.vault.seed("Notes/A.md", "# A");
+    app.vault.seed("Notes/B.md", "# B", { frontmatter: { type: "concept" } });
+    app.vault.seed("Notes/C.md", "# C");
+    return new VaultTools(app as never, { allowWrites: false, defaultFolder: "Claude", ...(related ? { related } : {}) });
+  }
+
+  it("is a read tool listed right after vault_search", () => {
+    const names = relatedTools().definitions().map((d) => d.name);
+    expect(names.indexOf("related_notes")).toBe(names.indexOf("vault_search") + 1);
+  });
+
+  it("errors when semantic search is not wired", async () => {
+    await expect(relatedTools().call("related_notes", { path: "Notes/A.md" })).rejects.toThrow("Semantic search is off");
+  });
+
+  it("errors on a missing or escaping path", async () => {
+    const vt = relatedTools(async () => []);
+    await expect(vt.call("related_notes", { path: "Notes/Missing.md" })).rejects.toThrow("Note not found: Notes/Missing.md");
+    await expect(vt.call("related_notes", { path: "../x.md" })).rejects.toThrow(/escapes the vault/);
+  });
+
+  it("formats hits with score and type, and clamps limit to 1..25", async () => {
+    const related = vi.fn(async () => [{ path: "Notes/B.md", score: 0.8312 }, { path: "Notes/C.md", score: 0.5 }]);
+    const vt = relatedTools(related);
+    expect(await vt.call("related_notes", { path: "Notes/A.md", limit: 99 })).toBe("- Notes/B.md (similarity 0.83) · type: concept\n- Notes/C.md (similarity 0.50)");
+    expect(related).toHaveBeenLastCalledWith("Notes/A.md", 25);
+    await vt.call("related_notes", { path: "Notes/A.md", limit: 0 });
+    expect(related).toHaveBeenLastCalledWith("Notes/A.md", 1);
+    await vt.call("related_notes", { path: "Notes/A.md" });
+    expect(related).toHaveBeenLastCalledWith("Notes/A.md", 8);
+  });
+
+  it("says the note is not indexed when there are no neighbours", async () => {
+    expect(await relatedTools(async () => []).call("related_notes", { path: "Notes/A.md" })).toBe("No related notes for Notes/A.md (index empty or note not indexed).");
   });
 });

@@ -50,7 +50,7 @@ describe("isWriteTool", () => {
     for (const t of ["note_create", "note_append", "note_update", "note_patch", "update_frontmatter", "note_move"]) {
       expect(isWriteTool(t)).toBe(true);
     }
-    for (const t of ["vault_search", "note_read", "list_recent", "vault_tags", "list_titles", "get_backlinks", "get_outgoing_links", "frontmatter_query"]) {
+    for (const t of ["vault_search", "related_notes", "note_read", "list_recent", "vault_tags", "list_titles", "get_backlinks", "get_outgoing_links", "frontmatter_query"]) {
       expect(isWriteTool(t)).toBe(false);
     }
   });

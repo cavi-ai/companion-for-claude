@@ -29,7 +29,8 @@ export const nodeSessionReader: SessionReader = {
     let names: string[];
     try {
       names = await nodeFs.readdir(projectDir);
-    } catch {
+    } catch (e) {
+      console.debug("Claude Companion: session dir read failed", e);
       return []; // dir absent → no sessions for this vault
     }
     const out: SessionFile[] = [];
@@ -39,8 +40,8 @@ export const nodeSessionReader: SessionReader = {
       try {
         const s = await nodeFs.stat(path);
         out.push({ id: name.replace(/\.jsonl$/, ""), path, mtimeMs: s.mtimeMs });
-      } catch {
-        // unreadable entry — skip
+      } catch (e) {
+        console.debug("Claude Companion: session file stat failed", e);
       }
     }
     return out;

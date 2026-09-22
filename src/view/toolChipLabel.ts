@@ -4,9 +4,10 @@ const QUERY_MAX = 60;
 const TEXT_MAX = 80;
 
 const QUERY_TOOLS = new Set(["vault_search", "web_search"]);
-const PATH_TOOLS = new Set(["note_read", "note_append", "note_update", "note_patch", "get_backlinks", "get_outgoing_links", "note_move", "propose_note_edit"]);
+const PATH_TOOLS = new Set(["note_read", "related_notes", "note_append", "note_update", "note_patch", "get_backlinks", "get_outgoing_links", "note_move", "propose_note_edit"]);
 const TOOL_LABELS: Record<string, string> = {
   vault_search: "Search vault",
+  related_notes: "Find related notes",
   note_read: "Read note",
   note_create: "Create note",
   note_append: "Append to note",

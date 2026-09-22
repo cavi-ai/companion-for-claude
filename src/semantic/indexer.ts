@@ -208,12 +208,12 @@ export class SemanticIndexer {
   }
 
   /** Semantic search: embed the query, return best chunk per note (top k). */
-  async search(query: string, k: number): Promise<SearchHit[]> {
+  async search(query: string, k: number, accept?: (path: string) => boolean): Promise<SearchHit[]> {
     const store = await this.ensureLoaded();
     if (store.stats().chunks === 0) return [];
     const [qv] = await this.deps.embed([query]);
     if (!qv || qv.length === 0) return [];
-    return store.search(qv, k);
+    return store.search(qv, k, accept);
   }
 
   /**
@@ -221,13 +221,13 @@ export class SemanticIndexer {
    * offline). If the note isn't indexed yet, live-embeds its first chunk as a
    * fallback so the panel still shows something.
    */
-  async related(path: string, k: number): Promise<SearchHit[]> {
+  async related(path: string, k: number, accept?: (path: string) => boolean): Promise<SearchHit[]> {
     const store = await this.ensureLoaded();
     if (store.stats().chunks === 0) return [];
     const source = this.deps.listMarkdown().find((file) => file.path === path)
       ?? this.deps.listPdf?.().find((file) => file.path === path);
     this.assertInputSize(path, source?.size);
-    const stored = store.related(path, k);
+    const stored = store.related(path, k, accept);
     if (stored.length || store.hasNote(path)) return stored;
 
     const chunks = chunkNote(await this.deps.read(path));
@@ -236,7 +236,7 @@ export class SemanticIndexer {
     const [v] = await this.deps.embed([first.text]);
     if (!v || v.length === 0) return [];
     return store
-      .search(v, k + 1)
+      .search(v, k + 1, accept)
       .filter((h) => h.path !== path)
       .slice(0, k);
   }

@@ -40,7 +40,8 @@ export function parseCliLine(line: string): CliEvent[] {
   let o: Json;
   try {
     o = obj(JSON.parse(line));
-  } catch {
+  } catch (e) {
+    console.debug("Claude Companion: CLI event JSON parse failed", e);
     return [];
   }
   switch (o.type) {

@@ -262,6 +262,9 @@ export function requireApiVersion(version: string): boolean {
   return a !== x ? a > x : b !== y ? b > y : c >= z;
 }
 
+/** Bases' null-cell sentinel; real toString() is undeclared, so assume the worst. */
+export class NullValue { toString(): string { return "null"; } }
+
 // Value stubs for modules that import these names (not exercised in tests).
 const noticeHistory: Notice[] = [];
 export function clearNotices(): void { noticeHistory.length = 0; }
@@ -347,6 +350,21 @@ function matches(item: FakeElement, selector: string): boolean {
   callback?.(frag);
   return frag;
 };
+
+export class Component {
+  registerEvent(_ref: unknown): void {}
+  load(): void {}
+  unload(): void {}
+}
+
+/** Minimal BasesView: tests assign app, config and data directly. */
+export abstract class BasesView extends Component {
+  app!: App;
+  config!: { get(key: string): unknown; getOrder(): string[]; getDisplayName(prop: string): string };
+  data!: { data: Array<{ file: TFile; getValue(prop: string): { toString(): string } | null }> };
+  constructor(_controller: unknown) { super(); }
+  abstract onDataUpdated(): void;
+}
 
 export class Plugin {}
 export class MarkdownView {}

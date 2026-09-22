@@ -12,7 +12,7 @@ export type ProposedFilter =
   | { not: ProposedFilter[] };
 
 export interface ProposedBaseView {
-  /** View type; "table" (default), "cards", "list", or "map". */
+  /** View type; "table" (default), "cards", "list", "map", or "companion-similar" (Companion's Similar notes view). */
   type?: string;
   name: string;
   /** Property order (e.g. "file.name", "note.status", "formula.ppu"). */
@@ -40,7 +40,7 @@ export interface ProposedBase {
 }
 
 const MAX_VIEWS = 8;
-const VIEW_TYPES = new Set(["table", "cards", "list", "map"]);
+const VIEW_TYPES = new Set(["table", "cards", "list", "map", "companion-similar"]);
 const BUILTIN_SUMMARIES = new Set([
   "Average", "Min", "Max", "Sum", "Range", "Median", "Stddev",
   "Earliest", "Latest", "Checked", "Unchecked", "Empty", "Filled", "Unique",
@@ -55,7 +55,7 @@ export function buildBaseFile(base: ProposedBase): string {
     if (!v.name?.trim()) throw new Error(`View ${i + 1} needs a name.`);
     const type = v.type?.trim() || "table";
     if (!VIEW_TYPES.has(type)) {
-      throw new Error(`View "${v.name}": unknown type "${type}" (use table, cards, list, map).`);
+      throw new Error(`View "${v.name}": unknown type "${type}" (use table, cards, list, map, companion-similar).`);
     }
     if (v.limit !== undefined && (!Number.isInteger(v.limit) || v.limit <= 0)) {
       throw new Error(`View "${v.name}": limit must be a positive integer.`);

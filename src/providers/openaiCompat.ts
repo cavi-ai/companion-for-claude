@@ -77,7 +77,8 @@ export class OpenAICompatProvider implements Provider {
           try {
             const parsed = JSON.parse(payload) as { choices?: Array<{ delta?: { content?: string } }> };
             delta = parsed.choices?.[0]?.delta?.content;
-          } catch {
+          } catch (e) {
+            console.debug("Claude Companion: OpenAI-compat SSE frame parse failed", e);
             continue; // keepalive / partial frame — skip
           }
           if (delta) {
@@ -132,7 +133,8 @@ export class OpenAICompatProvider implements Provider {
       if (res.status < 200 || res.status >= 300) return [];
       const data = res.json as { data?: Array<{ id?: string }> };
       return (data.data ?? []).map((m) => m.id ?? "").filter(Boolean);
-    } catch {
+    } catch (e) {
+      console.debug("Claude Companion: failed to list OpenAI-compat models", e);
       return [];
     }
   }

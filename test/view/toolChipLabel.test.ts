@@ -68,6 +68,7 @@ describe("chipLabel", () => {
   it("uses human labels and concise note names for built-in tools", () => {
     expect(chipLabel("vault_search", { query: "Continuity" })).toBe('Search vault — "Continuity"');
     expect(chipLabel("note_read", { path: "Research/Alpha/Project.md" })).toBe("Read note — Project");
+    expect(chipLabel("related_notes", { path: "Notes/A.md" })).toBe("Find related notes — A");
   });
 
   it("omits the dash and args entirely when there is nothing to show", () => {

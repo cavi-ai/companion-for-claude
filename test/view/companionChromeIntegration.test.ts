@@ -39,22 +39,21 @@ const optionLabel = (root: HTMLElement): string | null => {
 describe("Companion chrome view integration", () => {
   it("routes a quick embedding change through real saveSettings invalidation", async () => {
     const plugin = Object.create((await import("../../src/main")).default.prototype) as ClaudeCompanionPlugin;
-    const invalidateIndexer = vi.fn();
+    const onSettingsChanged = vi.fn();
     Object.assign(plugin as unknown as Record<string, unknown>, {
       app: new App(),
       settings: structuredClone(DEFAULT_SETTINGS),
       persist: async () => undefined,
       refreshViews: () => undefined,
       syncMcpServer: async () => undefined,
-      invalidateIndexer,
-      indexerModel: "builtin:old-model",
+      _semantic: { onSettingsChanged },
       _mcpServersSnapshot: "[]",
     });
 
     await plugin.companionChrome().save({ id: "embedding-engine", value: "ollama" });
 
     expect(plugin.settings.embeddingEngine).toBe("ollama");
-    expect(invalidateIndexer).toHaveBeenCalledTimes(1);
+    expect(onSettingsChanged).toHaveBeenCalledTimes(1);
   });
 
   it("puts contextual options on Inbox, Related Notes, and Session Memory", async () => {

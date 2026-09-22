@@ -19,7 +19,8 @@ export function readAnthropicEnv(): AnthropicEnv {
     if (env.ANTHROPIC_AUTH_TOKEN !== undefined) out.ANTHROPIC_AUTH_TOKEN = env.ANTHROPIC_AUTH_TOKEN;
     if (env.ANTHROPIC_BASE_URL !== undefined) out.ANTHROPIC_BASE_URL = env.ANTHROPIC_BASE_URL;
     return out;
-  } catch {
+  } catch (e) {
+    console.debug("Claude Companion: failed to read Anthropic env vars", e);
     return {};
   }
 }

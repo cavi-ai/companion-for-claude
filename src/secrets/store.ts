@@ -60,7 +60,8 @@ export function createSecretStore(app: App): SecretStore {
   const read = (id: string): string | null => {
     try {
       return api()?.getSecret(id) ?? null;
-    } catch {
+    } catch (e) {
+      console.debug("Claude Companion: secret read failed for", id, e);
       return null;
     }
   };
@@ -70,7 +71,8 @@ export function createSecretStore(app: App): SecretStore {
     set: (id, value) => {
       try {
         api()?.setSecret(id, value);
-      } catch {
+      } catch (e) {
+        console.debug("Claude Companion: secret write failed for", id, e);
         return false;
       }
       return read(id) === value;

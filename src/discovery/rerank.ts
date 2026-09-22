@@ -104,8 +104,9 @@ export function parseRerankResponse(raw: string, candidateIds: readonly string[]
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
-  } catch {
-    throw new Error("Rerank response must be a valid JSON object");
+  } catch (e) {
+    console.debug("Claude Companion: rerank response JSON parse failed", e);
+    throw new Error("Rerank response must be a valid JSON object", { cause: e });
   }
   if (!isObject(parsed) || !Array.isArray(parsed.order)) {
     throw new Error("Rerank response must be a JSON object with an order array");

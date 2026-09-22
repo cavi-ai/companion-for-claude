@@ -147,3 +147,13 @@ views:
     ).toThrow(/unknown summary/i);
   });
 });
+
+describe("companion-similar view type", () => {
+  it("emits the Similar notes view", () => {
+    const yaml = buildBaseFile({ views: [{ type: "companion-similar", name: "Similar" }] });
+    expect(yaml).toContain("  - type: companion-similar");
+  });
+  it("lists it in the unknown-type error", () => {
+    expect(() => buildBaseFile({ views: [{ type: "gallery", name: "G" }] })).toThrow("use table, cards, list, map, companion-similar");
+  });
+});

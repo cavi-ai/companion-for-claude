@@ -143,7 +143,8 @@ export function decodeBase64Utf8(b64: string): string {
 function safeJson(text: string): unknown {
   try {
     return JSON.parse(text);
-  } catch {
+  } catch (e) {
+    console.debug("Claude Companion: GitHub reply JSON parse failed", e);
     return null;
   }
 }

@@ -22,7 +22,8 @@ export function parseAuthStatus(stdout: string): CliAuthStatus {
   try {
     const o = JSON.parse(stdout) as { loggedIn?: unknown; authMethod?: unknown };
     return { loggedIn: o.loggedIn === true, method: typeof o.authMethod === "string" ? o.authMethod : "" };
-  } catch {
+  } catch (e) {
+    console.debug("Claude Companion: CLI auth status JSON parse failed", e);
     return { loggedIn: false, method: "" };
   }
 }
@@ -66,7 +67,8 @@ export function createNodeCliRuntime(): ClaudeCliRuntime {
     async authStatus(executable) {
       try {
         return parseAuthStatus(await run(executable, ["auth", "status"]));
-      } catch {
+      } catch (e) {
+        console.debug("Claude Companion: CLI auth status probe failed", e);
         return { loggedIn: false, method: "" };
       }
     },

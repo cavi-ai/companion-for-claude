@@ -162,7 +162,8 @@ export class McpHttpServer {
     let pathname: string;
     try {
       pathname = new URL(req.url ?? "/", "http://127.0.0.1").pathname;
-    } catch {
+    } catch (e) {
+      console.debug("Claude Companion: MCP server URL parse failed", e);
       pathname = "/";
     }
     if (pathname !== "/mcp") {

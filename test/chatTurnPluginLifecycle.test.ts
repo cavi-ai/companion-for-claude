@@ -14,8 +14,6 @@ function harness(): { plugin: ClaudeCompanionPlugin; saves: unknown[] } {
     settings: structuredClone(DEFAULT_SETTINGS),
     convState: { conversations: [], activeId: null },
     researchDeskPreferences: {},
-    buildRuns: {},
-    activeBuildRunId: null,
     _activity: new ActivityStore({ successRetentionMs: 60_000 }),
     saveData: async (data: unknown) => { saves.push(structuredClone(data)); },
   });

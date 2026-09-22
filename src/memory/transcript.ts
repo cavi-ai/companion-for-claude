@@ -104,7 +104,8 @@ export function digestTranscript(jsonl: string): SessionDigest {
     let rec: Record<string, unknown> | null;
     try {
       rec = asRecord(JSON.parse(line));
-    } catch {
+    } catch (e) {
+      console.debug("Claude Companion: transcript JSONL line parse failed", e);
       continue; // skip malformed lines — schema is best-effort
     }
     if (!rec) continue;

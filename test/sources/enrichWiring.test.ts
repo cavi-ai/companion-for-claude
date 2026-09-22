@@ -15,26 +15,44 @@ import { AnthropicProvider } from "../../src/providers/anthropic";
 import { InboxView, INBOX_VIEW_TYPE } from "../../src/view/InboxView";
 import { summarizeAndTag } from "../../src/indexing/autoTagger";
 import { OrganizeReviewModal } from "../../src/view/OrganizeReviewModal";
+import { SourceEnrichmentController } from "../../src/sources/controller";
 
 interface PrivateEnrich {
-  enrichDeps(selection: ProviderSelection): EnrichDeps;
-  resolvedEnrichDeps(): Promise<EnrichDeps>;
   sourceEnrichmentErrorHint(message: string): string | null;
   triageClippings(): Promise<void>;
   buildEnrichProposal(file: TFile, options: { rename: boolean; frontmatter: boolean; links: boolean; lint: boolean }): Promise<unknown>;
   organizeFolderFlow(folder: TFolder): Promise<void>;
-  queueEnrich(file: TFile): void;
 }
 
-function pluginHarness(completeResolved: ReturnType<typeof vi.fn>): ClaudeCompanionPlugin {
-  const plugin = Object.create(ClaudeCompanionPlugin.prototype) as ClaudeCompanionPlugin;
-  plugin.settings = { ...DEFAULT_SETTINGS };
-  Object.defineProperty(plugin, "router", {
-    value: () => ({
-      completeResolved,
-    }),
+function controllerHarness(completeResolved: ReturnType<typeof vi.fn>): SourceEnrichmentController {
+  const settings = { ...DEFAULT_SETTINGS };
+  return new SourceEnrichmentController({
+    settings: () => settings,
+    saveSettings: async () => {},
+    isMobile: false,
+    mobileSourceNoteMaxBytes: 5 * 1024 * 1024,
+    enrichApp: undefined as never,
+    vault: { cachedRead: async () => "" },
+    activity: () => ({ start: vi.fn(() => "a"), finish: vi.fn(), fail: vi.fn() }) as never,
+    enrichDiagnostics: () => ({ log: vi.fn() }) as never,
+    router: () => ({ utilitySelection: async () => ({}), completeResolved }) as never,
+    suspendReindex: () => () => {},
+    isUtilityLifecycleActive: () => true,
+    assertUtilityLifecycleActive: () => {},
+    utilityLifecycleEnded: () => false,
+    utilityLifecycleGeneration: () => 0,
+    notice: () => {},
+    openChoiceModal: () => ({ close() {} }),
   });
-  return plugin;
+}
+
+function enrichmentController(plugin: ClaudeCompanionPlugin): SourceEnrichmentController {
+  return (plugin as unknown as { enrichment(): SourceEnrichmentController }).enrichment();
+}
+
+async function resolvedEnrichDeps(plugin: ClaudeCompanionPlugin): Promise<EnrichDeps> {
+  const selection = await plugin.router().utilitySelection();
+  return enrichmentController(plugin).buildEnrichDeps(selection);
 }
 
 function selection(): ProviderSelection {
@@ -121,7 +139,7 @@ describe("source enrichment wiring", () => {
     // replied empty — ExtractError "reply was not valid JSON".
     const complete = vi.fn(async () => ({ text: "{}", provider: selection().provider }));
     const selected = selection();
-    const deps = (pluginHarness(complete) as unknown as PrivateEnrich).enrichDeps(selected);
+    const deps = controllerHarness(complete).buildEnrichDeps(selected);
     await deps.complete("sys", "user", { maxTokens: 4096, responseSchema: { type: "object" }, disableThinking: true });
     expect(complete).toHaveBeenCalledWith(selected, expect.objectContaining({
       maxTokens: 4096,
@@ -134,7 +152,7 @@ describe("source enrichment wiring", () => {
   it("leaves the default completion shape untouched when no opts are given", async () => {
     const complete = vi.fn(async () => ({ text: "ok", provider: selection().provider }));
     const selected = selection();
-    const deps = (pluginHarness(complete) as unknown as PrivateEnrich).enrichDeps(selected);
+    const deps = controllerHarness(complete).buildEnrichDeps(selected);
     await deps.complete("sys", "user");
     expect(complete).toHaveBeenCalledWith(selected, { system: "sys", user: "user" });
   });
@@ -146,7 +164,7 @@ describe("source enrichment wiring", () => {
     const complete = vi.spyOn(router, "completeResolved").mockResolvedValue({ text: "{}", provider: router.anthropic });
     const opened = vi.spyOn(ChoiceModal.prototype, "open");
 
-    const pending = (plugin as unknown as PrivateEnrich).resolvedEnrichDeps();
+    const pending = resolvedEnrichDeps(plugin);
     await Promise.resolve();
     choose("Use Claude this session");
     const deps = await pending;
@@ -159,7 +177,7 @@ describe("source enrichment wiring", () => {
     );
     expect(plugin.settings.utilityBackend).toBe("ollama");
 
-    await (plugin as unknown as PrivateEnrich).resolvedEnrichDeps();
+    await resolvedEnrichDeps(plugin);
     expect(opened).toHaveBeenCalledTimes(1);
   });
 
@@ -341,7 +359,7 @@ describe("source enrichment wiring", () => {
     expect(getNotices()).toEqual([]);
     expect(latestEnrichmentActivityMessage(plugin)).toMatch(/not approved.*LAN or remote endpoint/i);
     expect(latestEnrichmentActivityMessage(plugin)).not.toMatch(/see console/i);
-    await expect((plugin as unknown as PrivateEnrich).resolvedEnrichDeps()).rejects.toThrow(/not approved.*LAN or remote endpoint/i);
+    await expect(resolvedEnrichDeps(plugin)).rejects.toThrow(/not approved.*LAN or remote endpoint/i);
     expect(opened).toHaveBeenCalledTimes(1);
     expect(plugin.settings.utilityBackend).toBe("ollama");
   });
@@ -353,7 +371,7 @@ describe("source enrichment wiring", () => {
     const complete = vi.spyOn(router, "completeResolved");
     const opened = vi.spyOn(ChoiceModal.prototype, "open");
 
-    await expect((plugin as unknown as PrivateEnrich).resolvedEnrichDeps()).rejects.toThrow(/Anthropic credential.*LAN or remote endpoint/i);
+    await expect(resolvedEnrichDeps(plugin)).rejects.toThrow(/Anthropic credential.*LAN or remote endpoint/i);
 
     expect(opened).not.toHaveBeenCalled();
     expect(complete).not.toHaveBeenCalled();
@@ -416,8 +434,8 @@ describe("source enrichment wiring", () => {
     const claudeComplete = vi.spyOn(router.anthropic, "complete").mockResolvedValue("unsafe");
     const opened = vi.spyOn(ChoiceModal.prototype, "open");
 
-    const first = (plugin as unknown as PrivateEnrich).resolvedEnrichDeps();
-    const second = (plugin as unknown as PrivateEnrich).resolvedEnrichDeps();
+    const first = resolvedEnrichDeps(plugin);
+    const second = resolvedEnrichDeps(plugin);
     const settled = Promise.allSettled([first, second]);
     await settle();
 
@@ -429,7 +447,7 @@ describe("source enrichment wiring", () => {
     allow?.dispatchEvent({ type: "click" });
 
     expect((await settled).map((result) => result.status)).toEqual(["rejected", "rejected"]);
-    await expect((plugin as unknown as PrivateEnrich).resolvedEnrichDeps()).rejects.toThrow(/not approved/i);
+    await expect(resolvedEnrichDeps(plugin)).rejects.toThrow(/not approved/i);
     expect(opened).toHaveBeenCalledTimes(1);
     expect(ollamaComplete).not.toHaveBeenCalled();
     expect(claudeComplete).not.toHaveBeenCalled();
@@ -577,7 +595,7 @@ describe("source enrichment wiring", () => {
     Platform.isDesktop = false;
     const { plugin } = mobilePlugin();
 
-    const pending = (plugin as unknown as PrivateEnrich).resolvedEnrichDeps();
+    const pending = resolvedEnrichDeps(plugin);
     const rejected = expect(pending).rejects.toThrow(/not approved/i);
     await settle();
     const copy = (getLastOpenedModal()?.contentEl as unknown as FakeElement)
@@ -601,7 +619,7 @@ describe("source enrichment wiring", () => {
     vi.stubEnv("ANTHROPIC_BASE_URL", "https://gateway.example.com/anthropic/");
     const { plugin } = mobilePlugin({ authMode: "environment", apiKey: "", baseUrl: "" });
 
-    const pending = (plugin as unknown as PrivateEnrich).resolvedEnrichDeps();
+    const pending = resolvedEnrichDeps(plugin);
     const rejected = expect(pending).rejects.toThrow(/not approved/i);
     await settle();
     const copy = (getLastOpenedModal()?.contentEl as unknown as FakeElement)
@@ -672,7 +690,7 @@ describe("source enrichment wiring", () => {
     plugin.settings.utilityBackend = "ollama";
     plugin.settings.ollamaHost = "http://localhost:11434";
     await saveHarnessSettings(plugin);
-    const retry = (plugin as unknown as PrivateEnrich).resolvedEnrichDeps();
+    const retry = resolvedEnrichDeps(plugin);
     await settle();
     expect(opened).toHaveBeenCalledTimes(2);
     choose("Don't send");
@@ -715,7 +733,7 @@ describe("source enrichment wiring", () => {
     const before = await app.vault.cachedRead(file);
     const opened = vi.spyOn(ChoiceModal.prototype, "open");
 
-    const first = (plugin as unknown as PrivateEnrich).resolvedEnrichDeps();
+    const first = resolvedEnrichDeps(plugin);
     await settle();
     choose("Use Claude this session");
     await first;
@@ -746,7 +764,7 @@ describe("source enrichment wiring", () => {
     const before = await app.vault.cachedRead(file);
     const opened = vi.spyOn(ChoiceModal.prototype, "open");
 
-    const first = (plugin as unknown as PrivateEnrich).resolvedEnrichDeps();
+    const first = resolvedEnrichDeps(plugin);
     await settle();
     choose("Use Claude this session");
     await first;
@@ -807,7 +825,7 @@ describe("source enrichment wiring", () => {
     const before = await app.vault.cachedRead(file);
     const opened = vi.spyOn(ChoiceModal.prototype, "open");
 
-    const first = (plugin as unknown as PrivateEnrich).resolvedEnrichDeps();
+    const first = resolvedEnrichDeps(plugin);
     await settle();
     choose("Use Claude this session");
     await first;
@@ -861,7 +879,7 @@ describe("source enrichment wiring", () => {
     const { plugin } = mobilePlugin();
     const opened = vi.spyOn(ChoiceModal.prototype, "open");
 
-    const first = (plugin as unknown as PrivateEnrich).resolvedEnrichDeps();
+    const first = resolvedEnrichDeps(plugin);
     await settle();
     choose("Don't send");
     await expect(first).rejects.toThrow(/not approved/i);
@@ -870,7 +888,7 @@ describe("source enrichment wiring", () => {
     plugin.settings.apiKey = "";
     plugin.settings.oauthToken = "sk-ant-oat-test";
     await saveHarnessSettings(plugin);
-    const retry = (plugin as unknown as PrivateEnrich).resolvedEnrichDeps();
+    const retry = resolvedEnrichDeps(plugin);
     await settle();
 
     expect(opened).toHaveBeenCalledTimes(2);
@@ -887,13 +905,13 @@ describe("source enrichment wiring", () => {
     const { plugin } = mobilePlugin({ authMode: "environment", apiKey: "", baseUrl: "" });
     const opened = vi.spyOn(ChoiceModal.prototype, "open");
 
-    const first = (plugin as unknown as PrivateEnrich).resolvedEnrichDeps();
+    const first = resolvedEnrichDeps(plugin);
     await settle();
     choose("Don't send");
     await expect(first).rejects.toThrow(/not approved/i);
 
     vi.stubEnv("ANTHROPIC_BASE_URL", "https://gateway-b.example.com/v1");
-    const retry = (plugin as unknown as PrivateEnrich).resolvedEnrichDeps();
+    const retry = resolvedEnrichDeps(plugin);
     await settle();
 
     expect(opened).toHaveBeenCalledTimes(2);
@@ -941,7 +959,7 @@ describe("source enrichment wiring", () => {
     const opened = vi.spyOn(ChoiceModal.prototype, "open");
     const complete = vi.spyOn(router.anthropic, "complete").mockResolvedValue("unsafe");
 
-    (plugin as unknown as PrivateEnrich).queueEnrich(file);
+    enrichmentController(plugin).queueEnrich(file);
     plugin.onunload();
     await vi.advanceTimersByTimeAsync(2000);
 

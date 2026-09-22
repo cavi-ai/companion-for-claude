@@ -46,7 +46,8 @@ export function fireUrlError(fireUrl: string): string | null {
   let url: URL;
   try {
     url = new URL(raw);
-  } catch {
+  } catch (e) {
+    console.debug("Claude Companion: routine fire URL parse failed", e);
     return "Routine endpoint is not a valid URL.";
   }
   if (url.protocol !== "https:") return "Routine endpoint must be an https:// URL.";
@@ -90,7 +91,8 @@ export function parseFireResponse(status: number, bodyText: string): RoutineFire
   let json: unknown;
   try {
     json = JSON.parse(bodyText);
-  } catch {
+  } catch (e) {
+    console.debug("Claude Companion: routine fire response JSON parse failed", e);
     // 2xx but an unparseable body — treat as fired, just without a link.
     return { sessionId: null, sessionUrl: null };
   }
@@ -137,7 +139,8 @@ function extractApiErrorDetail(bodyText: string): string | null {
   try {
     const j = JSON.parse(bodyText) as { error?: { message?: string }; message?: string };
     return j.error?.message ?? j.message ?? null;
-  } catch {
+  } catch (e) {
+    console.debug("Claude Companion: routine error body JSON parse failed", e);
     const t = bodyText.trim();
     return t ? t.slice(0, 200) : null;
   }

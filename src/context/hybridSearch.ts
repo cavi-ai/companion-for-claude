@@ -13,15 +13,16 @@ export interface KeywordHit {
 }
 
 /** A semantic-search fn over the local index (chat context and MCP share it). */
-export type SemanticSearch = (query: string, k: number) => Promise<{ path: string; text: string }[]>;
+export type SemanticSearch = (query: string, k: number, accept?: (path: string) => boolean) => Promise<{ path: string; text: string }[]>;
 
 /** Keyword-score every markdown file (paths + tags + content), best first. */
-export async function keywordVaultSearch(app: App, query: string, excludePath: string | null = null): Promise<KeywordHit[]> {
+export async function keywordVaultSearch(app: App, query: string, excludePath: string | null = null, accept?: (path: string) => boolean): Promise<KeywordHit[]> {
   const terms = tokenize(query);
   if (terms.length === 0) return [];
   const hits: KeywordHit[] = [];
   for (const file of app.vault.getMarkdownFiles()) {
     if (file.path === excludePath) continue;
+    if (accept && !accept(file.path)) continue;
     const cache = app.metadataCache.getFileCache(file);
     const lowerTags = cache ? (getAllTags(cache) ?? []).join(" ").toLowerCase() : "";
     const content = await app.vault.cachedRead(file);

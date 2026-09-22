@@ -254,7 +254,8 @@ export class ProviderRouter {
     if (provider.supportsTools !== true || !provider.capabilities) return provider.supportsTools === true;
     try {
       return (await provider.capabilities(model)).includes("tools");
-    } catch {
+    } catch (e) {
+      console.debug("Claude Companion: tool capability check failed for", provider.id, model, e);
       return false;
     }
   }
@@ -276,7 +277,8 @@ export class ProviderRouter {
     if (!provider.capabilities) return false;
     try {
       return (await provider.capabilities(model)).includes("thinking");
-    } catch {
+    } catch (e) {
+      console.debug("Claude Companion: thinking capability check failed for", provider.id, model, e);
       return false;
     }
   }

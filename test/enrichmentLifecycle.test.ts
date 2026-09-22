@@ -7,21 +7,42 @@ vi.mock("obsidian", async (importOriginal) => ({
 
 import { App, FakeElement, getLastOpenedModal, Platform, TFile, WorkspaceLeaf } from "obsidian";
 import ClaudeCompanionPlugin from "../src/main";
-import { DEFAULT_SETTINGS } from "../src/types";
+import { DEFAULT_SETTINGS, type PluginSettings } from "../src/types";
 import { ExtractError } from "../src/sources/extract";
 import { InboxView, INBOX_VIEW_TYPE } from "../src/view/InboxView";
 import { ChoiceModal } from "../src/view/ChoiceModal";
+import { SourceEnrichmentController, type SourceEnrichmentControllerDeps } from "../src/sources/controller";
 
 type EnrichRunOutcome = Awaited<ReturnType<ClaudeCompanionPlugin["enrichInboxItem"]>>;
 
-interface EnrichmentLifecyclePlugin {
-  queueEnrich(file: TFile): void;
-  markEnrichRecentlyWritten(path: string): void;
+interface ControllerPrivates {
   enrichTimers: Map<string, number>;
-  enrichPending: Map<string, TFile>;
+  enrichPending: Map<string, unknown>;
   enrichQueueRunning: boolean;
   enrichRecentlyWritten: Set<string>;
   enrichRecentlyWrittenExpiryTimers: Map<string, number>;
+}
+
+function testControllerDeps(overrides: Partial<SourceEnrichmentControllerDeps> = {}): SourceEnrichmentControllerDeps {
+  return {
+    settings: () => ({ ...DEFAULT_SETTINGS, sourceCaptureConsent: "allow", sourceCaptureEnabled: true, sourceEnrichOnCreate: true, sourceInboxFolder: "Clippings" }) as PluginSettings,
+    saveSettings: async () => {},
+    isMobile: false,
+    mobileSourceNoteMaxBytes: 5 * 1024 * 1024,
+    enrichApp: undefined as never,
+    vault: { cachedRead: async () => "" },
+    activity: () => ({ start: vi.fn(() => "a"), finish: vi.fn(), fail: vi.fn() }) as never,
+    enrichDiagnostics: () => ({ log: vi.fn() }) as never,
+    router: () => ({ utilitySelection: async () => ({}), completeResolved: vi.fn() }) as never,
+    suspendReindex: () => () => {},
+    isUtilityLifecycleActive: () => true,
+    assertUtilityLifecycleActive: () => {},
+    utilityLifecycleEnded: () => false,
+    utilityLifecycleGeneration: () => 0,
+    notice: () => {},
+    openChoiceModal: () => ({ close() {} }),
+    ...overrides,
+  };
 }
 
 const settle = async (turns = 12): Promise<void> => {
@@ -38,6 +59,7 @@ function inboxPlugin(
     settings: { ...DEFAULT_SETTINGS, sourceCaptureEnabled: true, sourceInboxFolder: "Clippings" },
     enrichInboxItem,
     sourceEnrichmentBackendLabel: () => "Ollama · utility-model",
+    suspendReindex: () => () => {},
   });
   return plugin;
 }
@@ -62,35 +84,22 @@ describe("enrichment lifecycle", () => {
     const started: string[] = [];
     let active = 0;
     let maxActive = 0;
-    const plugin = Object.create(ClaudeCompanionPlugin.prototype) as ClaudeCompanionPlugin;
-    Object.assign(plugin, {
-      app,
-      settings: {
-        ...DEFAULT_SETTINGS,
-        sourceCaptureConsent: "allow",
-        sourceCaptureEnabled: true,
-        sourceEnrichOnCreate: true,
-        sourceInboxFolder: "Clippings",
-      },
-      utilityLifecycleEnded: false,
-      utilityLifecycleGeneration: 0,
-      enrichTimers: new Map<string, number>(),
-      enrichPending: new Map<string, TFile>(),
-      enrichQueueRunning: false,
-      enrichRecentlyWritten: new Set<string>(),
-      enrichRecentlyWrittenExpiryTimers: new Map<string, number>(),
-      runEnrich: async (candidate: TFile): Promise<EnrichRunOutcome> => {
-        started.push(candidate.path);
-        active++;
-        maxActive = Math.max(maxActive, active);
-        await release.promise;
-        active--;
-        return { status: "enriched" };
-      },
+    const controller = new SourceEnrichmentController(testControllerDeps({
+      enrichApp: app as never,
+      vault: { cachedRead: async (path) => { const f = app.vault.getAbstractFileByPath(path); return f ? await app.vault.cachedRead(f as TFile) : ""; } },
+    }));
+    vi.spyOn(controller, "runEnrich").mockImplementation(async (candidate) => {
+      started.push(candidate.path);
+      active++;
+      maxActive = Math.max(maxActive, active);
+      await release.promise;
+      active--;
+      return { status: "enriched" };
     });
-    const lifecycle = plugin as unknown as EnrichmentLifecyclePlugin;
+    const plugin = Object.create(ClaudeCompanionPlugin.prototype) as ClaudeCompanionPlugin;
+    Object.assign(plugin, { app, settings: { ...DEFAULT_SETTINGS }, _enrichment: controller });
 
-    lifecycle.queueEnrich(file);
+    controller.queueEnrich(file);
     await vi.advanceTimersByTimeAsync(1500);
     await settle();
     const inbox = plugin.enrichInboxItem(file, { inline: true, refreshInboxViews: false });
@@ -102,7 +111,7 @@ describe("enrichment lifecycle", () => {
     release.resolve();
     await expect(inbox).resolves.toEqual({ status: "enriched" });
     await settle();
-    expect(lifecycle.enrichQueueRunning).toBe(false);
+    expect((controller as unknown as ControllerPrivates).enrichQueueRunning).toBe(false);
   });
 
   it("serializes different clips across automatic and Inbox enrichment", async () => {
@@ -114,35 +123,22 @@ describe("enrichment lifecycle", () => {
     const started: string[] = [];
     let active = 0;
     let maxActive = 0;
-    const plugin = Object.create(ClaudeCompanionPlugin.prototype) as ClaudeCompanionPlugin;
-    Object.assign(plugin, {
-      app,
-      settings: {
-        ...DEFAULT_SETTINGS,
-        sourceCaptureConsent: "allow",
-        sourceCaptureEnabled: true,
-        sourceEnrichOnCreate: true,
-        sourceInboxFolder: "Clippings",
-      },
-      utilityLifecycleEnded: false,
-      utilityLifecycleGeneration: 0,
-      enrichTimers: new Map<string, number>(),
-      enrichPending: new Map<string, TFile>(),
-      enrichQueueRunning: false,
-      enrichRecentlyWritten: new Set<string>(),
-      enrichRecentlyWrittenExpiryTimers: new Map<string, number>(),
-      runEnrich: async (candidate: TFile): Promise<EnrichRunOutcome> => {
-        started.push(candidate.path);
-        active++;
-        maxActive = Math.max(maxActive, active);
-        if (candidate.path === automatic.path) await releaseAutomatic.promise;
-        active--;
-        return { status: "enriched" };
-      },
+    const controller = new SourceEnrichmentController(testControllerDeps({
+      enrichApp: app as never,
+      vault: { cachedRead: async (path) => { const f = app.vault.getAbstractFileByPath(path); return f ? await app.vault.cachedRead(f as TFile) : ""; } },
+    }));
+    vi.spyOn(controller, "runEnrich").mockImplementation(async (candidate) => {
+      started.push(candidate.path);
+      active++;
+      maxActive = Math.max(maxActive, active);
+      if (candidate.path === automatic.path) await releaseAutomatic.promise;
+      active--;
+      return { status: "enriched" };
     });
-    const lifecycle = plugin as unknown as EnrichmentLifecyclePlugin;
+    const plugin = Object.create(ClaudeCompanionPlugin.prototype) as ClaudeCompanionPlugin;
+    Object.assign(plugin, { app, settings: { ...DEFAULT_SETTINGS }, _enrichment: controller });
 
-    lifecycle.queueEnrich(automatic);
+    controller.queueEnrich(automatic);
     await vi.advanceTimersByTimeAsync(1500);
     await settle();
     const inboxResult = plugin.enrichInboxItem(inbox, { inline: true, refreshInboxViews: false });
@@ -166,30 +162,27 @@ describe("enrichment lifecycle", () => {
     const started: string[] = [];
     let active = 0;
     let maxActive = 0;
-    const plugin = Object.create(ClaudeCompanionPlugin.prototype) as ClaudeCompanionPlugin;
-    Object.assign(plugin, {
-      utilityLifecycleEnded: false,
-      utilityLifecycleGeneration: 0,
-      enrichTimers: new Map<string, number>(),
-      enrichPending: new Map<string, TFile>(),
-      enrichQueueRunning: false,
-      enrichRecentlyWritten: new Set<string>(),
-      enrichRecentlyWrittenExpiryTimers: new Map<string, number>(),
-      enrichFile: async (file: TFile): Promise<EnrichRunOutcome> => {
-        started.push(file.path);
-        active++;
-        maxActive = Math.max(maxActive, active);
-        if (file.path === first.path || file.path === second.path) await releaseFirst.promise;
-        active--;
-        if (file.path === second.path) throw new Error("malformed clipping");
-        return { status: "enriched" };
-      },
+    const activityRecords: Array<Record<string, unknown>> = [];
+    const controller = new SourceEnrichmentController(testControllerDeps({
+      activity: () => ({
+        start: vi.fn((opts: { id: string }) => { activityRecords.push({ ...opts, state: "needs-attention" }); return opts.id; }),
+        finish: vi.fn(),
+        fail: vi.fn((_id: string, data: Record<string, unknown>) => { Object.assign(activityRecords[activityRecords.length - 1]!, data); }),
+      }) as never,
+    }));
+    vi.spyOn(controller, "enrichFile").mockImplementation(async (file) => {
+      started.push(file.path);
+      active++;
+      maxActive = Math.max(maxActive, active);
+      if (file.path === first.path || file.path === second.path) await releaseFirst.promise;
+      active--;
+      if (file.path === second.path) throw new Error("malformed clipping");
+      return { status: "enriched" };
     });
-    const lifecycle = plugin as unknown as EnrichmentLifecyclePlugin;
 
-    lifecycle.queueEnrich(first);
-    lifecycle.queueEnrich(second);
-    lifecycle.queueEnrich(third);
+    controller.queueEnrich(first);
+    controller.queueEnrich(second);
+    controller.queueEnrich(third);
     await vi.advanceTimersByTimeAsync(1500);
     await settle();
 
@@ -200,9 +193,10 @@ describe("enrichment lifecycle", () => {
     await settle(24);
     expect(started).toEqual([first.path, second.path, third.path]);
     expect(maxActive).toBe(1);
-    expect(lifecycle.enrichPending.size).toBe(0);
-    expect(lifecycle.enrichQueueRunning).toBe(false);
-    expect(plugin.activity.snapshot().records).toEqual(expect.arrayContaining([
+    const state = controller as unknown as ControllerPrivates;
+    expect(state.enrichPending.size).toBe(0);
+    expect(state.enrichQueueRunning).toBe(false);
+    expect(activityRecords).toEqual(expect.arrayContaining([
       expect.objectContaining({ state: "needs-attention", details: [expect.objectContaining({ message: "malformed clipping" })] }),
     ]));
   });
@@ -215,37 +209,38 @@ describe("enrichment lifecycle", () => {
     const saveSettings = vi.fn()
       .mockRejectedValueOnce(new Error("settings disk full"))
       .mockResolvedValue(undefined);
-    const plugin = Object.create(ClaudeCompanionPlugin.prototype) as ClaudeCompanionPlugin;
-    Object.assign(plugin, {
-      app,
-      settings: { ...DEFAULT_SETTINGS, sourceCaptureConsent: "ask", sourceCaptureEnabled: true, sourceEnrichOnCreate: true, sourceInboxFolder: "Clippings" },
-      utilityLifecycleEnded: false,
-      utilityLifecycleGeneration: 0,
-      enrichTimers: new Map<string, number>(),
-      enrichPending: new Map<string, TFile>(),
-      enrichQueueRunning: false,
-      enrichRecentlyWritten: new Set<string>(),
-      enrichRecentlyWrittenExpiryTimers: new Map<string, number>(),
+    const settings = { ...DEFAULT_SETTINGS, sourceCaptureConsent: "ask" as string, sourceCaptureEnabled: true, sourceEnrichOnCreate: true, sourceInboxFolder: "Clippings" };
+    const activityRecords: Array<Record<string, unknown>> = [];
+    const controller = new SourceEnrichmentController(testControllerDeps({
+      settings: () => settings as PluginSettings,
       saveSettings,
-    });
-    const lifecycle = plugin as unknown as EnrichmentLifecyclePlugin;
+      enrichApp: app as never,
+      vault: { cachedRead: async (path) => { const f = app.vault.getAbstractFileByPath(path); return f ? await app.vault.cachedRead(f as TFile) : ""; } },
+      activity: () => ({
+        start: vi.fn((opts: { id: string }) => { activityRecords.push({ ...opts, state: "needs-attention" }); return opts.id; }),
+        finish: vi.fn(),
+        fail: vi.fn((_id: string, data: Record<string, unknown>) => { Object.assign(activityRecords[activityRecords.length - 1]!, data); }),
+      }) as never,
+      openChoiceModal: (opts) => { const m = new ChoiceModal(app, opts); m.open(); return m; },
+    }));
 
-    lifecycle.queueEnrich(first);
+    controller.queueEnrich(first);
     await vi.advanceTimersByTimeAsync(1500);
     const allow = (getLastOpenedModal()?.contentEl as unknown as FakeElement).querySelectorAll("button").find(({ textContent }) => textContent === "Enrich automatically");
     allow?.dispatchEvent({ type: "click" });
     await settle(24);
 
-    expect(lifecycle.enrichQueueRunning).toBe(false);
-    expect(plugin.activity.snapshot().records[0]).toMatchObject({ state: "needs-attention", details: [expect.objectContaining({ message: "settings disk full" })] });
+    const state = controller as unknown as ControllerPrivates;
+    expect(state.enrichQueueRunning).toBe(false);
+    expect(activityRecords[0]).toMatchObject({ state: "needs-attention", details: [expect.objectContaining({ message: "settings disk full" })] });
 
-    lifecycle.queueEnrich(second);
+    controller.queueEnrich(second);
     await vi.advanceTimersByTimeAsync(1500);
     const deny = (getLastOpenedModal()?.contentEl as unknown as FakeElement).querySelectorAll("button").find(({ textContent }) => textContent === "Manual only");
     deny?.dispatchEvent({ type: "click" });
     await settle(24);
-    expect(lifecycle.enrichQueueRunning).toBe(false);
-    expect(lifecycle.enrichPending.size).toBe(0);
+    expect(state.enrichQueueRunning).toBe(false);
+    expect(state.enrichPending.size).toBe(0);
   });
 
   it("treats persisted manual-only consent as an immediate skip without reopening consent", async () => {
@@ -253,26 +248,18 @@ describe("enrichment lifecycle", () => {
     const app = new App();
     const file = app.vault.seed("Clippings/manual.md", "Manual clip");
     const opened = vi.spyOn(ChoiceModal.prototype, "open");
-    const plugin = Object.create(ClaudeCompanionPlugin.prototype) as ClaudeCompanionPlugin;
-    Object.assign(plugin, {
-      app,
-      settings: { ...DEFAULT_SETTINGS, sourceCaptureConsent: "deny", sourceCaptureEnabled: true, sourceEnrichOnCreate: true, sourceInboxFolder: "Clippings" },
-      utilityLifecycleEnded: false,
-      utilityLifecycleGeneration: 0,
-      enrichTimers: new Map<string, number>(),
-      enrichPending: new Map<string, TFile>(),
-      enrichQueueRunning: false,
-      enrichRecentlyWritten: new Set<string>(),
-      enrichRecentlyWrittenExpiryTimers: new Map<string, number>(),
-    });
-    const lifecycle = plugin as unknown as EnrichmentLifecyclePlugin;
+    const controller = new SourceEnrichmentController(testControllerDeps({
+      settings: () => ({ ...DEFAULT_SETTINGS, sourceCaptureConsent: "deny", sourceCaptureEnabled: true, sourceEnrichOnCreate: true, sourceInboxFolder: "Clippings" }) as PluginSettings,
+      enrichApp: app as never,
+      vault: { cachedRead: async (path) => { const f = app.vault.getAbstractFileByPath(path); return f ? await app.vault.cachedRead(f as TFile) : ""; } },
+    }));
 
-    lifecycle.queueEnrich(file);
+    controller.queueEnrich(file);
     await vi.advanceTimersByTimeAsync(1500);
     await settle();
 
     expect(opened).not.toHaveBeenCalled();
-    expect(lifecycle.enrichQueueRunning).toBe(false);
+    expect((controller as unknown as ControllerPrivates).enrichQueueRunning).toBe(false);
   });
 
   it("publishes honest per-file batch percentage and retains partial failures", async () => {
@@ -396,9 +383,7 @@ describe("enrichment lifecycle", () => {
         openaiCompatHost: "https://models.example.com/v1",
         openaiCompatModel: "remote-model",
       },
-      enrichTimers: new Map<string, number>(),
-      enrichRecentlyWritten: new Set<string>(),
-      enrichRecentlyWrittenExpiryTimers: new Map<string, number>(),
+      suspendReindex: () => () => {},
     });
     vi.spyOn(plugin.router().openaiCompat, "complete").mockImplementation(async () => {
       await new Promise<void>((resolve) => window.setTimeout(resolve, 150));
@@ -446,35 +431,34 @@ describe("enrichment lifecycle", () => {
 
   it("catches a regression that leaves queued enrichment or expiry work alive after unload", () => {
     vi.useFakeTimers();
-    const plugin = Object.create(ClaudeCompanionPlugin.prototype) as ClaudeCompanionPlugin;
+    let ended = false;
+    const controller = new SourceEnrichmentController(testControllerDeps({
+      utilityLifecycleEnded: () => ended,
+      isUtilityLifecycleActive: () => !ended,
+    }));
     const file = new TFile("Clippings/later.md", "Later", 0);
+    const plugin = Object.create(ClaudeCompanionPlugin.prototype) as ClaudeCompanionPlugin;
     Object.assign(plugin, {
-      utilityLifecycleEnded: false,
-      utilityLifecycleGeneration: 0,
-      enrichTimers: new Map<string, number>(),
-      enrichPending: new Map([["Clippings/pending.md", new TFile("Clippings/pending.md", "Pending", 0)]]),
-      enrichQueueRunning: false,
-      enrichRecentlyWritten: new Set<string>(),
-      enrichRecentlyWrittenExpiryTimers: new Map<string, number>(),
-      reindexTimer: null,
+      _enrichment: controller,
       _ontologyReloadTimer: null,
       researchRefreshTimer: null,
       inboxBadgeTimer: null,
     });
-    const lifecycle = plugin as unknown as EnrichmentLifecyclePlugin;
 
-    lifecycle.queueEnrich(file);
-    lifecycle.markEnrichRecentlyWritten(file.path);
+    controller.queueEnrich(file);
+    controller.markEnrichRecentlyWritten(file.path);
     expect(vi.getTimerCount()).toBe(2);
 
+    ended = true;
     plugin.onunload();
-    lifecycle.markEnrichRecentlyWritten("Clippings/stale.md");
+    controller.markEnrichRecentlyWritten("Clippings/stale.md");
     vi.runAllTimers();
 
-    expect(lifecycle.enrichTimers.size).toBe(0);
-    expect(lifecycle.enrichPending.size).toBe(0);
-    expect(lifecycle.enrichRecentlyWrittenExpiryTimers.size).toBe(0);
-    expect(lifecycle.enrichRecentlyWritten.size).toBe(0);
+    const state = controller as unknown as ControllerPrivates;
+    expect(state.enrichTimers.size).toBe(0);
+    expect(state.enrichPending.size).toBe(0);
+    expect(state.enrichRecentlyWrittenExpiryTimers.size).toBe(0);
+    expect(state.enrichRecentlyWritten.size).toBe(0);
     expect(vi.getTimerCount()).toBe(0);
   });
 

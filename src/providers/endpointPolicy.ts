@@ -63,7 +63,8 @@ function validEndpoint(url: string): URL | null {
       if (labels.some((label) => !/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/i.test(label))) return null;
     }
     return parsed;
-  } catch {
+  } catch (e) {
+    console.debug("Claude Companion: endpoint URL parse failed", e);
     return null;
   }
 }
@@ -80,7 +81,8 @@ export function sanitizeEndpointForDisplay(endpoint: string): string {
     const path = parsed.pathname === "/" ? "" : parsed.pathname.replace(/\/+$/, "");
     const sanitized = `${parsed.protocol}//${parsed.host}${path}`;
     return validEndpoint(sanitized) ? sanitized : INVALID_ENDPOINT_DISPLAY;
-  } catch {
+  } catch (e) {
+    console.debug("Claude Companion: endpoint sanitize URL parse failed", e);
     return INVALID_ENDPOINT_DISPLAY;
   }
 }

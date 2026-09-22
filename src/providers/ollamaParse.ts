@@ -36,7 +36,8 @@ export function parseOllamaLine(line: string): OllamaLineResult {
   };
   try {
     obj = JSON.parse(trimmed) as typeof obj;
-  } catch {
+  } catch (e) {
+    console.debug("Claude Companion: Ollama response JSON parse failed", e);
     return { text: "", done: false }; // ignore partials / keep-alives
   }
   if (obj.error) return { text: "", done: true, error: obj.error };

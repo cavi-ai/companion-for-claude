@@ -65,7 +65,8 @@ export function assertSuccessful(adapter: DiscoveryAdapterId, response: Discover
 export function parseJson(adapter: DiscoveryAdapterId, body: string): unknown {
   try {
     return JSON.parse(body) as unknown;
-  } catch {
+  } catch (e) {
+    console.debug("Claude Companion: discovery adapter JSON parse failed", e);
     throw new DiscoveryAdapterError({ adapter, category: "malformed-response" });
   }
 }
