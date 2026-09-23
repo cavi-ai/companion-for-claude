@@ -29,6 +29,11 @@ function hasSecretBearingContent(value: string): boolean {
   return value.includes(REDACTION_MARKER) || sanitize(value) !== value;
 }
 
+/** Model-written fields arrive already masked; only a secret the sanitizer would still change is rejected. */
+function hasRawSecret(value: string): boolean {
+  return sanitize(value) !== value;
+}
+
 function containsSecretBearingContent(value: unknown, seen = new WeakSet<object>()): boolean {
   if (typeof value === "string") return hasSecretBearingContent(value);
   if (value === null || typeof value !== "object" || seen.has(value)) return false;
@@ -126,12 +131,12 @@ export function validateEnrichment(
 
   for (const [key, value] of Object.entries(fields)) {
     if (typeof value === "string") {
-      if (hasSecretBearingContent(value)) errors.push(`fields.${key}: contains secret-bearing content`);
+      if (hasRawSecret(value)) errors.push(`fields.${key}: contains secret-bearing content`);
       continue;
     }
     if (Array.isArray(value)) {
       for (const [index, item] of value.entries()) {
-        if (typeof item === "string" && hasSecretBearingContent(item)) errors.push(`fields.${key}[${index}]: contains secret-bearing content`);
+        if (typeof item === "string" && hasRawSecret(item)) errors.push(`fields.${key}[${index}]: contains secret-bearing content`);
       }
     }
   }

@@ -14,15 +14,17 @@
 //   - Sonnet 4.5 and older: classic `temperature`; thinking via
 //     `{type:"enabled",budget_tokens}`; no `effort`.
 //   - Haiku 4.5: thinking adaptive, no `effort`.
+//   - Opus 5.5, Fable 5/5.1, Mythos 5/5.1: thinking cannot be disabled
+//     (`disabled` and `budget_tokens` return 400); effort is the only control.
 //   - Unknown / custom ids: conservative defaults (temperature on, no
 //     thinking/effort) so a request never includes a field that 400s.
 
-export type ThinkingMode = "adaptive" | "budget" | "none";
+export type ThinkingMode = "adaptive" | "always" | "budget" | "none";
 
 export interface ModelCapabilities {
   /** `temperature` accepted by this model. */
   temperature: boolean;
-  /** How thinking is requested: adaptive (4.6+), budget_tokens (older), or unsupported. */
+  /** How thinking is requested: adaptive (4.6+), always on (cannot be disabled), budget_tokens (older), or unsupported. */
   thinking: ThinkingMode;
   /** `output_config.effort` accepted (Opus 4.5+, Sonnet 4.6). */
   effort: boolean;
@@ -42,6 +44,10 @@ function family(modelId: string): string {
 export function capabilitiesFor(modelId: string): ModelCapabilities {
   const f = family(modelId);
 
+  // Thinking always on — `disabled` / `budget_tokens` 400; effort is the only control.
+  if (f === "claude-opus-5-5" || f === "claude-fable-5-1" || f === "claude-fable-5" || f === "claude-mythos-5-1" || f === "claude-mythos-5") {
+    return { temperature: false, thinking: "always", effort: true, effortMax: true };
+  }
   // Opus 5 — full effort requires thinking at xhigh/max.
   if (f === "claude-opus-5") {
     return { temperature: false, thinking: "adaptive", effort: true, effortMax: true, maxEffortWithoutThinking: "high" };
@@ -62,9 +68,8 @@ export function capabilitiesFor(modelId: string): ModelCapabilities {
   if (f === "claude-sonnet-4-6") {
     return { temperature: true, thinking: "adaptive", effort: true, effortMax: false };
   }
-  // Fable/Mythos always reason server-side; their sampling controls are also
-  // rejected. Preserve the existing no-manual-thinking control shape here.
-  if (f === "claude-fable-5" || f === "claude-mythos-5" || f === "claude-mythos-preview") {
+  // Mythos Preview reasons server-side and rejects sampling controls.
+  if (f === "claude-mythos-preview") {
     return { ...CONSERVATIVE, temperature: false };
   }
   // Haiku 4.5 — adaptive thinking, no effort.

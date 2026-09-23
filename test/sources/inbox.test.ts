@@ -66,12 +66,20 @@ describe("typedInboxItems", () => {
     expect(items.map((i) => [i.basename, i.type])).toEqual([["new", "video"], ["old", "article"]]);
   });
 
-  it("ignores enriched notes outside the inbox and caps the list", () => {
+  it("returns every enriched inbox clip, ignoring notes outside the inbox", () => {
     const entries = [
       entry("Notes/elsewhere.md", { source_enriched: true }, 99),
-      ...Array.from({ length: 5 }, (_, i) => entry(`Clippings/c${i}.md`, { source_enriched: true }, i)),
+      ...Array.from({ length: 12 }, (_, i) => entry(`Clippings/c${i}.md`, { source_enriched: true }, i)),
     ];
-    expect(typedInboxItems(entries, "Clippings", 2).map((i) => i.basename)).toEqual(["c4", "c3"]);
+    expect(typedInboxItems(entries, "Clippings")).toHaveLength(12);
     expect(typedInboxItems(entries, "").length).toBe(0);
+  });
+
+  it("excludes clips already organized into a folder nested in the inbox", () => {
+    const entries = [
+      entry("Clippings/loose.md", { source_enriched: true }, 1),
+      entry("Clippings/Library/AI/filed.md", { source_enriched: true }, 2),
+    ];
+    expect(typedInboxItems(entries, "Clippings", "Clippings/Library").map((i) => i.basename)).toEqual(["loose"]);
   });
 });

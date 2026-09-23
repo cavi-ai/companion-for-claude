@@ -45,7 +45,7 @@ export function renderCompanionChrome(
   });
   if (!options.omitOptionsButton) {
     const optionsButton = controls.createEl("button", {
-      cls: options.compact ? "cc-icon-btn cc-companion-quick-options is-compact" : "cc-companion-quick-options",
+      cls: options.compact ? "cc-icon-btn clickable-icon cc-companion-quick-options is-compact" : "cc-companion-quick-options",
       attr: { type: "button", "aria-label": `Quick options for ${title}` },
     });
     if (options.compact) setIcon(optionsButton, "sliders-horizontal");

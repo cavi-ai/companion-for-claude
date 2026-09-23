@@ -34,6 +34,11 @@ describe("limitsFor", () => {
   });
   it("falls back to defaults for unknown models", () => {
     expect(limitsFor("some-local-model")).toBe(DEFAULT_LIMITS);
+    expect(limitsFor("claude-opus-5-5")).toEqual({ contextWindow: 1_000_000, maxOutput: 128_000, inputCostPerM: 4, outputCostPerM: 20 });
+    expect(limitsFor("claude-fable-5-1")).toEqual({ contextWindow: 1_000_000, maxOutput: 128_000, inputCostPerM: 10, outputCostPerM: 50 });
+    expect(limitsFor("claude-fable-5")).toEqual({ contextWindow: 1_000_000, maxOutput: 128_000, inputCostPerM: 10, outputCostPerM: 50 });
+    expect(limitsFor("claude-sonnet-5")).toMatchObject({ inputCostPerM: 2, outputCostPerM: 10 });
+    expect(limitsFor("claude-opus-5-5-20261001").inputCostPerM).toBe(4);
   });
 });
 

@@ -8,6 +8,7 @@ const ready: ClaudeCodeInspection = {
   marketplaceInstalled: true,
   pluginInstalled: true,
   pluginEnabled: true,
+  bridge: { enabled: false, url: "", registered: false, headerValue: "" },
 };
 
 const deferred = <T>() => {

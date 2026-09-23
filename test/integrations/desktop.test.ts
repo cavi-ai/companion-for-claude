@@ -19,6 +19,7 @@ const inspection = (overrides: Partial<ClaudeCodeInspection> = {}): ClaudeCodeIn
   marketplaceInstalled: false,
   pluginInstalled: false,
   pluginEnabled: false,
+  bridge: { enabled: false, url: "", registered: false, headerValue: "" },
   ...overrides,
 });
 
@@ -68,6 +69,42 @@ describe("desktop integration contracts", () => {
       { executable: "claude", args: ["plugin", "enable", "obsidian-agent@cavi-ai", "--scope", "user"], stage: "Enable obsidian-agent" },
     ]);
     expect(claudeCodeSetupPlan(inspection({ marketplaceInstalled: true, pluginInstalled: true, pluginEnabled: true }))).toEqual([]);
+  });
+
+  it("connects Companion's vault tools when the bridge is enabled and not registered", () => {
+    const plan = claudeCodeSetupPlan(inspection({
+      marketplaceInstalled: true,
+      pluginInstalled: true,
+      pluginEnabled: true,
+      bridge: { enabled: true, url: "http://127.0.0.1:22360/mcp", registered: false, headerValue: "${OBSIDIAN_COMPANION_MCP_TOKEN}" },
+    }));
+    expect(plan).toEqual([
+      {
+        executable: "claude",
+        args: ["mcp", "add", "--scope", "user", "--transport", "http", "obsidian-vault", "http://127.0.0.1:22360/mcp", "--header", "Authorization: Bearer ${OBSIDIAN_COMPANION_MCP_TOKEN}"],
+        stage: "Connect Companion's vault tools",
+      },
+    ]);
+  });
+
+  it("adds no bridge step once Companion's vault tools are already registered", () => {
+    const plan = claudeCodeSetupPlan(inspection({
+      marketplaceInstalled: true,
+      pluginInstalled: true,
+      pluginEnabled: true,
+      bridge: { enabled: true, url: "http://127.0.0.1:22360/mcp", registered: true, headerValue: "secret" },
+    }));
+    expect(plan).toEqual([]);
+  });
+
+  it("adds no bridge step while the MCP bridge is turned off", () => {
+    const plan = claudeCodeSetupPlan(inspection({
+      marketplaceInstalled: true,
+      pluginInstalled: true,
+      pluginEnabled: true,
+      bridge: { enabled: false, url: "http://127.0.0.1:22360/mcp", registered: false, headerValue: "secret" },
+    }));
+    expect(plan).toEqual([]);
   });
 
   it("installs from the marketplace name the published catalog declares", () => {

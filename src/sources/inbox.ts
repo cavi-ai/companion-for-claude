@@ -57,13 +57,14 @@ export function inboxItems(entries: InboxFileEntry[], inboxFolder: string): Inbo
   return items.sort((a, b) => a.path.localeCompare(b.path));
 }
 
-/** Already-typed inbox clips, newest first — auto-enrich leaves no other trace. */
-export function typedInboxItems(entries: InboxFileEntry[], inboxFolder: string, limit = 10): InboxItem[] {
+/** Enriched clips still in the inbox (not yet organized), newest first. */
+export function typedInboxItems(entries: InboxFileEntry[], inboxFolder: string, organizedFolder = ""): InboxItem[] {
   const inbox = inboxFolder.replace(/\/+$/, "");
   if (!inbox) return [];
+  const organized = organizedFolder.replace(/\/+$/, "");
   return entries
     .filter((e) => e.ext === "md" && e.path.startsWith(`${inbox}/`) && e.frontmatter?.source_enriched === true)
+    .filter((e) => !organized || !e.path.startsWith(`${organized}/`))
     .sort((a, b) => (b.mtime ?? 0) - (a.mtime ?? 0) || a.path.localeCompare(b.path))
-    .slice(0, limit)
     .map((e) => ({ path: e.path, basename: e.basename, ext: e.ext, type: itemType(e) }));
 }

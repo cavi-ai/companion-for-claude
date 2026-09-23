@@ -53,7 +53,7 @@ export function shapeRequest(
 
   // ---- thinking ----
   if (controls.thinking) {
-    if (caps.thinking === "adaptive") {
+    if (caps.thinking === "adaptive" || caps.thinking === "always") {
       shape.thinking = { type: "adaptive" };
       shape.thinkingDisplay = controls.showThinking ? "summarized" : "omitted";
     } else if (caps.thinking === "budget") {
@@ -66,6 +66,7 @@ export function shapeRequest(
       }
     }
     // caps.thinking === "none": thinking unsupported — emit nothing.
+    // caps.thinking === "always" with the toggle off: omit; `disabled` would 400.
   } else if (caps.thinking === "adaptive") {
     // Explicitly disable so adaptive models don't silently think.
     shape.thinking = { type: "disabled" };
@@ -88,4 +89,15 @@ export function shapeRequest(
   }
 
   return shape;
+}
+
+/** Which chat knobs the active model gets; always-thinking models keep effort with Think off. */
+export function knobVisibility(caps: ModelCapabilities, controls: ChatControls): { think: boolean; effort: boolean; showReasoning: boolean } {
+  const think = caps.thinking !== "none";
+  const reasoning = caps.thinking === "adaptive" || caps.thinking === "always";
+  return {
+    think,
+    effort: think && caps.effort && (controls.thinking || caps.thinking === "always"),
+    showReasoning: reasoning && controls.thinking,
+  };
 }

@@ -1,10 +1,15 @@
 import { describe, it, expect } from "vitest";
 import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { App } from "obsidian";
 import { WORKFLOWS } from "../src/workflows/catalog";
+import { VaultTools } from "../src/mcp/vaultTools";
+import { composeResourceProviders, substrateResourceProvider, vaultResourceProvider } from "../src/mcp/providers";
 
 const registryPath = fileURLToPath(new URL("../../claude-plugin/capabilities.json", import.meta.url));
 const present = existsSync(registryPath);
+const bridgePath = fileURLToPath(new URL("../../claude-plugin/bridges/companion-bridge.json", import.meta.url));
+const bridgePresent = existsSync(bridgePath);
 
 interface Lens {
   id: string;
@@ -84,6 +89,56 @@ describe.skipIf(!present)("Companion adapters ↔ obsidian-agent capability regi
         const matches = WORKFLOWS.filter((w) => capabilityOf(w) === cap.id && w.lens === lens.id);
         expect(matches.length, `lens '${cap.id}:${lens.id}' has ${matches.length} workflows`).toBe(1);
       }
+    }
+  });
+});
+
+interface BridgeContract {
+  server: string;
+  tools: string[];
+  resources: string[];
+}
+
+// Guard the read the same way as capabilities.json above: the submodule is optional.
+describe.skipIf(!bridgePresent)("Companion bridge ↔ obsidian-agent bridge contract", () => {
+  const bridge: BridgeContract = bridgePresent
+    ? JSON.parse(readFileSync(bridgePath, "utf8"))
+    : { server: "", tools: [], resources: [] };
+  const memoryPath = () => "Claude/Sessions/What Claude Knows.md";
+  const seededApp = () => {
+    const app = new App();
+    app.vault.seed(memoryPath(), "# What Claude Knows\n- terse");
+    return app;
+  };
+
+  it("names the server Companion registers", () => {
+    expect(bridge.server).toBe("obsidian-vault");
+  });
+
+  it("cites only tools VaultTools actually defines", () => {
+    const tools = new VaultTools(seededApp() as never, {
+      allowWrites: false,
+      defaultFolder: "Claude",
+      semantic: async () => [],
+      related: async () => [],
+      ontology: () => null,
+    }).definitions().map((d) => d.name);
+    for (const name of bridge.tools) {
+      expect(tools, `bridge tool '${name}' is not defined by VaultTools`).toContain(name);
+    }
+  });
+
+  it("cites only resources the composed resource provider serves", async () => {
+    const app = seededApp();
+    const composed = composeResourceProviders(
+      substrateResourceProvider(app as never, { call: async () => JSON.stringify({ types: [{ name: "person" }] }), memoryPath }),
+      vaultResourceProvider(app as never),
+    );
+    const templates = composed.templates().map((t) => t.uriTemplate);
+    const listed = (await composed.list()).resources.map((r) => r.uri);
+    const available = new Set([...templates, ...listed]);
+    for (const uri of bridge.resources) {
+      expect(available.has(uri), `bridge resource '${uri}' is not served by the composed resource provider`).toBe(true);
     }
   });
 });

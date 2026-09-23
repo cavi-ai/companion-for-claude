@@ -51,12 +51,21 @@ export interface CommandSpec {
   stage: string;
 }
 
+/** Companion's MCP bridge as Claude Code sees it. `headerValue` is never a raw secret in a log or Notice — see `sanitizeDesktopError`. */
+export interface BridgeSetupState {
+  enabled: boolean;
+  url: string;
+  registered: boolean;
+  headerValue: string;
+}
+
 export interface ClaudeCodeInspection {
   claude: ProbeResult;
   obsidian: ProbeResult;
   marketplaceInstalled: boolean;
   pluginInstalled: boolean;
   pluginEnabled: boolean;
+  bridge: BridgeSetupState;
 }
 
 export interface ClaudeCodePluginState {
@@ -144,26 +153,37 @@ export function claudeCodeSetupPlan(state: ClaudeCodeInspection, platform: Deskt
         : `The Obsidian CLI is not installed. ${obsidianCliInstallHint(platform)}`,
     );
   }
-  if (state.pluginInstalled && state.pluginEnabled) return [];
   const commands: CommandSpec[] = [];
-  if (!state.marketplaceInstalled) {
+  if (!(state.pluginInstalled && state.pluginEnabled)) {
+    if (!state.marketplaceInstalled) {
+      commands.push({
+        executable: "claude",
+        args: ["plugin", "marketplace", "add", MARKETPLACE_REPO],
+        stage: "Add the CAVI marketplace",
+      });
+    }
+    commands.push(state.pluginInstalled
+      ? {
+          executable: "claude",
+          args: ["plugin", "enable", OBSIDIAN_AGENT_PLUGIN_ID, "--scope", "user"],
+          stage: "Enable obsidian-agent",
+        }
+      : {
+          executable: "claude",
+          args: ["plugin", "install", OBSIDIAN_AGENT_PLUGIN_ID, "--scope", "user"],
+          stage: "Install obsidian-agent",
+        });
+  }
+  if (state.bridge.enabled && !state.bridge.registered) {
     commands.push({
       executable: "claude",
-      args: ["plugin", "marketplace", "add", MARKETPLACE_REPO],
-      stage: "Add the CAVI marketplace",
+      args: [
+        "mcp", "add", "--scope", "user", "--transport", "http", "obsidian-vault", state.bridge.url,
+        "--header", `Authorization: Bearer ${state.bridge.headerValue}`,
+      ],
+      stage: "Connect Companion's vault tools",
     });
   }
-  commands.push(state.pluginInstalled
-    ? {
-        executable: "claude",
-        args: ["plugin", "enable", OBSIDIAN_AGENT_PLUGIN_ID, "--scope", "user"],
-        stage: "Enable obsidian-agent",
-      }
-    : {
-        executable: "claude",
-        args: ["plugin", "install", OBSIDIAN_AGENT_PLUGIN_ID, "--scope", "user"],
-        stage: "Install obsidian-agent",
-      });
   return commands;
 }
 

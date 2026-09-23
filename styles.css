@@ -88,23 +88,57 @@ body.theme-light {
   line-height: 1.2;
 }
 .cc-eyebrow {
+  /* Screen-reader only; the model chip carries the header visually. */
   font-family: var(--cc-mono);
   font-size: var(--cc-text-2xs);
   letter-spacing: 0.1em;
   color: var(--cc-accent-text);
+  display: none;
 }
 .cc-model {
   font-family: var(--cc-serif);
   font-size: var(--cc-text-base);
   color: var(--text-normal);
 }
+/* Desktop: the model name is a tappable chip (dot + name + chevron), same pattern as mobile. */
+body:not(.is-mobile) .cc-model.cc-model-tappable {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--cc-space-2);
+  padding: var(--cc-space-1) var(--cc-space-2);
+  border-radius: var(--cc-radius-pill);
+  cursor: pointer;
+  background: var(--cc-surface-raised);
+  border: 1px solid transparent;
+}
+body:not(.is-mobile) .cc-model.cc-model-tappable:hover {
+  border-color: var(--cc-border-hover);
+}
+.cc-mcp-dot {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  padding: 0;
+  border: none;
+  border-radius: var(--cc-radius-pill);
+  background: var(--text-faint);
+  cursor: pointer;
+  box-shadow: none;
+}
+.cc-mcp-dot.is-on { background: var(--cc-olive); }
+.cc-mcp-dot.is-warn { background: var(--cc-clay); }
+.cc-model-chevron {
+  display: inline-flex;
+  flex: 0 0 auto;
+  color: var(--text-faint);
+}
+.cc-model-chevron svg { width: 14px; height: 14px; }
 .cc-header-actions {
   display: flex;
   align-items: center;
   gap: 4px;
 }
 .cc-header-actions-primary { display: inline-flex; gap: var(--cc-space-1); }
-.cc-header-actions-state { display: inline-flex; gap: var(--cc-space-1); padding: 2px; border-radius: var(--cc-radius-md); background: var(--cc-surface-sunken); }
 .cc-icon-btn {
   background: transparent;
   border: none;
@@ -141,25 +175,40 @@ body.theme-light {
 .cc-assistant + .cc-assistant {
   display: none;
 }
-.cc-role {
-  font-family: var(--cc-mono);
-  font-size: var(--cc-text-2xs);
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--cc-text-muted);
-}
+/* Screen-reader only: bubble shape and the spark mark show the speaker. */
+.cc-role { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 .cc-body {
   /* Independent of Obsidian's editor font (--font-text-size), which is often
      set large; driven by the chatFontSize setting via --cc-chat-font. */
   font-size: var(--cc-chat-font, 14px);
   line-height: 1.55;
 }
-.cc-user .cc-body {
-  background: var(--background-secondary);
-  border: 1px solid var(--background-modifier-border);
-  border-radius: 10px;
-  padding: 8px 12px;
+/* Desktop: soft borderless bubble; the hover overlay stays visible on sidebar backgrounds. */
+body:not(.is-mobile) .cc-user {
+  background: var(--background-modifier-hover);
+  border-radius: var(--cc-radius-lg);
+  padding: var(--cc-space-2) var(--cc-space-3);
+  margin-left: var(--cc-space-6);
 }
+/* Spark mark pinned top-left of an assistant bubble. */
+.cc-assistant {
+  position: relative;
+  padding-left: 28px;
+}
+.cc-spark {
+  position: absolute;
+  top: 2px;
+  left: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: var(--cc-radius-pill);
+  background: var(--cc-accent-wash);
+  color: var(--cc-accent);
+}
+.cc-spark svg { width: 12px; height: 12px; }
 /* A slash-command / workflow invocation: a compact clay chip instead of a
    plain bubble of raw prompt text. */
 .cc-msg.cc-command { gap: 0; }
@@ -184,6 +233,8 @@ body.theme-light {
 .cc-command-chip-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cc-assistant .cc-body {
   padding: 2px 0;
+  /* Theme text font; serif only when the theme sets one. */
+  font-family: var(--font-text);
 }
 /* Placeholder shown in the chat while a `claude-html` artifact is still
    streaming — a compact "building" chip (pulsing accent dot, reusing the
@@ -324,12 +375,23 @@ body.theme-light {
   justify-content: center;
   padding: 2px;
   border-radius: 6px;
-  border: 1px solid var(--background-modifier-border);
+  border: none;
   background: transparent;
-  color: var(--text-muted);
+  color: var(--text-faint);
+  opacity: 0.55;
   cursor: pointer;
   box-shadow: none;
 }
+/* Ghost actions surface on message hover or focus. */
+.cc-msg:hover .cc-action,
+.cc-msg:focus-within .cc-action {
+  opacity: 1;
+  color: var(--text-normal);
+}
+@media (hover: none) {
+  .cc-action { opacity: 1; }
+}
+.is-mobile .cc-action { opacity: 1; }
 .cc-action:hover {
   background: var(--background-modifier-hover);
   color: var(--text-normal);
@@ -1600,6 +1662,24 @@ pre.cc-has-copy:hover .cc-code-copy { opacity: 1; }
   color: var(--text-muted);
   font-size: var(--font-ui-smaller);
 }
+.cc-inbox-organize {
+  margin-left: auto;
+  min-height: 32px;
+  padding: 4px 14px;
+  border-radius: 16px;
+  border: 1px solid var(--cc-clay);
+  background: transparent;
+  color: var(--cc-clay);
+  font-weight: 600;
+  cursor: pointer;
+}
+.cc-inbox-organize:active {
+  transform: scale(0.97);
+}
+.cc-inbox-organize:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
 .cc-inbox-wireup {
   margin-top: 18px;
 }
@@ -1839,10 +1919,14 @@ pre.cc-has-copy:hover .cc-code-copy { opacity: 1; }
 .is-mobile .cc-write-grant-pill { max-width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* Messages: a one-column reading surface. Role labels go — bubble alignment
-   already says who spoke; a phone can't afford per-message chrome. */
+   already says who spoke; a phone can't afford per-message chrome. (.cc-role
+   is visually hidden everywhere now — see the shared rule above.) */
 .is-mobile .cc-messages { padding: 14px 14px 10px; gap: 16px; }
 .is-mobile .cc-body { font-size: var(--cc-chat-font, 16px); }
-.is-mobile .cc-role { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+/* The spark mark is a desktop affordance; the phone keeps its existing
+   chrome-free bubble layout unchanged. */
+.is-mobile .cc-assistant { padding-left: 0; }
+.is-mobile .cc-spark { display: none; }
 /* Your words are the only tinted surface on the phone: a right-aligned clay
    bubble, its tail corner pointing at the composer. */
 .is-mobile .cc-user { align-items: flex-end; }

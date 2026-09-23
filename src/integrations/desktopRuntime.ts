@@ -9,6 +9,7 @@ import {
   parseMarketplaceList,
   parsePluginList,
   sanitizeDesktopError,
+  type BridgeSetupState,
   type ClaudeCodeInspection,
   type DesktopPlatform,
   type ProbeResult,
@@ -51,6 +52,15 @@ export interface DesktopFsPort {
   atomicWrite(path: string, body: string): Promise<void>;
 }
 
+/** What the caller knows about Companion's bridge before Claude Code has been asked. */
+export interface BridgeSetupInput {
+  enabled: boolean;
+  url: string;
+  headerValue: string;
+}
+
+const DISABLED_BRIDGE: BridgeSetupInput = { enabled: false, url: "", headerValue: "" };
+
 export interface DesktopRuntimeOptions {
   exec: ExecFilePort;
   fs: DesktopFsPort;
@@ -59,6 +69,8 @@ export interface DesktopRuntimeOptions {
   env?: Record<string, string | undefined>;
   /** Directory holding the app executable; the CLI binary ships beside it. */
   execDir?: string | undefined;
+  /** Companion's MCP bridge as configured; omitted means disabled. */
+  bridge?: BridgeSetupInput | undefined;
 }
 
 interface ProcessStreamLike {
@@ -179,6 +191,13 @@ const commandError = (stage: string, cause: unknown, secrets: string[] = []): De
   return new DesktopIntegrationError(stage, `${stage}: ${sanitizeDesktopError(raw, secrets) || "command failed"}`);
 };
 
+/** The bearer value carried by a command's `--header "Authorization: Bearer <value>"`, if any. */
+const bearerSecret = (args: string[]): string[] => {
+  const header = args[args.indexOf("--header") + 1];
+  const token = header?.match(/^Authorization:\s*Bearer\s+(\S+)/i)?.[1];
+  return token ? [token] : [];
+};
+
 const parseLooseVersion = (stdout: string): ProbeResult => {
   const version = stdout.trim().split(/\s+/, 1)[0];
   if (!version) throw new Error("no version reported");
@@ -248,7 +267,18 @@ export class DesktopRuntime {
     ];
   }
 
+  /** `claude mcp get <name>` exits 0 when the server is registered, non-zero otherwise. */
+  private async probeMcpRegistered(name: string): Promise<boolean> {
+    try {
+      await this.options.exec.run(this.claudeExecutable, ["mcp", "get", name], COMMAND_OPTIONS);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   async inspectClaudeCode(): Promise<ClaudeCodeInspection> {
+    const bridgeInput = this.options.bridge ?? DISABLED_BRIDGE;
     const [claudeProbe, obsidianProbe] = await Promise.all([
       this.probe(this.claudeCandidates(), ["--version"], parseClaudeVersion),
       this.probe(this.obsidianCandidates(), ["version"], parseLooseVersion),
@@ -256,7 +286,8 @@ export class DesktopRuntime {
     const claude = claudeProbe.result;
     const obsidian = obsidianProbe.result;
     this.claudeExecutable = claudeProbe.executable ?? "claude";
-    if (!claude.available) return { claude, obsidian, marketplaceInstalled: false, pluginInstalled: false, pluginEnabled: false };
+    const bridge: BridgeSetupState = { ...bridgeInput, registered: false };
+    if (!claude.available) return { claude, obsidian, marketplaceInstalled: false, pluginInstalled: false, pluginEnabled: false, bridge };
 
     try {
       const marketplaces = await this.options.exec.run(this.claudeExecutable, ["plugin", "marketplace", "list", "--json"], COMMAND_OPTIONS);
@@ -268,12 +299,14 @@ export class DesktopRuntime {
       // marketplace) would skip `marketplace add` and leave the install with no
       // marketplace to resolve against — the failure this replaced.
       const obsidianAgent = pluginStates.find(({ id }) => id === OBSIDIAN_AGENT_PLUGIN_ID);
+      if (bridgeInput.enabled) bridge.registered = await this.probeMcpRegistered("obsidian-vault");
       return {
         claude,
         obsidian,
         marketplaceInstalled: marketplaceIds.some((id) => id === MARKETPLACE_NAME),
         pluginInstalled: !!obsidianAgent,
         pluginEnabled: obsidianAgent?.enabled ?? false,
+        bridge,
       };
     } catch (cause) {
       throw commandError("Check Claude Code integration", cause);
@@ -293,7 +326,7 @@ export class DesktopRuntime {
         const executable = command.executable === "claude" ? this.claudeExecutable : command.executable;
         await this.options.exec.run(executable, command.args, { ...COMMAND_OPTIONS, timeoutMs: 30_000 });
       } catch (cause) {
-        throw commandError(command.stage, cause);
+        throw commandError(command.stage, cause, bearerSecret(command.args));
       }
     }
     const after = await this.inspectClaudeCode();
@@ -358,6 +391,7 @@ export async function createNodeDesktopRuntime(
   platform: DesktopPlatform,
   homeDir: string,
   env: Record<string, string | undefined>,
+  bridge?: BridgeSetupInput,
 ): Promise<DesktopRuntime> {
   // Obsidian's renderer exposes Node through Electron's require boundary.
   // Leaving dynamic `import("node:…")` in the CJS bundle delegates it to
@@ -431,7 +465,7 @@ export async function createNodeDesktopRuntime(
     },
   };
 
-  return new DesktopRuntime({ exec, fs: desktopFs, platform, homeDir, env, execDir });
+  return new DesktopRuntime({ exec, fs: desktopFs, platform, homeDir, env, execDir, bridge });
 }
 
 export function createNodeManagedProcessPort(): ManagedProcessPort {

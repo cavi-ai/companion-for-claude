@@ -32,6 +32,21 @@ describe("sanitize", () => {
     expect(env).not.toContain("wJalrXUtnFEMIabcdEXAMPLEKEY");
   });
 
+  it("leaves secret-named prose and placeholders untouched", () => {
+    for (const prose of [
+      "set GITHUB_TOKEN: environment variable for private repos",
+      "password: required for the admin panel",
+      "API_KEY=your-api-key",
+      "api_key: ${API_KEY}",
+    ]) expect(sanitize(prose)).toBe(prose);
+  });
+
+  it("still masks credential-shaped assignment values", () => {
+    expect(sanitize("PASSWORD=hunter22")).toBe("PASSWORD=‹REDACTED›");
+    expect(sanitize("STRIPE_SECRET=sk_live_abcdefghijklmnopqrstu")).not.toContain("sk_live_abcdefghijklmnopqrstu");
+    expect(sanitize("TOKEN=abcdefghijklmnopqrstuvwxyz")).toBe("TOKEN=‹REDACTED›");
+  });
+
   it("leaves ordinary prose untouched", () => {
     const prose = "The cat sat on the mat and we shipped 0.5.1 today.";
     expect(sanitize(prose)).toBe(prose);

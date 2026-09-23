@@ -6,6 +6,8 @@ export interface LinkCandidate {
   path: string;
   basename: string;
   aliases: string[];
+  /** What to write as the [[link]] target — the full path (sans .md) when the basename is ambiguous, else the basename. */
+  linktext?: string;
 }
 
 export interface Mention {
@@ -13,6 +15,8 @@ export interface Mention {
   path: string;
   /** The candidate name that matched (basename or alias). */
   name: string;
+  /** What linkMention writes as the [[link]] target (candidate.linktext ?? basename). */
+  target: string;
   /** Whether the match was an alias (always linked in pipe form). */
   viaAlias: boolean;
   /** The exact text as it appears in the note. */
@@ -54,6 +58,7 @@ export function findUnlinkedMentions(content: string, candidates: LinkCandidate[
         best = {
           path: c.path,
           name: c.basename,
+          target: c.linktext ?? c.basename,
           viaAlias,
           surface,
           start: idx,
@@ -83,8 +88,21 @@ export function linkMention(content: string, m: Mention): string {
     if (first === -1) throw new Error("The note changed — the mention no longer applies.");
     start = first;
   }
-  const link = !m.viaAlias && m.surface === m.name ? `[[${m.name}]]` : `[[${m.name}|${m.surface}]]`;
+  const link = !m.viaAlias && m.surface === m.target ? `[[${m.target}]]` : `[[${m.target}|${m.surface}]]`;
   return content.slice(0, start) + link + content.slice(start + m.surface.length);
+}
+
+/** Link target per candidate: its path when the basename is shared (case-insensitive), else the basename. */
+export function withLinktext(candidates: LinkCandidate[]): LinkCandidate[] {
+  const counts = new Map<string, number>();
+  for (const c of candidates) {
+    const key = c.basename.toLowerCase();
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  return candidates.map((c) => {
+    const ambiguous = (counts.get(c.basename.toLowerCase()) ?? 0) > 1;
+    return { ...c, linktext: ambiguous ? c.path.replace(/\.md$/, "") : c.basename };
+  });
 }
 
 // ---- internals ----
@@ -128,6 +146,11 @@ function maskNonProse(content: string): string {
   out = out.replace(/!?\[\[[^\]]*\]\]/g, blank);
   // Markdown links: mask the whole [text](target).
   out = out.replace(/\[[^\]\n]*\]\([^)\n]*\)/g, blank);
+  // Autolinks and bare URLs — a note title can appear inside a path segment.
+  out = out.replace(/<https?:\/\/[^>\s]+>/g, blank);
+  out = out.replace(/\bhttps?:\/\/[^\s<>()]+/g, blank);
+  // Obsidian tags (#tag, #nested/tag) — never prose, so never link-worthy.
+  out = out.replace(/(^|\s)#[\p{L}\p{N}_/-]+/gmu, (m, lead: string) => lead + blank(m.slice(lead.length)));
   return out;
 }
 

@@ -58,7 +58,8 @@ export function buildRequestBody(req: CompletionRequest, stream: boolean, auth: 
   if (req.temperature !== undefined && capabilitiesFor(req.model).temperature) {
     payload.temperature = req.temperature;
   }
-  if (req.thinking) {
+  const thinkingAlwaysOn = capabilitiesFor(req.model).thinking === "always";
+  if (req.thinking && !(thinkingAlwaysOn && req.thinking.type !== "adaptive")) {
     payload.thinking =
       req.thinkingDisplay && req.thinking.type === "adaptive"
         ? { ...req.thinking, display: req.thinkingDisplay }

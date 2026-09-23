@@ -29,6 +29,8 @@ function safeActivityDetail(value: string): string {
     .slice(0, 240);
 }
 
+const TYPED_LIST_LIMIT = 10;
+
 /**
  * Source-inbox triage: everything the clipper dropped that isn't typed yet,
  * with one-tap enrich — plus a "wire up" section for enriched notes that
@@ -127,7 +129,7 @@ export class InboxView extends ItemView {
 
   /** Auto-enrich types clips before they can be triaged; show them anyway. */
   private typed(): InboxItem[] {
-    return typedInboxItems(this.entries(), this.plugin.settings.sourceInboxFolder);
+    return typedInboxItems(this.entries(), this.plugin.settings.sourceInboxFolder, this.plugin.settings.clipOrganizedFolder);
   }
 
   async render(): Promise<void> {
@@ -196,19 +198,22 @@ export class InboxView extends ItemView {
     void this.renderWireUp(root, generation);
   }
 
-  /** Typed clips, newest first: without this the Inbox looks empty after every capture. */
+  /** Enriched clips still in the inbox, newest first; organizing files them into folders. */
   private renderTyped(root: HTMLElement, typed: InboxItem[]): void {
     if (typed.length === 0) return;
     const section = root.createDiv({ cls: "cc-inbox-typed" });
     const header = section.createDiv({ cls: "cc-inbox-typed-header" });
-    header.createDiv({ cls: "cc-eyebrow", text: "TYPED" });
+    header.createDiv({ cls: "cc-eyebrow", text: "ENRICHED" });
     header.createSpan({
       cls: "cc-inbox-typed-count",
-      text: `${typed.length} typed`,
+      text: `${typed.length} enriched`,
       attr: { role: "status", "aria-live": "polite" },
     });
+    const organize = header.createEl("button", { cls: "cc-inbox-organize", text: "Organize into folders" });
+    organize.disabled = this.batchOperation !== null;
+    organize.addEventListener("click", () => void this.plugin.organizeClippings());
     const list = section.createDiv({ cls: "cc-inbox-list" });
-    for (const item of typed) {
+    for (const item of typed.slice(0, TYPED_LIST_LIMIT)) {
       this.renderInboxRow(list, item, {
         meta: { cls: `cc-inbox-type cc-inbox-type-${item.type}`, text: item.type },
       });

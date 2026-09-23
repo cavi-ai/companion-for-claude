@@ -71,12 +71,21 @@ export function parseOrganizeResponse(raw: string, candidates: OrganizeCandidate
   return candidates.map((c) => ({ path: c.path, domain: byPath.get(c.path) ?? FALLBACK_DOMAIN }));
 }
 
+/** Parent paths under `${base}/`, made relative to base, sorted and deduped. */
+export function relativeFolders(parentPaths: string[], base: string): string[] {
+  const prefix = `${base}/`;
+  const out = new Set<string>();
+  for (const p of parentPaths) {
+    if (p.startsWith(prefix) && p.length > prefix.length) out.add(p.slice(prefix.length));
+  }
+  return [...out].sort();
+}
+
 /** Lowercase dash-separated folder path, at most 2 segments; garbage → misc. */
 export function sanitizeDomain(value: string): string {
   const segments = value
-    .toLowerCase()
     .split("/")
-    .map((s) => s.trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, ""))
+    .map(sanitizeSegment)
     .filter(Boolean)
     .slice(0, 2);
   return segments.length > 0 ? segments.join("/") : FALLBACK_DOMAIN;
@@ -89,6 +98,44 @@ export interface OrganizeMove {
   domain: string;
 }
 
+/** Same per-segment normalization sanitizeDomain applies before joining. */
+function sanitizeSegment(value: string): string {
+  return value
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+/** Every prefix of every existing folder, keyed by its sanitized path, mapped to its own spelling. */
+function existingPrefixesBySanitizedPath(existingFolders: string[]): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const folder of [...existingFolders].sort()) {
+    const rawSegments = folder.split("/").filter(Boolean);
+    const sanitizedPrefix: string[] = [];
+    const rawPrefix: string[] = [];
+    for (const seg of rawSegments) {
+      sanitizedPrefix.push(sanitizeSegment(seg));
+      rawPrefix.push(seg);
+      const key = sanitizedPrefix.join("/");
+      if (!out.has(key)) out.set(key, rawPrefix.join("/"));
+    }
+  }
+  return out;
+}
+
+/** Reuse an existing folder's spelling per segment so "ai/x" never creates a case-only sibling of "AI". */
+function canonicalizeDomain(domain: string, existingPrefixes: Map<string, string>): string {
+  const segments = domain.split("/").filter(Boolean);
+  const out: string[] = [];
+  for (let i = 0; i < segments.length; i++) {
+    const key = segments.slice(0, i + 1).join("/");
+    const match = existingPrefixes.get(key);
+    out.push(match ? match.split("/")[match.split("/").length - 1]! : segments[i]!);
+  }
+  return out.join("/");
+}
+
 /**
  * Plan renames + moves: each clip lands at <base>/<domain>/<Title>.md with a
  * collision-safe name (suffix " 2", " 3", …). Clips whose basename already
@@ -97,20 +144,22 @@ export interface OrganizeMove {
 export function planOrganizeMoves(
   proposals: OrganizeProposal[],
   titles: Map<string, string>,
-  opts: { baseFolder: string; taken(path: string): boolean },
+  opts: { baseFolder: string; taken(path: string): boolean; existingFolders?: string[] },
 ): OrganizeMove[] {
   const base = opts.baseFolder.replace(/\/+$/, "");
+  const existingPrefixes = existingPrefixesBySanitizedPath(opts.existingFolders ?? []);
   const reserved = new Set<string>();
   const isTaken = (path: string): boolean => reserved.has(path) || opts.taken(path);
   const out: OrganizeMove[] = [];
   for (const p of proposals) {
     const title = titles.get(p.path) ?? "";
-    const dir = `${base}/${p.domain}`;
+    const domain = canonicalizeDomain(p.domain, existingPrefixes);
+    const dir = `${base}/${domain}`;
     const stem = sanitizeFileName(title || p.path.split("/").pop()?.replace(/\.md$/, "") || "Untitled");
     let name = stem;
     for (let n = 2; isTaken(`${dir}/${name}.md`) && `${dir}/${name}.md` !== p.path; n++) name = `${stem} ${n}`;
     const to = `${dir}/${name}.md`;
-    if (to !== p.path) out.push({ from: p.path, to, title: title || stem, domain: p.domain });
+    if (to !== p.path) out.push({ from: p.path, to, title: title || stem, domain });
     reserved.add(to);
   }
   return out;

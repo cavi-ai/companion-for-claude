@@ -36,7 +36,7 @@ import { ANTHROPIC_DEFAULT_BASE_URL } from "./providers/auth";
 import { DEFAULT_SETTINGS, normalizeDiscoverySettings, type PluginSettings, type ArtifactOpenTarget } from "./types";
 import { DESIGN_SYSTEM_PROMPT, PLANNING_INSTRUCTION } from "./artifacts/designSystem";
 import { AGENT_INSTRUCTION, PLAN_MODE_INSTRUCTION } from "./agent/prompt";
-import { findUnlinkedMentions, linkMention, type LinkCandidate } from "./links/unlinkedMentions";
+import { findUnlinkedMentions, linkMention, withLinktext, type LinkCandidate } from "./links/unlinkedMentions";
 import { mentionEdits } from "./links/suggest";
 import { planEdits, applyPlan, diffToEdits, type EditPlan } from "./edit/diff";
 import { inlineDiffExtension, reviewInline } from "./editor/inlineDiffExtension";
@@ -58,13 +58,15 @@ import type { AnthropicToolDef, ProviderId } from "./providers/types";
 import { braveSearch, duckDuckGoSearch, formatSearchResults } from "./web/search";
 import { webFetch as webFetchPage } from "./web/fetch";
 import { parseTemplateNote, TEMPLATE_SCAFFOLD, type PromptTemplate } from "./templates/promptTemplates";
-import { buildOrganizePrompt, buildFolderOrganizePrompt, parseOrganizeResponse, planOrganizeMoves, type OrganizeCandidate } from "./sources/organize";
+import { buildOrganizePrompt, buildFolderOrganizePrompt, parseOrganizeResponse, planOrganizeMoves, relativeFolders, type OrganizeCandidate } from "./sources/organize";
+import { applyOrganizeMoves } from "./sources/organizeApply";
 import { LINT_SYSTEM, buildLintUser, lintMaxTokens, parseLintResponse } from "./enrich/noteEnrich";
 import { EnrichOptionsModal, EnrichReviewModal, type EnrichDecision, type EnrichOptions, type EnrichProposal } from "./view/EnrichModal";
 import { sanitizeFileName } from "./artifacts/parse";
 import { OrganizeReviewModal } from "./view/OrganizeReviewModal";
 import { stripFrontmatter } from "./semantic/chunk";
-import { generateToken } from "./mcp/clientConfig";
+import { generateToken, bridgeHeaderValue, bridgeUrl, resolveMcpToken } from "./mcp/clientConfig";
+import type { BridgeSetupInput } from "./integrations/desktopRuntime";
 import type { AgentTurnRunner } from "./agent/loop";
 import { ClaudeCliSession } from "./cli/session";
 import { buildClaudeArgv, mcpConfigJson } from "./cli/argv";
@@ -249,7 +251,7 @@ export default class ClaudeCompanionPlugin extends Plugin {
   private _cliRuntime: ClaudeCliRuntime | null | undefined;
   private _desktopIntegrationModals?: Set<DesktopIntegrationsModal>;
   private _desktopRuntimeLoader: () => Promise<{
-    createNodeDesktopRuntime(platform: DesktopPlatform, homeDir: string, env: Record<string, string | undefined>): Promise<DesktopIntegrationRuntime>;
+    createNodeDesktopRuntime(platform: DesktopPlatform, homeDir: string, env: Record<string, string | undefined>, bridge?: BridgeSetupInput): Promise<DesktopIntegrationRuntime>;
     createNodeManagedProcessPort(): import("./build/desktopExecutor").ManagedProcessPort;
   }> = () => import("./integrations/desktopRuntime");
   private _externalMcp: ExternalMcpManager | null = null;
@@ -1146,7 +1148,7 @@ export default class ClaudeCompanionPlugin extends Plugin {
       }
 
       // 3) One batch call infers the domain folder for the whole set.
-      const existingFolders = [...new Set(this.app.vault.getMarkdownFiles().map((f) => f.parent?.path ?? "").filter((p) => p.startsWith(`${base}/`)))].sort();
+      const existingFolders = relativeFolders(this.app.vault.getMarkdownFiles().map((f) => f.parent?.path ?? ""), base);
       const { system, user } = buildOrganizePrompt(candidates, existingFolders);
       let proposals = candidates.map((c) => ({ path: c.path, domain: "misc" }));
       try {
@@ -1169,7 +1171,11 @@ export default class ClaudeCompanionPlugin extends Plugin {
       }
 
       // 4) Review, then apply the accepted subset.
-      const moves = planOrganizeMoves(proposals, titles, { baseFolder: base, taken: (p) => this.app.vault.getAbstractFileByPath(p) !== null });
+      const moves = planOrganizeMoves(proposals, titles, {
+        baseFolder: base,
+        taken: (p) => this.app.vault.getAbstractFileByPath(p) !== null,
+        existingFolders,
+      });
       pending.hide();
       if (moves.length === 0) {
         new Notice("Everything is already named and filed.");
@@ -1178,16 +1184,9 @@ export default class ClaudeCompanionPlugin extends Plugin {
       new OrganizeReviewModal(this.app, moves, (accepted) => {
         if (!accepted || accepted.length === 0) return;
         void (async () => {
-          let moved = 0;
-          for (const move of accepted) {
-            const file = this.app.vault.getAbstractFileByPath(move.from);
-            if (!(file instanceof TFile)) continue;
-            const dir = move.to.slice(0, move.to.lastIndexOf("/"));
-            await ensureVaultFolder(this.app, dir);
-            await this.app.fileManager.renameFile(file, move.to);
-            moved++;
-          }
-          new Notice(`Organized ${moved} clipping${moved === 1 ? "" : "s"} into ${base}/.`);
+          const { moved, failed } = await applyOrganizeMoves(this.app, accepted);
+          const failedNote = failed.length > 0 ? ` ${failed.length} failed — ${failed[0]!.error}` : "";
+          new Notice(`Organized ${moved} clipping${moved === 1 ? "" : "s"} into ${base}/.${failedNote}`);
         })();
       }).open();
     } finally {
@@ -1656,6 +1655,13 @@ export default class ClaudeCompanionPlugin extends Plugin {
     return { port: this.settings.mcpPort, token };
   }
 
+  /** enabled=false, never a partial bridge: no working step without a resolvable token. */
+  private claudeCodeBridgeInput(env: Record<string, string | undefined>): BridgeSetupInput {
+    const resolved = resolveMcpToken(env, this.settings.mcpToken);
+    if (!this.settings.mcpEnabled || !resolved.token) return { enabled: false, url: "", headerValue: "" };
+    return { enabled: true, url: bridgeUrl(this.settings.mcpPort), headerValue: bridgeHeaderValue(resolved) };
+  }
+
   private async createDesktopIntegrationController(): Promise<DesktopIntegrationCoordinator> {
     const adapter = this.app.vault.adapter;
     if (!(adapter instanceof FileSystemAdapter)) throw new Error("This vault does not expose a desktop filesystem path.");
@@ -1667,7 +1673,7 @@ export default class ClaudeCompanionPlugin extends Plugin {
     const homeDir = env.HOME || env.USERPROFILE || "";
     if (!homeDir) throw new Error("The desktop home directory is unavailable.");
     const module = await this._desktopRuntimeLoader();
-    const runtime = await module.createNodeDesktopRuntime(platform, homeDir, { APPDATA: env.APPDATA });
+    const runtime = await module.createNodeDesktopRuntime(platform, homeDir, { APPDATA: env.APPDATA }, this.claudeCodeBridgeInput(env));
     return new DesktopIntegrationCoordinator({
       runtime,
       providerReady: () => this.router().anthropic.hasCredentials() || this.settings.chatBackend !== "claude",
@@ -2227,12 +2233,14 @@ export default class ClaudeCompanionPlugin extends Plugin {
 
   /** Every markdown note as a link-candidate (basename + frontmatter aliases). */
   linkCandidates(): LinkCandidate[] {
-    return this.app.vault.getMarkdownFiles().map((f) => {
-      const fm = this.app.metadataCache.getFileCache(f)?.frontmatter as Record<string, unknown> | undefined;
-      const raw = fm?.aliases;
-      const aliases = Array.isArray(raw) ? raw.map(String) : typeof raw === "string" && raw.trim() ? [raw] : [];
-      return { path: f.path, basename: f.basename, aliases };
-    });
+    return withLinktext(
+      this.app.vault.getMarkdownFiles().map((f) => {
+        const fm = this.app.metadataCache.getFileCache(f)?.frontmatter as Record<string, unknown> | undefined;
+        const raw = fm?.aliases;
+        const aliases = Array.isArray(raw) ? raw.map(String) : typeof raw === "string" && raw.trim() ? [raw] : [];
+        return { path: f.path, basename: f.basename, aliases };
+      }),
+    );
   }
 
   /** Paths the given note already links to (its outgoing resolved links). */
@@ -2486,6 +2494,7 @@ export default class ClaudeCompanionPlugin extends Plugin {
       const moves = planOrganizeMoves(proposals, titles, {
         baseFolder: folder.path,
         taken: (p) => this.app.vault.getAbstractFileByPath(p) !== null,
+        existingFolders,
       });
       if (moves.length === 0) {
         new Notice("Everything is already named and filed.");
@@ -2494,16 +2503,9 @@ export default class ClaudeCompanionPlugin extends Plugin {
       new OrganizeReviewModal(this.app, moves, (accepted) => {
         if (!accepted || accepted.length === 0) return;
         void (async () => {
-          let moved = 0;
-          for (const move of accepted) {
-            const file = this.app.vault.getAbstractFileByPath(move.from);
-            if (!(file instanceof TFile)) continue;
-            const dir = move.to.slice(0, move.to.lastIndexOf("/"));
-            await ensureVaultFolder(this.app, dir);
-            await this.app.fileManager.renameFile(file, move.to);
-            moved++;
-          }
-          new Notice(`Organized ${moved} note${moved === 1 ? "" : "s"} into ${folder.path}/ subfolders.`);
+          const { moved, failed } = await applyOrganizeMoves(this.app, accepted);
+          const failedNote = failed.length > 0 ? ` ${failed.length} failed — ${failed[0]!.error}` : "";
+          new Notice(`Organized ${moved} note${moved === 1 ? "" : "s"} into ${folder.path}/ subfolders.${failedNote}`);
         })();
       }).open();
     } catch (e) {

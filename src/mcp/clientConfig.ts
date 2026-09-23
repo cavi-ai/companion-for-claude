@@ -56,6 +56,11 @@ export function bridgeUrl(port: number): string {
   return `http://127.0.0.1:${port}/mcp`;
 }
 
+/** Env-sourced tokens stay a `${VAR}` reference Claude Code expands at connect time; stored tokens go literal, as the paste snippet does. */
+export function bridgeHeaderValue(resolved: ResolvedToken): string {
+  return resolved.source === "env" ? mcpTokenEnvRef() : resolved.token;
+}
+
 function requireToken(token: string): string {
   const trimmed = token.trim();
   if (!trimmed) throw new Error("MCP bridge snippets require a non-empty bearer token.");

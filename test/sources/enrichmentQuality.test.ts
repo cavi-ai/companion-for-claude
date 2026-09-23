@@ -116,12 +116,9 @@ describe("validateEnrichment", () => {
     expect(qualityErrors(record, schema)).toContain("fields.rows: expected string");
   });
 
-  it("rejects sanitized and raw secret-bearing field values", () => {
+  it("accepts masked field values and rejects raw secrets in fields", () => {
     const errors = qualityErrors(article({ summary: "Credentials: ‹REDACTED›", topics: ["safe", "ghp_abcdefghijklmnopqrstuvwxyz0123"] }));
-    expect(errors).toEqual([
-      "fields.summary: contains secret-bearing content",
-      "fields.topics[1]: contains secret-bearing content",
-    ]);
+    expect(errors).toEqual(["fields.topics[1]: contains secret-bearing content"]);
   });
 
   it("rejects secret-bearing URL and asset provenance", () => {

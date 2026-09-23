@@ -119,6 +119,23 @@ describe("buildRequestBody", () => {
     expect(body.thinking).toEqual({ type: "adaptive", display: "summarized" });
   });
 
+  it.each(["claude-opus-5-5", "claude-fable-5-1", "claude-fable-5"])(
+    "drops thinking the model cannot turn off for %s (utility calls send disabled)",
+    (model) => {
+      const disabled = JSON.parse(buildRequestBody({ ...baseReq, model, thinking: { type: "disabled" } }, false, apiKeyAuth));
+      expect(disabled).not.toHaveProperty("thinking");
+      const budget = JSON.parse(buildRequestBody({ ...baseReq, model, thinking: { type: "enabled", budget_tokens: 2048 } }, false, apiKeyAuth));
+      expect(budget).not.toHaveProperty("thinking");
+      const adaptive = JSON.parse(buildRequestBody({ ...baseReq, model, thinking: { type: "adaptive" }, thinkingDisplay: "summarized" }, false, apiKeyAuth));
+      expect(adaptive.thinking).toEqual({ type: "adaptive", display: "summarized" });
+    },
+  );
+
+  it("still sends disabled thinking to models that accept it", () => {
+    const body = JSON.parse(buildRequestBody({ ...baseReq, model: "claude-sonnet-5", thinking: { type: "disabled" } }, false, apiKeyAuth));
+    expect(body.thinking).toEqual({ type: "disabled" });
+  });
+
   it.each([
     "claude-sonnet-5",
     "claude-opus-4-7",

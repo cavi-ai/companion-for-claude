@@ -265,7 +265,7 @@ describe("Chat render lifecycle", () => {
     expect(hint).toMatch(/host/i);
   });
 
-  it("splits the desktop header into a one-shot action group and a stateful toggle group", async () => {
+  it("renders the calm desktop header: 3 ghost icons plus quick options, no state group", async () => {
     const app = new App();
     (app.workspace as unknown as { getActiveViewOfType(): null; getActiveFile(): null }).getActiveViewOfType = () => null;
     (app.workspace as unknown as { getActiveFile(): null }).getActiveFile = () => null;
@@ -315,20 +315,17 @@ describe("Chat render lifecycle", () => {
     expect(headerActions).toBeTruthy();
     expect(headerActions?.querySelector(".cc-actions-sep")).toBeNull();
 
+    // Save, session capture, the ingest toggle, and the MCP button all moved out
+    // of the header (into the model chip's MCP dot or the overflow menu).
     const primary = headerActions?.querySelector(".cc-header-actions-primary");
     expect(primary).toBeTruthy();
     expect(primary?.querySelectorAll("button").map((b) => b.getAttribute("aria-label"))).toEqual([
       "New chat",
       "Resume a past conversation",
-      "Save chat to vault",
-      "Capture a Claude Code session into memory",
+      "More actions",
+      "Quick options for Chat",
     ]);
-
-    const state = headerActions?.querySelector(".cc-header-actions-state");
-    expect(state).toBeTruthy();
-    // aria-label is rewritten to reflect live bridge status right after mount
-    // (refreshContextStatus), so identify the MCP button by its stable class.
-    expect(state?.querySelectorAll(".cc-mcp-btn").length).toBe(1);
-    expect(primary?.querySelectorAll(".cc-mcp-btn").length).toBe(0);
+    expect(headerActions?.querySelector(".cc-header-actions-state")).toBeNull();
+    expect(headerActions?.querySelectorAll(".cc-mcp-btn").length).toBe(0);
   });
 });

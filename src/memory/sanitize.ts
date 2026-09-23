@@ -31,9 +31,9 @@ const TOKEN_PATTERNS: { kind: string; re: RegExp }[] = [
 ];
 
 // `NAME=value` / `"name": "value"` where the name looks secret. Keeps the key
-// (useful context) and masks only the value.
+// (useful context) and masks only a credential-shaped value: one with a digit or 20+ chars.
 const ASSIGNMENT_RE =
-  /\b([A-Za-z0-9_]*(?:TOKEN|SECRET|PASSWORD|PASSWD|API[_-]?KEY|ACCESS[_-]?KEY))\b(\s*[:=]\s*)(['"]?)[^\s'"]{6,}\3/gi;
+  /\b([A-Za-z0-9_]*(?:TOKEN|SECRET|PASSWORD|PASSWD|API[_-]?KEY|ACCESS[_-]?KEY))\b(\s*[:=]\s*)(['"]?)(?:(?=[^\s'"]*\d)[^\s'"]{6,}|[^\s'"]{20,})\3/gi;
 
 /** Scrub known secret shapes from text, reporting what was redacted. */
 export function sanitizeWithReport(text: string): SanitizeResult {

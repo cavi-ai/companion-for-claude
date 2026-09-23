@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildOrganizePrompt, parseOrganizeResponse, planOrganizeMoves, sanitizeDomain } from "../../src/sources/organize";
+import { buildOrganizePrompt, parseOrganizeResponse, planOrganizeMoves, relativeFolders, sanitizeDomain } from "../../src/sources/organize";
 
 const candidates = [
   { path: "Clippings/clip 2024-05-01 abc123.md", title: "Why local-first note apps are winning", summary: "Local-first software keeps data on-device." },
@@ -52,6 +52,12 @@ describe("sanitizeDomain", () => {
   });
 });
 
+describe("relativeFolders", () => {
+  it("keeps only paths under base, made relative, sorted and deduped", () => {
+    expect(relativeFolders(["Library/AI", "Library/AI/ml", "Other/x", "Library"], "Library")).toEqual(["AI", "AI/ml"]);
+  });
+});
+
 describe("planOrganizeMoves", () => {
   const titles = new Map(candidates.map((c) => [c.path, c.title]));
   const proposals = [
@@ -87,5 +93,37 @@ describe("planOrganizeMoves", () => {
     ]);
     const moves = planOrganizeMoves(dup, dupTitles, { baseFolder: "Library", taken: () => false });
     expect(moves.map((m) => m.to)).toEqual(["Library/x/Same Title.md", "Library/x/Same Title 2.md"]);
+  });
+
+  it("uses an existing folder's own casing/spelling when its sanitized form matches the domain", () => {
+    const proposal = [{ path: candidates[0]!.path, domain: "ai-tools" }];
+    const moves = planOrganizeMoves(proposal, titles, { baseFolder: "Library", taken: () => false, existingFolders: ["AI Tools"] });
+    expect(moves[0]!.to).toBe(`Library/AI Tools/${candidates[0]!.title}.md`);
+  });
+
+  it("matches a single-word existing folder too", () => {
+    const proposal = [{ path: candidates[0]!.path, domain: "research" }];
+    const moves = planOrganizeMoves(proposal, titles, { baseFolder: "Library", taken: () => false, existingFolders: ["Research"] });
+    expect(moves[0]!.to).toBe(`Library/Research/${candidates[0]!.title}.md`);
+  });
+
+  it("keeps the lowercase domain when no existing folder matches", () => {
+    const proposal = [{ path: candidates[0]!.path, domain: "ai-tools" }];
+    const moves = planOrganizeMoves(proposal, titles, { baseFolder: "Library", taken: () => false, existingFolders: ["Other"] });
+    expect(moves[0]!.to).toBe(`Library/ai-tools/${candidates[0]!.title}.md`);
+  });
+
+  it("canonicalizes a 2-segment domain segment by segment against existing folders", () => {
+    const existingFolders = ["AI", "AI/ML Papers"];
+    const cases: Array<[string, string]> = [
+      ["ai/ml-papers", "AI/ML Papers"],
+      ["ai/new-topic", "AI/new-topic"],
+      ["gardening", "gardening"],
+    ];
+    for (const [domain, expectedDir] of cases) {
+      const proposal = [{ path: candidates[0]!.path, domain }];
+      const moves = planOrganizeMoves(proposal, titles, { baseFolder: "Library", taken: () => false, existingFolders });
+      expect(moves[0]!.to).toBe(`Library/${expectedDir}/${candidates[0]!.title}.md`);
+    }
   });
 });

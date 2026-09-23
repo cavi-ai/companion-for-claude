@@ -336,7 +336,7 @@ describe("enrichment lifecycle", () => {
     expect((view.contentEl as unknown as FakeElement).querySelector(".setting-item-description")?.textContent)
       .toContain("Inbox zero");
     expect((view.contentEl as unknown as FakeElement).querySelector(".cc-inbox-typed-count")?.textContent)
-      .toBe("1 typed");
+      .toBe("1 enriched");
     expect(app.metadataCache.getFileCache(file)?.frontmatter).toBeUndefined();
   });
 

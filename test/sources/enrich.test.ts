@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { App, TFile } from "obsidian";
 import { enrichCapture } from "../../src/sources/enrich";
 import type { EnrichDeps } from "../../src/sources/enrich";
-import { EnrichmentQualityError, markdownBody } from "../../src/sources/enrichmentQuality";
+import { markdownBody } from "../../src/sources/enrichmentQuality";
 import { parse as parseYaml } from "yaml";
 
 const LEAK = "sk-ant-api03-DEADBEEFDEADBEEFDEADBEEF";
@@ -344,17 +344,37 @@ describe("enrichCapture — extraction failure", () => {
     expect(out).toContain("Untouched body.");
   });
 
-  it("rejects secret-bearing enrichment before mutation and leaves the complete note byte-identical", async () => {
+  it("masks secret-shaped text in enriched fields instead of rejecting the clip", async () => {
     const app = new App();
     const before = "---\nsource: https://x.com/p\ntags:\n  - private\n---\n\nUntouched body.  \n";
     const file = app.vault.seed("Clippings/secret.md", before);
     const complete = async () => JSON.stringify({ title: "A safe title", site: "Example", summary: `Summary ${LEAK}` });
 
-    await expect(
-      enrichCapture(deps(app, complete), { kind: "markdown", path: "Clippings/secret.md", basename: "secret", content: (file as TFile)._content }),
-    ).rejects.toBeInstanceOf(EnrichmentQualityError);
+    await enrichCapture(deps(app, complete), { kind: "markdown", path: "Clippings/secret.md", basename: "secret", content: (file as TFile)._content });
 
-    expect(await app.vault.cachedRead(file as TFile)).toBe(before);
+    const out = await app.vault.cachedRead(file as TFile);
+    expect(out).toContain("source_enriched: true");
+    expect(out).toContain("Summary ‹REDACTED›");
+    expect(out).not.toContain(LEAK);
+    expect(out).toContain("Untouched body.");
+  });
+
+  it("enriches a security-tool repo clip whose summary quotes example keys and env vars", async () => {
+    const app = new App();
+    const before = "---\nsource: https://github.com/gitleaks/gitleaks\n---\n\nGitleaks scans git repos for hardcoded secrets.\n";
+    const file = app.vault.seed("Clippings/gitleaks.md", before);
+    const complete = async () => JSON.stringify({
+      title: "Gitleaks",
+      site: "GitHub",
+      summary: "Detects hardcoded secrets such as AWS keys (AKIAIOSFODNN7EXAMPLE); set GITHUB_TOKEN: environment variable for private repos.",
+    });
+
+    await enrichCapture(deps(app, complete), { kind: "markdown", path: "Clippings/gitleaks.md", basename: "gitleaks", content: (file as TFile)._content });
+
+    const out = await app.vault.cachedRead(file as TFile);
+    expect(out).toContain("source_enriched: true");
+    expect(out).toContain("GITHUB_TOKEN: environment variable");
+    expect(out).not.toContain("AKIAIOSFODNN7EXAMPLE");
   });
 
   it("leaves the complete note unchanged when the atomic pure merge rejects current YAML", async () => {

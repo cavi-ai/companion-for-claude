@@ -140,6 +140,7 @@ describe("DesktopRuntime", () => {
       marketplaceInstalled: true,
       pluginInstalled: true,
       pluginEnabled: true,
+      bridge: { enabled: false, url: "", registered: false, headerValue: "" },
     });
     expect(exec.calls.map(({ executable, args }) => [executable, args])).toEqual([
       ["claude", ["--version"]],
@@ -148,6 +149,37 @@ describe("DesktopRuntime", () => {
       ["claude", ["plugin", "list", "--json"]],
     ]);
     expect(exec.calls.every(({ options }) => options.timeoutMs === 5_000 && options.maxBytes === 256_000)).toBe(true);
+  });
+
+  it("detects an already-registered bridge from claude mcp get's exit code", async () => {
+    const responses = readyResponses();
+    responses.set(key("claude", "mcp", "get", "obsidian-vault"), ok("obsidian-vault: registered"));
+    const exec = new FakeExec(responses);
+    const bridge = { enabled: true, url: "http://127.0.0.1:22360/mcp", headerValue: "${OBSIDIAN_COMPANION_MCP_TOKEN}" };
+    const runtime = new DesktopRuntime({ exec, fs: new MemoryFs(), platform: "darwin", homeDir: "/Users/test", bridge });
+
+    await expect(runtime.inspectClaudeCode()).resolves.toMatchObject({
+      bridge: { enabled: true, url: bridge.url, headerValue: bridge.headerValue, registered: true },
+    });
+    expect(exec.calls.map(({ executable, args }) => [executable, args])).toContainEqual(["claude", ["mcp", "get", "obsidian-vault"]]);
+  });
+
+  it("reports an unregistered bridge when claude mcp get exits non-zero", async () => {
+    const responses = readyResponses();
+    responses.set(key("claude", "mcp", "get", "obsidian-vault"), new ExecFailure("No MCP server found with name: obsidian-vault"));
+    const exec = new FakeExec(responses);
+    const bridge = { enabled: true, url: "http://127.0.0.1:22360/mcp", headerValue: "secret" };
+    const runtime = new DesktopRuntime({ exec, fs: new MemoryFs(), platform: "darwin", homeDir: "/Users/test", bridge });
+
+    await expect(runtime.inspectClaudeCode()).resolves.toMatchObject({ bridge: { enabled: true, registered: false } });
+  });
+
+  it("skips the mcp get probe entirely while the bridge is disabled", async () => {
+    const exec = new FakeExec(readyResponses());
+    const runtime = new DesktopRuntime({ exec, fs: new MemoryFs(), platform: "darwin", homeDir: "/Users/test" });
+
+    await runtime.inspectClaudeCode();
+    expect(exec.calls.some(({ args }) => args[0] === "mcp")).toBe(false);
   });
 
   it("ignores a same-prefix local marketplace and a plugin from another marketplace", async () => {
@@ -254,6 +286,36 @@ describe("DesktopRuntime", () => {
 
     await expect(runtime.setupClaudeCode()).rejects.toThrow("Add the CAVI marketplace");
     expect(exec.calls.some(({ args }) => args.includes("obsidian-agent@cavi-ai"))).toBe(false);
+  });
+
+  it("connects Companion's vault tools during setup and redacts the token on failure", async () => {
+    const responses = readyResponses();
+    const addArgs = ["mcp", "add", "--scope", "user", "--transport", "http", "obsidian-vault", "http://127.0.0.1:22360/mcp", "--header", "Authorization: Bearer bridge-secret-token"];
+    responses.set(key("claude", ...addArgs), new Error(`Command failed: claude ${addArgs.join(" ")}`));
+    const exec = new FakeExec(responses);
+    const bridge = { enabled: true, url: "http://127.0.0.1:22360/mcp", headerValue: "bridge-secret-token" };
+    const runtime = new DesktopRuntime({ exec, fs: new MemoryFs(), platform: "darwin", homeDir: "/Users/test", bridge });
+
+    const failure = await runtime.setupClaudeCode().catch((cause: Error) => cause);
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).toContain("Connect Companion's vault tools");
+    expect((failure as Error).message).not.toContain("bridge-secret-token");
+  });
+
+  it("registers Companion's vault tools once obsidian-agent is already ready", async () => {
+    const responses = readyResponses();
+    responses.set(key("claude", "mcp", "get", "obsidian-vault"), [
+      new ExecFailure("No MCP server found with name: obsidian-vault"),
+      ok("obsidian-vault: registered"),
+    ]);
+    responses.set(key("claude", "mcp", "add", "--scope", "user", "--transport", "http", "obsidian-vault", "http://127.0.0.1:22360/mcp", "--header", "Authorization: Bearer secret"), ok("added"));
+    const exec = new FakeExec(responses);
+    const bridge = { enabled: true, url: "http://127.0.0.1:22360/mcp", headerValue: "secret" };
+    const runtime = new DesktopRuntime({ exec, fs: new MemoryFs(), platform: "darwin", homeDir: "/Users/test", bridge });
+
+    const result = await runtime.setupClaudeCode();
+    expect(result.bridge.registered).toBe(true);
+    expect(exec.calls.some(({ args }) => args.join(" ") === "mcp add --scope user --transport http obsidian-vault http://127.0.0.1:22360/mcp --header Authorization: Bearer secret")).toBe(true);
   });
 
   it("backs up and atomically merges Claude Desktop configuration", async () => {

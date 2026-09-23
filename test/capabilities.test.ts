@@ -35,6 +35,11 @@ describe("capabilitiesFor", () => {
     });
     expect(capabilitiesFor("claude-sonnet-4-6").temperature).toBe(true);
   });
+  it("Opus 5.5, Fable 5/5.1, Mythos 5/5.1 — thinking always on, full effort, no temperature", () => {
+    for (const id of ["claude-opus-5-5", "claude-fable-5-1", "claude-fable-5", "claude-mythos-5-1", "claude-mythos-5"]) {
+      expect(capabilitiesFor(id)).toMatchObject({ temperature: false, thinking: "always", effort: true, effortMax: true });
+    }
+  });
   it("Fable and Mythos reject temperature", () => {
     for (const id of ["claude-fable-5", "claude-mythos-5", "claude-mythos-preview"]) {
       expect(capabilitiesFor(id).temperature).toBe(false);

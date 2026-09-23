@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { findUnlinkedMentions, linkMention, type LinkCandidate } from "../src/links/unlinkedMentions";
+import { findUnlinkedMentions, linkMention, withLinktext, type LinkCandidate } from "../src/links/unlinkedMentions";
 
 const candidates: LinkCandidate[] = [
   { path: "Projects/Companion Agent Mode.md", basename: "Companion Agent Mode", aliases: ["agent mode"] },
@@ -7,6 +7,8 @@ const candidates: LinkCandidate[] = [
   { path: "GTD.md", basename: "GTD", aliases: [] },
   { path: "Ok.md", basename: "Ok", aliases: [] }, // <3 chars — never suggested
 ];
+
+const reactCandidates: LinkCandidate[] = [{ path: "react.md", basename: "react", aliases: [] }];
 
 describe("findUnlinkedMentions", () => {
   it("finds a whole-word title mention with position and line", () => {
@@ -67,6 +69,33 @@ And \`Weekly Review\` inline. But GTD in prose.`;
     expect(findUnlinkedMentions(bigContent, many, "X.md").length).toBeLessThanOrEqual(20);
   });
 
+  it("does not match inside a bare URL", () => {
+    const content = "See https://github.com/remix-run/react-router for routing.";
+    expect(findUnlinkedMentions(content, reactCandidates, "X.md")).toEqual([]);
+  });
+
+  it("does not match inside an autolink", () => {
+    const content = "See <https://example.com/react> for details.";
+    expect(findUnlinkedMentions(content, reactCandidates, "X.md")).toEqual([]);
+  });
+
+  it("still finds the mention in plain prose", () => {
+    const content = "react is a UI library";
+    const paths = findUnlinkedMentions(content, reactCandidates, "X.md").map((m) => m.path);
+    expect(paths).toEqual(["react.md"]);
+  });
+
+  it("does not match inside a tag", () => {
+    expect(findUnlinkedMentions("Tagged #react today", reactCandidates, "X.md")).toEqual([]);
+    expect(findUnlinkedMentions("#ai/react", reactCandidates, "X.md")).toEqual([]);
+  });
+
+  it("still finds a mention after a heading hash", () => {
+    const content = "# React\n\nSome intro.";
+    const paths = findUnlinkedMentions(content, reactCandidates, "X.md").map((m) => m.path);
+    expect(paths).toEqual(["react.md"]);
+  });
+
   it("normalizes a note once regardless of candidate count", () => {
     const content = "A long mobile note about Weekly Review. ".repeat(2_000);
     const many: LinkCandidate[] = Array.from({ length: 500 }, (_, i) => ({
@@ -115,5 +144,32 @@ describe("linkMention", () => {
     const content = "The Weekly Review went well.";
     const [m] = findUnlinkedMentions(content, candidates, "X.md");
     expect(() => linkMention("something else entirely", m!)).toThrow(/changed/i);
+  });
+
+  it("links a duplicate basename by its full path", () => {
+    const dupCandidates = withLinktext([
+      { path: "Research/A/Project.md", basename: "Project", aliases: [] },
+      { path: "Research/B/Project.md", basename: "Project", aliases: [] },
+    ]);
+    const content = "The Project plan needs review.";
+    const [m] = findUnlinkedMentions(content, dupCandidates, "Other.md");
+    const linked = linkMention(content, m!);
+    expect(linked).toContain("|Project]]");
+    expect(linked).toMatch(/\[\[Research\/[AB]\/Project\|Project]]/);
+  });
+});
+
+describe("withLinktext", () => {
+  it("leaves a unique basename as-is", () => {
+    const [c] = withLinktext([{ path: "Notes/Name.md", basename: "Name", aliases: [] }]);
+    expect(c!.linktext).toBe("Name");
+  });
+
+  it("uses the full path (sans .md) for duplicate basenames, case-insensitively", () => {
+    const out = withLinktext([
+      { path: "Research/A/Project.md", basename: "Project", aliases: [] },
+      { path: "Research/B/project.md", basename: "project", aliases: [] },
+    ]);
+    expect(out.map((c) => c.linktext)).toEqual(["Research/A/Project", "Research/B/project"]);
   });
 });
