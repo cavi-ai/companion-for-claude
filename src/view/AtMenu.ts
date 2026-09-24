@@ -9,6 +9,18 @@ const ICON: Record<AtKind, string> = {
   "note-path": "file",
   "folder-path": "folder",
   "media-path": "image",
+  "base-path": "table",
+  claim: "quote",
+  recent: "clock",
+  project: "folder-kanban",
+};
+
+/** Short kind badge shown on rows for the newer, less self-explanatory kinds. */
+const BADGE: Partial<Record<AtKind, string>> = {
+  "base-path": "Base",
+  claim: "Claim",
+  recent: "Recent",
+  project: "Project",
 };
 
 /**
@@ -78,6 +90,8 @@ export class AtMenu {
       setIcon(row.createSpan({ cls: "cc-at-icon" }), ICON[item.kind]);
       row.createSpan({ cls: "cc-slash-name", text: item.label });
       if (item.sublabel) row.createSpan({ cls: "cc-slash-desc", text: item.sublabel });
+      const badge = BADGE[item.kind];
+      if (badge) row.createSpan({ cls: `cc-at-badge cc-at-badge-${item.kind}`, text: badge });
       row.addEventListener("mouseenter", () => {
         this.selected = i;
         this.render();

@@ -31,6 +31,8 @@ export async function gatherContext(
   semanticSearch?: SemanticSearch,
   attachedPaths: AttachedPath[] = [],
   attachedPages: AttachedPage[] = [],
+  /** Restricts automatic vault search (keyword + semantic) to notes it accepts — e.g. a chat project's folder. */
+  searchScope?: (path: string) => boolean,
 ): Promise<GatheredContext> {
   const sources: string[] = [];
   const blocks: string[] = [];
@@ -116,11 +118,11 @@ export async function gatherContext(
   //    when no semantic retriever is wired or the local index is unavailable.
   if (toggles.searchVault && userQuery.trim().length > 0 && budget > 0) {
     const exclude = activeFile instanceof TFile ? activeFile.path : null;
-    const keyword = (await keywordVaultSearch(app, userQuery, exclude)).slice(0, settings.maxContextNotes);
+    const keyword = (await keywordVaultSearch(app, userQuery, exclude, searchScope)).slice(0, settings.maxContextNotes);
     let semantic: { path: string; text: string }[] = [];
     if (semanticSearch) {
       try {
-        semantic = (await semanticSearch(userQuery, settings.maxContextNotes)).filter((s) => s.path !== exclude);
+        semantic = (await semanticSearch(userQuery, settings.maxContextNotes, searchScope)).filter((s) => s.path !== exclude && (!searchScope || searchScope(s.path)));
       } catch {
         // local index/Ollama unavailable → keyword-only, no regression
       }

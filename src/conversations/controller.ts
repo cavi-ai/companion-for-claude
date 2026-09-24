@@ -9,10 +9,10 @@ import {
   newConversation,
   withCliSession,
   saveConversation,
+  startConversationTurn,
   deleteConversation as removeConversation,
   setActive,
   touch,
-  startConversationTurn,
   settleConversationTurn,
   clearConversationTurn,
   type ChatTurnMode,
@@ -60,52 +60,37 @@ export class ConversationsController {
     return getActive(this.deps.state.get());
   }
 
-  /**
-   * Persist the current message list into the active conversation, creating one
-   * on first save. Returns the active conversation id (or null when there is
-   * nothing to save). Best-effort: a save failure never blocks the chat.
-   */
-  async saveActive(messages: ChatMessage[]): Promise<string | null> {
-    const { state, persist } = this.deps;
-    if (messages.length === 0) return state.get().activeId;
-    const base = getActive(state.get()) ?? newConversation(this.nextId(), Date.now());
-    const updated = touch(base, messages, Date.now());
-    state.set(saveConversation(state.get(), updated, this.maxConversations()));
-    try {
-      await persist();
-    } catch (e) {
-      console.error("[Claude Companion] failed to save conversation", e);
-    }
-    return updated.id;
-  }
-
   async beginTurn(
+    conversationId: string | null,
     messages: ChatMessage[],
     input: { backend: string; model: string; mode: ChatTurnMode },
   ): Promise<{ conversationId: string; turnId: string }> {
     const { state, persist } = this.deps;
     const previousState = state.get();
-    const conversationId = this.activeId();
+    const id = conversationId ?? this.nextId();
     const turnId = crypto.randomUUID();
     const now = Date.now();
-    state.set(startConversationTurn(state.get(), conversationId, messages, {
+    const receipt = {
       id: turnId,
-      state: "running",
+      state: "running" as const,
       backend: input.backend,
       model: input.model,
       mode: input.mode,
       userMessageIndex: messages.length - 1,
       createdAt: now,
       updatedAt: now,
-    }, this.maxConversations()));
+    };
+    state.set(startConversationTurn(state.get(), id, messages, receipt, this.maxConversations()));
+    // The leaf that starts a turn is the focused leaf — starting a turn makes its conversation active.
+    state.set(setActive(state.get(), id));
     try {
       await persist();
     } catch (error) {
       state.set(previousState);
       throw error;
     }
-    const title = this.getActive()?.title ?? "Chat request";
-    const activityId = this.activityId(conversationId);
+    const title = state.get().conversations.find((c) => c.id === id)?.title ?? "Chat request";
+    const activityId = this.activityId(id);
     const activity = this.deps.activity();
     activity.start({ id: activityId, kind: "chat-turn", title });
     activity.update(activityId, {
@@ -115,7 +100,7 @@ export class ConversationsController {
         { id: "stop-chat-turn", label: "Stop", kind: "stop" },
       ],
     });
-    return { conversationId, turnId };
+    return { conversationId: id, turnId };
   }
 
   registerTurn(conversationId: string, turnId: string, stop: () => void): () => void {
@@ -217,6 +202,18 @@ export class ConversationsController {
     state.set(setActive(state.get(), id));
     await persist();
     return getActive(state.get());
+  }
+
+  /** Set (or clear) the chat project a conversation is scoped to. */
+  async setProject(conversationId: string, projectId: string | null): Promise<void> {
+    const { state, persist } = this.deps;
+    const conversation = state.get().conversations.find((c) => c.id === conversationId);
+    if (!conversation) return;
+    const updated = { ...conversation };
+    if (projectId) updated.projectId = projectId;
+    else delete updated.projectId;
+    state.set(saveConversation(state.get(), updated, 0));
+    await persist();
   }
 
   /** Start a fresh conversation (the current one is already auto-saved). */

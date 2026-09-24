@@ -18,6 +18,7 @@ export interface CommandActions {
 
   openChat(): void;
   newChat(): void;
+  newChatTab(): void;
   generatePlanFromNote(): void;
   generateArtifactFromContext(): void;
   rewriteSelection(editor: Editor, view: MarkdownView): void;
@@ -47,6 +48,7 @@ export interface CommandActions {
   openSourceInbox(): void;
   exportClipperTemplates(): void;
   seedOntology(): void;
+  openSetupWizard(): void;
 }
 
 /** A command that only applies to the note in front of the user. */
@@ -81,6 +83,7 @@ export function companionCommands(actions: CommandActions): Command[] {
   const commands: Command[] = [
     { id: "open-chat", name: "Open chat panel", callback: () => actions.openChat() },
     { id: "new-chat", name: "New chat", callback: () => actions.newChat() },
+    { id: "new-chat-tab", name: "New chat tab", callback: () => actions.newChatTab() },
     onActiveFile("plan-from-note", "Generate implementation plan from current note", actions, () => actions.generatePlanFromNote()),
     { id: "artifact-from-selection", name: "Turn selection / note into a beautiful artifact", callback: () => actions.generateArtifactFromContext() },
     {
@@ -144,6 +147,7 @@ export function companionCommands(actions: CommandActions): Command[] {
     { id: "open-source-inbox", name: "Open source inbox (clip triage)", callback: () => actions.openSourceInbox() },
     whenEnabled("export-clipper-templates", "Export Web Clipper templates (typed clipping)", () => actions.sourceCaptureEnabled(), () => actions.exportClipperTemplates()),
     whenEnabled("seed-ontology", "Seed ontology (default type schemas)", () => actions.ontologyEnabled(), () => actions.seedOntology()),
+    { id: "open-setup-wizard", name: "Open setup wizard", callback: () => actions.openSetupWizard() },
   );
 
   return commands;

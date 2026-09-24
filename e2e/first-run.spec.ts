@@ -26,6 +26,8 @@ const openChat = async (page: import("@playwright/test").Page): Promise<void> =>
   });
 };
 
+// The legacy one-shot desktop-integrations prompt the wizard's vault-tools
+// step replaces — proving it, singular, never appears.
 const offerLocators = (harness: { windows(): import("@playwright/test").Page[] }) =>
   harness.windows().map((w) => w.locator(".modal-container").filter({ hasText: "Set up desktop integrations" }));
 
@@ -34,12 +36,20 @@ const offerVisible = async (harness: { windows(): import("@playwright/test").Pag
   return counts.some((n) => n > 0);
 };
 
-// Click "Not now" in whichever window currently shows a prompt.
-const dismissOne = async (harness: { windows(): import("@playwright/test").Page[] }): Promise<void> => {
-  for (const w of harness.windows()) {
-    const button = w.getByRole("button", { name: "Not now" }).last();
-    if ((await button.count().catch(() => 0)) > 0) { await button.click(); return; }
+const wizardLocators = (harness: { windows(): import("@playwright/test").Page[] }) =>
+  harness.windows().map((w) => w.locator(".modal-container").filter({ hasText: "Set up Claude Companion" }));
+
+const wizardVisible = async (harness: { windows(): import("@playwright/test").Page[] }): Promise<boolean> => {
+  const counts = await Promise.all(wizardLocators(harness).map((l) => l.count().catch(() => 0)));
+  return counts.some((n) => n > 0);
+};
+
+// The wizard modal, in whichever window Obsidian has focused.
+const wizardWindow = async (harness: { windows(): import("@playwright/test").Page[] }): Promise<import("@playwright/test").Locator> => {
+  for (const locator of wizardLocators(harness)) {
+    if ((await locator.count().catch(() => 0)) > 0) return locator;
   }
+  throw new Error("setup wizard modal not found in any window");
 };
 
 // Fresh-install ordering is one user journey and therefore one app launch.
@@ -73,19 +83,23 @@ test("a fresh install orders credential, consent, and desktop integration setup"
     await expect.poll(() => harness.providerRequests()).toBeGreaterThan(0);
     await expect(page.locator(".cc-setup-card")).toHaveCount(0);
 
-    // Held-back consent now runs, one modal at a time — in whichever window
-    // Obsidian has focused.
-    await expect.poll(() => deferredPrompts(harness), { timeout: 10_000 }).toBe(1);
+    // The remaining wizard steps now open — exactly one modal, in whichever
+    // window Obsidian has focused — starting on Vault tools (Connect is
+    // already satisfied; the legacy one-shot offer never fires).
+    await expect.poll(() => wizardVisible(harness), { timeout: 10_000 }).toBe(true);
+    expect(await openModals(harness)).toBe(1);
+    expect(await offerVisible(harness)).toBe(false);
+    const wizard = await wizardWindow(harness);
+    await expect(wizard).toContainText("Vault tools");
 
-    // Ontology, then semantic, then the offer — dismiss whatever precedes it.
-    for (let i = 0; i < 3; i += 1) {
-      await expect.poll(() => deferredPrompts(harness), { timeout: 10_000 }).toBeGreaterThan(0);
-      if (await offerVisible(harness)) break;
-      await dismissOne(harness);
-    }
-    await expect.poll(() => offerVisible(harness), { timeout: 10_000 }).toBe(true);
-    await dismissOne(harness);
-    await expect.poll(() => offerVisible(harness), { timeout: 10_000 }).toBe(false);
+    // Walk the wizard to the end without opening the real desktop-integrations
+    // flow (its own "Connect vault tools to Claude Code" action).
+    await wizard.getByRole("button", { name: "Skip" }).click();
+    await expect(wizard).toContainText("Index your vault");
+    await wizard.getByRole("button", { name: "Finish" }).click();
+
+    await expect.poll(() => wizardVisible(harness), { timeout: 10_000 }).toBe(false);
+    expect(await offerVisible(harness)).toBe(false);
 
     const dataPath = join(harness.paths.vault, ".obsidian", "plugins", "claude-companion", "data.json");
     await expect.poll(async () => (JSON.parse(await readFile(dataPath, "utf8")) as { settings: { desktopIntegrationsOffered?: boolean } }).settings.desktopIntegrationsOffered, { timeout: 10_000 }).toBe(true);

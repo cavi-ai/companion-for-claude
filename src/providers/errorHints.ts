@@ -2,7 +2,10 @@
 
 import { sanitizeEndpointForDisplay } from "./endpointPolicy";
 
-export type ErrorHintProvider = "anthropic" | "ollama" | "openai-compat" | "claude-cli";
+export type ErrorHintProvider = "anthropic" | "ollama" | "openai-compat" | "claude-cli" | "codex-cli" | "opencode-cli";
+
+const CLI_LABELS: Record<"claude-cli" | "codex-cli" | "opencode-cli", string> = { "claude-cli": "Claude Code", "codex-cli": "Codex", "opencode-cli": "OpenCode" };
+const CLI_SIGN_IN: Record<"claude-cli" | "codex-cli" | "opencode-cli", string> = { "claude-cli": "run `claude auth login`", "codex-cli": "run `codex login`", "opencode-cli": "run `opencode auth login`" };
 
 function redactUrlUserinfo(message: string): string {
   return message.replace(/\b([a-z][a-z0-9+.-]*:\/\/)[^/\s?#]*@/gi, "$1");
@@ -13,15 +16,17 @@ function endpointName(provider: ErrorHintProvider, endpoint?: string): string {
   const at = safeEndpoint ? ` at ${safeEndpoint}` : "";
   if (provider === "ollama") return `Ollama${at}`;
   if (provider === "openai-compat") return `the OpenAI-compatible endpoint${at}`;
-  if (provider === "claude-cli") return "Claude Code";
+  if (provider === "claude-cli" || provider === "codex-cli" || provider === "opencode-cli") return CLI_LABELS[provider];
   return `Anthropic${at}`;
 }
 
 export function errorHint(message: string, provider: ErrorHintProvider = "anthropic", endpoint?: string): string | null {
   const m = message.toLowerCase();
-  if (provider === "claude-cli") {
-    if (m.includes("not found")) return "Claude Code was not found on this machine. Install it, then run `claude auth login`, or pick another chat backend in Companion settings.";
-    if (m.includes("not signed in") || m.includes("not logged in") || m.includes("authentication")) return "Claude Code is not signed in. Run `claude auth login` in a terminal, then send again.";
+  if (provider === "claude-cli" || provider === "codex-cli" || provider === "opencode-cli") {
+    const label = CLI_LABELS[provider];
+    const signIn = CLI_SIGN_IN[provider];
+    if (m.includes("not found")) return `${label} was not found on this machine. Install it, then ${signIn}, or pick another chat backend in Companion settings.`;
+    if (m.includes("not signed in") || m.includes("not logged in") || m.includes("authentication")) return `${label} is not signed in. ${signIn[0]!.toUpperCase()}${signIn.slice(1)} in a terminal, then send again.`;
   }
   if (m.includes("401") || m.includes("invalid api key") || m.includes("authentication")) {
     if (provider !== "anthropic") {

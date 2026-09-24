@@ -1,4 +1,4 @@
-import { App, Notice, Platform, PluginSettingTab, Setting, type ButtonComponent, type SettingDefinitionItem, type SettingGroupItem } from "obsidian";
+import { App, Notice, Platform, PluginSettingTab, Setting, type ButtonComponent, type SettingDefinition, type SettingDefinitionItem, type SettingGroupItem } from "obsidian";
 import type ClaudeCompanionPlugin from "./main";
 import { CLAUDE_MODELS } from "./claude/models";
 import type { ProviderStatus } from "./providers/types";
@@ -10,6 +10,15 @@ import { BUILTIN_EMBEDDING_MODELS, builtinModelById } from "./semantic/transform
 import { ChoiceModal } from "./view/ChoiceModal";
 import { normalizeDiscoverySettings, type McpServerConfig, type PluginSettings } from "./types";
 import { needsCredentialSetup } from "./providers/setupState";
+import { claudeBackend } from "./cli/backends/claude";
+import { codexBackend } from "./cli/backends/codex";
+import { opencodeBackend } from "./cli/backends/opencode";
+import type { CliBackend } from "./cli/backends/types";
+import type { CliProvider } from "./providers/cliProvider";
+
+function capitalize(s: string): string {
+  return s.length > 0 ? s[0]!.toUpperCase() + s.slice(1) : s;
+}
 
 /** Text controls hand back a string; anything else is an empty field. */
 function asText(v: unknown): string {
@@ -66,6 +75,188 @@ for (const key of ["discoveryMaxResults", "discoveryExpansionLimit", "discoveryC
   };
 }
 
+// ---------- settings diet: basic vs advanced ----------
+
+export type SettingsTier = "basic" | "advanced";
+
+/**
+ * One tier per settings key. `Record<keyof PluginSettings, ...>` makes the
+ * compiler refuse a build the moment a key is added to PluginSettings and
+ * left out here — the actual coverage guarantee, independent of whether
+ * every key happens to have a settings-tab row.
+ */
+const SETTING_TIERS: Record<keyof PluginSettings, SettingsTier> = {
+  apiKey: "basic",
+  authMode: "basic",
+  oauthToken: "advanced",
+  baseUrl: "advanced",
+  model: "basic",
+  customModel: "advanced",
+  maxTokens: "advanced",
+  systemPrompt: "advanced",
+  artifactOpenTarget: "advanced",
+  artifactFolder: "advanced",
+  chatFolder: "advanced",
+  planFolder: "advanced",
+  templatesFolder: "advanced",
+  context: "advanced",
+  contextCharBudget: "advanced",
+  maxContextNotes: "advanced",
+  artifactHeight: "advanced",
+  chatFontSize: "advanced",
+  maxConversations: "advanced",
+  ollamaHost: "advanced",
+  ollamaModel: "advanced",
+  ollamaUtilityModel: "advanced",
+  utilityBackend: "advanced",
+  chatBackend: "basic",
+  codexModel: "advanced",
+  opencodeModel: "advanced",
+  intelligenceNarrator: "advanced",
+  openaiCompatHost: "advanced",
+  openaiCompatModel: "advanced",
+  openaiCompatKey: "advanced",
+  openaiCompatEmbeddingModel: "advanced",
+  discoveryEnabled: "advanced",
+  openAlexContactEmail: "advanced",
+  zoteroUserId: "advanced",
+  zoteroApiKey: "advanced",
+  discoveryReranker: "advanced",
+  discoveryMaxResults: "advanced",
+  discoveryExpansionLimit: "advanced",
+  discoveryCacheHours: "advanced",
+  semanticEnabled: "basic",
+  embeddingModel: "advanced",
+  embeddingEngine: "advanced",
+  builtinEmbeddingModel: "advanced",
+  semanticModelPrompted: "advanced",
+  semanticIndexPdfs: "advanced",
+  autoTagOnSave: "advanced",
+  artifactBaseTags: "advanced",
+  chatBaseTags: "advanced",
+  agentModeEnabled: "basic",
+  agentAllowWrites: "basic",
+  notifyOnTurnComplete: "basic",
+  inlineDiffEnabled: "advanced",
+  selectionActionEnabled: "advanced",
+  agentMaxIterations: "advanced",
+  webSearchEnabled: "advanced",
+  webSearchEngine: "advanced",
+  braveSearchApiKey: "advanced",
+  webFetchEnabled: "advanced",
+  // The bridge's own page calls it an "optional advanced bridge" — "vault
+  // tools connect" for a first-week user means the desktop-integrations flow.
+  mcpEnabled: "advanced",
+  mcpPort: "advanced",
+  mcpToken: "advanced",
+  mcpAllowWrites: "advanced",
+  mcpWriteFolder: "advanced",
+  mcpClientServers: "advanced",
+  cloudDispatchEnabled: "advanced",
+  cloudRoutineFireUrl: "advanced",
+  cloudRoutineToken: "advanced",
+  cloudRoutineBetaHeader: "advanced",
+  cloudReplyRepo: "advanced",
+  cloudReplyBranch: "advanced",
+  cloudReplyFolder: "advanced",
+  cloudReplyToken: "advanced",
+  memoryEnabled: "advanced",
+  memoryFolder: "advanced",
+  memoryIngestOnSave: "advanced",
+  memoryBaseTags: "advanced",
+  memoryAutoConsolidate: "advanced",
+  sourceCaptureEnabled: "basic",
+  sourceEnrichOnCreate: "advanced",
+  enrichmentDiagnostics: "advanced",
+  sourceCaptureConsent: "advanced",
+  sourceInboxFolder: "advanced",
+  clipOrganizedFolder: "advanced",
+  sourceBaseTags: "advanced",
+  sourceSchemaOverrides: "advanced",
+  clipperTemplateFingerprint: "advanced",
+  clipperVerification: "advanced",
+  ontologyEnabled: "basic",
+  ontologyFolder: "advanced",
+  ontologySeedPrompted: "advanced",
+  desktopIntegrationsOffered: "advanced",
+  setupWizardDone: "advanced",
+  // Always basic: the toggle that reveals the rest must itself stay visible.
+  settingsShowAdvanced: "basic",
+};
+
+/** Custom `render` rows with no `control.key`, promoted to basic by name. */
+const BASIC_ACTION_NAMES: ReadonlySet<string> = new Set([
+  "Desktop integrations", // "vault tools connect"
+  "Embedding model", // "semantic on/off + download"
+  "Anthropic API key", // "credential" — the apiKey field itself is a custom render
+  "Save & test connection", // what actually persists + verifies the credential
+  "Step 1 — connect to Claude", // the one mandatory step, called out while it's missing
+]);
+
+/** A page with zero basic items still shows with the toggle off when it configures the live setup. */
+const PAGE_RELEVANCE: Record<string, (s: PluginSettings) => boolean> = {
+  "Local models (Ollama & endpoints)": (s) =>
+    s.chatBackend === "local" || s.chatBackend === "auto" || s.chatBackend === "custom" ||
+    s.utilityBackend === "ollama" || s.utilityBackend === "custom",
+  "Agent bridge — MCP server (desktop)": (s) => s.mcpEnabled,
+  "External tools — MCP client": (s) => s.mcpClientServers.length > 0,
+  "Agent in the cloud (mobile-friendly)": (s) => s.cloudDispatchEnabled,
+  "Cloud replies (pull from repo)": (s) => s.cloudDispatchEnabled,
+  "Session memory": (s) => s.memoryEnabled,
+  "Scholarly discovery": (s) => s.discoveryEnabled,
+};
+
+/** Only groups/lists/pages carry a `type` at all — leaf definitions (control/action/render/empty) don't. */
+function isContainer(item: SettingDefinitionItem): item is Extract<SettingDefinitionItem, { type: "group" | "list" }> {
+  return "type" in item && (item.type === "group" || item.type === "list");
+}
+
+function isPage(item: SettingDefinitionItem): item is Extract<SettingDefinitionItem, { type: "page" }> {
+  return "type" in item && item.type === "page";
+}
+
+function leafTier(item: SettingDefinition): SettingsTier {
+  const key = (item as unknown as { control?: { key?: string } }).control?.key;
+  if (key && key in SETTING_TIERS) return SETTING_TIERS[key as keyof PluginSettings];
+  return BASIC_ACTION_NAMES.has(item.name) ? "basic" : "advanced";
+}
+
+/** True if any leaf under `items` (through nested groups/pages) is basic-tier. */
+function hasBasicItem(items: SettingDefinitionItem[] | undefined): boolean {
+  if (!items) return false;
+  return items.some((item) => (isContainer(item) || isPage(item) ? hasBasicItem(item.items) : leafTier(item) === "basic"));
+}
+
+function withExtraVisible(existing: boolean | (() => boolean) | undefined, extra: () => boolean): () => boolean {
+  return () => extra() && (typeof existing === "function" ? existing() : existing ?? true);
+}
+
+/** One cast choke point for the rebuilt tier-tagged objects below. */
+function asItem(value: object): SettingDefinitionItem { return value as SettingDefinitionItem; }
+
+/**
+ * Walks the declared tree and, per basic item 4/5: leaves basic items alone,
+ * gates advanced items' visibility behind `showAdvanced`, and hides a page
+ * entirely (until `showAdvanced`) when none of its items are basic.
+ */
+function applyTiers(items: SettingDefinitionItem[], showAdvanced: () => boolean, settings: PluginSettings): SettingDefinitionItem[] {
+  return items.map((item): SettingDefinitionItem => {
+    if (isContainer(item)) {
+      const inner = item.items ? (applyTiers(item.items, showAdvanced, settings) as unknown as SettingGroupItem[]) : item.items;
+      return asItem({ ...item, items: inner });
+    }
+    if (isPage(item)) {
+      const pageRelevant = hasBasicItem(item.items) || (PAGE_RELEVANCE[item.name]?.(settings) ?? false);
+      const gated = pageRelevant ? { ...item } : { ...item, visible: withExtraVisible(item.visible, showAdvanced) };
+      const inner = item.items ? applyTiers(item.items, showAdvanced, settings) : item.items;
+      return asItem({ ...gated, items: inner });
+    }
+    const tier = leafTier(item);
+    const out = tier === "basic" ? { ...item, tier } : { ...item, tier, visible: withExtraVisible(item.visible, showAdvanced) };
+    return asItem(out);
+  });
+}
+
 export class ClaudeCompanionSettingTab extends PluginSettingTab {
   /** Cached list of Ollama models from the last Detect, for the dropdown. */
   private detectedOllamaModels: string[] | null = null;
@@ -116,7 +307,11 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
       case "chatBackend":
       case "intelligenceNarrator":
       case "openaiCompatModel":
-        if (key === "chatBackend" && this.plugin.settings.chatBackend === "claude-cli") void this.plugin.router().claudeCli.refresh().then(() => this.plugin.refreshViews());
+        if (key === "chatBackend") {
+          const backend = this.plugin.settings.chatBackend;
+          const cli = backend === "claude-cli" ? this.plugin.router().claudeCli : backend === "codex-cli" ? this.plugin.router().codexCli : backend === "opencode-cli" ? this.plugin.router().opencodeCli : null;
+          if (cli) void cli.refresh().then(() => this.plugin.refreshViews());
+        }
         this.plugin.refreshViews();
         return;
       case "semanticIndexPdfs":
@@ -164,6 +359,10 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
   }
 
   override getSettingDefinitions(): SettingDefinitionItem[] {
+    return applyTiers(this.rawSettingDefinitions(), () => this.plugin.settings.settingsShowAdvanced, this.plugin.settings);
+  }
+
+  private rawSettingDefinitions(): SettingDefinitionItem[] {
     return [
       { type: "group", items: this.introItems() },
       { type: "group", heading: "Connection", items: this.connectionItems() },
@@ -204,9 +403,14 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
     ];
   }
 
-  /** Callouts and the desktop-integrations entry point, above the first heading. */
+  /** Callouts, the advanced-settings reveal, and the desktop-integrations entry point, above the first heading. */
   private introItems(): SettingGroupItem[] {
     return [
+      {
+        name: "Show advanced settings",
+        desc: "Basic settings are what a first-week user touches. Turn this on to see everything.",
+        control: { type: "toggle", key: "settingsShowAdvanced" },
+      },
       {
         name: "Credentials are stored in this vault",
         // Credentials fall back to this vault's data.json two ways: no secret-store
@@ -239,13 +443,18 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
             backend: router.chatBackend,
             hasAnthropicCredential: router.anthropic.hasCredentials(),
             hasClaudeCli: router.claudeCli.hasCredentials(),
+            hasCodexCli: router.codexCli.hasCredentials(),
+            hasOpencodeCli: router.opencodeCli.hasCredentials(),
           });
         },
         render: (setting) => {
           const callout = setting.settingEl.createDiv({ cls: "cc-connect-callout" });
           const p = callout.createEl("p");
-          if (this.plugin.router().chatBackend === "claude-cli") {
-            p.appendText("Claude Code is not signed in on this computer. Run `claude auth login` in a terminal, or add an Anthropic API key below. ");
+          const backend = this.plugin.router().chatBackend;
+          const cliBackends: Record<string, CliBackend> = { "claude-cli": claudeBackend, "codex-cli": codexBackend, "opencode-cli": opencodeBackend };
+          const cli = cliBackends[backend];
+          if (cli) {
+            p.appendText(`${cli.label} is not signed in on this computer. ${capitalize(cli.signInHint)} in a terminal, or add an Anthropic API key below. `);
           } else {
             p.appendText("Add an Anthropic API key below to start chatting. Create one at ");
             p.createEl("a", { text: "console.anthropic.com", href: "https://console.anthropic.com/settings/keys" });
@@ -259,6 +468,33 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
         aliases: ["marketplace", "claude desktop", "obsidian-agent"],
         render: (setting) => {
           setting.addButton((btn) => btn.setButtonText("Set up").onClick(() => this.plugin.openDesktopIntegrations()));
+        },
+      },
+    ];
+  }
+
+  /** Status row + "Check <label>" button for one CLI backend, shared by Claude Code, Codex, and OpenCode. */
+  private cliStatusItems(backend: CliBackend, cliOf: (router: ReturnType<ClaudeCompanionPlugin["router"]>) => CliProvider): SettingGroupItem[] {
+    return [
+      {
+        name: backend.label,
+        desc: `Status of the ${backend.binary} command this backend runs. Companion never sees your credentials; ${backend.label} holds them.`,
+        render: (setting) => {
+          const status = setting.settingEl.createDiv({ cls: "cc-conn-status" });
+          const cli = cliOf(this.plugin.router());
+          const probe = cli.probe();
+          if (probe) this.renderStatus(status, { ok: probe.loggedIn, detail: probe.loggedIn ? `${backend.label} ${probe.version} · signed in via ${probe.method} · ${probe.executable}` : `Not signed in — ${backend.signInHint}.` });
+          setting.addButton((btn) =>
+            btn
+              .setButtonText(`Check ${backend.label}`)
+              .onClick(async () => {
+                this.renderStatus(status, { ok: true, detail: "Checking…" });
+                const result = await cliOf(this.plugin.router()).test();
+                this.renderStatus(status, result);
+                this.plugin.refreshViews();
+                if (result.ok) await this.plugin.runFirstRunPrompts();
+              }),
+          );
         },
       },
     ];
@@ -384,38 +620,33 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
       },
       {
         name: "Chat backend",
-        desc: "Where chat runs. Auto keeps using Claude but transparently falls back to your local model when Claude is offline or out of usage — so you never lose chat on a plane or when tokens run out. Claude Code uses the claude command already signed in on this computer — no key needed; chat only.",
+        desc: "Where chat runs. Auto keeps using Claude but transparently falls back to your local model when Claude is offline or out of usage — so you never lose chat on a plane or when tokens run out. Claude Code, Codex, and OpenCode each use the CLI already signed in on this computer — no key needed; chat only.",
         control: {
           type: "dropdown",
           key: "chatBackend",
           options: {
             claude: "Claude only",
             "claude-cli": "Claude Code — your subscription (desktop)",
+            "codex-cli": "Codex — your subscription (desktop)",
+            "opencode-cli": "OpenCode — your subscription (desktop)",
             auto: "Auto (Claude, fall back to local)",
             local: "Local only — Ollama (offline)",
             custom: "Local only — OpenAI-compatible endpoint",
           },
         },
       },
+      ...this.cliStatusItems(claudeBackend, (r) => r.claudeCli),
+      ...this.cliStatusItems(codexBackend, (r) => r.codexCli),
       {
-        name: "Claude Code",
-        desc: "Status of the claude command this backend runs. Companion never sees your credentials; Claude Code holds them.",
-        render: (setting) => {
-          const status = setting.settingEl.createDiv({ cls: "cc-conn-status" });
-          const probe = this.plugin.router().claudeCli.probe();
-          if (probe) this.renderStatus(status, { ok: probe.loggedIn, detail: probe.loggedIn ? `Claude Code ${probe.version} · signed in via ${probe.method} · ${probe.executable}` : "Not signed in — run `claude auth login`." });
-          setting.addButton((btn) =>
-            btn
-              .setButtonText("Check Claude Code")
-              .onClick(async () => {
-                this.renderStatus(status, { ok: true, detail: "Checking…" });
-                const result = await this.plugin.router().claudeCli.test();
-                this.renderStatus(status, result);
-                this.plugin.refreshViews();
-                if (result.ok) await this.plugin.runFirstRunPrompts();
-              }),
-          );
-        },
+        name: "Codex model",
+        desc: "Optional model id passed as -m to codex exec. Leave blank to use Codex's own default.",
+        control: { type: "text", key: "codexModel", placeholder: "e.g. gpt-5.1-codex" },
+      },
+      ...this.cliStatusItems(opencodeBackend, (r) => r.opencodeCli),
+      {
+        name: "OpenCode model",
+        desc: "Optional model id passed as -m to opencode run (e.g. anthropic/claude-sonnet-5). Leave blank to use OpenCode's own default.",
+        control: { type: "text", key: "opencodeModel", placeholder: "e.g. anthropic/claude-sonnet-5" },
       },
       {
         name: "Max response tokens",
@@ -533,6 +764,7 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
       },
       { name: "Let Claude use vault tools", desc: "Claude can search and read your notes on its own while answering (read-only). Turn off for plain chat with pre-attached context.", control: { type: "toggle", key: "agentModeEnabled" } },
       { name: "Allow write tools", desc: "Also let Claude create, edit, and move notes from chat. Every write asks for your confirmation first.", control: { type: "toggle", key: "agentAllowWrites" } },
+      { name: "Notify when a turn finishes in the background", desc: "Show a system notice and a status-bar item if a turn completes while its chat pane is closed.", control: { type: "toggle", key: "notifyOnTurnComplete" } },
       { name: "Review edits in the editor", desc: "When the note is open, show proposed changes inline with word-level highlights and per-change Accept/Reject instead of a dialog.", control: { type: "toggle", key: "inlineDiffEnabled" } },
       { name: "Rewrite button on selection", desc: "Show a small “Rewrite with Claude” action above selected text. Desktop only.", control: { type: "toggle", key: "selectionActionEnabled" } },
       { name: "Max tool iterations per turn", desc: "How many search/read/write rounds Claude may take before it must answer.", control: { type: "slider", key: "agentMaxIterations", min: 1, max: 20, step: 1 } },

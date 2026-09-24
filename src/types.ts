@@ -111,9 +111,13 @@ export interface PluginSettings {
   /** Route cheap "utility" work (summarize/tag/ingest) to this backend. */
   utilityBackend: "claude" | "ollama" | "custom";
   /** Chat backend: always Claude, always local, auto (Claude with local
-   *  fallback), custom (an OpenAI-compatible endpoint), or claude-cli (the
-   *  user's Claude Code sign-in, desktop). */
-  chatBackend: "claude" | "local" | "auto" | "custom" | "claude-cli";
+   *  fallback), custom (an OpenAI-compatible endpoint), or the user's
+   *  Claude Code / Codex / OpenCode CLI sign-in (desktop only). */
+  chatBackend: "claude" | "local" | "auto" | "custom" | "claude-cli" | "codex-cli" | "opencode-cli";
+  /** Codex CLI model id passed as `-m`; empty lets the CLI pick its own default. */
+  codexModel: string;
+  /** OpenCode CLI model id passed as `-m` (e.g. "anthropic/claude-sonnet-5"); empty lets the CLI pick its own default. */
+  opencodeModel: string;
   /** Provider policy for explicit Research Intelligence narrative analysis. */
   intelligenceNarrator: "current" | "claude" | "local" | "disabled";
 
@@ -176,6 +180,8 @@ export interface PluginSettings {
   selectionActionEnabled: boolean;
   /** Max stream→tools→stream iterations per turn. */
   agentMaxIterations: number;
+  /** Show a Notice + status-bar item when a turn finishes while its chat view is closed. */
+  notifyOnTurnComplete: boolean;
   /** Offer the web_search agent tool (explicit calls only). */
   webSearchEnabled: boolean;
   /** Engine behind web_search: keyless DuckDuckGo HTML or the keyed Brave API. */
@@ -263,6 +269,12 @@ export interface PluginSettings {
   ontologySeedPrompted: boolean;
   /** One-time desktop-integrations offer already shown. */
   desktopIntegrationsOffered: boolean;
+
+  // ----- setup wizard & settings diet -----
+  /** Set once the first-run setup wizard has been finished or dismissed. */
+  setupWizardDone: boolean;
+  /** "Show advanced settings" toggle in the settings tab. */
+  settingsShowAdvanced: boolean;
 }
 
 export const DEFAULT_SETTINGS: PluginSettings = {
@@ -300,6 +312,8 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   ollamaUtilityModel: "",
   utilityBackend: "claude",
   chatBackend: "claude",
+  codexModel: "",
+  opencodeModel: "",
   intelligenceNarrator: "current",
 
   openaiCompatHost: "",
@@ -337,6 +351,7 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   inlineDiffEnabled: true,
   selectionActionEnabled: true,
   agentMaxIterations: 10,
+  notifyOnTurnComplete: true,
   webSearchEnabled: false,
   webSearchEngine: "duckduckgo",
   braveSearchApiKey: "",
@@ -380,6 +395,9 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   ontologyFolder: "Ontology",
   ontologySeedPrompted: false,
   desktopIntegrationsOffered: false,
+
+  setupWizardDone: false,
+  settingsShowAdvanced: false,
 };
 
 export type DiscoveryNumericSettings = Pick<PluginSettings,

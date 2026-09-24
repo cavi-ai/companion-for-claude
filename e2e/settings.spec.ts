@@ -60,3 +60,22 @@ test("settings tab renders, controls respond, dependent rows follow", async () =
     await harness.close();
   }
 });
+
+test("the advanced toggle hides irrelevant pages and reveals them on", async () => {
+  const harness = await launchObsidianHarness({ settingsOverride: { settingsShowAdvanced: false } });
+  const { page } = harness;
+  try {
+    const tab = await openSettingsTab(harness);
+
+    // Semantic search has a basic leaf (the enable toggle), so it stays visible.
+    await expect(tab.locator(".setting-item:visible", { hasText: "Semantic search (local embeddings)" })).toBeVisible();
+    // Cloud replies has no basic leaves and cloudDispatchEnabled is off by default, so it's hidden.
+    await expect(tab.locator(".setting-item:visible", { hasText: "Cloud replies (pull from repo)" })).toHaveCount(0);
+
+    await tab.locator(".setting-item", { hasText: "Show advanced settings" }).locator("input[type='checkbox']").click();
+
+    await expect(tab.locator(".setting-item:visible", { hasText: "Cloud replies (pull from repo)" })).toBeVisible();
+  } finally {
+    await harness.close();
+  }
+});

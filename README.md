@@ -42,6 +42,11 @@ source of truth.
   PDF chunks.
 - **Durable conversations** that survive restarts. An interrupted model turn
   returns as stopped work with a **Retry** action.
+- **Multiple chat tabs**, each with its own conversation, via the "New chat tab" command.
+- **Chat projects**: scope a conversation to a `chat-project` note or a
+  Research Desk project — its instructions and pinned notes join the system
+  prompt, and automatic vault search narrows to its folder. Choose one from
+  the "@" menu or the "Chat: choose project" command.
 - **Optional integrations**: a loopback MCP bridge for live-vault tools, and an
   MCP client for servers you explicitly configure.
 

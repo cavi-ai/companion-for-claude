@@ -117,10 +117,16 @@ function safeTitle(title: string): string {
   return value;
 }
 
+/** The project's folder for a Project.md path, or null when the path isn't one. */
+export function projectFolderOf(path: string): string | null {
+  return path.endsWith("/Project.md") ? path.slice(0, -"/Project.md".length) : null;
+}
+
 function projectFolder(projectPath: string): string {
   safePath(projectPath);
-  if (!projectPath.endsWith("/Project.md")) throw new Error(`Project path must end with /Project.md: ${projectPath}`);
-  return projectPath.slice(0, -"/Project.md".length);
+  const folder = projectFolderOf(projectPath);
+  if (folder === null) throw new Error(`Project path must end with /Project.md: ${projectPath}`);
+  return folder;
 }
 
 function recordPath(project: string, type: keyof typeof LAYOUT, title: string): string {

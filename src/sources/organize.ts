@@ -10,6 +10,8 @@ export interface OrganizeCandidate {
   path: string;
   title: string;
   summary: string;
+  /** Relative subfolder the clip already sits in under the inbox, if any (e.g. "ai-agents"). */
+  currentDomain?: string;
 }
 
 export interface OrganizeProposal {
@@ -18,14 +20,21 @@ export interface OrganizeProposal {
   domain: string;
 }
 
+export interface ParsedOrganizeResponse {
+  proposals: OrganizeProposal[];
+  /** Candidate paths the reply never resolved — never defaulted to misc. */
+  unresolved: string[];
+}
+
 const FALLBACK_DOMAIN = "misc";
+const DEFAULT_CHUNK_SIZE = 16;
 
 /** One batch call for the whole set — folder inference benefits from seeing every clip. */
 export function buildOrganizePrompt(candidates: OrganizeCandidate[], existingFolders: string[]): { system: string; user: string } {
   const system =
     "You organize web clippings into a small, durable folder taxonomy. " +
     organizeRules(existingFolders);
-  const user = `CLIPPINGS:\n\n${candidates.map((c) => `- path: ${c.path}\n  title: ${c.title}\n  summary: ${c.summary}`).join("\n")}`;
+  const user = `CLIPPINGS:\n\n${candidates.map(candidateLine).join("\n")}`;
   return { system, user };
 }
 
@@ -34,8 +43,13 @@ export function buildFolderOrganizePrompt(candidates: OrganizeCandidate[], exist
   const system =
     "You organize notes into a small, durable subfolder taxonomy. " +
     organizeRules(existingFolders);
-  const user = `NOTES:\n\n${candidates.map((c) => `- path: ${c.path}\n  title: ${c.title}\n  summary: ${c.summary}`).join("\n")}`;
+  const user = `NOTES:\n\n${candidates.map(candidateLine).join("\n")}`;
   return { system, user };
+}
+
+function candidateLine(c: OrganizeCandidate): string {
+  const currentLine = c.currentDomain ? `\n  current folder: ${c.currentDomain}` : "";
+  return `- path: ${c.path}\n  title: ${c.title}\n  summary: ${c.summary}${currentLine}`;
 }
 
 function organizeRules(existingFolders: string[]): string {
@@ -44,14 +58,28 @@ function organizeRules(existingFolders: string[]): string {
     `[{"path": "...", "domain": "..."}]. ` +
     "Rules: domain is 1-2 lowercase folder segments (letters, numbers, dashes; slash between segments) naming the topic or project " +
     "(e.g. \"ai-safety\", \"gardening\", \"research/continuity\"). Prefer reusing existing folders when they fit. " +
-    "Group related notes under the same domain rather than inventing one per note. Use \"misc\" only when nothing fits." +
+    "Group related notes under the same domain rather than inventing one per note. Use \"misc\" only when nothing fits. " +
+    "When an input lists a current folder, keep it unless another folder is clearly a better fit." +
     (existingFolders.length > 0 ? `\nExisting folders to prefer when relevant:\n${existingFolders.map((f) => `- ${f}`).join("\n")}` : "")
   );
 }
 
-/** Parse the batch reply into proposals, one per candidate (unmatched → misc). */
-export function parseOrganizeResponse(raw: string, candidates: OrganizeCandidate[]): OrganizeProposal[] {
-  const byPath = new Map<string, string>();
+/** A reply array the model started but never closed — the reply was cut off, not malformed. */
+function isTruncatedReply(raw: string): boolean {
+  const trimmed = raw
+    .trim()
+    .replace(/^```(?:json)?/i, "")
+    .replace(/```$/i, "")
+    .trim();
+  const start = trimmed.indexOf("[");
+  return start !== -1 && trimmed.lastIndexOf("]") === -1;
+}
+
+/** Parse one batch reply into proposals; a candidate the reply never names is unresolved, never misc. */
+export function parseOrganizeResponse(raw: string, candidates: OrganizeCandidate[]): ParsedOrganizeResponse {
+  if (isTruncatedReply(raw)) return { proposals: [], unresolved: candidates.map((c) => c.path) };
+
+  let entries: Array<Record<string, unknown>>;
   try {
     // Models reply with a JSON array as asked (possibly fenced/prose-wrapped),
     // or (llama3.1 in the wild) a bare object for the first clip — the array
@@ -59,16 +87,89 @@ export function parseOrganizeResponse(raw: string, candidates: OrganizeCandidate
     const start = raw.indexOf("[");
     const end = raw.lastIndexOf("]");
     const parsed: unknown = start !== -1 && end > start ? JSON.parse(raw.slice(start, end + 1)) : extractJson(raw);
-    const entries: unknown[] = Array.isArray(parsed) ? parsed : [parsed];
-    for (const entry of entries) {
-      if (typeof entry !== "object" || entry === null) continue;
-      const e = entry as Record<string, unknown>;
-      if (typeof e.path === "string" && typeof e.domain === "string") byPath.set(e.path, sanitizeDomain(e.domain));
-    }
+    const arr: unknown[] = Array.isArray(parsed) ? parsed : [parsed];
+    entries = arr.filter((e): e is Record<string, unknown> => typeof e === "object" && e !== null);
   } catch {
-    // Whole batch falls back to misc — the review modal still lets the user fix folders.
+    return { proposals: [], unresolved: candidates.map((c) => c.path) };
   }
-  return candidates.map((c) => ({ path: c.path, domain: byPath.get(c.path) ?? FALLBACK_DOMAIN }));
+
+  const byPath = new Map<string, string>();
+  const byBasename = new Map<string, string>();
+  for (const e of entries) {
+    if (typeof e.path !== "string" || typeof e.domain !== "string") continue;
+    const domain = sanitizeDomain(e.domain);
+    byPath.set(e.path, domain);
+    const basename = e.path.split("/").pop();
+    if (basename && !byBasename.has(basename)) byBasename.set(basename, domain);
+  }
+  const positional = entries.length === candidates.length ? entries : null;
+
+  const proposals: OrganizeProposal[] = [];
+  const unresolved: string[] = [];
+  candidates.forEach((c, i) => {
+    let domain = byPath.get(c.path);
+    if (domain === undefined) domain = byBasename.get(c.path.split("/").pop() ?? "");
+    if (domain === undefined && positional) {
+      const e = positional[i]!;
+      if (typeof e.domain === "string") domain = sanitizeDomain(e.domain);
+    }
+    if (domain === undefined) unresolved.push(c.path);
+    else proposals.push({ path: c.path, domain });
+  });
+  return { proposals, unresolved };
+}
+
+export interface InferDomainsOpts {
+  existingFolders: string[];
+  complete: (system: string, user: string, maxTokens: number) => Promise<string>;
+  chunkSize?: number;
+  /** Which prompt/rules to use — clippings (default) or an arbitrary folder of notes. */
+  promptBuilder?: (candidates: OrganizeCandidate[], existingFolders: string[]) => { system: string; user: string };
+}
+
+export interface InferDomainsResult {
+  proposals: OrganizeProposal[];
+  unresolved: string[];
+  /** At least one chunk's reply was cut off mid-array. */
+  truncated: boolean;
+  /** Number of batch calls made. */
+  chunks: number;
+  /** Message of the last `complete()` rejection, if any chunk's call threw. */
+  lastError?: string;
+}
+
+/** Chunked domain inference (default 16/call); later chunks see the domains earlier chunks already chose. */
+export async function inferDomains(candidates: OrganizeCandidate[], opts: InferDomainsOpts): Promise<InferDomainsResult> {
+  const chunkSize = opts.chunkSize ?? DEFAULT_CHUNK_SIZE;
+  const buildPrompt = opts.promptBuilder ?? buildOrganizePrompt;
+  const existingFolders = [...opts.existingFolders];
+  const proposals: OrganizeProposal[] = [];
+  const unresolved: string[] = [];
+  let truncated = false;
+  let chunks = 0;
+  let lastError: string | undefined;
+
+  for (let i = 0; i < candidates.length; i += chunkSize) {
+    chunks++;
+    const chunk = candidates.slice(i, i + chunkSize);
+    const { system, user } = buildPrompt(chunk, existingFolders);
+    const maxTokens = 64 + 96 * chunk.length;
+    let raw: string;
+    try {
+      raw = await opts.complete(system, user, maxTokens);
+    } catch (e) {
+      lastError = e instanceof Error ? e.message : String(e);
+      for (const c of chunk) unresolved.push(c.path);
+      continue;
+    }
+    if (isTruncatedReply(raw)) truncated = true;
+    const parsed = parseOrganizeResponse(raw, chunk);
+    proposals.push(...parsed.proposals);
+    unresolved.push(...parsed.unresolved);
+    for (const p of parsed.proposals) if (!existingFolders.includes(p.domain)) existingFolders.push(p.domain);
+  }
+
+  return { proposals, unresolved, truncated, chunks, ...(lastError !== undefined ? { lastError } : {}) };
 }
 
 /** Parent paths under `${base}/`, made relative to base, sorted and deduped. */
@@ -89,6 +190,31 @@ export function sanitizeDomain(value: string): string {
     .filter(Boolean)
     .slice(0, 2);
   return segments.length > 0 ? segments.join("/") : FALLBACK_DOMAIN;
+}
+
+/** Relative subfolder a clip sits in under the inbox, or undefined at the inbox root. */
+export function currentDomainOf(path: string, inboxFolder: string): string | undefined {
+  const inbox = inboxFolder.replace(/\/+$/, "");
+  const prefix = `${inbox}/`;
+  if (!path.startsWith(prefix)) return undefined;
+  const rest = path.slice(prefix.length);
+  const slash = rest.lastIndexOf("/");
+  return slash === -1 ? undefined : rest.slice(0, slash);
+}
+
+/** An unresolved candidate already filed under an inbox subfolder keeps that folder; a root-level one is skipped. */
+export function resolveUnresolvedWithCurrentFolder(
+  unresolved: string[],
+  currentDomains: Map<string, string>,
+): { proposals: OrganizeProposal[]; skipped: string[] } {
+  const proposals: OrganizeProposal[] = [];
+  const skipped: string[] = [];
+  for (const path of unresolved) {
+    const currentDomain = currentDomains.get(path);
+    if (currentDomain) proposals.push({ path, domain: currentDomain });
+    else skipped.push(path);
+  }
+  return { proposals, skipped };
 }
 
 export interface OrganizeMove {

@@ -20,6 +20,8 @@ export interface Conversation {
   cliSessionHistory?: string[];
   /** Durable receipt for the one turn that has not reached a persisted success. */
   activeTurn?: ChatTurnReceipt;
+  /** The chat project (note path or research Project.md path) this conversation is scoped to. */
+  projectId?: string;
 }
 
 export type ChatTurnState = "running" | "interrupted" | "failed";
@@ -134,15 +136,18 @@ export function touch(convo: Conversation, messages: ChatMessage[], now: number)
 }
 
 /**
- * Insert or replace `convo`, keep the list ordered by recency, prune to
- * `maxKeep`, and mark it active. `maxKeep <= 0` means unbounded.
+ * Insert or replace `convo`, keep the list ordered by recency, and prune to
+ * `maxKeep` (`<= 0` means unbounded). Leaves `state.activeId` untouched
+ * unless it was pruned out, in which case it falls back to the first kept
+ * conversation. The active conversation changes only through `setActive` —
+ * saving a conversation, even a background tab's turn, must never steal the
+ * slot the user is looking at.
  */
 export function saveConversation(state: ConversationState, convo: Conversation, maxKeep: number): ConversationState {
   const others = state.conversations.filter((c) => c.id !== convo.id);
   const merged = [convo, ...others].sort((a, b) => b.updatedAt - a.updatedAt);
   const kept = maxKeep > 0 ? merged.slice(0, maxKeep) : merged;
-  // If the active conversation was pruned out, clear it.
-  const activeId = kept.some((c) => c.id === convo.id) ? convo.id : kept[0]?.id ?? null;
+  const activeId = state.activeId !== null && kept.some((c) => c.id === state.activeId) ? state.activeId : kept[0]?.id ?? null;
   return { conversations: kept, activeId };
 }
 
@@ -216,11 +221,13 @@ export function fromPersisted(raw: unknown): ConversationState {
   const o = raw as { conversations?: unknown; activeId?: unknown };
   const conversations = Array.isArray(o.conversations)
     ? o.conversations.filter(isConversation).map((c) => {
-        const { activeTurn: rawTurn, ...conversation } = c;
+        const { activeTurn: rawTurn, projectId: rawProjectId, ...conversation } = c;
         const activeTurn = normalizeTurnReceipt(rawTurn);
+        const projectId = typeof rawProjectId === "string" && rawProjectId.length > 0 ? rawProjectId : undefined;
         return {
           ...conversation,
           messages: compactMessages(c.messages),
+          ...(projectId !== undefined ? { projectId } : {}),
           ...(activeTurn ? { activeTurn: activeTurn.state === "running"
             ? { ...activeTurn, state: "interrupted" as const }
             : activeTurn } : {}),

@@ -1,7 +1,11 @@
 import { EventEmitter } from "node:events";
 import { describe, it, expect, vi } from "vitest";
-import { ClaudeCliSession, userMessageLine } from "../../src/cli/session";
+import { CliSession, userMessageLine, plainUserMessageText } from "../../src/cli/session";
+import { claudeBackend } from "../../src/cli/backends/claude";
+import { codexBackend } from "../../src/cli/backends/codex";
+import { mcpConfigJson } from "../../src/cli/argv";
 import type { CompletionRequest } from "../../src/providers/types";
+import type { CliArgvInput } from "../../src/cli/backends/types";
 
 class FakeStdin {
   writes: string[] = [];
@@ -23,9 +27,9 @@ const text = (t: string) => `{"type":"stream_event","event":{"type":"content_blo
 const result = (t: string, subtype = "success") => `{"type":"result","subtype":"${subtype}","result":"${t}","session_id":"s1","is_error":false,"usage":{"input_tokens":1,"output_tokens":1}}\n`;
 const errorResult = (t: string) => `{"type":"result","subtype":"success","result":"${t}","session_id":"s1","is_error":true,"api_error_status":404,"usage":{"input_tokens":0,"output_tokens":0}}\n`;
 
-function session(transcript?: string): { s: ClaudeCliSession; children: FakeChild[] } {
+function session(transcript?: string): { s: CliSession; children: FakeChild[] } {
   const children: FakeChild[] = [];
-  const s = new ClaudeCliSession({ spawn: () => { const c = new FakeChild(); children.push(c); return c; }, ...(transcript !== undefined ? { transcript } : {}) });
+  const s = new CliSession({ backend: claudeBackend, spawn: () => { const c = new FakeChild(); children.push(c); return c; }, ...(transcript !== undefined ? { transcript } : {}) });
   return { s, children };
 }
 const feed = (c: FakeChild, s: string) => c.stdout.emit("data", Buffer.from(s));
@@ -46,7 +50,7 @@ describe("userMessageLine", () => {
   });
 });
 
-describe("ClaudeCliSession", () => {
+describe("CliSession", () => {
   it("spawns on first run, writes the user line, streams text, resolves on result", async () => {
     const { s, children } = session();
     const text_: string[] = [];
@@ -200,7 +204,7 @@ describe("ClaudeCliSession", () => {
   });
 });
 
-describe("ClaudeCliSession idle watchdog", () => {
+describe("CliSession idle watchdog", () => {
   it("notices once after 60s of silence", async () => {
     vi.useFakeTimers();
     try {
@@ -301,5 +305,107 @@ describe("ClaudeCliSession idle watchdog", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("plainUserMessageText", () => {
+  it("returns the last user message as plain text", () => {
+    expect(plainUserMessageText(req)).toBe("hello");
+  });
+  it("joins only text blocks, dropping image/document blocks", () => {
+    const withImage: CompletionRequest = { ...req, messages: [{ role: "user", content: [{ type: "image", source: { type: "base64", media_type: "image/png", data: "AA==" } }, { type: "text", text: "what is this" }] }] };
+    expect(plainUserMessageText(withImage)).toBe("what is this");
+  });
+});
+
+describe("CliSession per-turn (codex, opencode)", () => {
+  const argvTemplate: Omit<CliArgvInput, "message" | "systemPromptText" | "resumeSessionId" | "sessionId"> = {
+    model: "gpt-5.1-codex",
+    systemPromptFile: "",
+    mcpConfigJson: mcpConfigJson(51234, "tok"),
+    allowedTools: [],
+    maxTurns: 10,
+    cwd: "/tmp/vault",
+  };
+
+  function perTurnSession(overrides: Partial<{ initialSessionId: string; systemPromptText: string; transcript: string }> = {}) {
+    const children: FakeChild[] = [];
+    const calls: { argv: string[]; env: Record<string, string> | undefined }[] = [];
+    const s = new CliSession({
+      backend: codexBackend,
+      spawnTurn: (argv, env) => { calls.push({ argv, env }); const c = new FakeChild(); children.push(c); return c; },
+      argvTemplate,
+      systemPromptText: "SYSTEM PROMPT",
+      ...overrides,
+    });
+    return { s, children, calls };
+  }
+
+  it("spawns a fresh child per run(), the trailing argv is the system-prompt-prefixed message", async () => {
+    const { s, children, calls } = perTurnSession();
+    const turn = s.run(req, { onText: () => undefined });
+    expect(children).toHaveLength(1);
+    expect(calls[0]!.argv[calls[0]!.argv.length - 1]).toBe("SYSTEM PROMPT\n\nhello");
+    feed(children[0]!, '{"type":"thread.started","thread_id":"th1"}\n{"type":"item.completed","item":{"type":"agent_message","text":"hi"}}\n{"type":"turn.completed","usage":{}}\n');
+    const r = await turn;
+    expect(r.text).toBe("hi");
+    expect(s.sessionId()).toBe("th1");
+  });
+
+  it("threads the resume id into the second turn's argv and does not re-prepend the system prompt", async () => {
+    const { s, children, calls } = perTurnSession();
+    const first = s.run(req, { onText: () => undefined });
+    feed(children[0]!, '{"type":"thread.started","thread_id":"th1"}\n{"type":"turn.completed","usage":{}}\n');
+    await first;
+    const second = s.run(req, { onText: () => undefined });
+    expect(children).toHaveLength(2);
+    const argv2 = calls[1]!.argv;
+    expect(argv2[argv2.indexOf("resume") + 1]).toBe("th1");
+    expect(argv2[argv2.length - 1]).toBe("hello");
+    feed(children[1]!, '{"type":"turn.completed","usage":{}}\n');
+    await second;
+  });
+
+  it("settles with the buffered text when the child exits cleanly without a result event", async () => {
+    const { s, children } = perTurnSession();
+    const turn = s.run(req, { onText: () => undefined });
+    feed(children[0]!, '{"type":"thread.started","thread_id":"th1"}\n{"type":"item.completed","item":{"type":"agent_message","text":"partial"}}\n');
+    children[0]!.emit("exit", 0);
+    const r = await turn;
+    expect(r.text).toBe("partial");
+    expect(r.error).toBeUndefined();
+    expect(s.isClosed()).toBe(false);
+  });
+
+  it("settles as an error when the child exits nonzero without a result event", async () => {
+    const { s, children } = perTurnSession();
+    const turn = s.run(req, { onText: () => undefined });
+    children[0]!.stderr.emit("data", Buffer.from("boom"));
+    children[0]!.emit("exit", 1);
+    const r = await turn;
+    expect(r.error?.message).toMatch(/exited \(code 1\).*boom/);
+    expect(s.isClosed()).toBe(false);
+  });
+
+  it("aborts by killing the child and settling as interrupted, without closing the session", async () => {
+    const { s, children } = perTurnSession();
+    const turn = s.run(req, { onText: () => undefined });
+    feed(children[0]!, '{"type":"thread.started","thread_id":"th1"}\n{"type":"item.completed","item":{"type":"agent_message","text":"partial"}}\n');
+    s.interrupt();
+    expect(children[0]!.signals).toEqual(["SIGINT"]);
+    const r = await turn;
+    expect(r.aborted).toBe(true);
+    expect(r.text).toBe("partial");
+    expect(s.isClosed()).toBe(false);
+  });
+
+  it("resumes immediately when constructed with an initialSessionId, without prepending the system prompt", async () => {
+    const { s, children, calls } = perTurnSession({ initialSessionId: "th-existing" });
+    const turn = s.run(req, { onText: () => undefined });
+    const argv = calls[0]!.argv;
+    expect(argv[argv.indexOf("resume") + 1]).toBe("th-existing");
+    expect(argv[argv.length - 1]).toBe("hello");
+    feed(children[0]!, '{"type":"turn.completed","usage":{}}\n');
+    await turn;
   });
 });

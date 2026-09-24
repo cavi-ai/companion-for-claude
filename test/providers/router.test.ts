@@ -325,11 +325,13 @@ describe("migrateUtilityBackend", () => {
   });
 });
 
-import { ClaudeCliProvider } from "../../src/providers/claudeCli";
+import { CliProvider } from "../../src/providers/cliProvider";
+import { claudeBackend } from "../../src/cli/backends/claude";
+import { codexBackend } from "../../src/cli/backends/codex";
 
-const cliRuntime = (loggedIn: boolean) => ({
-  findClaude: async () => ({ executable: "/usr/local/bin/claude", version: "2.1.257" }),
-  authStatus: async () => ({ loggedIn, method: "claude.ai" }),
+const cliRuntime = (loggedIn: boolean, method = "claude.ai") => ({
+  find: async () => ({ executable: "/usr/local/bin/claude", version: "2.1.257" }),
+  probe: async () => ({ loggedIn, method }),
   writeSystemPromptFile: async () => "/tmp/p.md",
   removeFile: async () => undefined,
   spawn: () => { throw new Error("no spawn in router tests"); },
@@ -342,7 +344,7 @@ describe("ProviderRouter — claude-cli backend", () => {
     await r.claudeCli.refresh();
     expect(r.chatProvider().provider.id).toBe("claude-cli");
     expect(r.chatProvider().model).toBe(DEFAULT_SETTINGS.model);
-    expect(r.get("claude-cli")).toBeInstanceOf(ClaudeCliProvider);
+    expect(r.get("claude-cli")).toBeInstanceOf(CliProvider);
   });
   it("falls back to the API key when the CLI is signed out or the runtime is absent (mobile)", async () => {
     const out = new ProviderRouter(settings({ chatBackend: "claude-cli" }), undefined, { cliRuntime: cliRuntime(false) });
@@ -356,7 +358,7 @@ describe("ProviderRouter — claude-cli backend", () => {
     const cli = new ProviderRouter(settings({ chatBackend: "claude-cli", apiKey: "" }), undefined, { cliRuntime: cliRuntime(true) });
     await cli.claudeCli.refresh();
     expect(await cli.chatToolCapable()).toBe(true);
-    expect(cli.chatCapabilities()).toEqual({ agentActions: true, claudeControls: false, metered: false, local: false, cli: true });
+    expect(cli.chatCapabilities()).toEqual({ agentActions: true, claudeControls: false, metered: false, local: false, cli: true, cliBackend: "claude-cli" });
     const api = new ProviderRouter(settings({}));
     expect(api.chatCapabilities()).toEqual({ agentActions: true, claudeControls: true, metered: true, local: false, cli: false });
     const local = new ProviderRouter(settings({ chatBackend: "local" }));
@@ -366,5 +368,33 @@ describe("ProviderRouter — claude-cli backend", () => {
     const r = new ProviderRouter(settings({ chatBackend: "claude-cli", utilityBackend: "claude" }), undefined, { cliRuntime: cliRuntime(true) });
     await r.claudeCli.refresh();
     expect(r.resolve("utility").provider.id).toBe("anthropic");
+  });
+});
+
+describe("ProviderRouter — codex-cli and opencode-cli backends", () => {
+  it("get() returns a distinct CliProvider per backend", () => {
+    const r = new ProviderRouter(settings({}));
+    expect(r.get("codex-cli")).toBe(r.codexCli);
+    expect(r.get("opencode-cli")).toBe(r.opencodeCli);
+    expect(r.codexCli).not.toBe(r.claudeCli);
+    expect(r.codexCli.id).toBe("codex-cli");
+    expect(r.opencodeCli.id).toBe("opencode-cli");
+  });
+  it("chatProvider() picks codex once signed in, using the configured codexModel", async () => {
+    const r = new ProviderRouter(settings({ chatBackend: "codex-cli", codexModel: "gpt-5.1-codex", apiKey: "" }), undefined, { cliRuntime: cliRuntime(true, "ChatGPT") });
+    expect(r.chatProvider().provider.id).toBe("anthropic");
+    await r.codexCli.refresh();
+    expect(r.chatProvider()).toEqual({ provider: r.codexCli, model: "gpt-5.1-codex" });
+    expect(r.chatCapabilities()).toEqual({ agentActions: true, claudeControls: false, metered: false, local: false, cli: true, cliBackend: "codex-cli" });
+  });
+  it("chatProvider() falls back to Anthropic when opencode is signed out, same as claude-cli today", async () => {
+    const r = new ProviderRouter(settings({ chatBackend: "opencode-cli", apiKey: "sk-ant-api-test" }), undefined, { cliRuntime: cliRuntime(false) });
+    await r.opencodeCli.refresh();
+    expect(r.chatProvider().provider.id).toBe("anthropic");
+  });
+  it("builds providers from the given backend module (labels, sign-in hints)", () => {
+    const r = new ProviderRouter(settings({}));
+    expect(r.claudeCli.label).toBe(claudeBackend.label);
+    expect(r.codexCli.label).toBe(codexBackend.label);
   });
 });

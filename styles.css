@@ -100,6 +100,12 @@ body.theme-light {
   font-size: var(--cc-text-base);
   color: var(--text-normal);
 }
+/* Active chat project name, next to the conversation title; empty = hidden. */
+.cc-project-label {
+  font-size: var(--cc-text-xs);
+  color: var(--cc-accent-text);
+}
+.cc-project-label:empty { display: none; }
 /* Desktop: the model name is a tappable chip (dot + name + chevron), same pattern as mobile. */
 body:not(.is-mobile) .cc-model.cc-model-tappable {
   display: inline-flex;
@@ -1248,6 +1254,42 @@ pre.cc-has-copy:hover .cc-code-copy { opacity: 1; }
   color: var(--cc-clay);
 }
 .cc-at-item .cc-slash-name { color: var(--text-normal); }
+.cc-at-badge, .cc-at-badge-recent, .cc-at-badge-base-path, .cc-at-badge-claim {
+  flex: 0 0 auto;
+  font-size: var(--cc-text-xs);
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--background-modifier-border);
+  color: var(--text-muted);
+}
+
+/* Active chat project pill in the composer (same pill style as a folder attachment). */
+.cc-ctx-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 4px 8px 4px 10px;
+  margin-bottom: 6px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: var(--cc-text-xs);
+}
+.cc-ctx-pill-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cc-ctx-pill-remove {
+  flex: 0 0 auto;
+  padding: 0 2px;
+  border: none;
+  background: transparent;
+  color: var(--text-faint);
+  cursor: pointer;
+  box-shadow: none;
+  line-height: 1;
+}
+.cc-ctx-pill-remove:hover { color: var(--text-normal); }
+.cc-ctx-project { color: var(--cc-accent-text); border-color: var(--cc-accent-text); }
 
 /* Composer context manager: one quiet trigger, expandable detail on demand. */
 .cc-context-manager { position: relative; min-width: 0; margin-bottom: 6px; }

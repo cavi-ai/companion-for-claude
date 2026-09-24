@@ -3,7 +3,7 @@ import { MarkdownView, TFile } from "obsidian";
 import { companionCommands, type CommandActions } from "../../src/commands/definitions";
 
 const ACTION_NAMES = [
-  "openChat", "newChat", "generatePlanFromNote", "generateArtifactFromContext", "rewriteSelection",
+  "openChat", "newChat", "newChatTab", "generatePlanFromNote", "generateArtifactFromContext", "rewriteSelection",
   "enrichNote", "enableVaultSearch", "rebuildSemanticIndex", "openRelatedNotes", "openResearchDesk",
   "openResearchWorkbench", "triageClippings", "startResearchFromActiveNote", "showSemanticIndexStatus",
   "browseConversations", "deleteActiveConversation", "handoffToBuild", "markNoteAsPlan", "organizeClippings",
@@ -73,6 +73,7 @@ describe("plain commands", () => {
   it.each([
     ["open-chat", "openChat"],
     ["new-chat", "newChat"],
+    ["new-chat-tab", "newChatTab"],
     ["artifact-from-selection", "generateArtifactFromContext"],
     ["ask-vault", "enableVaultSearch"],
     ["rebuild-semantic-index", "rebuildSemanticIndex"],

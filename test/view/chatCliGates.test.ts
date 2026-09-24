@@ -52,7 +52,7 @@ function pluginStub(settings: Partial<PluginSettings>, caps: ChatCapabilities, c
     interruptCliTurn: vi.fn(),
     secrets: () => ({ available: () => false }),
     saveSettings: vi.fn(async () => undefined),
-    runFirstRunPrompts: vi.fn(async () => undefined),
+    continueOnboarding: vi.fn(async () => undefined),
     composeSystemPrompt: () => "sys",
     agentTools: () => ({ definitions: () => [] }),
     externalMcpTools: async () => [],
@@ -122,6 +122,33 @@ describe("ChatView on the claude-cli backend", () => {
     (view as unknown as { renderSetupCard(parent: HTMLElement): void }).renderSetupCard(host);
     const buttons = (host as unknown as FakeElement).querySelectorAll("button");
     expect(buttons.some((b) => b.textContent === "Use Claude Code sign-in")).toBe(true);
+  });
+
+  it("offers Codex sign-in on the setup card when Codex is signed in, and switches the backend on click", async () => {
+    const plugin = pluginStub({ chatBackend: "claude", apiKey: "" }, API, false);
+    plugin.router = () => ({
+      chatBackend: "claude",
+      claudeCli: { hasCredentials: () => false, available: () => true, refresh: async () => ({ ok: false }) },
+      codexCli: { hasCredentials: () => true, available: () => true, refresh: async () => ({ ok: true }) },
+      opencodeCli: { hasCredentials: () => false, available: () => true, refresh: async () => ({ ok: false }) },
+      anthropic: { hasCredentials: () => false },
+      chatCapabilities: () => NOT_CLI,
+      chatProvider: () => ({ provider: { id: "anthropic", hasCredentials: () => false }, model: DEFAULT_SETTINGS.model }),
+    }) as unknown as ClaudeCompanionPlugin["router"];
+    const view = new ChatView(new WorkspaceLeaf(new App()), plugin);
+    const host = new FakeElement() as unknown as HTMLElement;
+    const seam = view as unknown as { messagesEl: HTMLElement; renderSetupCard(parent: HTMLElement): void; renderEmptyState(): void; refreshModelLabel(): void };
+    seam.messagesEl = host;
+    seam.renderEmptyState = () => {};
+    seam.refreshModelLabel = () => {};
+    seam.renderSetupCard(host);
+    const buttons = (host as unknown as FakeElement).querySelectorAll("button");
+    const codexButton = buttons.find((b) => b.textContent === "Use Codex sign-in");
+    expect(codexButton).toBeDefined();
+    codexButton?.dispatchEvent({ type: "click" });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(plugin.settings.chatBackend).toBe("codex-cli");
   });
 
   it("leads the setup card with Claude Code when the CLI is signed in", () => {

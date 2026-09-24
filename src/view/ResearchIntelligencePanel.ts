@@ -2,6 +2,7 @@ import type { ProjectSnapshot } from "../research/graph";
 import { analyzeProjectIntelligence, type EpistemicLabel, type IntelligenceCategory, type IntelligenceFinding } from "../research/intelligence";
 import type { IntelligenceCoordinator, IntelligenceNarrativeState } from "../research/intelligenceCoordinator";
 import type { NarrativeResult } from "../research/intelligenceNarrative";
+import type { ProviderId } from "../providers/types";
 
 export interface ResearchIntelligencePanelDeps {
   coordinator: IntelligenceCoordinator;
@@ -119,9 +120,10 @@ export class ResearchIntelligencePanel {
     }
   }
 
-  private renderProvider(root: HTMLElement, providerId: "anthropic" | "ollama" | "openai-compat" | "claude-cli", model: string, fallback: boolean): void {
+  private renderProvider(root: HTMLElement, providerId: ProviderId, model: string, fallback: boolean): void {
     const meta = root.createDiv({ cls: "cc-intelligence-meta" });
-    meta.createSpan({ text: providerId === "anthropic" ? "Anthropic" : providerId === "claude-cli" ? "Claude Code" : providerId === "ollama" ? "Ollama" : "Endpoint" });
+    const label = providerId === "anthropic" ? "Anthropic" : providerId === "claude-cli" ? "Claude Code" : providerId === "codex-cli" ? "Codex" : providerId === "opencode-cli" ? "OpenCode" : providerId === "ollama" ? "Ollama" : "Endpoint";
+    meta.createSpan({ text: label });
     meta.createSpan({ text: model });
     if (fallback) meta.createSpan({ text: "Fallback" });
   }

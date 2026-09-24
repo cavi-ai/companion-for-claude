@@ -381,6 +381,8 @@ export class ItemView {
   getDisplayText(): string { return ""; }
   getIcon(): string { return ""; }
   onOpen(): Promise<void> { return Promise.resolve(); }
+  getState(): Record<string, unknown> { return {}; }
+  setState(_state: unknown, _result: unknown): Promise<void> { return Promise.resolve(); }
 }
 let lastOpenedModal: Modal | undefined;
 export function getLastOpenedModal(): Modal | undefined { return lastOpenedModal; }

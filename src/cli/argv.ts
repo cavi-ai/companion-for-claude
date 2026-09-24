@@ -21,6 +21,16 @@ export function mcpConfigJson(port: number, token: string): string {
   });
 }
 
+/** Recovers the bridge url + bearer token from mcpConfigJson for backends that don't take Claude's --mcp-config shape. */
+export function parseMcpConfig(json: string): { url: string; token: string } {
+  const parsed = JSON.parse(json) as { mcpServers?: Record<string, { url?: string; headers?: { Authorization?: string } }> };
+  const server = parsed.mcpServers?.[CLI_MCP_SERVER];
+  const url = server?.url ?? "";
+  const auth = server?.headers?.Authorization ?? "";
+  const token = auth.startsWith("Bearer ") ? auth.slice("Bearer ".length) : "";
+  return { url, token };
+}
+
 export interface CliArgvInput {
   model: string;
   systemPromptFile: string;

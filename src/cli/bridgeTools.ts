@@ -48,6 +48,47 @@ export function cliAllowedTools(defs: McpToolDef[], readOnly: boolean): string[]
   return readOnly ? reads : [...reads, cliToolName(CLI_PROPOSE_EDIT_TOOL)];
 }
 
+/** The result returned to a backend without a permission-prompt tool when the user declines a write. */
+export const WRITE_DECLINED_RESULT = "Write declined by the user.";
+
+/**
+ * For backends with no `--permission-prompt-tool` equivalent (codex, opencode): every write tool call
+ * awaits `confirmWrite` itself before executing, since there is no separate permission-prompt callback
+ * the CLI will invoke. Read tools and propose_note_edit pass through unchanged.
+ */
+export function gatedWriteTools(base: ToolRegistry, deps: () => InteractiveToolDeps | null): ToolRegistry {
+  return {
+    definitions: () => base.definitions(),
+    call: async (name, args) => {
+      if (!isWriteTool(name)) return base.call(name, args);
+      const bound = deps();
+      const allowed = bound ? await bound.confirmWrite({ type: "tool_use", id: "cli", name, input: args }) : false;
+      if (!allowed) return WRITE_DECLINED_RESULT;
+      return base.call(name, args);
+    },
+  };
+}
+
+/**
+ * The chat-scoped bridge for a backend with no permission-prompt tool (codex, opencode): writes gate through
+ * `gatedWriteTools` per call instead of a separate permission callback. `tools` false (agent mode off) hides every
+ * tool; `readOnly` (Plan Mode) hides write tools from the list as well as gating their calls.
+ */
+export function perTurnTools(base: ToolRegistry, deps: () => InteractiveToolDeps | null, readOnly: () => boolean, tools: () => boolean): ToolRegistry {
+  const gated = gatedWriteTools(base, deps);
+  return {
+    definitions: () => {
+      if (!tools()) return [];
+      const defs = gated.definitions();
+      return readOnly() ? defs.filter((d) => !isWriteTool(d.name)) : defs;
+    },
+    call: async (name, args) => {
+      if (!tools()) throw new Error(`Tool unavailable: agent mode is off (${name}).`);
+      return gated.call(name, args);
+    },
+  };
+}
+
 /** `tools` false (agent mode off) lists only the permission tool, which Claude Code validates at startup. */
 export function interactiveTools(base: ToolRegistry, deps: () => InteractiveToolDeps | null, readOnly: () => boolean, tools: () => boolean): ToolRegistry {
   return {

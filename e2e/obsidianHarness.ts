@@ -200,7 +200,7 @@ async function seedVault(vault: string, providerPort: number, firstRun: boolean,
   // E2E_SEED_DATA points at a real data.json so the suite can run against a
   // lived-in config, not just the pristine one a fresh install writes.
   const seeded = process.env.E2E_SEED_DATA ? JSON.parse(await readFile(process.env.E2E_SEED_DATA, "utf8")) as { settings?: Record<string, unknown> } : null;
-  const neutralOnboarding = { ontologySeedPrompted: true, semanticModelPrompted: true, sourceCaptureConsent: "deny", desktopIntegrationsOffered: true };
+  const neutralOnboarding = { ontologySeedPrompted: true, semanticModelPrompted: true, sourceCaptureConsent: "deny", desktopIntegrationsOffered: true, settingsShowAdvanced: true };
   // An endpoint host with no model id is the reported bug's starting state.
   const endpoint = endpointPort === null ? {} : { openaiCompatHost: `http://127.0.0.1:${endpointPort}`, openaiCompatModel: "" };
   // The live binary 404s on a placeholder model id; omit it so the plugin's own default applies.

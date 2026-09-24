@@ -109,6 +109,9 @@ export function parseCliLine(line: string): CliEvent[] {
 export class StreamJsonParser {
   private buffer = "";
 
+  /** Defaults to Claude's stream-json parser; other CLI backends inject their own `parseLine`. */
+  constructor(private readonly parseLine: (line: string) => CliEvent[] = parseCliLine) {}
+
   push(chunk: string): CliEvent[] {
     this.buffer += chunk;
     const out: CliEvent[] = [];
@@ -117,7 +120,7 @@ export class StreamJsonParser {
       if (nl === -1) break;
       const line = this.buffer.slice(0, nl).trim();
       this.buffer = this.buffer.slice(nl + 1);
-      if (line) out.push(...parseCliLine(line));
+      if (line) out.push(...this.parseLine(line));
     }
     return out;
   }
@@ -125,6 +128,6 @@ export class StreamJsonParser {
   flush(): CliEvent[] {
     const line = this.buffer.trim();
     this.buffer = "";
-    return line ? parseCliLine(line) : [];
+    return line ? this.parseLine(line) : [];
   }
 }

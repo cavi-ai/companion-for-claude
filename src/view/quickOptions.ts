@@ -25,7 +25,7 @@ export interface QuickOptionDefinition {
 }
 
 export interface QuickOptionsState {
-  chatBackend: "claude" | "local" | "auto" | "custom" | "claude-cli";
+  chatBackend: "claude" | "local" | "auto" | "custom" | "claude-cli" | "codex-cli" | "opencode-cli";
   chatModel: string;
   agentModeEnabled: boolean;
   vaultContextEnabled: boolean;

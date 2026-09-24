@@ -101,7 +101,7 @@ export async function dispatchNativeSlashAction(
 
 export interface NativeSlashCommandContext {
   command: SlashCommand;
-  backend: "claude" | "auto" | "local" | "custom" | "claude-cli";
+  backend: "claude" | "auto" | "local" | "custom" | "claude-cli" | "codex-cli" | "opencode-cli";
   clearComposer: () => void;
   activateResearchDesk: () => Promise<void>;
   requestCompletion: (prompt: string, display?: string) => Promise<void>;

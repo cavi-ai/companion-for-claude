@@ -1,57 +1,61 @@
-import { ItemView, MarkdownRenderer, MarkdownView, Menu, Modal, Notice, Platform, WorkspaceLeaf, setIcon } from "obsidian";
+import { ItemView, MarkdownRenderer, MarkdownView, Notice, Platform, WorkspaceLeaf, setIcon, type ViewStateResult } from "obsidian";
 import type ClaudeCompanionPlugin from "../main";
-import type { ChatMessage, ContextToggles, ToolTraceEntry } from "../types";
-import { providerTurnRunner, type AgentTurnDeps, type AgentTurnRunner } from "../agent/loop";
-import { executeTool, toAnthropicTools, readOnlyAnthropicTools, PROPOSE_EDIT_TOOL, truncateResult } from "../agent/tools";
+import type { ChatMessage, ContextToggles } from "../types";
+import { providerTurnRunner, type AgentTurnDeps, type AgentTurnHandlers, type AgentTurnResult, type AgentTurnRunner } from "../agent/loop";
+import { toAnthropicTools, executeTool, readOnlyAnthropicTools, PROPOSE_EDIT_TOOL, truncateResult } from "../agent/tools";
 import { parseExternalToolName } from "../mcp/external";
 import { WriteConfirmModal } from "./WriteConfirmModal";
 import { planEdits, applyPlan, type ProposedEdit } from "../edit/diff";
 import { reviewEdits } from "../editor/reviewEdits";
-import type { ApiMessage, ContentBlock, ToolResultBlock, ToolUseBlock, Provider } from "../providers/types";
+import type { ApiMessage, ToolResultBlock, ToolUseBlock, Provider } from "../providers/types";
 import { TFile } from "obsidian";
 import { compactArtifactsInHistory, compactMessages, toApiMessages, transcriptText, type Conversation } from "../conversations/store";
-import { ConversationPicker } from "./ConversationPicker";
-import { modelLabel, CLAUDE_MODELS, resolveModelId } from "../claude/models";
-import { isMobileModelChoiceActive, mobileModelChoices } from "./mobileModelChoices";
-import { capabilitiesFor, effortLevels } from "../claude/capabilities";
-import { type ChatControls, defaultChatControls, knobVisibility, shapeRequest } from "../claude/chatControls";
+import { resolveModelId } from "../claude/models";
+import { type ChatControls, defaultChatControls, shapeRequest } from "../claude/chatControls";
 import { shouldFallbackToLocal, fallbackReason } from "../providers/fallback";
 import type { CompletionRequest } from "../providers/types";
 import { SlashMenu } from "./SlashMenu";
-import { ModeControl, type ChatMode } from "./ModeControl";
-import { type SlashCommand, runNativeSlashCommand, SLASH_COMMANDS, parseSlashQuery, workflowSlashCommands, templateSlashCommand, WORKFLOW_ACTION_PREFIX, skillSlashCommands, SKILL_ACTION_PREFIX } from "./slashCommands";
+import type { ChatMode } from "./ModeControl";
+import { skillSlashCommands, workflowSlashCommands, SLASH_COMMANDS, type SlashCommand, runNativeSlashCommand, templateSlashCommand, WORKFLOW_ACTION_PREFIX, SKILL_ACTION_PREFIX } from "./slashCommands";
 import { substitutePlaceholders } from "../templates/promptTemplates";
-import { detectPageUrl, pageLabel, type AttachedPage } from "../context/urlContext";
+import { type AttachedPage } from "../context/urlContext";
 import { WORKFLOWS } from "../workflows/catalog";
 import { SKILLS } from "../workflows/skillRegistry.generated";
 import { composeSkillPrompt, parseSkillInvocation, skillDisplay } from "../skills/compose";
-import { hasIncompleteHtmlArtifactFence, splitStreamingArtifact } from "./streamRender";
-import { TurnRenderer, type TurnRendererHost } from "./turnRenderer";
+import { splitStreamingArtifact } from "./streamRender";
 import { gatherContext, type AttachedPath } from "../context/vaultContext";
-import { arrayBufferToBase64, maxBytesFor, mediaBlock, mediaKind, mediaMime, sniffMime, type MediaAttachment } from "../context/attachments";
-import { AtMenu } from "./AtMenu";
-import { type AtItem, buildAtItems, activeAtQuery } from "../context/atMention";
-import { extractArtifact, saveArtifactNote, saveChatNote, savePlanNote } from "../artifacts/artifactStore";
-import { extractTasks } from "../build/spec";
-import { errorHint, type ErrorHintProvider } from "../providers/errorHints";
-import { chipLabel } from "./toolChipLabel";
+import { type MediaAttachment } from "../context/attachments";
+import { type AtItem, type ClaimAtSource } from "../context/atMention";
+import { isProjectChange, projectSearchScope, type ChatProject } from "../projects/model";
+import { type ErrorHintProvider } from "../providers/errorHints";
 import { needsCredentialSetup } from "../providers/setupState";
-import { mergeDetectedModels } from "../providers/localModels";
-import { addUsage, contextGauge, EMPTY_SESSION, estimateTokens, estimateTokensForChars, formatCost, formatTokens, sessionCost, type SessionUsage } from "../usage/tokens";
-import { mergeUsage, type TokenUsage } from "../claude/sse";
+import { claudeBackend } from "../cli/backends/claude";
+import { codexBackend } from "../cli/backends/codex";
+import { opencodeBackend } from "../cli/backends/opencode";
+import type { CliBackend, CliSignInProvider } from "../cli/backends/types";
+import type { ProviderRouter } from "../providers/router";
+import { EMPTY_SESSION, type SessionUsage } from "../usage/tokens";
+import { type TokenUsage } from "../claude/sse";
 import type { CompanionWorkspaceCard } from "./companionWorkspace";
-import { ActionModal, type ActionModalItem } from "./ActionModal";
-import { renderCompanionChrome } from "./companionChrome";
-import { QuickOptionsModal } from "./QuickOptionsModal";
 import { quickNotice } from "../notice";
 import { ComposerContextManager } from "./ComposerContextManager";
-import { buildContextManagerModel, type AutomaticContextKey } from "./contextManagerModel";
+import { type AutomaticContextKey } from "./contextManagerModel";
+import { HeaderControls } from "./chat/HeaderControls";
+import { Composer } from "./chat/Composer";
+import { Transcript, type TurnState } from "./chat/Transcript";
 
 export const CHAT_VIEW_TYPE = "claude-companion-chat";
 
-/** Truncate a tool result for the expandable chip body. */
-function previewText(text: string): string {
-  return text.length > 400 ? `${text.slice(0, 400)}…` : text;
+/** The message list a turn should persist as: `base` plus the assistant reply, when one was produced. */
+function appendAssistantMessage(base: ChatMessage[], result: AgentTurnResult): ChatMessage[] {
+  const full = result.text.trim();
+  if (!full) return base;
+  return [...base, { role: "assistant", content: result.text, ...(result.trace.length > 0 ? { toolTrace: result.trace } : {}) }];
+}
+
+/** Tag which provider a fallback-ineligible error actually failed on, for renderError's hint. */
+function tagProvider(error: Error | undefined, provider: ErrorHintProvider): void {
+  if (error) (error as Error & { ccProvider?: ErrorHintProvider }).ccProvider = provider;
 }
 
 /** Defensive shape-check of a propose_note_edit `edits` argument. */
@@ -75,124 +79,218 @@ interface ObsidianAppWithSettings {
 }
 
 export class ChatView extends ItemView {
-  private disposeChrome: ((remove?: boolean) => void) | null = null;
+  private header: HeaderControls;
+  private get modelLabelEl(): HTMLElement { return this.header.modelLabelEl; }
+  private set modelLabelEl(v: HTMLElement) { this.header.modelLabelEl = v; }
+  private composer: Composer;
   private messages: ChatMessage[] = [];
-  private messagesEl!: HTMLElement;
-  private inputEl!: HTMLTextAreaElement;
-  private sendBtn!: HTMLButtonElement;
-  private modelLabelEl!: HTMLElement;
-  /** Desktop only: the text span nested inside the cc-model chip (dot + text + chevron). */
-  private modelTextEl: HTMLElement | null = null;
-  private backendPillEl!: HTMLElement;
-  private writeGrantPillEl!: HTMLElement;
-  modeControl: ModeControl | null = null;
-  private usageEl!: HTMLElement;
-  private gaugeFillEl!: HTMLElement;
+  private transcript: Transcript;
+  private get messagesEl(): HTMLElement { return this.transcript.messagesEl; }
+  private set messagesEl(v: HTMLElement) { this.transcript.messagesEl = v; }
+  private get inputEl(): HTMLTextAreaElement { return this.composer.inputEl; }
+  private set inputEl(v: HTMLTextAreaElement) { this.composer.inputEl = v; }
+  private get sendBtn(): HTMLButtonElement { return this.composer.sendBtn; }
+  private set sendBtn(v: HTMLButtonElement) { this.composer.sendBtn = v; }
+  private get usageEl(): HTMLElement { return this.header.usageEl; }
+  private set usageEl(v: HTMLElement) { this.header.usageEl = v; }
+  private get gaugeFillEl(): HTMLElement { return this.header.gaugeFillEl; }
+  private set gaugeFillEl(v: HTMLElement) { this.header.gaugeFillEl = v; }
   private streaming = false;
-  private abort: AbortController | null = null;
-  private currentTurn: { conversationId: string; turnId: string } | null = null;
-  private unregisterCurrentTurn: (() => void) | null = null;
+  /** Turn/session state shared with Transcript. */
+  private readonly turn: TurnState = { lastBuffer: "", turnUsage: null, abort: null, currentTurn: null, session: { ...EMPTY_SESSION }, turnRenderUnsubscribe: null, unregisterCurrentTurn: null };
+  private get abort(): AbortController | null { return this.turn.abort; }
+  private set abort(v: AbortController | null) { this.turn.abort = v; }
+  private get currentTurn(): { conversationId: string; turnId: string } | null { return this.turn.currentTurn; }
+  private set currentTurn(v: { conversationId: string; turnId: string } | null) { this.turn.currentTurn = v; }
+  private get unregisterCurrentTurn(): (() => void) | null { return this.turn.unregisterCurrentTurn; }
+  private set unregisterCurrentTurn(v: (() => void) | null) { this.turn.unregisterCurrentTurn = v; }
+  /** Detaches this view from the live turn's event stream (does not stop the turn). */
+  private get turnRenderUnsubscribe(): (() => void) | null { return this.turn.turnRenderUnsubscribe; }
+  private set turnRenderUnsubscribe(v: (() => void) | null) { this.turn.turnRenderUnsubscribe = v; }
   private resumeCliSessionId: string | null = null;
-  private session: SessionUsage = { ...EMPTY_SESSION };
+  private get session(): SessionUsage { return this.turn.session; }
+  private set session(v: SessionUsage) { this.turn.session = v; }
   /** Usage for the in-flight turn; folded into the session once on completion. */
-  private _turnUsage: TokenUsage | null = null;
+  private get _turnUsage(): TokenUsage | null { return this.turn.turnUsage; }
+  private set _turnUsage(v: TokenUsage | null) { this.turn.turnUsage = v; }
   /** Per-session chat controls (model, thinking, effort, temp, max). */
   private controls!: ChatControls;
-  private controlsEl!: HTMLElement;
-  private knobsEl!: HTMLElement;
-  private mcpStatusEl!: HTMLButtonElement;
-  private atMenu!: AtMenu;
-  private contextManager!: ComposerContextManager;
+  private get controlsEl(): HTMLElement { return this.composer.controlsEl; }
+  private set controlsEl(v: HTMLElement) { this.composer.controlsEl = v; }
+  private get contextManager(): ComposerContextManager { return this.composer.contextManager; }
+  private set contextManager(v: ComposerContextManager) { this.composer.contextManager = v; }
   /** Notes/folders explicitly attached via "@" (session-scoped). */
-  private attachedPaths: AttachedPath[] = [];
+  private get attachedPaths(): AttachedPath[] { return this.composer.attachedPaths; }
+  private set attachedPaths(v: AttachedPath[]) { this.composer.attachedPaths = v; }
   /** PDFs/images attached via "@" or paste — cleared after the next send. */
-  private attachedMedia: MediaAttachment[] = [];
+  private get attachedMedia(): MediaAttachment[] { return this.composer.attachedMedia; }
+  private set attachedMedia(v: MediaAttachment[]) { this.composer.attachedMedia = v; }
   /** Media consumed by the last send — restored on failure, re-sent on Regenerate. */
   private lastUserMedia: MediaAttachment[] = [];
-  /** Rotating "thinking" status word timer + per-turn start offset. */
-  private thinkingTimer: number | null = null;
-  private claudianSeq = 0;
   /** Per-turn max-output override (artifact/plan/workflow flows need headroom). */
   private maxTokensOverride: number | null = null;
   private contextStatusInterval: number | null = null;
   /** Last visible context-manager state; skip DOM rebuilds when nothing changed. */
-  private lastContextManagerSignature = "";
+  private get lastContextManagerSignature(): string { return this.composer.lastContextManagerSignature; }
+  private set lastContextManagerSignature(v: string) { this.composer.lastContextManagerSignature = v; }
   private lastMarkdownView: MarkdownView | null = null;
   private lastMarkdownFilePath: string | null = null;
   /** The last user message text, for the Regenerate action. */
   private lastUserText = "";
   /** The last user-bubble display text, when it differs from lastUserText (skill turns). */
   private lastDisplay: string | undefined = undefined;
-  private slashMenu!: SlashMenu;
+  private get slashMenu(): SlashMenu { return this.composer.slashMenu; }
+  private set slashMenu(v: SlashMenu) { this.composer.slashMenu = v; }
   /** User-defined prompt templates (notes in the templates folder). */
   private templateCommands: SlashCommand[] = [];
   private templateReloadGeneration = 0;
+  /** Research claims offered by the "@"/"#" pickers, refreshed when a research note changes. */
+  private cachedClaims: ClaimAtSource[] = [];
+  private claimReloadGeneration = 0;
+  private claimReloadTimer: number | null = null;
+  /** Chat projects offered by the "@" picker, refreshed alongside claims. */
+  private cachedProjects: ChatProject[] = [];
+  /** The chat project this.conversationId is scoped to (null = none), kept in sync with the conversation. */
+  private currentChatProject: ChatProject | null = null;
+  /** A project chosen before the first send (no conversation yet); applied once `run()` creates one. */
+  private pendingProjectId: string | null = null;
+  /** Which trigger ("@" or "#") the open at-menu is currently showing matches for. */
+  private get activeMenuTrigger(): "@" | "#" { return this.composer.activeMenuTrigger; }
+  private set activeMenuTrigger(v: "@" | "#") { this.composer.activeMenuTrigger = v; }
   /** Per-turn overrides from a prompt template; reset at the start of each run. */
   private turnModelOverride: string | null = null;
   private turnContextOverride: Partial<ContextToggles> | null = null;
   /** Web pages attached via "Attach page content" (captured markdown). */
-  private attachedPages: AttachedPage[] = [];
-  /** The "attach this page?" offer chip; one at a time. */
-  private pageOfferEl!: HTMLElement;
-  /** URL the user declined to attach — don't re-offer while it stays in the input. */
-  private dismissedPageUrl: string | null = null;
+  private get attachedPages(): AttachedPage[] { return this.composer.attachedPages; }
+  private set attachedPages(v: AttachedPage[]) { this.composer.attachedPages = v; }
   /** Latest streamed text of the in-flight turn (for clean abort handling). */
-  private _lastBuffer = "";
+  private get _lastBuffer(): string { return this.turn.lastBuffer; }
+  private set _lastBuffer(v: string) { this.turn.lastBuffer = v; }
   /** "Allow for this session" on agent write confirmations (cleared with the view). */
   private agentWriteAlways = false;
   /** Plan Mode: read-only agent turn that ends in a plan (per conversation). */
   private planMode = false;
   /** Whether the current chat backend can run tool-driven agent turns (refreshed per turn + backend change). */
   private agentCapable = false;
-  private reasoningEl: HTMLButtonElement | null = null;
-  /** Guards the setup card's background sign-in probe against stacking on re-render. */
-  private cliSetupProbeInFlight = false;
+  /** Guards the setup card's background sign-in probe against stacking on re-render, per CLI backend id. */
+  private cliSetupProbeInFlight = new Set<string>();
 
-  /** Re-derive agent capability + reasoning state for the controls row (async, backend-aware). */
-  private refreshCapabilityIndicators(): void {
-    void (async () => {
-      const router = this.plugin.router();
-      this.agentCapable = this.plugin.settings.agentModeEnabled && (await router.chatToolCapable());
-      this.updateModeControl();
-      const el = this.reasoningEl;
-      if (!el) return;
-      const reasoning = await router.chatReasoningActive(this.controls.thinking);
-      const { provider, model } = router.chatProvider();
-      el.toggleClass("is-active", reasoning);
-      el.setAttr(
-        "aria-label",
-        reasoning
-          ? "Reasoning on — this model thinks before answering"
-          : provider.id === "anthropic"
-            ? "Reasoning off — enable thinking in model controls (the tune button)"
-            : `Reasoning off — ${model} doesn't report a thinking capability`,
-      );
-      el.setAttr("title", el.getAttr("aria-label") ?? "");
-    })();
-  }
   private renderVersions = new WeakMap<HTMLElement, number>();
+  /** The conversation this leaf shows; null for an unstarted "New chat tab". Persisted via getState/setState. */
+  private conversationId: string | null = null;
 
   constructor(
     leaf: WorkspaceLeaf,
     private plugin: ClaudeCompanionPlugin,
   ) {
     super(leaf);
+    this.transcript = new Transcript(this.app, plugin, this.turn, {
+      autosizeInput: () => this.composer.autosizeInput(),
+      onSend: (...args) => this.onSend(...args),
+      prepareWorkspaceQuestion: (...args) => this.prepareWorkspaceQuestion(...args),
+      regenerate: (...args) => this.regenerate(...args),
+      renderMarkdownInto: (...args) => this.renderMarkdownInto(...args),
+      renderSetupCard: (...args) => this.renderSetupCard(...args),
+      renderStreamingArtifactInto: (...args) => this.renderStreamingArtifactInto(...args),
+      resumeInterruptedTurn: (...args) => this.resumeInterruptedTurn(...args),
+      restoreMediaAfterFailure: (...args) => this.restoreMediaAfterFailure(...args),
+      setSending: (...args) => this.setSending(...args),
+      setupRequired: (...args) => this.setupRequired(...args),
+      submitPrompt: (text, display) => this.submitPrompt(text, display),
+      updateUsageBar: (...args) => this.updateUsageBar(...args),
+      controls: () => this.controls,
+      inputEl: () => this.composer.inputEl,
+      lastUserText: () => this.lastUserText,
+      messages: () => this.messages,
+      streaming: () => this.streaming,
+    });
+    this.header = new HeaderControls(this.app, plugin, {
+      anyContextEnabled: () => this.composer.anyContextEnabled(),
+      applyMode: (...args) => this.applyMode(...args),
+      clearChat: (...args) => this.clearChat(...args),
+      cliEntries: (...args) => this.cliEntries(...args),
+      loadConversation: (...args) => this.loadConversation(...args),
+      openSettings: (...args) => this.openSettings(...args),
+      renderContextManager: (...args) => this.renderContextManager(...args),
+      renderKnobs: () => this.composer.renderKnobs(),
+      renderKnobsInto: (parent) => this.composer.renderKnobsInto(parent),
+      saveChat: (...args) => this.transcript.saveChat(...args),
+      updateModeControl: (...args) => this.updateModeControl(...args),
+      agentCapable: () => this.agentCapable,
+      setAgentCapable: (v) => { this.agentCapable = v; },
+      agentWriteAlways: () => this.agentWriteAlways,
+      controls: () => this.controls,
+      inputEl: () => this.composer.inputEl,
+      messages: () => this.messages,
+      planMode: () => this.planMode,
+      reasoningEl: () => this.composer.reasoningEl,
+      session: () => this.session,
+      currentProject: () => this.currentChatProject,
+    });
+    this.composer = new Composer(this.app, plugin, {
+      applyChatFontSize: (...args) => this.applyChatFontSize(...args),
+      applyMode: (...args) => this.applyMode(...args),
+      currentMode: (...args) => this.currentMode(...args),
+      onModelSelect: (...args) => this.header.onModelSelect(...args),
+      refreshCapabilityIndicators: (...args) => this.header.refreshCapabilityIndicators(...args),
+      registerDomEvent: (el, type, callback) => this.registerDomEvent(el, type, callback),
+      resolveMarkdownContextView: (...args) => this.resolveMarkdownContextView(...args),
+      updateModeControl: (...args) => this.updateModeControl(...args),
+      updateUsageBar: (...args) => this.updateUsageBar(...args),
+      cachedClaims: () => this.cachedClaims,
+      cachedProjects: () => this.cachedProjects.map((p) => ({ id: p.id, name: p.name })),
+      controls: () => this.controls,
+      streaming: () => this.streaming,
+      mountUsage: (parent) => this.header.mountUsage(parent),
+      onSlashCommand: (cmd) => void this.runSlashCommand(cmd),
+      pickAtItems: () => (this.activeMenuTrigger === "#" ? this.hashItems() : this.atItems()),
+      onAtChoose: (item) => void this.onAtChoose(item),
+      toggleAutomatic: (key, enabled) => this.toggleAutomaticContext(key, enabled),
+      removeSource: (id) => this.removeContextSource(id),
+      retrySource: (id) => this.retryContextSource(id),
+      addContext: () => this.openContextPicker(),
+      onSend: () => void this.onSend(),
+      syncSlashMenu: () => this.syncSlashMenu(),
+      chooseProject: (id) => this.chooseProjectById(id),
+    });
   }
 
   override getViewType(): string {
     return CHAT_VIEW_TYPE;
   }
   override getDisplayText(): string {
-    return "Companion for Claude";
+    const conversation = this.conversationId ? this.plugin.listConversations().find((c) => c.id === this.conversationId) : undefined;
+    return conversation?.title ?? "Companion for Claude";
   }
   override getIcon(): string {
     return "sparkles";
   }
 
+  override getState(): Record<string, unknown> {
+    return { conversationId: this.conversationId };
+  }
+
+  override async setState(state: unknown, result: ViewStateResult): Promise<void> {
+    const raw = (state as { conversationId?: unknown } | null)?.conversationId;
+    if (raw === null) {
+      // Explicit "start empty" signal (the New chat tab command) — overrides
+      // whatever onOpen loaded by default for a freshly created leaf.
+      this.conversationId = null;
+      this.resetToEmpty();
+    } else if (typeof raw === "string") {
+      const conversation = this.plugin.listConversations().find((c) => c.id === raw);
+      if (conversation) {
+        this.conversationId = raw;
+        this.loadConversation(conversation);
+      }
+      // An unknown id (e.g. a deleted conversation) keeps the current state.
+    }
+    await super.setState(state, result);
+  }
+
   override async onOpen(): Promise<void> {
     const root = this.contentEl;
-    this.disposeChrome?.();
-    this.disposeChrome = null;
+    this.header.teardown();
     root.empty();
     root.addClass("cc-chat-root"); // scroll/layout root the mobile CSS keys on (see styles.css)
     root.addClass("cc-root");
@@ -203,65 +301,19 @@ export class ChatView extends ItemView {
     }
 
     // ---- header ----
-    const header = root.createDiv({ cls: "cc-header" });
-    const title = header.createDiv({ cls: "cc-title" });
-    title.createSpan({ cls: "cc-eyebrow", text: "COMPANION FOR CLAUDE" });
-    this.modelLabelEl = title.createSpan({ cls: "cc-model" });
-    this.backendPillEl = title.createSpan({ cls: "cc-backend-pill", attr: { "aria-label": "Chat backend / connectivity" } });
-    this.writeGrantPillEl = title.createEl("button", {
-      cls: "cc-write-grant-pill",
-      text: "✎ writes auto-allowed",
-      attr: { "aria-label": "Agent writes are auto-allowed for this session — click to revoke" },
+    this.header.mount(root, {
+      onModelClick: () => this.openModelMenu(),
+      onMcpClick: (evt) => this.openMcpMenu(evt),
+      onWriteGrantRevoke: () => {
+        this.agentWriteAlways = false;
+        this.header.updateWriteGrantPill();
+        quickNotice("Session write grant revoked — writes will ask again.");
+      },
+      onNewChat: () => this.clearChat(),
+      onHistory: () => this.openHistory(),
+      onOverflow: () => this.openOverflowMenu(),
     });
-    this.writeGrantPillEl.addEventListener("click", () => {
-      this.agentWriteAlways = false;
-      this.updateWriteGrantPill();
-      quickNotice("Session write grant revoked — writes will ask again.");
-    });
-    this.updateWriteGrantPill();
-    const actions = header.createDiv({ cls: "cc-header-actions" });
-    if (Platform.isMobile) {
-      // Mobile: the model name is the model picker, and one ⋯ menu carries the
-      // actions the desktop icon row holds, plus the session toggles from the
-      // hidden controls bar (Act on vault, Plan mode, memory ingest). Truly
-      // desktop-only chrome (MCP, session capture) stays omitted.
-      this.modelLabelEl.addClass("cc-model-tappable");
-      this.modelLabelEl.addEventListener("click", () => this.openModelMenu());
-      const more = actions.createEl("button", { cls: "cc-icon-btn clickable-icon", attr: { "aria-label": "More actions" } });
-      setIcon(more, "more-vertical");
-      more.addEventListener("click", () => this.openOverflowMenu());
-      // Quick options reaches mobile through that one ⋯ menu; a second control on
-      // a phone-width header is the crowding this row exists to avoid.
-      this.disposeChrome = renderCompanionChrome(root, "chat", "Chat", this.plugin.companionChrome(), {
-        host: actions,
-        compact: true,
-        omitOptionsButton: true,
-      });
-    } else {
-      // Desktop: same pattern as mobile — the model name opens the model picker,
-      // and one "More" button carries the rest (Save, capture, MCP bridge) so the
-      // header stays a calm 3-icon row plus quick options.
-      this.modelLabelEl.addClass("cc-model-tappable");
-      this.modelLabelEl.addEventListener("click", () => this.openModelMenu());
-      this.mcpStatusEl = this.modelLabelEl.createEl("button", { cls: "cc-mcp-dot", attr: { "aria-label": "MCP bridge controls" } });
-      this.mcpStatusEl.addEventListener("click", (evt) => {
-        evt.stopPropagation();
-        this.openMcpMenu(evt);
-      });
-      this.modelTextEl = this.modelLabelEl.createSpan({ cls: "cc-model-text" });
-      setIcon(this.modelLabelEl.createSpan({ cls: "cc-model-chevron" }), "chevron-down");
-
-      const primary = actions.createDiv({ cls: "cc-header-actions-primary" });
-      this.iconButton(primary, "plus", "New chat", () => this.clearChat());
-      this.iconButton(primary, "history", "Resume a past conversation", () => this.openHistory());
-      this.iconButton(primary, "more-horizontal", "More actions", () => this.openOverflowMenu());
-      // Quick options joins this row rather than owning a header of its own, and
-      // replaces the gear: its own sheet already offers "Open all settings".
-      this.disposeChrome = renderCompanionChrome(root, "chat", "Chat", this.plugin.companionChrome(), {
-        host: primary,
-        compact: true,
-      });
-    }
+    this.header.updateWriteGrantPill();
 
     // ---- messages ----
     // Chat controls now live at the bottom (in the composer), so the top stays
@@ -269,25 +321,11 @@ export class ChatView extends ItemView {
     this.messagesEl = root.createDiv({ cls: "cc-messages" });
 
     // ---- composer ----
-    const composer = root.createDiv({ cls: "cc-composer" });
-
-    this.contextManager = new ComposerContextManager(composer, {
-      toggleAutomatic: (key, enabled) => this.toggleAutomaticContext(key, enabled),
-      removeSource: (id) => this.removeContextSource(id),
-      retrySource: (id) => this.retryContextSource(id),
-      addContext: () => this.openContextPicker(),
-    });
+    this.composer.mount(
+      root,
+      [...SLASH_COMMANDS, ...workflowSlashCommands(WORKFLOWS), ...skillSlashCommands(SKILLS, WORKFLOWS)],
+    );
     this.renderContextManager();
-    // The "attach this page?" offer for URLs in the composer.
-    this.pageOfferEl = composer.createDiv({ cls: "cc-page-offer" });
-    this.pageOfferEl.setCssStyles({ display: "none" });
-
-    // Palettes anchored above the input (built before the textarea so they sit
-    // above it in flow; CSS positions them absolutely).
-    // Slash is the single command surface: the built-in commands plus every vault
-    // workflow (the browsable picker stays reachable via /workflows).
-    this.slashMenu = new SlashMenu(composer, [...SLASH_COMMANDS, ...workflowSlashCommands(WORKFLOWS), ...skillSlashCommands(SKILLS, WORKFLOWS)], (cmd) => void this.runSlashCommand(cmd));
-    this.atMenu = new AtMenu(composer, () => this.atItems(), (item) => void this.onAtChoose(item));
 
     // User templates: load now, refresh when a note in the folder changes.
     void this.reloadTemplates();
@@ -303,91 +341,15 @@ export class ChatView extends ItemView {
       if (templateTouched(file) || templateTouched({ path: oldPath })) void this.reloadTemplates();
     }));
 
-    // Mobile keeps the compact input row; the context manager above is the one
-    // button-driven source entry point on every platform.
-    const inputRow = Platform.isMobile ? composer.createDiv({ cls: "cc-composer-input-row" }) : composer;
-    this.inputEl = inputRow.createEl("textarea", {
-      cls: "cc-input",
-      // Start compact on mobile (1 row, grows via autosizeInput) so the composer
-      // doesn't eat a big band of the phone screen; roomier default on desktop.
-      // The desktop placeholder spells out the /@ affordances, but that string
-      // wraps to two cramped lines inside a one-row phone pill — mobile gets a
-      // short placeholder (the "+" button already surfaces context on mobile).
-      attr: {
-        placeholder: Platform.isMobile
-          ? "Message Claude…"
-          : "Ask Claude…  ( / for commands · @ to add context · Enter to send )",
-        rows: Platform.isMobile ? "1" : "3",
-      },
-    });
-    this.inputEl.addEventListener("keydown", (e) => {
-      // The "@" picker intercepts navigation keys while open.
-      if (this.atMenu.isOpen()) {
-        if (e.key === "ArrowDown") { e.preventDefault(); this.atMenu.move(1); return; }
-        if (e.key === "ArrowUp") { e.preventDefault(); this.atMenu.move(-1); return; }
-        if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); this.atMenu.choose(); return; }
-        if (e.key === "Escape") { e.preventDefault(); this.atMenu.hide(); return; }
-      }
-      // Slash menu intercepts navigation keys while open.
-      if (this.slashMenu.isOpen()) {
-        if (e.key === "ArrowDown") { e.preventDefault(); this.slashMenu.move(1); return; }
-        if (e.key === "ArrowUp") { e.preventDefault(); this.slashMenu.move(-1); return; }
-        if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); this.slashMenu.choose(); return; }
-        if (e.key === "Escape") { e.preventDefault(); this.slashMenu.hide(); return; }
-      }
-      // Desktop: Enter sends, Shift+Enter breaks a line. Mobile soft keyboards
-      // have no Shift — Enter inserts a newline and only the send button sends.
-      if (e.key === "Enter" && !e.shiftKey && !Platform.isMobile) {
-        e.preventDefault();
-        void this.onSend();
-      }
-    });
-    this.inputEl.addEventListener("input", () => {
-      this.autosizeInput();
-      this.updateUsageBar();
-      this.syncSlashMenu();
-      this.syncAtMenu();
-      this.syncPageOffer();
-    });
-    // Close the menus when focus leaves the composer.
-    this.inputEl.addEventListener("blur", () => window.setTimeout(() => { this.slashMenu.hide(); this.atMenu.hide(); }, 120));
-    // Paste a screenshot/image straight into the composer to attach it.
-    this.inputEl.addEventListener("paste", (evt: ClipboardEvent) => {
-      const items = evt.clipboardData?.items;
-      if (!items) return;
-      for (const item of Array.from(items)) {
-        if (item.kind === "file" && item.type.startsWith("image/")) {
-          const file = item.getAsFile();
-          if (file) {
-            evt.preventDefault();
-            void this.attachPastedImage(file);
-          }
-          return;
-        }
-      }
-    });
-
-    // ---- composer bar: model + tune (left group) · usage + Send (right) ----
-    // Desktop: one row under the input. Mobile: Send joins the thumb input row
-    // ([+] · input · ↑); the bar keeps only the thin usage gauge (see styles).
-    const bar = composer.createDiv({ cls: "cc-composer-bar" });
-    this.controlsEl = bar.createDiv({ cls: "cc-controls" });
-    this.renderControls();
-
-    const sendGroup = bar.createDiv({ cls: "cc-send-group" });
-    const usageRow = sendGroup.createDiv({ cls: "cc-usage" });
-    const gauge = usageRow.createDiv({ cls: "cc-gauge", attr: { "aria-label": "Estimated context window used" } });
-    this.gaugeFillEl = gauge.createDiv({ cls: "cc-gauge-fill" });
-    this.usageEl = usageRow.createDiv({ cls: "cc-usage-text" });
-    const sendParent = Platform.isMobile ? inputRow : sendGroup;
-    this.sendBtn = sendParent.createEl("button", {
-      cls: Platform.isMobile ? "cc-send cc-send-icon" : "cc-send",
-      ...(Platform.isMobile
-        ? { attr: { "aria-label": "Send message" } }
-        : { text: "Send" }),
-    });
-    if (Platform.isMobile) setIcon(this.sendBtn, "arrow-up");
-    this.sendBtn.addEventListener("click", () => void this.onSend());
+    // Research claims for the "@"/"#" pickers: load now, refresh on the same
+    // signal the research views use to know a research note changed. Chat
+    // projects reload alongside, but only for a chat-project note or a research Project.md.
+    void this.reloadClaims();
+    void this.reloadProjects();
+    this.registerEvent(this.app.metadataCache.on("changed", (file) => { this.scheduleReloadClaims(); if (isProjectChange(file.path, this.app.metadataCache.getFileCache(file)?.frontmatter)) void this.reloadProjects(); }));
+    this.registerEvent(this.app.vault.on("create", (file) => { if (file.path.endsWith(".md")) this.scheduleReloadClaims(); if (isProjectChange(file.path)) void this.reloadProjects(); }));
+    this.registerEvent(this.app.vault.on("delete", (file) => { if (file.path.endsWith(".md")) this.scheduleReloadClaims(); if (isProjectChange(file.path)) void this.reloadProjects(); }));
+    this.registerEvent(this.app.vault.on("rename", (file, oldPath) => { if (file.path.endsWith(".md") || oldPath.endsWith(".md")) this.scheduleReloadClaims(); if (isProjectChange(file.path) || isProjectChange(oldPath)) void this.reloadProjects(); }));
 
     this.applyChatFontSize();
     this.refreshModelLabel();
@@ -414,9 +376,10 @@ export class ChatView extends ItemView {
 
   /** Replace the panel contents with a stored conversation and render it. */
   loadConversation(conversation: Conversation): void {
-    void this.stopCurrentTurn();
-    this.streaming = false;
-    this.setSending(false);
+    this.detachTurnRendering();
+    this.conversationId = conversation.id;
+    this.pendingProjectId = null;
+    void this.refreshCurrentProject();
     this.session = { ...EMPTY_SESSION };
     this.messages = compactMessages(conversation.messages);
     this.messagesEl.empty();
@@ -424,148 +387,80 @@ export class ChatView extends ItemView {
       this.renderEmptyState();
     } else {
       for (const m of this.messages) this.renderStoredMessage(m);
-      if (conversation.activeTurn) this.renderInterruptedTurn(conversation);
+      const live = this.plugin.turnService().live(conversation.id);
+      if (live) this.attachLiveTurn(conversation.id, live.turnId);
+      else if (conversation.activeTurn) this.transcript.renderInterruptedTurn(conversation);
     }
     this.updateUsageBar();
-    this.scrollToBottom();
+    this.transcript.scrollToBottom();
+    this.refreshTabTitle();
   }
 
-  /** Render one persisted message, including assistant action buttons. */
-  private renderStoredMessage(m: ChatMessage): void {
-    // A user turn with a `display` is a slash/workflow invocation — show it as a
-    // command chip on replay too, matching the live render.
-    if (m.role === "user" && m.display !== undefined) {
-      const chipBubble = this.messagesEl.createDiv({ cls: "cc-msg cc-user cc-command" });
-      this.renderCommandChip(chipBubble, m.display);
-      return;
-    }
-    const bubble = this.messagesEl.createDiv({ cls: `cc-msg cc-${m.role}` });
-    bubble.createDiv({ cls: "cc-role", text: m.role === "user" ? "You" : "Claude" });
-    if (m.role === "assistant") this.addSparkMark(bubble);
-    const body = bubble.createDiv({ cls: "cc-body" });
-    if (m.role === "assistant" && m.toolTrace && m.toolTrace.length > 0) this.renderTraceChips(bubble, body, m.toolTrace);
-    const rendered = m.display ?? m.content;
-    void this.renderMarkdownInto(body, rendered).catch(() => {
-      // A broken Markdown extension must not make persisted conversation text
-      // disappear or reject the fire-and-forget conversation replay.
-      body.setText(rendered);
-    });
-    if (m.role === "assistant" && m.content.trim().length > 0) this.addAssistantActions(bubble, m.content);
+  /** Ask Obsidian to re-read getDisplayText() so the tab header follows the active conversation's title. */
+  private refreshTabTitle(): void {
+    (this.leaf as { updateHeader?: () => void }).updateHeader?.();
   }
+
+  /** Reattach to a turn already running elsewhere: replay its buffer, then stream live. */
+  private attachLiveTurn(conversationId: string, turnId: string): void {
+    this.currentTurn = { conversationId, turnId };
+    this.setSending(true);
+    this._turnUsage = null;
+    const { bubble, body } = this.transcript.createAssistantBubble();
+    const wantThinking = !!(this.controls?.thinking && this.controls?.showThinking);
+    this.turnRenderUnsubscribe = this.transcript.startTurnRendering(conversationId, bubble, body, wantThinking, this.plugin.turnService());
+  }
+
+  /** Unsubscribe from the live turn's events without stopping it, and reset this view's send-state. */
+  private detachTurnRendering(): void {
+    this.turnRenderUnsubscribe?.();
+    this.turnRenderUnsubscribe = null;
+    this.unregisterCurrentTurn = null;
+    this.currentTurn = null;
+    this.abort = null;
+    this.streaming = false;
+    this.setSending(false);
+  }
+
+  private renderStoredMessage(m: ChatMessage): void { return this.transcript.renderStoredMessage(m); }
 
   /** Clear the panel to its empty state without altering stored history. */
   resetToEmpty(): void {
-    void this.stopCurrentTurn();
-    this.streaming = false;
-    this.setSending(false);
+    this.detachTurnRendering();
+    this.conversationId = null;
+    this.pendingProjectId = null;
     this.messages = [];
     this.session = { ...EMPTY_SESSION };
     this.messagesEl.empty();
     this.renderEmptyState();
     this.updateUsageBar();
+    this.refreshTabTitle();
   }
 
-  openHistory(): void {
-    const conversations = this.plugin.listConversations();
-    if (conversations.length === 0) {
-      new Notice("No saved conversations yet.");
-      return;
-    }
-    new ConversationPicker(
-      this.app,
-      conversations,
-      (chosen) => {
-        void this.plugin.setActiveConversation(chosen.id).then((c) => {
-          if (c) this.loadConversation(c);
-        });
-      },
-      (doomed) => {
-        void (async () => {
-          if (this.plugin.getActiveConversation()?.id === doomed.id) {
-            await this.plugin.deleteActiveConversation(); // resets the view + notices
-          } else {
-            await this.plugin.deleteConversation(doomed.id);
-            quickNotice(`Deleted “${doomed.title}”.`);
-          }
-          this.openHistory(); // reopen with the refreshed list
-        })();
-      },
-    ).open();
-  }
+  openHistory(): void { return this.header.openHistory(); }
 
-  /**
-   * Recompute the context gauge (estimated input + reserved output vs the
-   * model's window) and render the running session totals. Called on input,
-   * after each response, and when the model changes.
-   */
-  private updateUsageBar(): void {
-    const { model: resolvedModel } = this.plugin.router().chatProvider();
-    const caps = this.plugin.router().chatCapabilities();
-    const local = caps.local;
-    const model = local ? resolvedModel : this.controls?.model ?? this.plugin.settings.model;
-    const reserved = this.controls?.maxTokens ?? this.plugin.settings.maxTokens;
-
-    // Estimate input tokens: system + conversation so far + the draft + a
-    // rough allowance for the vault context that will be attached.
-    const convo = this.messages.map((m) => m.content).join("\n");
-    const draft = this.inputEl?.value ?? "";
-    const ctxAllowance = this.anyContextEnabled() ? this.plugin.settings.contextCharBudget : 0;
-    const estIn = estimateTokens(this.plugin.composeSystemPrompt()) + estimateTokens(convo) + estimateTokens(draft) + estimateTokensForChars(ctxAllowance);
-
-    const g = contextGauge(estIn, model, reserved);
-    this.gaugeFillEl.setCssStyles({ width: `${Math.round(g.fraction * 100)}%` });
-    this.gaugeFillEl.toggleClass("is-warn", g.fraction >= 0.75 && g.fraction < 0.92);
-    this.gaugeFillEl.toggleClass("is-danger", g.fraction >= 0.92);
-
-    const parts: string[] = [];
-    if (local) {
-      parts.push(`~${formatTokens(estIn)} ctx · local (no metered cost)`);
-      // Local turns report token counts too (Ollama), so show running totals
-      // without a cost — the same shape as the OAuth/subscription branch.
-      if (this.session.requests > 0) {
-        parts.push(`session ${formatTokens(this.session.inputTokens)}↑ ${formatTokens(this.session.outputTokens)}↓`);
-      }
-    } else {
-      parts.push(`~${formatTokens(estIn)} / ${formatTokens(g.window)} ctx`);
-      // OAuth subscription tokens don't bill per-token, so show token totals
-      // without a dollar estimate; API-key usage shows the estimated cost.
-      const oauth = !caps.metered;
-      if (this.session.requests > 0) {
-        const totals = `session ${formatTokens(this.session.inputTokens)}↑ ${formatTokens(this.session.outputTokens)}↓`;
-        parts.push(oauth ? `${totals} · subscription` : `${totals} ≈ ${formatCost(sessionCost(this.session, model))}`);
-      }
-    }
-    this.usageEl.setText(parts.join("  ·  "));
-  }
-
-  private anyContextEnabled(): boolean {
-    const c = this.plugin.settings.context;
-    return c.activeNote || c.selection || c.linkedNotes || c.searchVault || this.attachedPaths.length > 0 || this.attachedMedia.length > 0 || this.attachedPages.length > 0;
-  }
+  private updateUsageBar(): void { return this.header.updateUsageBar(); }
 
   override async onClose(): Promise<void> {
     this.templateReloadGeneration++;
-    this.disposeChrome?.(false);
-    this.disposeChrome = null;
-    await this.stopCurrentTurn();
-    this.clearThinkingStatus();
+    this.claimReloadGeneration++;
+    if (this.claimReloadTimer !== null) {
+      window.clearTimeout(this.claimReloadTimer);
+      this.claimReloadTimer = null;
+    }
+    this.header.teardown(false);
+    // A live turn keeps running (and persisting) after the pane closes — only
+    // detach this view from its event stream (ChatTurnService).
+    this.detachTurnRendering();
+    this.transcript.clearThinkingStatus();
     if (this.contextStatusInterval !== null) {
       window.clearInterval(this.contextStatusInterval);
       this.contextStatusInterval = null;
     }
-    this.contextManager?.destroy();
+    this.composer.destroy();
   }
 
-  refreshModelLabel(): void {
-    const { model: resolvedModel } = this.plugin.router().chatProvider();
-    const caps = this.plugin.router().chatCapabilities();
-    const chosen = modelLabel(this.controls?.model ?? this.plugin.settings.model);
-    const label = caps.local ? `${modelLabel(resolvedModel)} · local` : chosen;
-    // Desktop nests the dot + chevron inside cc-model, so the name text goes into
-    // its own child span; mobile has no such child and keeps setting cc-model directly.
-    (this.modelTextEl ?? this.modelLabelEl).setText(label);
-    if (this.usageEl) this.updateUsageBar();
-  }
+  refreshModelLabel(): void { return this.header.refreshModelLabel(); }
 
   // ---------- public entry point (used by commands) ----------
 
@@ -575,512 +470,132 @@ export class ChatView extends ItemView {
     await this.run(text.trim(), display, maxTokens, opts);
   }
 
-  // ---------- UI helpers ----------
-
-  private iconButton(parent: HTMLElement, icon: string, tip: string, onClick: () => void): void {
-    const btn = parent.createEl("button", { cls: "cc-icon-btn clickable-icon", attr: { "aria-label": tip } });
-    setIcon(btn, icon);
-    btn.addEventListener("click", onClick);
-  }
-
   // ---------- "@" context picker ----------
 
-  /** Candidate sources for the "@" menu: 4 specials + vault notes + folders. */
-  private atItems(): AtItem[] {
-    const notes = this.app.vault.getMarkdownFiles().map((f) => f.path);
-    const folders = new Set<string>();
-    for (const p of notes) {
-      const i = p.lastIndexOf("/");
-      if (i > 0) folders.add(p.slice(0, i));
-    }
-    const media = this.app.vault
-      .getFiles()
-      .filter((f) => mediaKind(f.path) !== null)
-      .map((f) => f.path)
-      .sort();
-    return buildAtItems(notes, [...folders].sort(), media);
+  private atItems(): AtItem[] { return this.composer.atItems(); }
+
+  private hashItems(): AtItem[] { return this.composer.hashItems(); }
+
+  /** Coalesces rapid vault/metadata events into one reloadClaims() after the last one. */
+  private scheduleReloadClaims(): void {
+    if (this.claimReloadTimer !== null) window.clearTimeout(this.claimReloadTimer);
+    this.claimReloadTimer = window.setTimeout(() => {
+      this.claimReloadTimer = null;
+      void this.reloadClaims();
+    }, 500);
   }
 
-  /** Load attached media into wire blocks; oversize/unreadable files are skipped with a notice. */
-  private async mediaBlocks(): Promise<ContentBlock[]> {
-    const blocks: ContentBlock[] = [];
-    for (const m of this.attachedMedia) {
-      try {
-        let data = m.data;
-        let mime = m.mime;
-        if (!data && m.path) {
-          const file = this.app.vault.getAbstractFileByPath(m.path);
-          if (!(file instanceof TFile)) throw new Error("file not found");
-          if (file.stat.size > maxBytesFor(m.kind)) {
-            new Notice(`${m.label} is too large to attach (max ${Math.round(maxBytesFor(m.kind) / 1024 / 1024)} MB).`);
-            continue;
-          }
-          const buf = await this.app.vault.readBinary(file);
-          // Trust the bytes over the extension so a mislabeled file isn't 400'd.
-          mime = sniffMime(buf) ?? m.mime;
-          data = arrayBufferToBase64(buf);
-        }
-        if (data) blocks.push(mediaBlock(m.kind, mime, data));
-      } catch (e) {
-        new Notice(`Couldn't attach ${m.label}: ${e instanceof Error ? e.message : String(e)}`);
+  /** Re-read every active research project's claims for the "@"/"#" pickers. */
+  private async reloadClaims(): Promise<void> {
+    const generation = ++this.claimReloadGeneration;
+    const claims: ClaimAtSource[] = [];
+    try {
+      const repo = this.plugin.researchRepository();
+      const projects = (await repo.listProjects()).filter((p) => p.status === "active");
+      for (const project of projects) {
+        const snapshot = await repo.loadProject(project.path);
+        for (const claim of snapshot.claims) claims.push({ path: claim.path, label: claim.proposition, project: claim.project });
       }
+    } catch {
+      // Research repository unavailable — claims stay empty.
     }
-    return blocks;
+    if (generation !== this.claimReloadGeneration) return;
+    this.cachedClaims = claims;
   }
 
-  /** Attach an image pasted into the composer (screenshots, copied images). */
-  private async attachPastedImage(file: File): Promise<void> {
-    if (file.size > maxBytesFor("image")) {
-      new Notice(`Pasted image is too large to attach (max ${Math.round(maxBytesFor("image") / 1024 / 1024)} MB).`);
+  /** Re-read every available chat project (notes + Research Desk) for the "@" picker. */
+  private async reloadProjects(): Promise<void> {
+    try {
+      this.cachedProjects = await this.plugin.listChatProjects();
+    } catch {
+      // Registry unavailable — projects list stays as it was.
+    }
+  }
+
+  /** Set `currentChatProject` and its pill/header label, without touching persisted storage. */
+  private setLocalProject(project: ChatProject | null): void {
+    this.currentChatProject = project;
+    this.composer.setProjectPill(project);
+    this.header.setProjectLabel(project?.name ?? null);
+  }
+
+  /** Sync `currentChatProject` (and the pill/header label) to `this.conversationId`'s persisted projectId. */
+  private async refreshCurrentProject(): Promise<void> {
+    let project: ChatProject | null = null;
+    try {
+      project = await this.plugin.chatProjectFor(this.conversationId);
+    } catch {
+      // Conversation/registry lookup unavailable — no project for this turn.
+    }
+    this.setLocalProject(project);
+  }
+
+  /** Apply a project chosen from the "@" menu or the "Chat: choose project" command. */
+  async applyChosenProject(project: ChatProject): Promise<void> {
+    if (this.conversationId === null) {
+      // No conversation yet — hold the choice until run() creates one.
+      this.pendingProjectId = project.id;
+      this.setLocalProject(project);
       return;
     }
-    const buf = await file.arrayBuffer();
-    const data = arrayBufferToBase64(buf);
-    const n = this.attachedMedia.filter((m) => !m.path).length + 1;
-    this.attachedMedia.push({ label: file.name || `Pasted image ${n}`, kind: "image", mime: sniffMime(buf) ?? (file.type || "image/png"), data });
-    this.renderContextManager();
-    quickNotice("Image attached to your next message.");
-  }
-
-  /** Open/refresh/close the "@" picker based on the cursor's @-token. */
-  private syncAtMenu(): void {
-    const cursor = this.inputEl.selectionStart ?? this.inputEl.value.length;
-    const hit = activeAtQuery(this.inputEl.value, cursor);
-    if (!hit) this.atMenu.hide();
-    else this.atMenu.show(hit.query);
-  }
-
-  /**
-   * Offer "Attach page content" when the composer holds a URL. Never fetches
-   * on its own — the capture only fires from the Attach click (spec §7).
-   */
-  private syncPageOffer(): void {
-    if (!this.pageOfferEl) return;
-    const hide = () => this.pageOfferEl.setCssStyles({ display: "none" });
-    if (this.streaming || !this.plugin.captureWebPage()) return hide();
-    const url = detectPageUrl(this.inputEl.value);
-    if (!url || url === this.dismissedPageUrl || this.attachedPages.some((p) => p.url === url)) return hide();
-
-    this.pageOfferEl.empty();
-    this.pageOfferEl.createSpan({ cls: "cc-page-offer-label", text: `Attach page content from ${pageLabel(url)}?` });
-    const attach = this.pageOfferEl.createEl("button", { cls: "cc-page-offer-btn", text: "Attach" });
-    attach.addEventListener("click", () => void this.attachPage(url));
-    const dismiss = this.pageOfferEl.createEl("button", { cls: "cc-page-offer-dismiss", text: "×", attr: { "aria-label": "Dismiss" } });
-    dismiss.addEventListener("click", () => {
-      this.dismissedPageUrl = url;
-      hide();
-    });
-    this.pageOfferEl.setCssStyles({ display: "" });
-  }
-
-  /** Capture a URL into an attached page. Errors land on the pill, not the chat. */
-  private async attachPage(url: string): Promise<void> {
-    const capture = this.plugin.captureWebPage();
-    if (!capture) return;
-    this.pageOfferEl.setCssStyles({ display: "none" });
-    if (this.attachedPages.some((p) => p.url === url)) return;
-    const page: AttachedPage = { url, markdown: "" };
-    this.attachedPages.push(page);
-    await this.captureAttachedPage(page);
-  }
-
-  private async captureAttachedPage(page: AttachedPage): Promise<void> {
-    const capture = this.plugin.captureWebPage();
-    if (!capture) return;
-    page.pending = true;
-    delete page.error;
-    this.renderContextManager();
-    try {
-      const result = await capture(page.url);
-      if (!result) {
-        page.error = "No readable content on that page.";
-      } else {
-        page.markdown = result.markdown;
-        if (result.title) page.title = result.title;
-      }
-    } catch (e) {
-      page.error = e instanceof Error ? e.message : String(e);
-    } finally {
-      page.pending = false;
-      this.renderContextManager();
-      this.updateUsageBar();
-    }
-  }
-
-  /** Apply a chosen "@" source: toggle a context flag or attach a note/folder. */
-  private async onAtChoose(item: AtItem): Promise<void> {
-    // Strip the "@query" token the user typed.
-    const cursor = this.inputEl.selectionStart ?? this.inputEl.value.length;
-    const hit = activeAtQuery(this.inputEl.value, cursor);
-    if (hit) {
-      const v = this.inputEl.value;
-      this.inputEl.value = v.slice(0, hit.start) + v.slice(cursor);
-      this.inputEl.setSelectionRange(hit.start, hit.start);
-    }
-    this.inputEl.focus();
-
-    if (item.kind === "note") this.plugin.settings.context.activeNote = true;
-    else if (item.kind === "selection") this.plugin.settings.context.selection = true;
-    else if (item.kind === "linked") this.plugin.settings.context.linkedNotes = true;
-    else if (item.kind === "vault") this.plugin.settings.context.searchVault = true;
-    else if (item.path && (item.kind === "note-path" || item.kind === "folder-path")) {
-      const kind = item.kind === "folder-path" ? "folder" : "note";
-      if (!this.attachedPaths.some((a) => a.path === item.path && a.kind === kind)) {
-        this.attachedPaths.push({ path: item.path, kind });
-      }
-    } else if (item.path && item.kind === "media-path") {
-      const kind = mediaKind(item.path);
-      if (kind && !this.attachedMedia.some((m) => m.path === item.path)) {
-        this.attachedMedia.push({ label: item.label, kind, mime: mediaMime(item.path), path: item.path });
-      }
-    }
-    await this.plugin.saveSettings();
-    this.renderContextManager();
+    await this.plugin.setChatProject(this.conversationId, project.id);
+    await this.refreshCurrentProject();
     this.updateUsageBar();
   }
 
-  private renderContextManager(): void {
-    if (!this.contextManager) return;
-    const active = this.resolveMarkdownContextView()?.file ?? this.app.workspace.getActiveFile();
-    const model = buildContextManagerModel({
-      toggles: this.plugin.settings.context,
-      activeNotePath: active?.path ?? null,
-      paths: this.attachedPaths,
-      media: this.attachedMedia,
-      pages: this.attachedPages,
-    });
-    if (model.signature === this.lastContextManagerSignature) return;
-    this.lastContextManagerSignature = model.signature;
-    this.contextManager.render(model);
-  }
-
-  private toggleAutomaticContext(key: AutomaticContextKey, enabled: boolean): void {
-    this.plugin.settings.context[key] = enabled;
-    void this.plugin.saveSettings();
-    this.renderContextManager();
-    this.updateUsageBar();
-  }
-
-  private removeContextSource(id: string): void {
-    const active = this.resolveMarkdownContextView()?.file ?? this.app.workspace.getActiveFile();
-    const model = buildContextManagerModel({
-      toggles: this.plugin.settings.context,
-      activeNotePath: active?.path ?? null,
-      paths: this.attachedPaths,
-      media: this.attachedMedia,
-      pages: this.attachedPages,
-    });
-    const index = model.sources.findIndex((source) => source.id === id);
-    if (index < 0) return;
-    if (index < this.attachedPaths.length) this.attachedPaths.splice(index, 1);
-    else if (index < this.attachedPaths.length + this.attachedMedia.length) this.attachedMedia.splice(index - this.attachedPaths.length, 1);
-    else this.attachedPages.splice(index - this.attachedPaths.length - this.attachedMedia.length, 1);
-    this.renderContextManager();
-    this.updateUsageBar();
-  }
-
-  private retryContextSource(id: string): void {
-    const page = this.attachedPages.find((candidate) => `page:${candidate.url}` === id);
-    if (page) void this.captureAttachedPage(page);
-  }
-
-  private openContextPicker(): void {
-    this.contextManager.close({ restoreFocus: false });
-    this.inputEl.focus();
-    const value = this.inputEl.value;
-    const needsSpace = value.length > 0 && !value.endsWith(" ");
-    this.inputEl.value = `${value}${needsSpace ? " " : ""}@`;
-    const end = this.inputEl.value.length;
-    this.inputEl.setSelectionRange(end, end);
-    this.inputEl.dispatchEvent(new Event("input"));
-  }
-
-  /**
-   * Render the per-message control row. The visible knobs adapt to the selected
-   * model's capabilities, so a control that the model would 400 on is hidden
-   * rather than shown-and-broken. Ollama (local) sessions show no Claude knobs.
-   */
-  private renderControls(): void {
-    this.controlsEl.empty();
-
-    // The model switcher is built ONCE here and never destroyed on knob changes,
-    // so picking a model doesn't flicker or drop focus. Only `knobsEl` rebuilds.
-    const modelWrap = this.controlsEl.createDiv({ cls: "cc-ctl cc-ctl-model" });
-    const select = modelWrap.createEl("select", { cls: "cc-ctl-select", attr: { "aria-label": "Model" } });
-    const claudeGroup = select.createEl("optgroup", { attr: { label: "Claude" } });
-    const ids = new Set(CLAUDE_MODELS.map((m) => m.id));
-    for (const m of CLAUDE_MODELS) claudeGroup.createEl("option", { value: m.id, text: m.label });
-    if (!ids.has(this.controls.model)) claudeGroup.createEl("option", { value: this.controls.model, text: this.controls.model });
-    select.value = this.controls.model;
-    select.addEventListener("change", () => void this.onModelSelect(select.value));
-    // Pull in detected Ollama models so a local model can be picked here without
-    // opening settings. Async — appended once the local server answers.
-    void this.appendLocalModelOptions(select);
-    void this.appendCustomModelOptions(select);
-
-    // Reasoning indicator: lit when the current backend thinks before
-    // answering (Claude thinking on, or a local model with thinking metadata).
-    const reasoning = this.controlsEl.createEl("button", {
-      cls: "cc-ctl cc-reasoning-indicator",
-      attr: { "aria-label": "Reasoning status", tabindex: "-1" },
-    });
-    setIcon(reasoning, "brain");
-    this.reasoningEl = reasoning;
-    this.refreshCapabilityIndicators();
-
-    // Ask / Plan / Act — one segmented control for whether Claude can create /
-    // edit notes in chat. Only meaningful for Claude (Ollama has no vault
-    // tools), so it hides itself on local sessions. Each write still asks for
-    // confirmation; Act just controls whether the tools are offered.
-    this.modeControl = new ModeControl(this.controlsEl, {
-      initial: this.currentMode(),
-      onChange: (m) => this.applyMode(m),
-    });
-    this.updateModeControl();
-
-    // Knobs (thinking / effort / temp / max) live in a popover behind a single
-    // "tune" button, so the footer stays clean and Send is never buried.
-    const tuneWrap = this.controlsEl.createDiv({ cls: "cc-tune" });
-    const tuneBtn = tuneWrap.createEl("button", {
-      cls: "cc-icon-btn clickable-icon cc-tune-btn",
-      attr: { "aria-label": "Model controls — thinking, temperature, max tokens", "aria-expanded": "false" },
-    });
-    setIcon(tuneBtn, "sliders-horizontal");
-    this.knobsEl = tuneWrap.createDiv({ cls: "cc-knobs cc-knobs-popover" });
-    this.renderKnobs();
-    tuneBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      const open = !this.knobsEl.hasClass("is-open");
-      this.knobsEl.toggleClass("is-open", open);
-      tuneBtn.setAttr("aria-expanded", String(open));
-    });
-    // Close the popover on an outside click (auto-cleaned with the view).
-    this.registerDomEvent(activeDocument, "click", (e) => {
-      if (this.knobsEl?.hasClass("is-open") && !tuneWrap.contains(e.target as Node)) {
-        this.knobsEl.removeClass("is-open");
-        tuneBtn.setAttr("aria-expanded", "false");
-      }
-    });
-  }
-
-  /** Append a "Local (Ollama)" optgroup of detected models to the switcher. */
-  private async appendLocalModelOptions(select: HTMLSelectElement): Promise<void> {
-    let detected: string[];
-    try {
-      detected = await this.plugin.router().ollama.listModels();
-    } catch (e) {
-      console.debug("Claude Companion: Ollama model listing failed", e);
-      detected = [];
-    }
-    const configured = this.plugin.settings.ollamaModel;
-    const models = mergeDetectedModels(detected, configured);
-    if (!models.length || !select.isConnected) return;
-    const group = select.createEl("optgroup", { attr: { label: "Local (Ollama)" } });
-    for (const m of models) group.createEl("option", { value: `ollama:${m}`, text: `${m} · local` });
-    // Now that local options exist, reflect the active backend in the selection.
-    if (this.plugin.settings.chatBackend === "local" && configured) select.value = `ollama:${configured}`;
-  }
-
-  /**
-   * Append a "Local (endpoint)" optgroup for the OpenAI-compatible server —
-   * every model it reports, so one can be picked here without knowing its id.
-   */
-  private async appendCustomModelOptions(select: HTMLSelectElement): Promise<void> {
-    if (!this.plugin.settings.openaiCompatHost.trim()) return;
-    let detected: string[];
-    try {
-      detected = await this.plugin.router().openaiCompat.listModels();
-    } catch (e) {
-      console.debug("Claude Companion: custom endpoint model listing failed", e);
-      detected = [];
-    }
-    const configured = this.plugin.settings.openaiCompatModel;
-    const models = mergeDetectedModels(detected, configured);
-    if (!models.length || !select.isConnected) return;
-    const group = select.createEl("optgroup", { attr: { label: "Local (endpoint)" } });
-    for (const m of models) group.createEl("option", { value: `custom:${m}`, text: `${m} · endpoint` });
-    const active = configured.trim() || models[0];
-    if (this.plugin.settings.chatBackend === "custom" && active) select.value = `custom:${active}`;
-  }
-
-  /**
-   * Apply a model-switcher choice. Picking a `ollama:<model>` entry routes the
-   * chat to that local model (backend → local); picking a Claude model routes
-   * back to Claude (backend → auto, so it still falls back to local when needed).
-   */
-  private async onModelSelect(value: string): Promise<void> {
-    if (value.startsWith("ollama:")) {
-      this.plugin.settings.ollamaModel = value.slice("ollama:".length);
-      this.plugin.settings.chatBackend = "local";
-    } else if (value.startsWith("custom:")) {
-      // The picker now lists every endpoint model, so the choice has to land in
-      // settings — the router reads openaiCompatModel, not the select value.
-      this.plugin.settings.openaiCompatModel = value.slice("custom:".length);
-      this.plugin.settings.chatBackend = "custom";
-    } else {
-      this.controls.model = value;
-      if (this.plugin.settings.chatBackend === "local" || this.plugin.settings.chatBackend === "custom") this.plugin.settings.chatBackend = "auto";
-    }
-    await this.plugin.saveSettings();
-    this.renderKnobs(); // capabilities/provider changed → rebuild dependent knobs
-    this.refreshModelLabel();
-    this.refreshCapabilityIndicators(); // provider changed → gates + reasoning
-    this.updateUsageBar();
-    void this.refreshBackendPill();
-  }
-
-  /** Rebuild only the capability-dependent knobs (keeps the model select stable). */
-  /** Rebuild only the capability-dependent knobs into the given container. */
-  private renderKnobsInto(parent: HTMLElement): void {
-    parent.empty();
-
-    // Chat text size — provider-independent, so it sits above the model knobs
-    // (and stays available on local sessions). Drives --cc-chat-font live.
-    const fontWrap = parent.createDiv({ cls: "cc-ctl cc-ctl-font", attr: { "aria-label": "Chat text size" } });
-    fontWrap.createSpan({ cls: "cc-ctl-label", text: "text" });
-    const font = fontWrap.createEl("input", {
-      cls: "cc-ctl-range",
-      attr: { type: "range", min: "11", max: "20", step: "1", "aria-label": "Chat text size (px)" },
-    });
-    const fontOut = fontWrap.createSpan({ cls: "cc-ctl-val" });
-    font.value = String(this.plugin.settings.chatFontSize);
-    fontOut.setText(`${this.plugin.settings.chatFontSize}px`);
-    font.addEventListener("input", () => {
-      const px = parseInt(font.value, 10);
-      this.plugin.settings.chatFontSize = px;
-      fontOut.setText(`${px}px`);
-      this.applyChatFontSize(); // live
-    });
-    font.addEventListener("change", () => void this.plugin.saveSettings());
-
-    const controlCaps = this.plugin.router().chatCapabilities();
-    if (!controlCaps.claudeControls) {
-      parent.createSpan({ cls: "cc-ctl-note", text: controlCaps.cli ? "Claude Code owns thinking and effort for this backend" : "local model · Claude controls apply when routed to Claude" });
-      return;
-    }
-
-    const caps = capabilitiesFor(this.controls.model);
-    const knobs = knobVisibility(caps, this.controls);
-
-    if (knobs.think) {
-      const think = parent.createEl("button", { cls: "cc-ctl cc-ctl-toggle", text: "Think", attr: { "aria-label": "Extended thinking" } });
-      think.toggleClass("is-active", this.controls.thinking);
-      think.addEventListener("click", () => {
-        this.controls.thinking = !this.controls.thinking;
-        this.renderKnobsInto(parent);
+  /** "@" project item / pill remove-×: `id` null clears the project. */
+  private chooseProjectById(id: string | null): void {
+    if (id === null) {
+      void (async () => {
+        if (this.conversationId) {
+          await this.plugin.setChatProject(this.conversationId, null);
+          await this.refreshCurrentProject();
+        } else { this.pendingProjectId = null; this.setLocalProject(null); }
         this.updateUsageBar();
-        this.refreshCapabilityIndicators();
-      });
-
-      if (knobs.effort) {
-        const eff = parent.createEl("select", { cls: "cc-ctl cc-ctl-select", attr: { "aria-label": "Effort" } });
-        for (const level of effortLevels(caps)) eff.createEl("option", { value: level, text: `effort: ${level}` });
-        if (!effortLevels(caps).includes(this.controls.effort)) this.controls.effort = "high";
-        eff.value = this.controls.effort;
-        eff.addEventListener("change", () => {
-          this.controls.effort = eff.value;
-        });
-      }
-
-      if (knobs.showReasoning) {
-        const show = parent.createEl("button", { cls: "cc-ctl cc-ctl-toggle", text: "Show reasoning" });
-        show.toggleClass("is-active", this.controls.showThinking);
-        show.addEventListener("click", () => {
-          this.controls.showThinking = !this.controls.showThinking;
-          show.toggleClass("is-active", this.controls.showThinking);
-        });
-      }
-    }
-
-    if (caps.temperature && !this.controls.thinking) {
-      const tempWrap = parent.createDiv({ cls: "cc-ctl cc-ctl-temp", attr: { "aria-label": "Temperature (double-click to reset)" } });
-      tempWrap.createSpan({ cls: "cc-ctl-label", text: "temp" });
-      const temp = tempWrap.createEl("input", {
-        cls: "cc-ctl-range",
-        attr: { type: "range", min: "0", max: "1", step: "0.1", "aria-label": "Temperature" },
-      });
-      const out = tempWrap.createSpan({ cls: "cc-ctl-val" });
-      const sync = () => out.setText(this.controls.temperature === null ? "auto" : this.controls.temperature.toFixed(1));
-      temp.value = String(this.controls.temperature ?? 0.7);
-      sync();
-      temp.addEventListener("input", () => {
-        this.controls.temperature = parseFloat(temp.value);
-        sync();
-      });
-      tempWrap.addEventListener("dblclick", () => {
-        this.controls.temperature = null;
-        sync();
-      });
-    }
-
-    const maxWrap = parent.createDiv({ cls: "cc-ctl cc-ctl-max" });
-    maxWrap.createSpan({ cls: "cc-ctl-label", text: "max" });
-    const maxIn = maxWrap.createEl("input", {
-      cls: "cc-ctl-num",
-      attr: { type: "number", min: "1", placeholder: String(this.plugin.settings.maxTokens), "aria-label": "Max output tokens" },
-    });
-    if (this.controls.maxTokens) maxIn.value = String(this.controls.maxTokens);
-    maxIn.addEventListener("change", () => {
-      const n = parseInt(maxIn.value, 10);
-      this.controls.maxTokens = Number.isFinite(n) && n > 0 ? n : null;
-      this.updateUsageBar();
-    });
-  }
-
-  private renderKnobs(): void {
-    if (this.knobsEl) this.renderKnobsInto(this.knobsEl);
-  }
-
-  private renderEmptyState(): void {
-    if (this.messages.length > 0) return;
-    this.messagesEl.empty();
-    const empty = this.messagesEl.createDiv({ cls: "cc-empty" });
-    setIcon(empty.createDiv({ cls: "cc-empty-icon" }), "sparkles");
-    empty.createDiv({ cls: "cc-empty-title", text: "Claude, in your vault." });
-    empty.createDiv({
-      cls: "cc-empty-sub",
-      text: "Stay in the thread across notes, research, thinking, and finished work.",
-    });
-    if (this.setupRequired()) {
-      // Without a credential every example below would just error — show the
-      // connect card instead and stop.
-      this.renderSetupCard(empty);
+      })();
       return;
     }
-    const workspaceMount = empty.createDiv({ cls: "cc-context-workspace-mount", attr: { "aria-live": "polite" } });
-    void this.renderContextualWorkspace(workspaceMount);
-    empty.createDiv({ cls: "cc-empty-section-label", text: "START SOMETHING ELSE" });
-    const examples: { label: string; prompt: string; needsActiveNote?: boolean }[] = [
-      { label: "📋 Summarize my active note", prompt: "Summarize my active note as concise bullet points with the key takeaways first.", needsActiveNote: true },
-      { label: "📊 Turn this into a dashboard", prompt: "Turn my current note into a single beautiful, self-contained interactive dashboard artifact using the design system.", needsActiveNote: true },
-      { label: "🗺️ Plan a feature", prompt: "Help me plan a feature. Ask me clarifying questions first, then produce an implementation plan." },
-      { label: "🔍 Ask across my vault", prompt: "Search my vault and answer: what have I written about " },
+    const project = this.cachedProjects.find((p) => p.id === id);
+    if (project) void this.applyChosenProject(project);
+  }
+
+  private onAtChoose(item: AtItem): Promise<void> { return this.composer.onAtChoose(item); }
+
+  private renderContextManager(): void { return this.composer.renderContextManager(); }
+
+  private toggleAutomaticContext(key: AutomaticContextKey, enabled: boolean): void { return this.composer.toggleAutomaticContext(key, enabled); }
+
+  private removeContextSource(id: string): void { return this.composer.removeContextSource(id); }
+
+  private retryContextSource(id: string): void { return this.composer.retryContextSource(id); }
+
+  private openContextPicker(): void { return this.composer.openContextPicker(); }
+
+  private renderControls(): void { return this.composer.renderControls(); }
+
+  private renderEmptyState(): void { return this.transcript.renderEmptyState(); }
+
+  /** Every CLI backend the router actually exposes, paired with its module (label, sign-in hint) — skips a partial test stub instead of crashing on it. */
+  private cliEntries(router: ProviderRouter): { backend: CliBackend; provider: CliSignInProvider }[] {
+    const candidates: [CliBackend, CliSignInProvider | undefined][] = [
+      [claudeBackend, router.claudeCli],
+      [codexBackend, (router as { codexCli?: CliSignInProvider }).codexCli],
+      [opencodeBackend, (router as { opencodeCli?: CliSignInProvider }).opencodeCli],
     ];
-    const grid = empty.createDiv({ cls: "cc-empty-examples" });
-    for (const ex of examples) {
-      const card = grid.createEl("button", { cls: "cc-example", text: ex.label });
-      card.addEventListener("click", () => {
-        if (ex.needsActiveNote && !this.app.workspace.getActiveFile()) {
-          new Notice("Open a note first, then try this one.");
-          return;
-        }
-        this.inputEl.value = ex.prompt;
-        this.inputEl.focus();
-        this.autosizeInput();
-        this.updateUsageBar();
-        // A trailing-space prompt (the vault-search one) waits for the user to type.
-        if (!ex.prompt.endsWith(" ")) void this.onSend();
-      });
-    }
+    return candidates.filter((e): e is [CliBackend, CliSignInProvider] => e[1] != null).map(([backend, provider]) => ({ backend, provider }));
   }
 
   /** True when chatting requires configuration the user hasn't done yet. */
   private setupRequired(): boolean {
     const router = this.plugin.router();
+    const entries = this.cliEntries(router);
+    const signedIn = (id: string) => entries.find((e) => e.backend.id === id)?.provider.hasCredentials() ?? false;
     return needsCredentialSetup({
       backend: router.chatBackend,
       hasAnthropicCredential: router.anthropic.hasCredentials(),
-      hasClaudeCli: router.claudeCli.hasCredentials(),
+      hasClaudeCli: signedIn("claude-cli"),
+      hasCodexCli: signedIn("codex-cli"),
+      hasOpencodeCli: signedIn("opencode-cli"),
     });
   }
 
@@ -1088,34 +603,40 @@ export class ChatView extends ItemView {
   private renderSetupCard(parent: HTMLElement): void {
     const card = parent.createDiv({ cls: "cc-setup-card" });
     const router = this.plugin.router();
-    const cliSignedIn = router.claudeCli.hasCredentials();
-    if (!cliSignedIn && router.claudeCli.available() && !this.cliSetupProbeInFlight) {
-      this.cliSetupProbeInFlight = true;
-      void router.claudeCli.refresh().finally(() => {
-        this.cliSetupProbeInFlight = false;
-        if (router.claudeCli.hasCredentials() && this.messagesEl.querySelector(".cc-setup-card")) this.renderEmptyState();
-      });
+    const entries = this.cliEntries(router);
+    for (const { backend, provider } of entries) {
+      if (!provider.hasCredentials() && provider.available() && !this.cliSetupProbeInFlight.has(backend.id)) {
+        this.cliSetupProbeInFlight.add(backend.id);
+        void provider.refresh().finally(() => {
+          this.cliSetupProbeInFlight.delete(backend.id);
+          if (provider.hasCredentials() && this.messagesEl.querySelector(".cc-setup-card")) this.renderEmptyState();
+        });
+      }
     }
+    const signedIn = entries.filter((e) => e.provider.hasCredentials());
+    const lead = signedIn[0]?.backend;
     const storage = this.plugin.secrets().available()
       ? "It’s kept in your device’s secret storage, not in this vault — nothing else leaves your machine."
       : "It’s stored in this vault’s plugin data — nothing else leaves your machine.";
     card.createDiv({ cls: "cc-setup-title", text: "Connect to Claude" });
     card.createDiv({
       cls: "cc-setup-sub",
-      text: cliSignedIn
-        ? `Claude Code is signed in on this computer. Use it for chat on your subscription, or add an Anthropic API key. ${storage}`
+      text: lead
+        ? `${lead.label} is signed in on this computer. Use it for chat on your subscription, or add an Anthropic API key. ${storage}`
         : `Add your Anthropic API key to start chatting. ${storage}`,
     });
-    if (cliSignedIn) {
+    if (signedIn.length > 0) {
       const cli = card.createDiv({ cls: "cc-setup-cli" });
-      const useCli = cli.createEl("button", { cls: "mod-cta cc-setup-cli-use", text: "Use Claude Code sign-in" });
-      useCli.addEventListener("click", () => void (async () => {
-        this.plugin.settings.chatBackend = "claude-cli";
-        await this.plugin.saveSettings();
-        await this.plugin.runFirstRunPrompts();
-        this.renderEmptyState();
-        this.refreshModelLabel();
-      })());
+      for (const { backend } of signedIn) {
+        const useCli = cli.createEl("button", { cls: "mod-cta cc-setup-cli-use", text: `Use ${backend.label} sign-in` });
+        useCli.addEventListener("click", () => void (async () => {
+          this.plugin.settings.chatBackend = backend.id;
+          await this.plugin.saveSettings();
+          await this.plugin.continueOnboarding();
+          this.renderEmptyState();
+          this.refreshModelLabel();
+        })());
+      }
       card.createDiv({ cls: "cc-setup-or", text: "or" });
     }
     const link = card.createEl("a", {
@@ -1163,44 +684,11 @@ export class ChatView extends ItemView {
       } else {
         card.remove();
       }
-      // Prompts held back while there was no credential can run now.
-      await this.plugin.runFirstRunPrompts();
+      // Setup held back while there was no credential can run now.
+      await this.plugin.continueOnboarding();
     })());
     const settingsBtn = card.createEl("button", { cls: "cc-setup-settings", text: "Other options (OAuth, environment)…" });
     settingsBtn.addEventListener("click", () => this.openSettings());
-  }
-
-  /** Surface the setup card on a blocked send without losing the typed text. */
-  private showSetupCard(): void {
-    const existing = this.messagesEl.querySelector<HTMLElement>(".cc-setup-card");
-    if (existing) {
-      existing.addClass("cc-setup-attn");
-      window.setTimeout(() => existing.removeClass("cc-setup-attn"), 900);
-      return;
-    }
-    this.renderSetupCard(this.messagesEl);
-    this.scrollToBottom();
-  }
-
-  private async renderContextualWorkspace(mount: HTMLElement): Promise<void> {
-    const workspace = await this.plugin.companionWorkspaceContext();
-    if (!mount.isConnected || this.messages.length > 0 || !workspace) return;
-    mount.empty();
-    const card = mount.createEl("section", { cls: `cc-context-workspace is-${workspace.kind}`, attr: { "aria-label": "Current Companion workspace" } });
-    card.createDiv({ cls: "cc-context-workspace-eyebrow", text: workspace.eyebrow });
-    card.createEl("h3", { text: workspace.title });
-    card.createEl("p", { text: workspace.description });
-    card.createDiv({ cls: "cc-context-workspace-meta", text: workspace.meta });
-    const actions = card.createDiv({ cls: "cc-context-workspace-actions" });
-    const primary = actions.createEl("button", { cls: "mod-cta", text: workspace.primaryAction });
-    const secondary = actions.createEl("button", { text: workspace.secondaryAction });
-    if (workspace.kind === "research") {
-      primary.addEventListener("click", () => void this.plugin.activateResearchDesk(workspace.contextPath));
-      secondary.addEventListener("click", () => void this.prepareWorkspaceQuestion(workspace));
-    } else {
-      primary.addEventListener("click", () => void this.prepareWorkspaceQuestion(workspace));
-      secondary.addEventListener("click", () => void this.plugin.activateRelatedView());
-    }
   }
 
   /** Attach canonical workspace context and hand control back to the user. */
@@ -1214,26 +702,27 @@ export class ChatView extends ItemView {
       ? `Help me continue ${workspace.title.replace(/^Continue /, "")}. `
       : `Help me continue working with ${workspace.title.replace(/^Continue with /, "")}. `;
     this.renderContextManager();
-    this.autosizeInput();
+    this.composer.autosizeInput();
     this.updateUsageBar();
     this.inputEl.focus();
   }
 
   clearChat(): void {
-    this.abort?.abort();
-    this.streaming = false;
+    this.detachTurnRendering();
     this.messages = [];
     this.session = { ...EMPTY_SESSION };
     // Plan Mode is per-conversation — a fresh chat starts with it off.
     this.planMode = false;
     this.updateModeControl();
     // The previous conversation is already auto-saved; detach so the next turn
-    // begins a fresh session.
-    void this.plugin.startNewConversation();
+    // begins a fresh one instead of continuing it.
+    this.conversationId = null;
+    this.pendingProjectId = null;
+    this.setLocalProject(null);
     this.attachedPaths = [];
     this.attachedPages = [];
-    this.dismissedPageUrl = null;
-    this.pageOfferEl?.setCssStyles({ display: "none" });
+    this.composer.dismissedPageUrl = null;
+    this.composer.pageOfferEl?.setCssStyles({ display: "none" });
     this.renderContextManager();
     this.messagesEl.empty();
     this.renderEmptyState();
@@ -1265,7 +754,7 @@ export class ChatView extends ItemView {
     // Check credentials BEFORE clearing the composer — a new user's first
     // message must never be silently discarded.
     if (this.setupRequired()) {
-      this.showSetupCard();
+      this.transcript.showSetupCard();
       return;
     }
     // A typed obsidian-agent skill invocation ("/wikilink-weaver <note path>") composes into a full turn with vault search on.
@@ -1276,34 +765,18 @@ export class ChatView extends ItemView {
       this.lastUserText = prompt;
       this.lastDisplay = display;
       this.inputEl.value = "";
-      this.autosizeInput();
+      this.composer.autosizeInput();
       await this.run(prompt, display, undefined, { context: { searchVault: true } });
       return;
     }
     this.lastUserText = text;
     this.lastDisplay = undefined;
     this.inputEl.value = "";
-    this.autosizeInput();
+    this.composer.autosizeInput();
     await this.run(text);
   }
 
-  /** Grow the composer with its content (1→~8 rows), then stop and scroll. */
-  private autosizeInput(): void {
-    const el = this.inputEl;
-    if (!el) return;
-    el.setCssStyles({ height: "auto" });
-    // Phone: ~6 rows then internal scroll, so the composer never eats the
-    // reading surface; desktop gets ~8 rows.
-    const max = Platform.isMobile ? 132 : 200;
-    el.setCssStyles({ height: `${Math.min(el.scrollHeight, max)}px` });
-  }
-
-  /** Open/refresh/close the slash palette based on the current input. */
-  private syncSlashMenu(): void {
-    const q = parseSlashQuery(this.inputEl.value);
-    if (q === null) this.slashMenu.hide();
-    else this.slashMenu.show(q);
-  }
+  private syncSlashMenu(): void { return this.composer.syncSlashMenu(); }
 
   /** Re-read the templates folder and rebuild the slash catalog (templates last). */
   private async reloadTemplates(): Promise<void> {
@@ -1322,14 +795,14 @@ export class ChatView extends ItemView {
       backend: this.plugin.settings.chatBackend,
       clearComposer: () => {
         this.inputEl.value = "";
-        this.autosizeInput();
+        this.composer.autosizeInput();
       },
       activateResearchDesk: () => this.plugin.activateResearchDesk(),
       requestCompletion: (prompt, display) => this.submitPrompt(prompt, display),
     })) return;
 
     this.inputEl.value = "";
-    this.autosizeInput();
+    this.composer.autosizeInput();
 
     // User template: substitute placeholders against the live editor state,
     // then send with the note's optional model/context overrides for this turn.
@@ -1350,7 +823,7 @@ export class ChatView extends ItemView {
         // Insert the template and let the user finish typing (e.g. "/explain ").
         this.inputEl.value = cmd.prompt;
         this.inputEl.focus();
-        this.autosizeInput();
+        this.composer.autosizeInput();
         this.updateUsageBar();
         return;
       }
@@ -1363,7 +836,7 @@ export class ChatView extends ItemView {
     if (cmd.action?.startsWith(SKILL_ACTION_PREFIX)) {
       this.inputEl.value = `/${cmd.action.slice(SKILL_ACTION_PREFIX.length)} `;
       this.inputEl.focus();
-      this.autosizeInput();
+      this.composer.autosizeInput();
       this.updateUsageBar();
       return;
     }
@@ -1396,7 +869,7 @@ export class ChatView extends ItemView {
         this.openHistory();
         break;
       case "save":
-        await this.saveChat();
+        await this.transcript.saveChat();
         break;
       case "delete-active":
         await this.plugin.deleteActiveConversation();
@@ -1445,10 +918,12 @@ export class ChatView extends ItemView {
     let { provider, model } = router.chatProvider();
     const backend = router.chatBackend;
     let caps = router.chatCapabilities();
-    if (backend === "claude-cli" && !caps.cli && !router.anthropic.hasCredentials()) {
-      // The cached sign-in probe can be stale (user just ran `claude auth login`); re-probe once before blocking.
-      if (router.claudeCli.available()) {
-        await router.claudeCli.refresh();
+    if ((backend === "claude-cli" || backend === "codex-cli" || backend === "opencode-cli") && !caps.cli && !router.anthropic.hasCredentials()) {
+      const entry = this.cliEntries(router).find((e) => e.backend.id === backend);
+      const label = entry?.backend.label ?? "This backend";
+      // The cached sign-in probe can be stale (user just ran the sign-in command); re-probe once before blocking.
+      if (entry?.provider.available()) {
+        await entry.provider.refresh();
         caps = router.chatCapabilities();
         if (caps.cli) {
           ({ provider, model } = router.chatProvider());
@@ -1456,7 +931,7 @@ export class ChatView extends ItemView {
         }
       }
       if (!caps.cli) {
-        new Notice(router.claudeCli.available() ? "Claude Code is not signed in — run `claude auth login`, or add an API key in Companion settings." : "Claude Code runs on desktop only. Add an API key to chat here.");
+        new Notice(entry?.provider.available() ? `${label} is not signed in — ${entry.backend.signInHint}, or add an API key in Companion settings.` : `${label} runs on desktop only. Add an API key to chat here.`);
         return;
       }
     }
@@ -1472,9 +947,12 @@ export class ChatView extends ItemView {
     }
 
     this.messages.push({ role: "user", content: userText, ...(display !== undefined ? { display } : {}) });
+    // Snapshot now (not read from `this.messages` at completion) — the view may
+    // switch conversations while this turn is still in flight.
+    const turnMessages = [...this.messages];
     let turn: { conversationId: string; turnId: string };
     try {
-      turn = await this.plugin.beginActiveConversationTurn(this.messages, {
+      turn = await this.plugin.beginActiveConversationTurn(this.conversationId, this.messages, {
         backend,
         model: this.turnModelOverride ?? model,
         mode: this.currentMode(),
@@ -1483,11 +961,15 @@ export class ChatView extends ItemView {
       this.messages.pop();
       if (this.inputEl) {
         this.inputEl.value = userText;
-        this.autosizeInput();
+        this.composer.autosizeInput();
       }
       new Notice(`Couldn't save this request, so it was not started: ${error instanceof Error ? error.message : String(error)}`);
       return;
     }
+    this.conversationId = turn.conversationId;
+    this.refreshTabTitle();
+    if (this.pendingProjectId !== null) { await this.plugin.setChatProject(turn.conversationId, this.pendingProjectId); this.pendingProjectId = null; }
+    await this.refreshCurrentProject(); // memoized for the rest of this turn
     this.currentTurn = turn;
     this.abort = new AbortController();
     const controller = this.abort;
@@ -1501,7 +983,7 @@ export class ChatView extends ItemView {
     });
     this.setSending(true);
     this._turnUsage = null;
-    this.renderMessage("user", display ?? userText, { command: display !== undefined });
+    this.transcript.renderMessage("user", display ?? userText, { command: display !== undefined });
 
     // Agent mode: the model pulls vault context itself via tools. Gated on the
     // provider actually round-tripping tool_use (Claude, and local models whose
@@ -1521,14 +1003,21 @@ export class ChatView extends ItemView {
     const toggles = agentActive
       ? { ...this.plugin.settings.context, ...this.turnContextOverride, searchVault: false }
       : { ...this.plugin.settings.context, ...this.turnContextOverride };
+    // A chat project's pinned notes join the attach list for this turn only —
+    // the composer's own attachedPaths (session-scoped) stay untouched.
+    const pinnedPaths: AttachedPath[] = (this.currentChatProject?.pinned ?? [])
+      .filter((path) => !this.attachedPaths.some((a) => a.path === path))
+      .map((path) => ({ path, kind: "note" as const }));
+    const searchScope = this.currentChatProject ? projectSearchScope(this.currentChatProject) : undefined;
     const ctx = await gatherContext(
       this.app,
       this.plugin.settings,
       toggles,
       userText,
-      (q, k) => this.plugin.semanticSearch(q, k),
-      this.attachedPaths,
+      (q, k) => this.plugin.semanticSearch(q, k, searchScope),
+      [...this.attachedPaths, ...pinnedPaths],
       this.attachedPages,
+      searchScope,
     );
     if (controller.signal.aborted) return;
     // A resumed Claude Code session already owns its history. Sending the whole
@@ -1538,14 +1027,14 @@ export class ChatView extends ItemView {
     if (ctx.text) {
       const last = apiMessages[apiMessages.length - 1];
       if (last && typeof last.content === "string") last.content = `${ctx.text}\n\n---\n\n${last.content}`;
-      this.annotateContext(ctx.sources);
+      this.transcript.annotateContext(ctx.sources);
     }
 
     // Attached PDFs/images become content blocks ahead of the text (media is
     // per-turn: consumed by this send, pills cleared). Local backends can't
     // see them — textContent() drops non-text blocks on the Ollama path.
     if (this.attachedMedia.length > 0) {
-      const blocks = await this.mediaBlocks();
+      const blocks = await this.composer.mediaBlocks();
       if (controller.signal.aborted) return;
       const last = apiMessages[apiMessages.length - 1];
       if (blocks.length > 0 && last && typeof last.content === "string") {
@@ -1559,80 +1048,71 @@ export class ChatView extends ItemView {
       this.lastUserMedia = [];
     }
 
-    const { bubble, body } = this.createAssistantBubble();
-
-    // Attempt #1 on the primary backend (Claude unless backend is "local"/"custom").
+    const { bubble, body } = this.transcript.createAssistantBubble();
     const startedOnLocal = caps.local;
-    const err1 = agentActive || caps.cli
-      ? await this.agentTurn(apiMessages, bubble, body)
-      : startedOnLocal
-        ? await this.streamTurn("local", apiMessages, bubble, body)
-        : await this.streamTurn("claude", apiMessages, bubble, body);
+    const wantThinking = agentActive || caps.cli
+      ? !!(this.controls.thinking && this.controls.showThinking)
+      : !startedOnLocal && !!(this.controls.thinking && this.controls.showThinking);
+    // The primary-backend/local-fallback decision runs inside
+    // ChatTurnService.start() so it keeps going — and still persists — even if
+    // this view closes mid-turn. Mirrors the fallback policy run() used to
+    // apply itself: an agent turn that already produced text/trace despite an
+    // error is a completed answer with a notice, never a fallback trigger.
+    const fallbackProviderId: ErrorHintProvider = caps.cli ? (caps.cliBackend ?? "claude-cli") : startedOnLocal ? "ollama" : "anthropic";
+    const coreRun = async (handlers: AgentTurnHandlers, signal: AbortSignal): Promise<AgentTurnResult> => {
+      const primary = agentActive || caps.cli
+        ? await this.agentTurn(apiMessages, handlers, signal)
+        : startedOnLocal
+          ? await this.streamTurn("local", apiMessages, handlers, signal)
+          : await this.streamTurn("claude", apiMessages, handlers, signal);
+      if (!primary.error) return primary;
 
-    // Fallback: if Claude failed with an offline/usage error and a local model is
-    // available, retry transparently so you keep working with no internet/tokens.
-    if (err1) {
+      const isAgent = agentActive || caps.cli;
+      if (isAgent && (primary.text.trim().length > 0 || primary.trace.length > 0)) {
+        handlers.onNotice?.(`Turn ended early: ${primary.error.message}`);
+        return { text: primary.text, trace: primary.trace, ...(primary.aborted !== undefined ? { aborted: primary.aborted } : {}), ...(primary.capped !== undefined ? { capped: primary.capped } : {}) };
+      }
+
       const fb = await router.localFallback();
-      const doFallback = shouldFallbackToLocal({ backend, localAvailable: fb !== null, error: err1 });
-      if (doFallback && fb) {
-        this.annotateFallback(bubble, fallbackReason(err1), fb.model);
-        const err2 = await this.streamTurn("local", apiMessages, bubble, body, fb);
-        if (err2) {
-          // Keep whatever streamed before the failure — persist it like an
-          // abort, then append the error below it.
-          await this.finishAssistant(this._lastBuffer || null, bubble, undefined, "interrupted");
-          this.renderError(body, err2.message ?? "Request failed", fb.provider.id);
-          this.restoreMediaAfterFailure();
-        }
-      } else {
-        await this.finishAssistant(this._lastBuffer || null, bubble, undefined, "interrupted");
-        this.renderError(body, err1.message ?? "Request failed", caps.cli ? "claude-cli" : startedOnLocal ? "ollama" : "anthropic");
-        this.restoreMediaAfterFailure();
+      const doFallback = shouldFallbackToLocal({ backend, localAvailable: fb !== null, error: primary.error });
+      if (!doFallback || !fb) {
+        tagProvider(primary.error, fallbackProviderId);
+        return primary;
       }
-    }
-
-    // If a stream ended without onDone (usually an abort), keep ordinary text
-    // recoverable but never persist a half-generated HTML artifact fence.
-    if (this.streaming) {
-      if (this._lastBuffer && hasIncompleteHtmlArtifactFence(this._lastBuffer)) {
-        this.renderInterruptedArtifact(body);
-        await this.finishAssistant(null, bubble, undefined, "interrupted");
-      } else {
-        await this.finishAssistant(this._lastBuffer || null, bubble, undefined, "interrupted");
-      }
-    }
-  }
-
-  /** Adapt this view to the TurnRenderer host contract (one per turn). */
-  private turnHost(): TurnRendererHost {
-    return {
-      renderMarkdownInto: (el, md) => this.renderMarkdownInto(el, md),
-      renderStreamingArtifactInto: (el, buffer) => this.renderStreamingArtifactInto(el, buffer),
-      scrollToBottom: () => this.scrollToBottom(),
-      clearThinkingStatus: () => this.clearThinkingStatus(),
-      createThinkingPanel: (bubble) => this.createThinkingPanel(bubble),
-      annotateTruncated: (bubble) => this.annotateTruncated(bubble),
-      mergeTurnUsage: (usage) => {
-        this._turnUsage = mergeUsage(this._turnUsage ?? undefined, usage);
-      },
-      syncBuffer: (buffer) => {
-        this._lastBuffer = buffer;
-      },
+      handlers.onNotice?.(`${fallbackReason(primary.error)} — answered locally with ${fb.model}.`);
+      const fallback = await this.streamTurn("local", apiMessages, handlers, signal, fb);
+      if (fallback.error) tagProvider(fallback.error, fb.provider.id);
+      return fallback;
     };
+
+    // Cache one instance for this turn's whole lifecycle — start() and the
+    // subscribe() below must land on the same ChatTurnService (plugin.turnService()
+    // is a memoized singleton in production, but nothing here should rely on that).
+    const turnService = this.plugin.turnService();
+    const handle = turnService.start(turn.conversationId, {
+      turnId: turn.turnId,
+      title: display ?? userText,
+      run: coreRun,
+      completeTurn: (result) => this.plugin.completeActiveConversationTurn(turn.conversationId, turn.turnId, appendAssistantMessage(turnMessages, result)),
+      interruptTurn: (result, error) => this.plugin.interruptActiveConversationTurn(turn.conversationId, turn.turnId, appendAssistantMessage(turnMessages, result), error?.message ?? "Interrupted"),
+      registerTurn: (stop) => this.plugin.registerActiveChatTurn(turn.conversationId, turn.turnId, stop),
+    });
+    this.turnRenderUnsubscribe = this.transcript.startTurnRendering(turn.conversationId, bubble, body, wantThinking, turnService);
+    await handle.result.catch(() => undefined);
   }
 
   /**
-   * Run one streaming attempt on a backend. Resolves to the error if it failed
-   * (for the fallback decision), or null on success (onDone fired). The answer
-   * and reasoning render into the passed bubble/body.
+   * Run one streaming attempt on a backend, emitting through `handlers` instead
+   * of touching the DOM directly — the view (attached or not) renders from the
+   * ChatTurnService event stream. Always resolves; never rejects.
    */
   private streamTurn(
     target: "claude" | "local",
     apiMessages: ApiMessage[],
-    bubble: HTMLElement,
-    body: HTMLElement,
+    handlers: AgentTurnHandlers,
+    signal: AbortSignal,
     localOverride?: { provider: Provider; model: string },
-  ): Promise<{ message?: string; status?: number } | null> {
+  ): Promise<AgentTurnResult> {
     const router = this.plugin.router();
     const onClaude = target === "claude";
     // "local" = the configured non-Claude chat backend (Ollama, or the custom
@@ -1644,81 +1124,78 @@ export class ChatView extends ItemView {
       ? (this.turnModelOverride ?? this.controls.model)
       : localOverride?.model ?? (useCustom ? this.plugin.settings.openaiCompatModel : this.plugin.settings.ollamaModel);
     const shape = shapeRequest({ ...this.controls, model: onClaude ? model : this.controls.model }, this.maxTokensOverride ?? this.plugin.settings.maxTokens);
-    const renderer = new TurnRenderer(this.turnHost(), bubble, body, onClaude && this.controls.thinking && this.controls.showThinking);
 
     return new Promise((resolve) => {
       let settled = false;
+      let buffer = "";
+      const fail = (error: unknown): void => {
+        if (settled) return;
+        settled = true;
+        const status = (error as { status?: number } | null)?.status;
+        const err = error instanceof Error ? error : new Error(String(error));
+        if (status !== undefined) (err as Error & { status?: number }).status = status;
+        resolve({ text: buffer, trace: [], error: err });
+      };
       const request: CompletionRequest = {
-        system: this.plugin.composeSystemPrompt(),
+        system: this.plugin.composeSystemPrompt({ project: this.currentChatProject }),
         messages: apiMessages,
         model,
         maxTokens: shape.maxTokens,
+        signal,
       };
       if (onClaude && shape.temperature !== undefined) request.temperature = shape.temperature;
       if (onClaude && shape.thinking !== undefined) request.thinking = shape.thinking;
       if (onClaude && shape.thinkingDisplay !== undefined) request.thinkingDisplay = shape.thinkingDisplay;
       if (onClaude && shape.outputConfig !== undefined) request.outputConfig = shape.outputConfig;
-      if (this.abort?.signal) request.signal = this.abort.signal;
       void provider.stream(
         request,
         {
-          onThinking: (delta) => renderer.onThinking(delta),
-          onText: (delta) => renderer.onText(delta),
-          onError: (err) => {
-            if (settled) return;
-            settled = true;
-            const status = (err as { status?: number }).status;
-            resolve(status !== undefined ? { message: err.message, status } : { message: err.message });
+          onThinking: (delta) => handlers.onThinking?.(delta),
+          onText: (delta) => {
+            buffer += delta;
+            handlers.onText(delta);
           },
-          onUsage: (usage) => renderer.onUsage(usage),
-          onTruncated: () => renderer.onTruncated(),
+          onError: (err) => fail(err),
+          onUsage: (usage) => handlers.onUsage?.(usage),
+          onTruncated: () => handlers.onTruncated?.(),
           onDone: (full) => {
             if (settled) return;
             settled = true;
-            void renderer.finalize(full).then(async () => {
-              await this.finishAssistant(full, bubble);
-              resolve(null);
-            }).catch((error: unknown) => {
-              resolve({ message: error instanceof Error ? error.message : String(error) });
-            });
+            resolve({ text: full, trace: [] });
           },
         },
       ).then(() => {
-        // stream() resolved without onError/onDone (e.g. aborted) — not an error.
+        // stream() resolved without onError/onDone (e.g. aborted) — keep the
+        // partial buffer, no error.
         if (!settled) {
           settled = true;
-          resolve(null);
+          resolve({ text: buffer, trace: [], aborted: true });
         }
-      }).catch((error: unknown) => {
-        if (settled) return;
-        settled = true;
-        const status = (error as { status?: number } | null)?.status;
-        const message = error instanceof Error ? error.message : String(error);
-        resolve(status !== undefined ? { message, status } : { message });
-      });
+      }).catch((error: unknown) => fail(error));
     });
   }
 
   /**
    * Run one agent-mode turn: Claude may call vault tools between streaming
-   * passes (spec 2026-07-05). Resolves like streamTurn — error info when the
-   * turn produced nothing (so run() can fall back to local), null when handled.
+   * passes (spec 2026-07-05). Always resolves; the caller (coreRun in run())
+   * decides whether an error means fallback, a completed-with-notice answer,
+   * or a hard failure.
    */
   private async agentTurn(
     apiMessages: ApiMessage[],
-    bubble: HTMLElement,
-    body: HTMLElement,
-  ): Promise<{ message?: string; status?: number } | null> {
+    handlers: AgentTurnHandlers,
+    signal: AbortSignal,
+  ): Promise<AgentTurnResult> {
     const { provider, model: providerModel } = this.plugin.router().chatProvider();
     const shape = shapeRequest(this.controls, this.maxTokensOverride ?? this.plugin.settings.maxTokens);
-    const renderer = new TurnRenderer(this.turnHost(), bubble, body, this.controls.thinking && this.controls.showThinking);
     const externalTools = this.planMode ? [] : await this.plugin.externalMcpTools().catch(() => []);
 
     const request: CompletionRequest = {
-      system: this.plugin.composeSystemPrompt({ agent: true, plan: this.planMode }),
+      system: this.plugin.composeSystemPrompt({ agent: true, plan: this.planMode, project: this.currentChatProject }),
       messages: apiMessages,
       model: this.turnModelOverride ?? providerModel,
       maxTokens: shape.maxTokens,
+      signal,
       // Plan Mode forces the read-only set regardless of agentAllowWrites, and
       // drops propose_note_edit — the turn should end in a plan, not an edit.
       // Otherwise propose_note_edit rides along regardless of agentAllowWrites —
@@ -1731,14 +1208,12 @@ export class ChatView extends ItemView {
     if (shape.thinking !== undefined) request.thinking = shape.thinking;
     if (shape.thinkingDisplay !== undefined) request.thinkingDisplay = shape.thinkingDisplay;
     if (shape.outputConfig !== undefined) request.outputConfig = shape.outputConfig;
-    if (this.abort?.signal) request.signal = this.abort.signal;
 
-    const chips = this.createToolChips(bubble, body);
     const deps: AgentTurnDeps = {
-      stream: (req, handlers) => provider.stream(req, handlers),
-      execute: (block, signal) =>
+      stream: (req, h) => provider.stream(req, h),
+      execute: (block, sig) =>
         parseExternalToolName(block.name)
-          ? this.executeExternalMcp(block, signal)
+          ? this.executeExternalMcp(block, sig)
           : executeTool(
               {
                 call: (name, args) => this.plugin.agentTools().call(name, args),
@@ -1748,58 +1223,25 @@ export class ChatView extends ItemView {
               block,
             ),
       maxIterations: this.plugin.settings.agentMaxIterations,
-      ...(this.abort?.signal ? { signal: this.abort.signal } : {}),
+      signal,
     };
 
     let runner: AgentTurnRunner;
     try {
-      runner = await this.turnRunnerFor(deps, request);
+      runner = await this.turnRunnerFor(deps, request, signal);
     } catch (error) {
-      return { message: error instanceof Error ? error.message : String(error) };
+      return { text: "", trace: [], error: error instanceof Error ? error : new Error(String(error)) };
     }
-    const result = await runner.run(request, {
-      onText: (delta) => renderer.onText(delta),
-      onThinking: (delta) => renderer.onThinking(delta),
-      onUsage: (usage) => renderer.onUsage(usage),
-      onTruncated: () => renderer.onTruncated(),
-      onToolStart: (block) => chips.start(block),
-      onToolResult: (block, res) => {
-        chips.finish(block, res);
-        renderer.markToolBoundary();
-      },
-      onNotice: (text) => this.annotateAgentNotice(bubble, text),
-    });
-
-    // Nothing rendered and nothing ran → let run() decide on the local fallback.
-    if (result.error && result.trace.length === 0 && result.text.trim().length === 0) {
-      const status = (result.error as { status?: number }).status;
-      return { message: result.error.message, ...(status !== undefined ? { status } : {}) };
-    }
-
-    if (result.error) this.annotateAgentNotice(bubble, `Turn ended early: ${result.error.message}`);
-    try {
-      await renderer.finalize(result.text);
-    } catch (error) {
-      const status = (error as { status?: number } | null)?.status;
-      const message = error instanceof Error ? error.message : String(error);
-      return { message, ...(status !== undefined ? { status } : {}) };
-    }
-    await this.finishAssistant(
-      result.text.trim().length > 0 ? result.text : null,
-      bubble,
-      result.trace,
-      result.aborted ? "interrupted" : "completed",
-    );
-    return null;
+    return runner.run(request, handlers);
   }
 
   /** The CLI runs the turn when the backend is Claude Code; otherwise today's provider loop does. */
-  private async turnRunnerFor(deps: AgentTurnDeps, request: CompletionRequest): Promise<AgentTurnRunner> {
+  private async turnRunnerFor(deps: AgentTurnDeps, request: CompletionRequest, signal?: AbortSignal): Promise<AgentTurnRunner> {
     const caps = this.plugin.router().chatCapabilities();
     if (!caps.cli) return providerTurnRunner(deps);
     if (!this.agentCapable) request.tools = [];
     const conversationId = this.currentTurn?.conversationId ?? this.plugin.activeConversationId();
-    this.abort?.signal.addEventListener("abort", () => this.plugin.interruptCliTurn(conversationId), { once: true });
+    signal?.addEventListener("abort", () => this.plugin.interruptCliTurn(conversationId), { once: true });
     return this.plugin.cliTurnRunner({
       conversationId,
       planMode: this.planMode,
@@ -1870,22 +1312,18 @@ export class ChatView extends ItemView {
     }
   }
 
-  /** Ask the user before an agent write tool runs; honors "allow for this session". */  private confirmAgentWrite(block: ToolUseBlock): Promise<boolean> {
+  /** Ask the user before an agent write tool runs; honors "allow for this session". */
+  private confirmAgentWrite(block: ToolUseBlock): Promise<boolean> {
     if (this.agentWriteAlways) return Promise.resolve(true);
     return new Promise((resolve) => {
       new WriteConfirmModal(this.app, block, (choice) => {
         if (choice === "always") {
           this.agentWriteAlways = true;
-          this.updateWriteGrantPill();
+          this.header.updateWriteGrantPill();
         }
         resolve(choice !== "deny");
       }).open();
     });
-  }
-
-  /** Show the session-grant pill only while the grant is live. */
-  private updateWriteGrantPill(): void {
-    this.writeGrantPillEl?.toggleClass("is-on", this.agentWriteAlways);
   }
 
   /** Push the chatFontSize setting onto the view as --cc-chat-font (drives .cc-body). */
@@ -1900,8 +1338,8 @@ export class ChatView extends ItemView {
 
   /** Reflect the mode control: hidden when the session can't act, state from currentMode(). */
   private updateModeControl(): void {
-    this.modeControl?.setVisible(this.agentCapable);
-    this.modeControl?.set(this.currentMode());
+    this.composer.modeControl?.setVisible(this.agentCapable);
+    this.composer.modeControl?.set(this.currentMode());
   }
 
   /** Apply an Ask / Plan / Act switch: writes setting + Plan Mode, the matching notice, then persist if writes changed. */
@@ -1936,95 +1374,6 @@ export class ChatView extends ItemView {
     }
   }
 
-  /** Live tool chips for the in-flight agent turn, inserted above the answer body. */
-  private createToolChips(bubble: HTMLElement, body: HTMLElement) {
-    let container: HTMLElement | null = null;
-    const open = new Map<string, HTMLElement>();
-    const ensure = (): HTMLElement => {
-      if (!container) {
-        container = bubble.createDiv({ cls: "cc-tool-chips" });
-        bubble.insertBefore(container, body);
-      }
-      return container;
-    };
-    return {
-      start: (block: ToolUseBlock): void => {
-        const chip = ensure().createEl("details", { cls: "cc-tool-chip is-running" });
-        chip.createEl("summary", { cls: "cc-tool-chip-summary", text: chipLabel(block.name, block.input) });
-        open.set(block.id, chip);
-        this.scrollToBottom();
-      },
-      finish: (block: ToolUseBlock, result: ToolResultBlock): void => {
-        const chip = open.get(block.id);
-        if (!chip) return;
-        chip.removeClass("is-running");
-        if (result.is_error) chip.addClass("is-error");
-        chip.createEl("pre", { cls: "cc-tool-chip-result", text: previewText(result.content) });
-      },
-    };
-  }
-
-  /** Re-render persisted tool chips (from a message's toolTrace) on replay. */
-  private renderTraceChips(bubble: HTMLElement, body: HTMLElement, trace: ToolTraceEntry[]): void {
-    const container = bubble.createDiv({ cls: "cc-tool-chips" });
-    bubble.insertBefore(container, body);
-    for (const t of trace) {
-      const chip = container.createEl("details", { cls: `cc-tool-chip${t.ok ? "" : " is-error"}` });
-      chip.createEl("summary", { cls: "cc-tool-chip-summary", text: chipLabel(t.name, t.argsSummary) });
-      chip.createEl("pre", { cls: "cc-tool-chip-result", text: t.resultPreview });
-    }
-  }
-
-  /** Muted status line under an agent turn (iteration cap, early end). */
-  private annotateAgentNotice(bubble: HTMLElement, text: string): void {
-    bubble.createDiv({ cls: "cc-agent-notice", text });
-  }
-
-  private async finishAssistant(
-    full: string | null,
-    bubble: HTMLElement,
-    trace?: ToolTraceEntry[],
-    outcome: "completed" | "interrupted" = "completed",
-  ): Promise<void> {
-    // Idempotent per bubble: onDone and the abort-safety net can both reach here
-    // for the same turn — only the first call commits the message + action bar.
-    if (bubble.dataset.ccFinished === "1") return;
-    bubble.dataset.ccFinished = "1";
-    this.clearThinkingStatus(); // covers no-text / error / abort turns
-    if (full && full.trim().length > 0) {
-      this.messages.push({ role: "assistant", content: full, ...(trace && trace.length > 0 ? { toolTrace: trace } : {}) });
-      this.addAssistantActions(bubble, full);
-    }
-    const turn = this.currentTurn;
-    try {
-      if (turn) {
-        if (outcome === "completed") await this.plugin.completeActiveConversationTurn(turn.conversationId, turn.turnId, this.messages);
-        else await this.plugin.interruptActiveConversationTurn(turn.conversationId, turn.turnId, this.messages);
-      } else {
-        await this.plugin.saveActiveConversation(this.messages);
-      }
-    } catch (error) {
-      new Notice(`The response is visible, but it could not be saved: ${error instanceof Error ? error.message : String(error)}`);
-    } finally {
-      if (turn && this.currentTurn?.turnId === turn.turnId) {
-        this.unregisterCurrentTurn?.();
-        this.unregisterCurrentTurn = null;
-        this.currentTurn = null;
-      }
-      this.setSending(false);
-      this.abort = null;
-    }
-    // Fold this turn's usage into the session exactly once. The API emits usage
-    // on both message_start and message_delta; counting each event would double
-    // the request count and inflate output tokens.
-    if (this._turnUsage) {
-      this.session = addUsage(this.session, this._turnUsage);
-      this._turnUsage = null;
-    }
-    this.updateUsageBar();
-    this.scrollToBottom();
-  }
-
   private async stopCurrentTurn(): Promise<void> {
     const turn = this.currentTurn;
     if (!turn) {
@@ -2048,119 +1397,7 @@ export class ChatView extends ItemView {
     }
   }
 
-  private renderInterruptedTurn(conversation: Conversation): void {
-    const row = this.messagesEl.createDiv({ cls: "cc-agent-notice cc-interrupted-turn" });
-    row.createSpan({ text: "This task was interrupted. Review any partial changes before resuming." });
-    const resume = row.createEl("button", { text: "Resume", cls: "mod-cta" });
-    resume.addEventListener("click", () => void this.resumeInterruptedTurn(conversation));
-  }
-
   // ---------- rendering ----------
-
-  /** The round spark mark before an assistant bubble's content (screen-reader label "Claude" is carried by .cc-role, not this icon). */
-  private addSparkMark(bubble: HTMLElement): void {
-    setIcon(bubble.createSpan({ cls: "cc-spark" }), "sparkles");
-  }
-
-  private createAssistantBubble(): { bubble: HTMLElement; body: HTMLElement } {
-    const bubble = this.messagesEl.createDiv({ cls: "cc-msg cc-assistant" });
-    bubble.createDiv({ cls: "cc-role", text: "Claude" });
-    this.addSparkMark(bubble);
-    const body = bubble.createDiv({ cls: "cc-body" });
-    // One indicator only: the breathing smiley in the thinking status. (The old
-    // "▍" cursor was a second clay marker fighting it.)
-    this.startThinkingStatus(body);
-    this.scrollToBottom();
-    return { bubble, body };
-  }
-
-  /** Playful "Claudian" gerunds shown while Claude works, before text arrives. */
-  private static readonly CLAUDIAN = [
-    "Manifesting", "Synthesizing", "Philosophising", "Pondering",
-    "Actualizing", "Synergizing", "Ruminating", "Clauding",
-  ];
-
-  /**
-   * Show a single breathing smiley on the left with a whimsical word cycling
-   * beside it until the first token lands. The smiley is fixed-position so the
-   * word's changing length never shifts it. The smiley pulses 4× per word-fade
-   * cycle (80 bpm vs 20 bpm) — driven by CSS; the word swaps on the fade trough.
-   */
-  private startThinkingStatus(body: HTMLElement): void {
-    const status = body.createSpan({ cls: "cc-thinking-status" });
-    setIcon(status.createSpan({ cls: "cc-thinking-dot" }), "smile");
-    const word = status.createSpan({ cls: "cc-thinking-word" });
-    let i = this.claudianSeq++;
-    const tick = () => {
-      word.setText(`${ChatView.CLAUDIAN[i % ChatView.CLAUDIAN.length]}…`);
-      i++;
-    };
-    tick();
-    this.clearThinkingStatus();
-    // 3000ms = the 20-bpm word-fade period, so the swap lands at the fade trough.
-    this.thinkingTimer = window.setInterval(tick, 3000);
-  }
-
-  private clearThinkingStatus(): void {
-    if (this.thinkingTimer != null) {
-      window.clearInterval(this.thinkingTimer);
-      this.thinkingTimer = null;
-    }
-  }
-
-  /**
-   * Insert a collapsible reasoning panel before the answer body. Returns the
-   * element that thinking text is streamed into. Inserted once per turn.
-   */
-  private createThinkingPanel(bubble: HTMLElement): HTMLElement {
-    const details = bubble.createEl("details", { cls: "cc-thinking" });
-    details.setAttr("open", "");
-    details.createEl("summary", { cls: "cc-thinking-summary", text: "Reasoning" });
-    const pre = details.createEl("pre", { cls: "cc-thinking-body" });
-    // Place the panel right after the role label, above the answer body.
-    const body = bubble.querySelector(".cc-body");
-    if (body) bubble.insertBefore(details, body);
-    return pre;
-  }
-
-  private renderMessage(role: "user" | "assistant", text: string, opts?: { command?: boolean }): void {
-    if (this.messages.length === 1) this.messagesEl.empty();
-    const bubble = this.messagesEl.createDiv({ cls: `cc-msg cc-${role}${opts?.command ? " cc-command" : ""}` });
-    if (opts?.command) {
-      this.renderCommandChip(bubble, text);
-      this.scrollToBottom();
-      return;
-    }
-    bubble.createDiv({ cls: "cc-role", text: role === "user" ? "You" : "Claude" });
-    if (role === "assistant") this.addSparkMark(bubble);
-    const body = bubble.createDiv({ cls: "cc-body" });
-    void this.renderMarkdownInto(body, text);
-    this.scrollToBottom();
-  }
-
-  /** A slash command / workflow invocation renders as a compact accent chip
-   *  (e.g. "/summarize") instead of a plain user bubble of raw prompt text. */
-  private renderCommandChip(bubble: HTMLElement, label: string): void {
-    const chip = bubble.createDiv({ cls: "cc-command-chip" });
-    setIcon(chip.createSpan({ cls: "cc-command-chip-icon" }), "terminal");
-    chip.createSpan({ cls: "cc-command-chip-label", text: label });
-  }
-
-  private renderError(body: HTMLElement, message: string, provider: ErrorHintProvider): void {
-    // Append below any partial streamed content — never destroy what arrived.
-    // But a failure before the first token leaves the "thinking" indicator in
-    // place; drop it so the bubble doesn't show both a spinner and the error.
-    body.querySelector(".cc-thinking-status")?.remove();
-    const box = body.createDiv({ cls: "cc-error" });
-    box.createSpan({ cls: "cc-error-title", text: "Couldn’t reach the model" });
-    box.createSpan({ text: message });
-    const hint = errorHint(message, provider);
-    if (hint) box.createDiv({ cls: "cc-error-hint", text: hint });
-    if (this.lastUserText) {
-      const retry = box.createEl("button", { cls: "cc-error-retry", text: "Retry" });
-      retry.addEventListener("click", () => void this.regenerate());
-    }
-  }
 
   /** Re-attach the failed turn's media so a retry (or edit) still has it. */
   private restoreMediaAfterFailure(): void {
@@ -2170,81 +1407,9 @@ export class ChatView extends ItemView {
     }
   }
 
-  /** Flag a reply that the model truncated at the output-token limit. */
-  private annotateTruncated(bubble: HTMLElement): void {
-    if (bubble.querySelector(".cc-truncated-note")) return;
-    const cap = this.controls?.maxTokens ?? this.plugin.settings.maxTokens;
-    const note = bubble.createDiv({ cls: "cc-truncated-note" });
-    note.createSpan({ cls: "cc-truncated-title", text: "Response hit the output-token limit" });
-    note.createSpan({ text: ` — it was cut off at ${cap} tokens.` });
-    const retry = note.createEl("button", { cls: "cc-error-retry", text: "Retry with a higher limit" });
-    retry.addEventListener("click", () => void this.regenerate({ maxTokens: Math.min(cap * 2, 64000) }));
-  }
+  refreshBackendPill(): Promise<void> { return this.header.refreshBackendPill(); }
 
-  private renderInterruptedArtifact(body: HTMLElement): void {
-    body.empty();
-    const box = body.createDiv({ cls: "cc-error" });
-    box.createSpan({ cls: "cc-error-title", text: "Artifact generation stopped" });
-    box.createSpan({ text: "The HTML block did not finish, so it was not saved to the chat history." });
-  }
-
-  private annotateContext(sources: string[]): void {
-    if (sources.length === 0) return;
-    const last = this.messagesEl.lastElementChild;
-    if (!last) return;
-    last.createDiv({ cls: "cc-context-note", text: `+ context: ${sources.join(", ")}` });
-  }
-
-  /**
-   * Update the header backend pill: shows the active mode and, for auto/local,
-   * whether a local model is reachable (so you can see your offline safety net
-   * at a glance). Best-effort and never throws.
-   */
-  async refreshBackendPill(): Promise<void> {
-    if (!this.backendPillEl) return;
-    const router = this.plugin.router();
-    const backend = router.chatBackend;
-    const el = this.backendPillEl;
-    el.removeClass("is-ok", "is-warn");
-    if (backend === "claude-cli") {
-      const ok = router.claudeCli.hasCredentials();
-      el.setText(ok ? "● Claude Code" : router.anthropic.hasCredentials() ? "● Claude Code offline · API key" : "● Claude Code not signed in");
-      el.toggleClass("is-ok", ok);
-      el.toggleClass("is-warn", !ok);
-      return;
-    }
-    if (backend === "claude") {
-      el.setText("");
-      el.toggleClass("is-ok", false);
-      return;
-    }
-    const localOk = await router.localAvailable();
-    if (backend === "local") {
-      el.setText(localOk ? "● local" : "● local offline");
-      el.toggleClass("is-ok", localOk);
-      el.toggleClass("is-warn", !localOk);
-    } else {
-      // auto
-      el.setText(localOk ? "● auto · local ready" : "● auto · no local");
-      el.toggleClass("is-ok", localOk);
-      el.toggleClass("is-warn", !localOk);
-    }
-  }
-
-  async refreshContextStatus(): Promise<void> {
-    // Refresh active-note detail as navigation changes, and the MCP header icon.
-    this.renderContextManager();
-    if (!this.mcpStatusEl) return;
-    const mcp = this.plugin.mcpStats();
-    const title = mcp.running
-      ? mcp.activeRequests > 0
-        ? `MCP bridge — ${mcp.activeRequests} active`
-        : "MCP bridge — ready"
-      : "MCP bridge — off";
-    this.mcpStatusEl.setAttr("aria-label", title);
-    this.mcpStatusEl.toggleClass("is-on", mcp.running);
-    this.mcpStatusEl.toggleClass("is-warn", this.plugin.settings.mcpEnabled && !mcp.running);
-  }
+  refreshContextStatus(): Promise<void> { return this.header.refreshContextStatus(); }
 
   private resolveMarkdownContextView(): MarkdownView | null {
     const active = this.app.workspace.getActiveViewOfType(MarkdownView);
@@ -2268,117 +1433,11 @@ export class ChatView extends ItemView {
     return null;
   }
 
-  /** `anchor` is a real MouseEvent from the header dot, or the dot element itself when opened from the overflow menu (which has already closed and lost the click event). */
-  private openMcpMenu(anchor: MouseEvent | HTMLElement): void {
-    const stats = this.plugin.mcpStats();
-    const menu = new Menu();
-    menu.addItem((item) => {
-      item
-        .setTitle(stats.running ? "Disconnect MCP bridge" : "Connect MCP bridge")
-        .setIcon(stats.running ? "unlink" : "link")
-        .onClick(async () => {
-          await this.plugin.setMcpEnabled(!stats.running);
-          await this.refreshContextStatus();
-        });
-    });
-    menu.addItem((item) => {
-      item
-        .setTitle("Open MCP settings")
-        .setIcon("settings")
-        .onClick(() => this.openSettings());
-    });
-    if (anchor instanceof HTMLElement) {
-      const rect = anchor.getBoundingClientRect();
-      menu.showAtPosition({ x: rect.left, y: rect.bottom });
-    } else {
-      menu.showAtMouseEvent(anchor);
-    }
-  }
+  private openMcpMenu(anchor: MouseEvent | HTMLElement): void { return this.header.openMcpMenu(anchor); }
 
-  /** Mobile: the tune knobs (thinking / effort / temp / max) in a modal. */
-  private openTuneModal(): void {
-    const modal = new Modal(this.app);
-    modal.titleEl.setText("Model controls");
-    modal.contentEl.addClass("cc-knobs", "cc-knobs-modal");
-    this.renderKnobsInto(modal.contentEl);
-    modal.open();
-  }
+  private openOverflowMenu(): void { return this.header.openOverflowMenu(); }
 
-  /** The single ⋯ menu: on mobile it replaces the header icon row entirely; on desktop it carries the actions the 3-icon row + model chip don't. */
-  private openOverflowMenu(): void {
-    const items: ActionModalItem[] = [
-      { title: "Source inbox", icon: "inbox", run: () => void this.plugin.activateInboxView() },
-      { title: "Related notes", icon: "link", run: () => void this.plugin.activateRelatedView() },
-      { title: "Research Desk", icon: "flask-conical", run: () => void this.plugin.activateResearchDesk() },
-      { title: "New chat", icon: "plus", run: () => this.clearChat() },
-      { title: "History", icon: "history", run: () => this.openHistory() },
-      { title: "Save chat to vault", icon: "save", run: () => void this.saveChat() },
-    ];
-    if (!Platform.isMobile) {
-      if (this.plugin.settings.memoryEnabled) {
-        items.push({ title: "Capture a Claude Code session…", icon: "import", run: () => void this.plugin.openSessionPicker() });
-      }
-      items.push({ title: "MCP bridge…", icon: "plug-zap", run: () => this.openMcpMenu(this.mcpStatusEl) });
-    }
-    items.push(
-      { title: "Model controls…", icon: "sliders-horizontal", run: () => this.openTuneModal() },
-      { title: "Options…", icon: "settings-2", run: () => new QuickOptionsModal(this.app, "chat", this.plugin.companionChrome()).open() },
-    );
-    // Session toggles that live in the hidden desktop controls bar — without
-    // these, phone users can't reach agent writes, Plan Mode, or memory ingest.
-    const canAct = this.plugin.settings.agentModeEnabled && this.plugin.router().chatCapabilities().agentActions;
-    if (canAct) {
-      items.push(
-        { title: "Act on vault", icon: "pencil-line", checked: this.plugin.settings.agentAllowWrites, separatorBefore: true, run: () => void this.applyMode(this.plugin.settings.agentAllowWrites ? "ask" : "act") },
-        { title: "Plan mode", icon: "list-todo", checked: this.planMode, run: () => void this.applyMode(this.planMode ? (this.plugin.settings.agentAllowWrites ? "act" : "ask") : "plan") },
-      );
-    }
-    if (this.plugin.settings.memoryEnabled) {
-      items.push({
-        title: "File chats into session memory", icon: "archive", checked: this.plugin.settings.memoryIngestOnSave,
-        separatorBefore: !canAct,
-        run: () => {
-          this.plugin.settings.memoryIngestOnSave = !this.plugin.settings.memoryIngestOnSave;
-          void this.plugin.saveSettings();
-        },
-      });
-    }
-    // Cloud actions only when actually configured — a menu item that just
-    // bounces a "feature is off" notice is noise.
-    const cloudDispatch = this.plugin.settings.cloudDispatchEnabled;
-    const cloudReplies = this.plugin.settings.cloudReplyRepo.trim().length > 0;
-    if (cloudDispatch) items.push({ title: "Send to cloud session", icon: "cloud", separatorBefore: true, run: () => void this.plugin.dispatchCloudSession() });
-    if (cloudReplies) items.push({ title: "Pull cloud replies", icon: "cloud-download", separatorBefore: !cloudDispatch, run: () => void this.plugin.pullCloudReplies() });
-    items.push({ title: "Settings", icon: "settings", separatorBefore: true, run: () => this.openSettings() });
-    new ActionModal(this.app, "Companion actions", items).open();
-  }
-
-  /** Model picker opened by tapping the model name in the header. */
-  private openModelMenu(): void {
-    const resolved = this.plugin.router().chatProvider();
-    const activeModel = resolved.provider.id === "anthropic" ? this.controls.model : resolved.model;
-    const items = mobileModelChoices({
-      // Avoid a network probe on tap: the configured local model is the one
-      // mobile users need to retain/switch back to. Discovery remains in settings.
-      ollamaModels: [],
-      configuredOllamaModel: this.plugin.settings.ollamaModel,
-      openaiCompatHost: this.plugin.settings.openaiCompatHost,
-      openaiCompatModel: this.plugin.settings.openaiCompatModel,
-    }).map((choice): ActionModalItem => ({
-      title: choice.label,
-      checked: isMobileModelChoiceActive(choice, resolved.provider.id, activeModel),
-      run: () => void this.onModelSelect(choice.value),
-    }));
-    new ActionModal(this.app, "Choose model", items).open();
-  }
-
-  /** Note in the assistant bubble that we fell back to the local model. */
-  private annotateFallback(bubble: HTMLElement, reason: string, model?: string): void {
-    bubble.createDiv({
-      cls: "cc-fallback-note",
-      text: `${reason} — answered locally with ${model ?? this.plugin.settings.ollamaModel}.`,
-    });
-  }
+  private openModelMenu(): void { return this.header.openModelMenu(); }
 
   private async renderMarkdownInto(el: HTMLElement, markdown: string): Promise<void> {
     const version = this.bumpRenderVersion(el);
@@ -2419,99 +1478,6 @@ export class ChatView extends ItemView {
     return version;
   }
 
-  private addAssistantActions(bubble: HTMLElement, full: string): void {
-    bubble.querySelectorAll(":scope > .cc-actions").forEach((el) => el.remove());
-    // Per-code-block copy buttons inside the rendered markdown.
-    this.decorateCodeBlocks(bubble);
-
-    const bar = bubble.createDiv({ cls: "cc-actions" });
-    this.actionBtn(bar, "Copy", "copy", () => {
-      void navigator.clipboard.writeText(full);
-      quickNotice("Copied to clipboard");
-    });
-    this.actionBtn(bar, "Insert", "text-cursor-input", () => this.insertIntoNote(full));
-    // One Save button that adapts to the content: an artifact saves as an inline
-    // `claude-html` note (accented to stand out), anything else saves as a plain
-    // chat note. (These used to be two separate buttons running the same handler.)
-    const isArtifact = !!extractArtifact(full);
-    const saveBtn = this.actionBtn(
-      bar,
-      isArtifact ? "Save artifact" : "Save as note",
-      isArtifact ? "layout-dashboard" : "save",
-      () => void this.saveReplyAsNote(full),
-    );
-    if (isArtifact) saveBtn.addClass("cc-accent");
-    // A plan reply (has a `## Build tasks` checklist) gets execution buttons:
-    // "Implement" runs the tasks in-app via agent mode (vault work); "Build"
-    // hands the plan off to Claude Code (code work outside the vault).
-    if (extractTasks(full).length > 0) {
-      const impl = this.actionBtn(bar, "Implement", "play", () => void this.implementFromReply(full));
-      impl.addClass("cc-accent");
-      this.actionBtn(bar, "Build", "hammer", () => void this.buildFromReply(full));
-    }
-    // Regenerate the last reply (only on the most recent assistant message).
-    const tail = this.messages[this.messages.length - 1];
-    const isLast = tail?.role === "assistant";
-    if (isLast && this.lastUserText) {
-      this.actionBtn(bar, "Regenerate", "refresh-cw", () => void this.regenerate());
-    }
-  }
-
-  /**
-   * Execute the plan in-app: feed its build tasks back through agent mode so
-   * Claude actually does the vault work (create/edit notes, canvases, bases) —
-   * each write still confirms. Needs agent mode + Claude; otherwise points the
-   * user at the Build (Claude Code) handoff instead.
-   */
-  private async implementFromReply(full: string): Promise<void> {
-    if (this.streaming) return;
-    if (!this.plugin.settings.agentModeEnabled || !this.plugin.router().chatCapabilities().agentActions) {
-      new Notice("Turn on agent mode (and use Claude or Claude Code) to implement in-app, or use Build to hand off to Claude Code.");
-      return;
-    }
-    if (!this.plugin.settings.agentAllowWrites) {
-      new Notice("Turn on “Act on vault” to let me make the changes, then hit Implement again.");
-      return;
-    }
-    const tasks = extractTasks(full);
-    const list = tasks.map((t, i) => `${i + 1}. ${t.title}`).join("\n");
-    const prompt =
-      "Implement the plan above by actually doing the work in my vault. Go through these build tasks in order, " +
-      "using your vault tools to create and edit the notes/canvases/bases each one calls for — don't just re-describe the plan. " +
-      "Note briefly what you changed after each. If a task requires code changes outside the vault, say so and skip it.\n\n" +
-      `Tasks:\n${list}`;
-    await this.submitPrompt(prompt, "Implement plan");
-  }
-
-  /** Save a plan reply as a `type: plan` note, then hand it to the build flow. */
-  private async buildFromReply(full: string): Promise<void> {
-    const artifact = extractArtifact(full);
-    const { tags, summary, title } = await this.maybeIndex(full);
-    const planTitle = title ?? artifact?.title ?? this.fallbackTitle();
-    const file = await savePlanNote(this.app, this.plugin.settings.planFolder, planTitle, full, {
-      extraTags: tags,
-      ...(summary !== undefined ? { summary } : {}),
-    });
-    await this.plugin.handoffToBuild(file);
-  }
-
-  /** Add a hover "copy" button to each <pre><code> block in a rendered reply. */
-  private decorateCodeBlocks(bubble: HTMLElement): void {
-    bubble.querySelectorAll("pre").forEach((pre) => {
-      if (pre.querySelector(".cc-code-copy")) return; // already decorated
-      const el = pre as HTMLElement;
-      el.addClass("cc-has-copy");
-      const btn = el.createEl("button", { cls: "cc-code-copy", text: "Copy", attr: { "aria-label": "Copy code" } });
-      btn.addEventListener("click", (e) => {
-        e.stopPropagation();
-        const code = pre.querySelector("code")?.textContent ?? pre.textContent ?? "";
-        void navigator.clipboard.writeText(code);
-        btn.setText("Copied!");
-        window.setTimeout(() => btn.setText("Copy"), 1200);
-      });
-    });
-  }
-
   /** Drop the last assistant reply and re-run the previous user turn. */
   private async regenerate(opts?: { maxTokens?: number }): Promise<void> {
     if (this.streaming || !this.lastUserText) return;
@@ -2530,122 +1496,4 @@ export class ChatView extends ItemView {
     await this.run(this.lastUserText, this.lastDisplay, opts?.maxTokens);
   }
 
-  /**
-   * Index a document for durable storage: tags + a one-line summary, generated
-   * by the utility provider (local Ollama when available, else Claude — heavy
-   * lifting offloads automatically). Best-effort: never blocks a save.
-   */
-  private async maybeIndex(content: string): Promise<{ tags: string[]; summary?: string; title?: string }> {
-    if (!this.plugin.settings.autoTagOnSave) return { tags: [] };
-    try {
-      const { summarizeAndTag, existingVaultTags } = await import("../indexing/autoTagger");
-      const res = await summarizeAndTag(this.plugin.router(), content, existingVaultTags(this.app));
-      return {
-        tags: res.tags,
-        ...(res.summary ? { summary: res.summary } : {}),
-        ...(res.title ? { title: res.title } : {}),
-      };
-    } catch (e) {
-      console.debug("Claude Companion: auto-tag failed", e);
-      return { tags: [] };
-    }
-  }
-
-  /**
-   * A title derived from the *answer*, never the prompt. Used as a fallback when
-   * the indexer (which produces a better title) is disabled or fails.
-   */
-  private fallbackTitle(): string {
-    const firstAssistant = this.messages.find((m) => m.role === "assistant")?.content ?? "";
-    const line = firstAssistant
-      .split("\n")
-      .map((l) => l.replace(/^#+\s*/, "").replace(/[*_`]/g, "").trim())
-      .find((l) => l.length > 0) ?? "";
-    // Match the first sentence with a lookahead (lookbehind is unsupported on iOS < 16.4).
-    const sentence = line.match(/^.*?[.?!](?=\s)/)?.[0] || line;
-    return (sentence || "Claude chat").slice(0, 60);
-  }
-
-  /**
-   * Save a reply as a durable, indexed note. If the reply contains a
-   * `claude-html` artifact, it's saved as an artifact note (renders inline) —
-   * not a raw fenced dump. Either way it gets auto-tags + a summary in
-   * frontmatter so semantic/query search and Dataview index it correctly.
-   */
-  private async saveReplyAsNote(full: string): Promise<void> {
-    const artifact = extractArtifact(full);
-    new Notice("Indexing & saving…");
-
-    // A plan reply carries a `## Build tasks` checklist. Save it as a canonical
-    // `type: plan` note (artifact renders inline + checklist drives Build).
-    if (extractTasks(full).length > 0) {
-      const { tags, summary, title } = await this.maybeIndex(full);
-      const planTitle = title ?? artifact?.title ?? this.fallbackTitle();
-      const file = await savePlanNote(this.app, this.plugin.settings.planFolder, planTitle, full, {
-        extraTags: tags,
-        ...(summary !== undefined ? { summary } : {}),
-      });
-      await this.app.workspace.getLeaf(true).openFile(file);
-      return;
-    }
-
-    if (artifact) {
-      const { tags, summary } = await this.maybeIndex(`${artifact.title}\n\n${full}`);
-      const file = await saveArtifactNote(this.app, this.plugin.settings.artifactFolder, artifact, {
-        height: this.plugin.settings.artifactHeight,
-        baseTags: this.plugin.settings.artifactBaseTags,
-        extraTags: tags,
-        ...(summary !== undefined ? { summary } : {}),
-      });
-      await this.app.workspace.getLeaf(true).openFile(file);
-      return;
-    }
-    const { tags, summary, title } = await this.maybeIndex(full);
-    const heuristic = full.split("\n").find((l) => l.trim())?.replace(/^#+\s*/, "").slice(0, 60) ?? "Claude reply";
-    await saveChatNote(this.app, this.plugin.settings.chatFolder, title ?? heuristic, full, {
-      baseTags: this.plugin.settings.chatBaseTags,
-      extraTags: tags,
-      ...(summary !== undefined ? { summary } : {}),
-    });
-  }
-
-  private actionBtn(bar: HTMLElement, label: string, icon: string, onClick: () => void): HTMLButtonElement {
-    const btn = bar.createEl("button", { cls: "cc-action clickable-icon", attr: { "aria-label": label, title: label } });
-    setIcon(btn, icon);
-    btn.addEventListener("click", onClick);
-    return btn;
-  }
-
-  private insertIntoNote(text: string): void {
-    const view = this.app.workspace.getActiveViewOfType(MarkdownView);
-    if (!view) {
-      new Notice("Open a note to insert into.");
-      return;
-    }
-    view.editor.replaceSelection(text);
-    quickNotice("Inserted into note");
-  }
-
-  private async saveChat(): Promise<void> {
-    if (this.messages.length === 0) {
-      new Notice("Nothing to save yet.");
-      return;
-    }
-    const md = this.messages.map((m) => `**${m.role === "user" ? "You" : "Claude"}:**\n\n${m.content}`).join("\n\n---\n\n");
-    new Notice("Indexing & saving…");
-    const { tags, summary, title } = await this.maybeIndex(md);
-    const finalTitle = title ?? this.fallbackTitle();
-    await saveChatNote(this.app, this.plugin.settings.chatFolder, finalTitle, md, {
-      baseTags: this.plugin.settings.chatBaseTags,
-      extraTags: tags,
-      ...(summary !== undefined ? { summary } : {}),
-    });
-    if (this.plugin.settings.memoryEnabled && this.plugin.settings.memoryIngestOnSave) {
-      await this.plugin.captureConversation(this.messages); // also file this chat into memory
-    }
-  }
-
-  private scrollToBottom(): void {
-    this.messagesEl.scrollTop = this.messagesEl.scrollHeight;
-  }
 }

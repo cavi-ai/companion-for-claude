@@ -14,6 +14,8 @@ function stubPlugin(): ClaudeCompanionPlugin & { settings: Record<string, unknow
       ollama: { listModels: async () => [], capabilities: async () => [], test: async () => ({ ok: true, detail: "" }) },
       openaiCompat: { listModels: async () => [], test: async () => ({ ok: true, detail: "" }) },
       claudeCli: { probe: () => null, hasCredentials: () => false, test: async () => ({ ok: false, detail: "" }), refresh: async () => ({ ok: false, detail: "" }) },
+      codexCli: { probe: () => null, hasCredentials: () => false, test: async () => ({ ok: false, detail: "" }), refresh: async () => ({ ok: false, detail: "" }) },
+      opencodeCli: { probe: () => null, hasCredentials: () => false, test: async () => ({ ok: false, detail: "" }), refresh: async () => ({ ok: false, detail: "" }) },
     }),
     secrets: () => unavailableStore(),
     secretsWriteFailures: () => [],
@@ -95,7 +97,9 @@ describe("settings definitions", () => {
 
 describe("settings tab render", () => {
   it("renders every row, including the imperative ones", () => {
-    const tab = new ClaudeCompanionSettingTab(new App() as never, stubPlugin());
+    const plugin = stubPlugin();
+    plugin.settings.settingsShowAdvanced = true;
+    const tab = new ClaudeCompanionSettingTab(new App() as never, plugin);
     expect(() => openSettingTab(tab)).not.toThrow();
     const container = tab.containerEl as unknown as FakeElement;
 
@@ -143,6 +147,8 @@ describe("Claude Code backend settings", () => {
       chatBackend: "claude-cli",
       anthropic: { hasCredentials: () => false },
       claudeCli: { hasCredentials: () => true },
+      codexCli: { hasCredentials: () => false },
+      opencodeCli: { hasCredentials: () => false },
     }) as never;
     const item = flatten(definitionsOf(plugin)).find((i) => i.name === "Step 1 — connect to Claude");
     expect(item?.visible?.()).toBe(false);
@@ -154,6 +160,8 @@ describe("Claude Code backend settings", () => {
       chatBackend: "claude-cli",
       anthropic: { hasCredentials: () => false },
       claudeCli: { hasCredentials: () => false },
+      codexCli: { hasCredentials: () => false },
+      opencodeCli: { hasCredentials: () => false },
     }) as never;
     const item = flatten(definitionsOf(plugin)).find((i) => i.name === "Step 1 — connect to Claude");
     expect(item?.visible?.()).toBe(true);

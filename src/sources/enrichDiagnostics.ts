@@ -2,7 +2,7 @@
 export type EnrichPhase =
   | "batch-start" | "item-start" | "response-received" | "write-done"
   | "reindex-flush-start" | "reindex-flush-rejected" | "embed-start" | "embed-done"
-  | "serialize-start" | "save-start" | "save-done" | "batch-end";
+  | "serialize-start" | "save-start" | "save-done" | "batch-end" | "organize-batch";
 
 export interface EnrichDiagnosticsDeps {
   append(path: string, text: string): Promise<void>;
