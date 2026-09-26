@@ -1,6 +1,5 @@
 import type { Locator, Page } from "@playwright/test";
 import { test, expect } from "./fixtures";
-import { launchObsidianHarness } from "./obsidianHarness";
 
 const OUTPUT = process.env.CC_E2E_OUTPUT_DIR ?? "/private/tmp/claude-companion-research-e2e-results";
 
@@ -21,8 +20,8 @@ async function openChat(page: Page): Promise<Locator> {
   return chrome;
 }
 
-test("completed activity clears and Quick Options stays inside compact viewports", async () => {
-  const harness = await launchObsidianHarness();
+test("completed activity clears and Quick Options stays inside compact viewports", async ({ rig }) => {
+  const harness = await rig.reset();
   const { page } = harness;
   try {
     let chrome = await openChat(page);
@@ -175,8 +174,8 @@ test("completed activity clears and Quick Options stays inside compact viewports
 
 // Chat used to spend a full-width header row on one "Options" text button,
 // stacked above the header it already had. One row, one control.
-test("chat spends no extra header row on quick options", async () => {
-  const harness = await launchObsidianHarness();
+test("chat spends no extra header row on quick options", async ({ rig }) => {
+  const harness = await rig.reset();
   const { page } = harness;
   try {
     const header = await openChat(page);

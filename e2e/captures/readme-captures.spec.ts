@@ -1,19 +1,20 @@
 import type { Locator, Page } from "@playwright/test";
-import { test, expect } from "./fixtures";
+import { test, expect } from "../fixtures";
+import type { Rig } from "../fixtures";
 import { mkdir, readFile, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { launchObsidianHarness, setRightSidebarWidth, type ObsidianHarness } from "./obsidianHarness";
+import { setRightSidebarWidth } from "../rig/pageOps.ts";
 
 const ENABLED = process.env.CC_E2E_CAPTURE === "1";
-const ASSETS = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "assets");
-const PLUGIN_ASSETS = join(dirname(fileURLToPath(import.meta.url)), "..", "assets");
+const ASSETS = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "assets");
+const PLUGIN_ASSETS = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "assets");
 const THEMES = (process.env.CC_E2E_CAPTURE_THEME ?? "both") === "both" ? (["dark", "light"] as const) : [process.env.CC_E2E_CAPTURE_THEME as "dark" | "light"];
 const OUT_ROOT = process.env.CC_E2E_CAPTURE_DIR;
 const CHAT_REPLY = "Your research draft is grounded in three reviewed evidence notes. Resolve the stale citation next, then continue drafting.";
 const ORIGINAL_PLAN = "# Build plan\n\nNotes for implementation.\n\n- [ ] Create the parser\n- [ ] Wire the interface\n- [ ] Write tests\n- [ ] Ship it\n";
 const ENRICHED_PLAN = "# Build Plan\n\nNotes for implementation.\n\n- [ ] Create the parser\n- [ ] Wire the interface\n- [ ] Write tests\n- [ ] Ship it to users\n";
-let harness: ObsidianHarness;
+let harness: Rig;
 let baselineSettings: Record<string, unknown>;
 
 function outputPath(name: string, theme: "dark" | "light", assetRoot = ASSETS): string {
@@ -80,7 +81,7 @@ async function run(page: Page, id: string): Promise<void> {
   }, id);
 }
 
-async function openChat(harness: ObsidianHarness): Promise<Locator> {
+async function openChat(harness: Rig): Promise<Locator> {
   await run(harness.page, "claude-companion:open-chat");
   const root = harness.page.locator(".cc-chat-root");
   await expect(root).toBeVisible();
@@ -125,18 +126,17 @@ async function widen(page: Page, px: number): Promise<void> {
 
 test.describe("README captures", () => {
   test.describe.configure({ mode: "serial" });
-  test.beforeAll(async () => {
-    harness = await launchObsidianHarness({
+  test.beforeAll(async ({ rig }) => {
+    harness = await rig.reset({
       claudeCli: true,
       endpointModels: ["local-model"],
       endpointReply: "Your vault summary is ready — generated entirely on this device.",
       extraFiles: { "Build plan.md": ORIGINAL_PLAN },
-      providerReply: (body) => {
-        if (/copyeditor/i.test(body)) return ENRICHED_PLAN;
-        if (body.includes("What should I work on next?")) return CHAT_REPLY;
-        return null;
-      },
-      providerFail: (body) => body.includes("Summarize my vault in one line.") ? 503 : null,
+      providerReply: [
+        { match: "copyeditor", flags: "i", replies: [ENRICHED_PLAN] },
+        { match: "What should I work on next?", replies: [CHAT_REPLY] },
+      ],
+      providerFail: [{ match: "Summarize my vault in one line.", status: 503 }],
       settingsOverride: {
         authMode: "oauthToken",
         oauthToken: "sk-ant-oat-e2e",

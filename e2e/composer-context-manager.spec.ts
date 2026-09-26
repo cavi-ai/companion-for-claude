@@ -1,18 +1,18 @@
 import { mkdir } from "node:fs/promises";
 import type { Locator, Page } from "@playwright/test";
 import { expect, test } from "./fixtures";
-import { launchObsidianHarness, type ObsidianHarness } from "./obsidianHarness";
+import type { Rig } from "./fixtures";
 
 const OUTPUT = "/private/tmp/claude-companion-context-e2e-results";
 const LONG_FOLDER = "Reference material with a deliberately long folder name";
 type Fixture = "empty" | "one" | "automatic" | "dense" | "pending" | "failed" | "long";
 
 test.describe.configure({ mode: "serial" });
-let harness: ObsidianHarness;
+let harness: Rig;
 
-test.beforeAll(async () => {
+test.beforeAll(async ({ rig }) => {
   await mkdir(OUTPUT, { recursive: true });
-  harness = await launchObsidianHarness();
+  harness = await rig.reset();
   await harness.page.evaluate(async () => {
     const app = (window as unknown as {
       app: {

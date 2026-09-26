@@ -121,4 +121,49 @@ describe("Clipper first-note verification wiring", () => {
     expect(harness.clipperVerificationTimers.size).toBe(0);
     expect(vi.getTimerCount()).toBe(0);
   });
+
+  function passivePlugin(app: App): ClaudeCompanionPlugin {
+    const plugin = Object.create(ClaudeCompanionPlugin.prototype) as ClaudeCompanionPlugin;
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    settings.sourceBaseTags = ["source"];
+    Object.assign(plugin as unknown as Record<string, unknown>, {
+      app, settings,
+      persist: async () => undefined,
+      clipperVerificationTimers: new Map<string, number>(),
+      enrichTimers: new Map<string, number>(), enrichRecentlyWritten: new Set<string>(), enrichRecentlyWrittenExpiryTimers: new Map<string, number>(),
+      reindexTimer: null, _ontologyReloadTimer: null, researchRefreshTimer: null, inboxBadgeTimer: null,
+    });
+    return plugin;
+  }
+
+  it("verifies a stamped clip even when setup was done outside Companion (nothing waiting)", async () => {
+    vi.useFakeTimers();
+    const app = new App();
+    const file = app.vault.seed("Clippings/Stamped.md", "body", {
+      frontmatter: { type: "article", schema_version: 1, source: "https://example.com", tags: ["source"] },
+    });
+    const plugin = passivePlugin(app);
+    expect(plugin.clipperSetupNeeded()).toBe(true);
+
+    (plugin as unknown as ClipperVerificationHarness).queueClipperVerification(file);
+    await vi.advanceTimersByTimeAsync(600);
+
+    expect(plugin.settings.clipperVerification.article).toMatchObject({ state: "verified", path: "Clippings/Stamped.md" });
+    expect(plugin.clipperSetupNeeded()).toBe(false);
+  });
+
+  it("records nothing for an unstamped or mismatched note when nothing is waiting", async () => {
+    vi.useFakeTimers();
+    const app = new App();
+    const plain = app.vault.seed("Clippings/Plain.md", "body", { frontmatter: { title: "x" } });
+    const wrongVersion = app.vault.seed("Clippings/Old.md", "body", {
+      frontmatter: { type: "article", schema_version: 99, source: "https://example.com", tags: ["source"] },
+    });
+    const plugin = passivePlugin(app);
+    (plugin as unknown as ClipperVerificationHarness).queueClipperVerification(plain);
+    (plugin as unknown as ClipperVerificationHarness).queueClipperVerification(wrongVersion);
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(plugin.settings.clipperVerification.article).toBeUndefined();
+    expect(plugin.activity.snapshot().records).toHaveLength(0);
+  });
 });

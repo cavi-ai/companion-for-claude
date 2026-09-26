@@ -180,8 +180,9 @@ describe("SemanticIndexer", () => {
     expect(res2.skipped).toBe(2);
     expect(ctx.embedCalls.length).toBe(callsAfterFirst);
 
-    // Change a note → only it re-embeds.
+    // Change a note (a real edit bumps mtime) → only it re-embeds.
     ctx.files["a.md"] = "dog content now";
+    ctx.deps.listMarkdown = () => Object.keys(ctx.files).map((path) => ({ path, mtime: path === "a.md" ? 2 : 1 }));
     const res3 = await ix.build();
     expect(res3.indexed).toBe(1);
     expect(res3.skipped).toBe(1);
@@ -246,6 +247,47 @@ describe("SemanticIndexer", () => {
 
     await ix.removeNote("a2.md");
     expect((await ix.stats()).notes).toBe(0);
+  });
+
+  it("renameNote reports false for a note that was never indexed, and indexes nothing", async () => {
+    const ctx = makeDeps({ "a.md": "cat" });
+    const ix = new SemanticIndexer(ctx.deps);
+    await ix.build();
+    expect(await ix.renameNote("never.md", "moved.md")).toBe(false);
+    expect(await ix.renameNote("a.md", "a2.md")).toBe(true);
+    expect((await ix.stats()).notes).toBe(1);
+  });
+
+  it("an incremental build skips notes whose mtime is unchanged without reading them, and catches up new, changed, and deleted notes", async () => {
+    const ctx = makeDeps({ "same.md": "cat", "changed.md": "dog", "gone.md": "fish" });
+    const ix = new SemanticIndexer(ctx.deps);
+    await ix.build();
+    const mtimes: Record<string, number> = { "same.md": 1, "changed.md": 2, "new.md": 1 };
+    ctx.files["changed.md"] = "ocean";
+    ctx.files["new.md"] = "code";
+    delete ctx.files["gone.md"];
+    ctx.deps.listMarkdown = () => Object.keys(ctx.files).map((path) => ({ path, mtime: mtimes[path] ?? 1 }));
+    const reads: string[] = [];
+    const read = ctx.deps.read;
+    ctx.deps.read = async (path) => { reads.push(path); return read(path); };
+
+    const res = await ix.build();
+
+    expect(reads.sort()).toEqual(["changed.md", "new.md"]);
+    expect(res).toMatchObject({ indexed: 2, removed: 1 });
+    expect((await ix.search("ocean", 1))[0].path).toBe("changed.md");
+    expect((await ix.stats()).notes).toBe(3);
+  });
+
+  it("a forced build still re-reads every note", async () => {
+    const ctx = makeDeps({ "a.md": "cat" });
+    const ix = new SemanticIndexer(ctx.deps);
+    await ix.build();
+    const reads: string[] = [];
+    const read = ctx.deps.read;
+    ctx.deps.read = async (path) => { reads.push(path); return read(path); };
+    await ix.build({ force: true });
+    expect(reads).toEqual(["a.md"]);
   });
 
   it("related: finds neighbors of an indexed note, excluding itself", async () => {

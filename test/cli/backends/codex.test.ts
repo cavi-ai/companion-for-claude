@@ -66,6 +66,12 @@ describe("parseCodexLine against the real codex exec --json fixtures", () => {
     expect(result).toEqual({ kind: "toolResult", id: "item_2", content: "note.txt\n", isError: false });
   });
 
+  it("maps mcp_tool_call items to bridge tool chips (codex-mcp.jsonl, codex-cli 0.146.0)", () => {
+    const events = fixture("codex-mcp.jsonl").flatMap(parseCodexLine);
+    expect(events.find((e) => e.kind === "toolUse")).toEqual({ kind: "toolUse", block: { type: "tool_use", id: "item_1", name: "mcp__obsidian-vault__vault_ping", input: {} } });
+    expect(events.find((e) => e.kind === "toolResult")).toEqual({ kind: "toolResult", id: "item_1", content: "PONG-7731", isError: false });
+  });
+
   it("drops unrecognized item types instead of guessing at their shape", () => {
     const line = JSON.stringify({ type: "item.completed", item: { id: "x", type: "reasoning", text: "thinking..." } });
     expect(parseCodexLine(line)).toEqual([]);
@@ -79,6 +85,11 @@ describe("parseCodexLine against the real codex exec --json fixtures", () => {
 describe("codexBackend.probe", () => {
   it("parses `codex login status` plain-text output (verified live: \"Logged in using ChatGPT\")", async () => {
     const run = async () => ({ stdout: "Logged in using ChatGPT\n", code: 0 });
+    expect(await codexBackend.probe(run)).toEqual({ loggedIn: true, method: "ChatGPT" });
+  });
+
+  it("reads the status from stderr, where codex-cli 0.146 prints it", async () => {
+    const run = async () => ({ stdout: "", stderr: "Logged in using ChatGPT\n", code: 0 });
     expect(await codexBackend.probe(run)).toEqual({ loggedIn: true, method: "ChatGPT" });
   });
 

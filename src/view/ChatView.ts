@@ -43,6 +43,7 @@ import { type AutomaticContextKey } from "./contextManagerModel";
 import { HeaderControls } from "./chat/HeaderControls";
 import { Composer } from "./chat/Composer";
 import { Transcript, type TurnState } from "./chat/Transcript";
+import { SetupCard } from "./chat/SetupCard";
 
 export const CHAT_VIEW_TYPE = "claude-companion-chat";
 
@@ -85,6 +86,7 @@ export class ChatView extends ItemView {
   private composer: Composer;
   private messages: ChatMessage[] = [];
   private transcript: Transcript;
+  private setupCard: SetupCard;
   private get messagesEl(): HTMLElement { return this.transcript.messagesEl; }
   private set messagesEl(v: HTMLElement) { this.transcript.messagesEl = v; }
   private get inputEl(): HTMLTextAreaElement { return this.composer.inputEl; }
@@ -173,7 +175,6 @@ export class ChatView extends ItemView {
   /** Whether the current chat backend can run tool-driven agent turns (refreshed per turn + backend change). */
   private agentCapable = false;
   /** Guards the setup card's background sign-in probe against stacking on re-render, per CLI backend id. */
-  private cliSetupProbeInFlight = new Set<string>();
 
   private renderVersions = new WeakMap<HTMLElement, number>();
   /** The conversation this leaf shows; null for an unstarted "New chat tab". Persisted via getState/setState. */
@@ -184,13 +185,22 @@ export class ChatView extends ItemView {
     private plugin: ClaudeCompanionPlugin,
   ) {
     super(leaf);
+    this.setupCard = new SetupCard({
+      plugin,
+      cliEntries: (router) => this.cliEntries(router),
+      messagesEl: () => this.messagesEl,
+      hasMessages: () => this.messages.length > 0,
+      renderEmptyState: () => this.renderEmptyState(),
+      refreshModelLabel: () => this.refreshModelLabel(),
+      openSettings: () => this.openSettings(),
+    });
     this.transcript = new Transcript(this.app, plugin, this.turn, {
       autosizeInput: () => this.composer.autosizeInput(),
       onSend: (...args) => this.onSend(...args),
       prepareWorkspaceQuestion: (...args) => this.prepareWorkspaceQuestion(...args),
       regenerate: (...args) => this.regenerate(...args),
       renderMarkdownInto: (...args) => this.renderMarkdownInto(...args),
-      renderSetupCard: (...args) => this.renderSetupCard(...args),
+      renderSetupCard: (parent) => this.setupCard.render(parent),
       renderStreamingArtifactInto: (...args) => this.renderStreamingArtifactInto(...args),
       resumeInterruptedTurn: (...args) => this.resumeInterruptedTurn(...args),
       restoreMediaAfterFailure: (...args) => this.restoreMediaAfterFailure(...args),
@@ -599,97 +609,6 @@ export class ChatView extends ItemView {
     });
   }
 
-  /** First-run card: connect to Claude without leaving the chat panel. */
-  private renderSetupCard(parent: HTMLElement): void {
-    const card = parent.createDiv({ cls: "cc-setup-card" });
-    const router = this.plugin.router();
-    const entries = this.cliEntries(router);
-    for (const { backend, provider } of entries) {
-      if (!provider.hasCredentials() && provider.available() && !this.cliSetupProbeInFlight.has(backend.id)) {
-        this.cliSetupProbeInFlight.add(backend.id);
-        void provider.refresh().finally(() => {
-          this.cliSetupProbeInFlight.delete(backend.id);
-          if (provider.hasCredentials() && this.messagesEl.querySelector(".cc-setup-card")) this.renderEmptyState();
-        });
-      }
-    }
-    const signedIn = entries.filter((e) => e.provider.hasCredentials());
-    const lead = signedIn[0]?.backend;
-    const storage = this.plugin.secrets().available()
-      ? "It’s kept in your device’s secret storage, not in this vault — nothing else leaves your machine."
-      : "It’s stored in this vault’s plugin data — nothing else leaves your machine.";
-    card.createDiv({ cls: "cc-setup-title", text: "Connect to Claude" });
-    card.createDiv({
-      cls: "cc-setup-sub",
-      text: lead
-        ? `${lead.label} is signed in on this computer. Use it for chat on your subscription, or add an Anthropic API key. ${storage}`
-        : `Add your Anthropic API key to start chatting. ${storage}`,
-    });
-    if (signedIn.length > 0) {
-      const cli = card.createDiv({ cls: "cc-setup-cli" });
-      for (const { backend } of signedIn) {
-        const useCli = cli.createEl("button", { cls: "mod-cta cc-setup-cli-use", text: `Use ${backend.label} sign-in` });
-        useCli.addEventListener("click", () => void (async () => {
-          this.plugin.settings.chatBackend = backend.id;
-          await this.plugin.saveSettings();
-          await this.plugin.continueOnboarding();
-          this.renderEmptyState();
-          this.refreshModelLabel();
-        })());
-      }
-      card.createDiv({ cls: "cc-setup-or", text: "or" });
-    }
-    const link = card.createEl("a", {
-      cls: "cc-setup-link",
-      text: "Get a key at console.anthropic.com",
-      href: "https://console.anthropic.com/settings/keys",
-    });
-    link.setAttr("target", "_blank");
-    link.setAttr("rel", "noopener noreferrer");
-    const row = card.createDiv({ cls: "cc-setup-row" });
-    const input = row.createEl("input", {
-      cls: "cc-setup-input",
-      attr: { type: "password", placeholder: "sk-ant-api…", "aria-label": "Anthropic API key" },
-    });
-    const save = row.createEl("button", { cls: "mod-cta cc-setup-save", text: "Save key" });
-    const status = card.createDiv({ cls: "cc-setup-status" });
-    save.addEventListener("click", () => void (async () => {
-      const key = input.value.trim();
-      if (!key) {
-        input.focus();
-        return;
-      }
-      this.plugin.settings.authMode = "apiKey";
-      this.plugin.settings.apiKey = key;
-      await this.plugin.saveSettings(); // rebuilds the provider router
-      // Verify here rather than letting the first send be the test — a typo'd
-      // key otherwise reads as a broken plugin.
-      save.disabled = true;
-      status.removeClass("is-err");
-      status.setText("Checking your key…");
-      const result = await this.plugin.router().anthropic.test();
-      save.disabled = false;
-      if (!result.ok) {
-        // The key stays saved so it can be corrected rather than retyped.
-        status.addClass("is-err");
-        status.setText(`Couldn’t connect: ${result.detail}`);
-        input.focus();
-        return;
-      }
-      status.setText("");
-      quickNotice("API key saved — you’re connected.");
-      if (this.messages.length === 0) {
-        this.messagesEl.empty();
-        this.renderEmptyState();
-      } else {
-        card.remove();
-      }
-      // Setup held back while there was no credential can run now.
-      await this.plugin.continueOnboarding();
-    })());
-    const settingsBtn = card.createEl("button", { cls: "cc-setup-settings", text: "Other options (OAuth, environment)…" });
-    settingsBtn.addEventListener("click", () => this.openSettings());
-  }
 
   /** Attach canonical workspace context and hand control back to the user. */
   prepareWorkspaceQuestion(workspace: Pick<CompanionWorkspaceCard, "kind" | "title" | "contextPath">): void {

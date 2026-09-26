@@ -5,12 +5,19 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import type { Page } from "@playwright/test";
 import { expect, test } from "./fixtures";
-import { launchObsidianHarness } from "./obsidianHarness";
+import type { Rig } from "./fixtures";
 
 // Real Claude Code, real subscription: opt in with CC_E2E_LIVE=1. Never runs in CI.
 const LIVE = process.env.CC_E2E_LIVE === "1";
-const CLAUDE = join(homedir(), ".local", "bin", "claude");
+const REAL_BIN = join(homedir(), ".local", "bin");
+const CLAUDE = join(REAL_BIN, "claude");
 const run = promisify(execFile);
+
+/** Widen the renderer's PATH to reach the real, signed-in claude binary — reset() always restores the hermetic default first. */
+async function widenPathToRealClaude(rig: Rig): Promise<void> {
+  const current = await rig.page.evaluate(() => (window as unknown as { process: { env: { PATH?: string } } }).process.env.PATH ?? "");
+  await rig.setProcessEnv({ PATH: `${REAL_BIN}:${current}` });
+}
 
 async function claudeSignedIn(): Promise<boolean> {
   try {
@@ -56,15 +63,15 @@ const readData = async (path: string): Promise<string> => {
 test.describe("Claude Code backend, live", () => {
   test.skip(!LIVE, "set CC_E2E_LIVE=1 to run against the signed-in claude binary");
 
-  test("the real-run gate: stream, read, gated write, diffed edit, patch, secrets, abort, restart, session id", async () => {
+  test("the real-run gate: stream, read, gated write, diffed edit, patch, secrets, abort, restart, session id", async ({ rig }) => {
     // 9 model turns; budget generously for live latency.
     test.setTimeout(900_000);
     test.skip(!(await claudeSignedIn()), "claude auth status is not loggedIn");
-    const harness = await launchObsidianHarness({ liveClaude: true });
+    const harness = await rig.reset({ liveClaude: true });
+    await widenPathToRealClaude(rig);
     const { vault } = harness.paths;
     const dataPath = join(vault, ".obsidian", "plugins", "claude-companion", "data.json");
-    let kept = false;
-    try {
+    {
       const { page } = harness;
       await openChat(page);
       const chat = page.locator(".cc-chat-root").first();
@@ -150,19 +157,12 @@ test.describe("Claude Code backend, live", () => {
       expect(listed, "memory import excludes the chat's own session").toBe(false);
 
       // restart: the conversation resumes and prior turns are visible to the model
-      kept = true;
-      await harness.close({ keep: true });
-      const again = await launchObsidianHarness({ liveClaude: true, reuse: harness.paths });
-      try {
-        await openChat(again.page);
-        await expect(again.page.locator(".cc-msg.cc-assistant").first()).toBeVisible({ timeout: 20_000 });
-        await send(again.page, "Which note did I ask you to create earlier in this conversation? Answer with its vault path only.");
-        await expect(again.page.locator(".cc-msg.cc-assistant").last()).toContainText("Live/Hello.md", { timeout: 180_000 });
-      } finally {
-        await again.close();
-      }
-    } finally {
-      if (!kept) await harness.close();
+      await harness.reloadPlugin();
+      await widenPathToRealClaude(rig);
+      await openChat(page);
+      await expect(page.locator(".cc-msg.cc-assistant").first()).toBeVisible({ timeout: 20_000 });
+      await send(page, "Which note did I ask you to create earlier in this conversation? Answer with its vault path only.");
+      await expect(page.locator(".cc-msg.cc-assistant").last()).toContainText("Live/Hello.md", { timeout: 180_000 });
     }
   });
 });

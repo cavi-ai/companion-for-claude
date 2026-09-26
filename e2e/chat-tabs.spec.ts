@@ -1,5 +1,4 @@
 import { expect, test } from "./fixtures";
-import { launchObsidianHarness } from "./obsidianHarness";
 
 /** Switch the visible Chat tab to the leaf at `index` among all Chat leaves, in DOM/creation order. */
 async function focusChatLeaf(page: import("@playwright/test").Page, index: number): Promise<void> {
@@ -16,64 +15,41 @@ async function focusChatLeaf(page: import("@playwright/test").Page, index: numbe
   }, index);
 }
 
-/** The conversation id of the currently active Chat leaf, per its own getState() — never assume DOM order. */
-async function activeChatConversationId(page: import("@playwright/test").Page): Promise<string | null> {
-  return page.evaluate(() =>
-    (window as unknown as {
-      app: { workspace: { activeLeaf: { view?: { getState?(): { conversationId: string | null } } } | null } };
-    }).app.workspace.activeLeaf?.view?.getState?.()?.conversationId ?? null,
-  );
-}
-
-test("running New chat tab twice opens two leaves that stream independent conversations", async () => {
-  const harness = await launchObsidianHarness({ claudeCli: true });
+test("running New chat tab twice opens two leaves that stream independent conversations", async ({ rig }) => {
+  const harness = await rig.reset({ claudeCli: true });
   const { page } = harness;
-  try {
-    await page.evaluate(async () => {
-      const app = (window as unknown as { app: { commands: { executeCommandById(id: string): Promise<void> } } }).app;
-      await app.commands.executeCommandById("claude-companion:new-chat-tab");
-      await app.commands.executeCommandById("claude-companion:new-chat-tab");
-    });
+  await page.evaluate(async () => {
+    const app = (window as unknown as { app: { commands: { executeCommandById(id: string): Promise<void> } } }).app;
+    await app.commands.executeCommandById("claude-companion:new-chat-tab");
+    await app.commands.executeCommandById("claude-companion:new-chat-tab");
+  });
 
-    const leafCount = await page.evaluate(() =>
-      (window as unknown as { app: { workspace: { getLeavesOfType(type: string): unknown[] } } }).app.workspace
-        .getLeavesOfType("claude-companion-chat").length,
-    );
-    expect(leafCount).toBe(2);
+  // Each Chat leaf renders its own root, only the active one visible — two tabs means two roots in the DOM.
+  await expect(page.locator(".cc-chat-root")).toHaveCount(2);
 
-    // Send "ping" in the first tab and wait for the reply.
-    await focusChatLeaf(page, 0);
-    expect(await activeChatConversationId(page)).toBeNull(); // fresh tab, no turn started yet
-    const chat = page.locator(".cc-chat-root:visible").first();
-    await expect(chat).toContainText("● Claude Code", { timeout: 15_000 });
-    await chat.locator(".cc-input").fill("ping");
-    await chat.locator(".cc-input").press("Enter");
-    await expect(chat.locator(".cc-msg.cc-assistant").last()).toContainText("pong from claude code", { timeout: 30_000 });
-    const firstConversationId = await activeChatConversationId(page);
-    expect(firstConversationId).not.toBeNull();
+  // Send "ping" in the first tab and wait for the reply.
+  await focusChatLeaf(page, 0);
+  const first = page.locator(".cc-chat-root:visible").first();
+  await expect(first).toContainText("● Claude Code", { timeout: 15_000 });
+  await expect(first.locator(".cc-msg")).toHaveCount(0); // fresh tab, nothing sent yet
+  await first.locator(".cc-input").fill("ping");
+  await first.locator(".cc-input").press("Enter");
+  await expect(first.locator(".cc-msg.cc-assistant").last()).toContainText("pong from claude code", { timeout: 30_000 });
+  await expect(first.locator(".cc-msg")).toHaveCount(2);
 
-    // Switch to the second tab — a fresh, empty conversation — and do the same.
-    await focusChatLeaf(page, 1);
-    expect(await activeChatConversationId(page)).toBeNull(); // fresh tab, no turn started yet
-    await expect(chat).toContainText("● Claude Code", { timeout: 15_000 });
-    await expect(chat.locator(".cc-msg")).toHaveCount(0);
-    await chat.locator(".cc-input").fill("ping");
-    await chat.locator(".cc-input").press("Enter");
-    await expect(chat.locator(".cc-msg.cc-assistant").last()).toContainText("pong from claude code", { timeout: 30_000 });
-    const secondConversationId = await activeChatConversationId(page);
-    expect(secondConversationId).not.toBeNull();
-    expect(secondConversationId).not.toBe(firstConversationId);
+  // Switch to the second tab — a fresh, empty conversation, unaffected by the first — and do the same.
+  await focusChatLeaf(page, 1);
+  const second = page.locator(".cc-chat-root:visible").first();
+  await expect(second).toContainText("● Claude Code", { timeout: 15_000 });
+  await expect(second.locator(".cc-msg")).toHaveCount(0);
+  await second.locator(".cc-input").fill("ping");
+  await second.locator(".cc-input").press("Enter");
+  await expect(second.locator(".cc-msg.cc-assistant").last()).toContainText("pong from claude code", { timeout: 30_000 });
+  await expect(second.locator(".cc-msg")).toHaveCount(2);
 
-    const conversationIds = await page.evaluate(() =>
-      (window as unknown as {
-        app: { workspace: { getLeavesOfType(type: string): { view: { getState(): { conversationId: string | null } } }[] } };
-      }).app.workspace.getLeavesOfType("claude-companion-chat").map((leaf) => leaf.view.getState().conversationId),
-    );
-    expect(conversationIds).toHaveLength(2);
-    expect(conversationIds[0]).not.toBeNull();
-    expect(conversationIds[1]).not.toBeNull();
-    expect(conversationIds[0]).not.toBe(conversationIds[1]);
-  } finally {
-    await harness.close();
-  }
+  // Switching back proves the first tab's own transcript was never touched by the second's turn.
+  await focusChatLeaf(page, 0);
+  const backToFirst = page.locator(".cc-chat-root:visible").first();
+  await expect(backToFirst.locator(".cc-msg")).toHaveCount(2);
+  await expect(backToFirst.locator(".cc-msg.cc-user").first()).toContainText("ping");
 });

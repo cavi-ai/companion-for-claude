@@ -1,12 +1,12 @@
 import { expect, test } from "./fixtures";
-import { launchObsidianHarness, type ObsidianHarness } from "./obsidianHarness";
+import type { Rig } from "./fixtures";
 
 test.describe.configure({ mode: "serial" });
 
-let harness: ObsidianHarness;
+let harness: Rig;
 
-test.beforeAll(async () => {
-  harness = await launchObsidianHarness();
+test.beforeAll(async ({ rig }) => {
+  harness = await rig.reset();
   await harness.page.setViewportSize({ width: 320, height: 900 });
   await harness.page.evaluate(async () => {
     // The desktop harness cannot replace Obsidian's module-scoped Platform

@@ -42,7 +42,9 @@ export class ClipperSetupModal extends Modal {
       tab.addEventListener("click", () => { this.active = item.type; this.render(); });
     }
 
-    const status = setup.status === "not-set-up" ? "Not set up" : setup.status === "update-available" ? "Update available" : "Current template copied";
+    const status = setup.status === "verified"
+      ? "Verified — a clip matched this template"
+      : setup.status === "not-set-up" ? "Not set up" : setup.status === "update-available" ? "Update available" : "Current template copied";
     this.contentEl.createDiv({ cls: "cc-clipper-status", text: status });
     const summary = this.contentEl.createDiv({ cls: "cc-clipper-summary" });
     summary.createDiv({ text: `Template: ${setup.templateName}` });

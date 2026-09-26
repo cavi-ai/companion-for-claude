@@ -189,6 +189,13 @@ body:not(.is-mobile) .cc-model.cc-model-tappable:hover {
   font-size: var(--cc-chat-font, 14px);
   line-height: 1.55;
 }
+/* Obsidian sets user-select: none on body. */
+.cc-body,
+.cc-tool-chip-result,
+.cc-thinking-body {
+  user-select: text;
+  -webkit-user-select: text;
+}
 /* Desktop: soft borderless bubble; the hover overlay stays visible on sidebar backgrounds. */
 body:not(.is-mobile) .cc-user {
   background: var(--background-modifier-hover);

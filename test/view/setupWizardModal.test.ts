@@ -20,6 +20,7 @@ const deps = (over: Partial<SetupWizardDependencies> = {}): SetupWizardDependenc
   downloadEmbeddings: vi.fn().mockResolvedValue(undefined),
   seedOntology: vi.fn().mockResolvedValue(undefined),
   finish: vi.fn().mockResolvedValue(undefined),
+  onClosed: vi.fn(),
   ...over,
 });
 

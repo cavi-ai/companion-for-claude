@@ -1,8 +1,8 @@
 import { expect, test } from "./fixtures";
-import { launchObsidianHarness, type ObsidianHarness } from "./obsidianHarness";
+import type { Rig } from "./fixtures";
 
 test.describe.configure({ mode: "serial" });
-let harness: ObsidianHarness;
+let harness: Rig;
 let consoleFailures: string[] = [];
 
 function paddedPdf(size: number): Buffer {
@@ -24,8 +24,8 @@ function paddedPdf(size: number): Buffer {
   return fixture;
 }
 
-test.beforeAll(async () => {
-  harness = await launchObsidianHarness();
+test.beforeAll(async ({ rig }) => {
+  harness = await rig.reset();
   harness.page.on("console", (message) => { if (message.type() === "error") consoleFailures.push(message.text()); });
   harness.page.on("pageerror", (error) => consoleFailures.push(error.message));
 });
@@ -74,7 +74,7 @@ test("05 advanced workbench: grouped navigation exposes every research panel wit
   const workbench = harness.page.locator(".cc-research-workbench");
   await expect(workbench.locator(".cc-research-tab-group")).toHaveCount(4);
   await expect(workbench.locator(".cc-research-header-top .cc-workspace-navigation")).toBeVisible();
-  const before = harness.providerRequests();
+  const before = await harness.providerRequests();
   for (const tab of ["Overview", "Sources", "Evidence", "Claims", "Outline", "Draft", "Audit", "Intelligence", "Discover"]) {
     await workbench.locator(".cc-research-tab-select").selectOption(tab);
     await expect(workbench.getByRole("tabpanel")).toBeVisible();
@@ -84,7 +84,7 @@ test("05 advanced workbench: grouped navigation exposes every research panel wit
   await expect(workbench.getByLabel("Discovery query")).toHaveCount(0);
   await expect(workbench.getByRole("button", { name: "Search", exact: true })).toHaveCount(0);
   await expect.poll(async () => await workbench.evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1);
-  expect(harness.providerRequests()).toBe(before);
+  expect(await harness.providerRequests()).toBe(before);
   await harness.page.screenshot({ path: "/private/tmp/claude-companion-research-e2e-results/05-workbench.png" });
 
   for (const [tab, title, artifact] of [["Overview", "Project overview", "05a-overview"], ["Sources", "Source library", "05b-sources"], ["Evidence", "Evidence review", "05c-evidence"], ["Intelligence", "Research intelligence", "05d-intelligence"]] as const) {

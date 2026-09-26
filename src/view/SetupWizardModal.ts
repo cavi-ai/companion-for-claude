@@ -26,6 +26,7 @@ export interface SetupWizardDependencies {
   downloadEmbeddings(): Promise<void>;
   seedOntology(): Promise<void>;
   finish(): Promise<void>;
+  onClosed(): void;
 }
 
 /** First-run wizard: one modal, three optional steps, over the same flags `firstRun.ts` orders. */
@@ -42,6 +43,7 @@ export class SetupWizardModal extends Modal {
 
   override onClose(): void {
     this.contentEl.empty();
+    this.deps.onClosed();
   }
 
   private step(): WizardStep | undefined {

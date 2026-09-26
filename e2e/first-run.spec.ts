@@ -1,7 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, test } from "./fixtures";
-import { launchObsidianHarness } from "./obsidianHarness";
 
 /**
  * How many deferred-consent prompts are open across the whole app. Accepting
@@ -53,8 +52,8 @@ const wizardWindow = async (harness: { windows(): import("@playwright/test").Pag
 };
 
 // Fresh-install ordering is one user journey and therefore one app launch.
-test("a fresh install orders credential, consent, and desktop integration setup", async () => {
-  const harness = await launchObsidianHarness({ firstRun: true });
+test("a fresh install orders credential, consent, and desktop integration setup", async ({ rig }) => {
+  const harness = await rig.reset({ firstRun: true });
   const { page } = harness;
   try {
     await openChat(page);
@@ -74,7 +73,7 @@ test("a fresh install orders credential, consent, and desktop integration setup"
     await composer.fill("does this send?");
     await composer.press("Enter");
     await expect(page.locator(".cc-setup-card")).toBeVisible();
-    expect(harness.providerRequests()).toBe(0);
+    expect(await harness.providerRequests()).toBe(0);
 
     await page.locator(".cc-setup-input").fill("sk-ant-api-e2e");
     await page.locator(".cc-setup-save").click();

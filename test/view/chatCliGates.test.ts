@@ -119,7 +119,7 @@ describe("ChatView on the claude-cli backend", () => {
   it("offers Claude Code sign-in on the setup card when the CLI is signed in and no key exists", () => {
     const view = new ChatView(new WorkspaceLeaf(new App()), pluginStub({ chatBackend: "claude", apiKey: "" }, API, true));
     const host = new FakeElement() as unknown as HTMLElement;
-    (view as unknown as { renderSetupCard(parent: HTMLElement): void }).renderSetupCard(host);
+    (view as unknown as { setupCard: { render(parent: HTMLElement): void } }).setupCard.render(host);
     const buttons = (host as unknown as FakeElement).querySelectorAll("button");
     expect(buttons.some((b) => b.textContent === "Use Claude Code sign-in")).toBe(true);
   });
@@ -137,11 +137,11 @@ describe("ChatView on the claude-cli backend", () => {
     }) as unknown as ClaudeCompanionPlugin["router"];
     const view = new ChatView(new WorkspaceLeaf(new App()), plugin);
     const host = new FakeElement() as unknown as HTMLElement;
-    const seam = view as unknown as { messagesEl: HTMLElement; renderSetupCard(parent: HTMLElement): void; renderEmptyState(): void; refreshModelLabel(): void };
+    const seam = view as unknown as { messagesEl: HTMLElement; setupCard: { render(parent: HTMLElement): void }; renderEmptyState(): void; refreshModelLabel(): void };
     seam.messagesEl = host;
     seam.renderEmptyState = () => {};
     seam.refreshModelLabel = () => {};
-    seam.renderSetupCard(host);
+    seam.setupCard.render(host);
     const buttons = (host as unknown as FakeElement).querySelectorAll("button");
     const codexButton = buttons.find((b) => b.textContent === "Use Codex sign-in");
     expect(codexButton).toBeDefined();
@@ -154,7 +154,7 @@ describe("ChatView on the claude-cli backend", () => {
   it("leads the setup card with Claude Code when the CLI is signed in", () => {
     const view = new ChatView(new WorkspaceLeaf(new App()), pluginStub({ chatBackend: "claude", apiKey: "" }, API, true));
     const host = new FakeElement() as unknown as HTMLElement;
-    (view as unknown as { renderSetupCard(parent: HTMLElement): void }).renderSetupCard(host);
+    (view as unknown as { setupCard: { render(parent: HTMLElement): void } }).setupCard.render(host);
     const sub = (host as unknown as FakeElement).querySelector(".cc-setup-sub");
     expect(sub?.textContent).toMatch(/^Claude Code is signed in on this computer/);
   });
@@ -210,10 +210,10 @@ describe("ChatView on the claude-cli backend", () => {
     } as unknown as ClaudeCompanionPlugin;
     const view = new ChatView(new WorkspaceLeaf(new App()), plugin);
     const host = new FakeElement() as unknown as HTMLElement;
-    const seam = view as unknown as { messagesEl: HTMLElement; renderSetupCard(parent: HTMLElement): void };
+    const seam = view as unknown as { messagesEl: HTMLElement; setupCard: { render(parent: HTMLElement): void } };
     seam.messagesEl = host;
 
-    seam.renderSetupCard(host);
+    seam.setupCard.render(host);
     expect(refresh).toHaveBeenCalledTimes(1);
     expect((host as unknown as FakeElement).querySelectorAll("button").some((b) => b.textContent === "Use Claude Code sign-in")).toBe(false);
 

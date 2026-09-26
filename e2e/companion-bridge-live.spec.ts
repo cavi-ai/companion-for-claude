@@ -6,7 +6,6 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { expect, test } from "./fixtures";
-import { launchObsidianHarness } from "./obsidianHarness";
 
 // Real Claude Code, real subscription: opt in with CC_E2E_LIVE=1. Never runs in CI.
 const LIVE = process.env.CC_E2E_LIVE === "1";
@@ -42,12 +41,12 @@ interface StreamEvent {
 test.describe("obsidian-agent connection-finder over Companion's bridge, live", () => {
   test.skip(!LIVE, "set CC_E2E_LIVE=1 to run against the signed-in claude binary");
 
-  test("connection-finder calls the obsidian-vault MCP bridge's related_notes tool", async () => {
+  test("connection-finder calls the obsidian-vault MCP bridge's related_notes tool", async ({ rig }) => {
     test.setTimeout(300_000);
     test.skip(!(await claudeSignedIn()), "claude auth status is not loggedIn");
 
     const port = await freePort();
-    const harness = await launchObsidianHarness({
+    const harness = await rig.reset({
       embedStub: true,
       settingsOverride: { mcpEnabled: true, mcpPort: port, mcpAllowWrites: false, mcpToken: TOKEN },
       extraFiles: {

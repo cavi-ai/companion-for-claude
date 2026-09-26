@@ -92,6 +92,11 @@ export class SemanticStore {
     return !e || e.hash !== hash;
   }
 
+  /** True if the path is indexed at exactly this mtime. */
+  isCurrent(path: string, mtime: number): boolean {
+    return this.data.notes[path]?.mtime === mtime;
+  }
+
   hasNote(path: string): boolean {
     return path in this.data.notes;
   }

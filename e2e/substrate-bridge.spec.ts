@@ -1,9 +1,9 @@
 import { createServer } from "node:net";
 import { expect, test } from "./fixtures";
-import { launchObsidianHarness, type ObsidianHarness } from "./obsidianHarness";
+import type { Rig } from "./fixtures";
 
 test.describe.configure({ mode: "serial" });
-let harness: ObsidianHarness;
+let harness: Rig;
 let port = 0;
 
 async function freePort(): Promise<number> {
@@ -14,9 +14,9 @@ async function freePort(): Promise<number> {
   });
 }
 
-test.beforeAll(async () => {
+test.beforeAll(async ({ rig }) => {
   port = await freePort();
-  harness = await launchObsidianHarness({
+  harness = await rig.reset({
     embedStub: true,
     settingsOverride: { mcpEnabled: true, mcpPort: port, mcpAllowWrites: false, mcpToken: "3f9c1b7e2a6d4c8f9e0b1a2c3d4e5f61" },
     extraFiles: {

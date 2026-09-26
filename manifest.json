@@ -1,7 +1,7 @@
 {
   "id": "claude-companion",
   "name": "Companion for Claude",
-  "version": "0.32.0",
+  "version": "0.32.1",
   "minAppVersion": "1.13.0",
   "description": "Claude in your vault: chat over your notes, approve agent edits hunk by hunk, type Web Clipper clips into source notes, take research from sources to cited drafts, search on device, render artifacts, bridge over MCP. Claude Code, API key, or Ollama.",
   "author": "Sasan Sotoodehfar",

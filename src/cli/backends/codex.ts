@@ -57,12 +57,20 @@ export function parseCodexLine(line: string): CliEvent[] {
       if (item.type === "command_execution") {
         return [{ kind: "toolResult", id: str(item.id), content: str(item.aggregated_output), isError: num(item.exit_code) !== 0 }];
       }
+      if (item.type === "mcp_tool_call") {
+        const content = Array.isArray(obj(item.result).content) ? (obj(item.result).content as unknown[]).map((c) => str(obj(c).text)).join("") : "";
+        const error = str(obj(item.error).message, typeof item.error === "string" ? item.error : "");
+        return [{ kind: "toolResult", id: str(item.id), content: error || content, isError: item.status !== "completed" }];
+      }
       return [];
     }
     case "item.started": {
       const item = obj(o.item);
       if (item.type === "command_execution") {
         return [{ kind: "toolUse", block: { type: "tool_use", id: str(item.id), name: "shell", input: { command: str(item.command) } } }];
+      }
+      if (item.type === "mcp_tool_call") {
+        return [{ kind: "toolUse", block: { type: "tool_use", id: str(item.id), name: `mcp__${str(item.server)}__${str(item.tool)}`, input: obj(item.arguments) } }];
       }
       return [];
     }
@@ -89,9 +97,10 @@ export const codexBackend: CliBackend = {
   supportsMcp: true,
   signInHint: "run `codex login`",
   async probe(run) {
-    const { stdout, code } = await run(["login", "status"]);
-    const loggedIn = code === 0 && /^logged in/i.test(stdout.trim());
-    const method = /logged in using (.+)/i.exec(stdout)?.[1]?.trim() ?? "";
+    const { stdout, stderr, code } = await run(["login", "status"]);
+    const text = `${stdout}\n${stderr ?? ""}`.trim();
+    const loggedIn = code === 0 && /^logged in/im.test(text);
+    const method = /logged in using (.+)/i.exec(text)?.[1]?.trim() ?? "";
     return { loggedIn, method };
   },
   buildArgv: buildCodexArgv,

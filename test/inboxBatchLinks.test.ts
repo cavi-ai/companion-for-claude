@@ -30,6 +30,7 @@ function createHarness(): InboxHarness {
   Object.assign(plugin, {
     app,
     settings: { sourceCaptureEnabled: true, sourceInboxFolder: "Clippings" },
+    clipperSetupNeeded: () => true,
   });
   return { app, plugin, view: new InboxView(new WorkspaceLeaf(app), plugin), alpha, beta };
 }

@@ -7,7 +7,7 @@ const settle = async (turns = 24): Promise<void> => {
   for (let turn = 0; turn < turns; turn++) await Promise.resolve();
 };
 
-function harness(): { app: App; view: InboxView; organizeClippings: ReturnType<typeof vi.fn> } {
+function harness(clipperSetupNeeded = true): { app: App; view: InboxView; organizeClippings: ReturnType<typeof vi.fn> } {
   const app = new App();
   const plugin = Object.create(ClaudeCompanionPlugin.prototype) as ClaudeCompanionPlugin;
   const organizeClippings = vi.fn(async () => undefined);
@@ -17,6 +17,7 @@ function harness(): { app: App; view: InboxView; organizeClippings: ReturnType<t
     sourceEnrichmentBackendLabel: () => "Claude",
     linkCandidates: () => [],
     organizeClippings,
+    clipperSetupNeeded: () => clipperSetupNeeded,
   });
   return { app, view: new InboxView(new WorkspaceLeaf(app), plugin), organizeClippings };
 }
@@ -90,5 +91,14 @@ describe("Inbox typed clips", () => {
     await settle();
 
     expect(html(view)).toContain("Clip something and it'll show up here");
+  });
+
+  it("offers Web Clipper setup at inbox zero only until a template is verified", async () => {
+    const pending = harness(true);
+    await pending.view.onOpen();
+    expect(html(pending.view)).toContain("Set up Web Clipper");
+    const verified = harness(false);
+    await verified.view.onOpen();
+    expect(html(verified.view)).not.toContain("Set up Web Clipper");
   });
 });

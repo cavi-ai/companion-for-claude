@@ -1,0 +1,7 @@
+{"type":"thread.started","thread_id":"01a0d0b0-3da6-7331-a586-3847f9f4315d"}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"I’m invoking the requested `vault_ping` MCP capability and will return its output verbatim."}}
+{"type":"item.started","item":{"id":"item_1","type":"mcp_tool_call","server":"obsidian-vault","tool":"vault_ping","arguments":{},"result":null,"error":null,"status":"in_progress"}}
+{"type":"item.completed","item":{"id":"item_1","type":"mcp_tool_call","server":"obsidian-vault","tool":"vault_ping","arguments":{},"result":{"content":[{"type":"text","text":"PONG-7731"}],"structured_content":null},"error":null,"status":"completed"}}
+{"type":"item.completed","item":{"id":"item_2","type":"agent_message","text":"PONG-7731"}}
+{"type":"turn.completed","usage":{"input_tokens":62143,"cached_input_tokens":42880,"cache_write_input_tokens":0,"output_tokens":155,"reasoning_output_tokens":19}}

@@ -9,11 +9,12 @@ export interface ClipperSetupSettings {
   inboxFolder: string;
   baseTags: string[];
   savedFingerprint: string;
+  verification?: { state: string; fingerprint: string };
 }
 
 export interface ClipperSetupViewModel {
   type: SourceType;
-  status: "not-set-up" | "current" | "update-available";
+  status: "not-set-up" | "current" | "update-available" | "verified";
   templateName: string;
   destination: string;
   baseTags: string[];
@@ -44,7 +45,9 @@ export function clipperSetupFor(
   const companionFields = schema.fields
     .map(({ key }) => key)
     .filter((key) => !pageKnown.has(key));
-  const status = !settings.savedFingerprint
+  const status = settings.verification?.state === "verified" && settings.verification.fingerprint === fingerprint
+    ? "verified" as const
+    : !settings.savedFingerprint
     ? "not-set-up" as const
     : settings.savedFingerprint === fingerprint
       ? "current" as const

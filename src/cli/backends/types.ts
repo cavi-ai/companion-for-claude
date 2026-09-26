@@ -48,7 +48,7 @@ export interface CliBackend {
   readonly supportsMcp: boolean;
   /** Instruction fragment for setup copy, e.g. "run `claude auth login`". */
   readonly signInHint: string;
-  probe(run: (argv: string[]) => Promise<{ stdout: string; code: number }>): Promise<CliAuthStatus>;
+  probe(run: (argv: string[]) => Promise<{ stdout: string; stderr?: string; code: number }>): Promise<CliAuthStatus>;
   buildArgv(input: CliArgvInput): string[];
   env?(input: CliArgvInput): Record<string, string>;
   parseLine(line: string): CliEvent[];

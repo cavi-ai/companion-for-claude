@@ -1,8 +1,7 @@
 import { expect, test } from "./fixtures";
-import { launchObsidianHarness } from "./obsidianHarness";
 
-test("ephemeral Companion feedback appears immediately and clears within 2.5 seconds", async () => {
-  const harness = await launchObsidianHarness();
+test("ephemeral Companion feedback appears immediately and clears within 2.5 seconds", async ({ rig }) => {
+  const harness = await rig.reset();
   const { page } = harness;
   try {
     await page.evaluate(async () => {

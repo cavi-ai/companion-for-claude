@@ -128,4 +128,46 @@ describe("reindex suspension", () => {
     expect(diagLines).toContain("reindex-flush-start");
     expect(diagLines).toContain("reindex-flush-rejected");
   });
+
+  it("keeps queued notes while the built-in model is not ready, instead of dropping them", async () => {
+    const { ctrl, internal } = makeController(["a.md"]);
+    (ctrl as unknown as { canEmbedWithoutDownload: () => Promise<boolean> }).canEmbedWithoutDownload = async () => false;
+    internal.reindexQueue.add("a.md");
+    await internal.flushReindex();
+    expect(internal._indexer!.updateNotes).not.toHaveBeenCalled();
+    expect([...internal.reindexQueue]).toEqual(["a.md"]);
+  });
+});
+
+describe("rename and startup catch-up", () => {
+  it("queues the new path when a renamed note was never indexed (Organize moves unindexed clips)", async () => {
+    const { ctrl, internal } = makeController(["Library/clip.md"]);
+    (internal._indexer as unknown as { renameNote: ReturnType<typeof vi.fn> }).renameNote = vi.fn(async () => false);
+    await ctrl.renameNote("Clippings/clip.md", "Library/clip.md");
+    expect([...internal.reindexQueue]).toEqual(["Library/clip.md"]);
+  });
+
+  it("does not queue a renamed note the index already moved", async () => {
+    const { ctrl, internal } = makeController(["b.md"]);
+    (internal._indexer as unknown as { renameNote: ReturnType<typeof vi.fn> }).renameNote = vi.fn(async () => true);
+    await ctrl.renameNote("a.md", "b.md");
+    expect(internal.reindexQueue.size).toBe(0);
+  });
+
+  it("catchUpIndex runs an incremental build when the model is ready", async () => {
+    const { ctrl, internal } = makeController(["a.md"]);
+    const build = vi.fn(async () => ({ indexed: 1, skipped: 0, removed: 0, failureCount: 0, failures: [] }));
+    (internal._indexer as unknown as { build: typeof build }).build = build;
+    await ctrl.catchUpIndex();
+    expect(build).toHaveBeenCalledWith({});
+  });
+
+  it("catchUpIndex never triggers a model download", async () => {
+    const { ctrl, internal } = makeController(["a.md"]);
+    (ctrl as unknown as { canEmbedWithoutDownload: () => Promise<boolean> }).canEmbedWithoutDownload = async () => false;
+    const build = vi.fn();
+    (internal._indexer as unknown as { build: typeof build }).build = build;
+    await ctrl.catchUpIndex();
+    expect(build).not.toHaveBeenCalled();
+  });
 });

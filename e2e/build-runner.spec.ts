@@ -1,8 +1,7 @@
 import { expect, test } from "./fixtures";
-import { launchObsidianHarness } from "./obsidianHarness";
 
-test("Build creates documents and runs tasks in native stable controls without copy-paste", async ({}, testInfo) => {
-  const harness = await launchObsidianHarness({ fakeClaudeCode: true });
+test("Build creates documents and runs tasks in native stable controls without copy-paste", async ({ rig }, testInfo) => {
+  const harness = await rig.reset({ fakeClaudeCode: true });
   const { page } = harness;
   try {
     await page.evaluate(async () => {
@@ -64,8 +63,8 @@ test("Build creates documents and runs tasks in native stable controls without c
   }
 });
 
-test("Build Runner keeps controls inside a compact mobile viewport", async ({}, testInfo) => {
-  const harness = await launchObsidianHarness({ fakeClaudeCode: true });
+test("Build Runner keeps controls inside a compact mobile viewport", async ({ rig }, testInfo) => {
+  const harness = await rig.reset({ fakeClaudeCode: true });
   const { page } = harness;
   try {
     await page.setViewportSize({ width: 390, height: 844 });

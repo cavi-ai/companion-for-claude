@@ -347,6 +347,37 @@ export class SemanticController {
     }
   }
 
+  async renameNote(oldPath: string, newPath: string): Promise<void> {
+    const ix = this.indexer();
+    if (!ix) return;
+    if (!(await ix.renameNote(oldPath, newPath))) this.queueReindex(newPath);
+  }
+
+  /** Startup pass for notes created, changed, or deleted while Obsidian was closed. Never downloads a model. */
+  async catchUpIndex(): Promise<void> {
+    const s = this.deps.settings();
+    if (!s.semanticEnabled) return;
+    if (s.embeddingEngine === "ollama" ? !this.deps.router().ollama.hasCredentials() : !(await this.canEmbedWithoutDownload())) return;
+    const ix = this.indexer();
+    if (!ix) return;
+    try {
+      const res = await ix.build({});
+      if (res.failureCount === 0) return;
+      const recovery = this.embeddingRecovery(new Error(res.failures[0]?.message ?? "Embedding failed"));
+      const activity = this.deps.activity();
+      const activityId = activity.start({ id: "semantic-index:catch-up", kind: "semantic-index", title: "Semantic index needs attention" });
+      activity.fail(activityId, {
+        succeeded: res.indexed,
+        failed: res.failureCount,
+        technicalDetails: recovery.technicalDetails,
+        recovery: recovery.actions,
+        details: res.failures.map(({ path, message }) => ({ label: path, message, state: "error" as const })),
+      });
+    } catch (error) {
+      console.error("[Claude Companion] semantic catch-up failed", error);
+    }
+  }
+
   queueReindex(path: string): void {
     if (!this.deps.settings().semanticEnabled) return;
     this.reindexQueue.add(path);
@@ -374,7 +405,6 @@ export class SemanticController {
       return;
     }
     if (!(await this.canEmbedWithoutDownload())) {
-      this.reindexQueue.clear();
       if (!this.reindexPausedNotified) {
         this.reindexPausedNotified = true;
         this.deps.notice("Semantic reindex paused — download the built-in model in settings.");

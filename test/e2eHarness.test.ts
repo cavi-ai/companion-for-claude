@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { effectiveObsidianCoreVersion } from "../e2e/obsidianHarness";
+import { effectiveObsidianCoreVersion } from "../e2e/coreAsar";
 
 describe("effectiveObsidianCoreVersion", () => {
   it("uses an explicitly supplied newer auto-update core for an isolated E2E profile", () => {

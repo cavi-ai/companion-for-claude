@@ -1,8 +1,8 @@
 import { test, expect } from "./fixtures";
+import type { Rig } from "./fixtures";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { launchObsidianHarness, type ObsidianHarness } from "./obsidianHarness";
 
 const ENABLED = process.env.CC_E2E_MEMORY === "1";
 const CLIPS = 40;
@@ -21,39 +21,37 @@ function reply(i: number): string {
 }
 
 /**
- * Two-launch fixture: launch 1 seeds only the filler notes, primes the semantic
- * index over them, then closes (kept on disk). The 40 clips are written directly
- * to disk afterward — unindexed, like clips synced while the phone app is closed —
- * then launch 2 reuses the vault/profile. Obsidian's startup scan sees the new
- * clip files, but the plugin's reindex listeners register only after layout-ready,
- * so the clips stay unindexed until the batch itself modifies them.
+ * Seeds only the filler notes, primes the semantic index over them, then
+ * writes the 40 clips directly to the live vault — unindexed, approximating
+ * clips synced while the app was closed. The single rig never relaunches, so
+ * this no longer exercises Obsidian's own cold-scan-on-startup path; it still
+ * proves the clips stay unindexed until the batch itself touches them, since
+ * writing straight to disk bypasses the plugin's create-event listeners.
  */
-async function launchPrimed(): Promise<ObsidianHarness> {
+async function launchPrimed(rig: Rig): Promise<Rig> {
   const fillerFiles: Record<string, string> = {};
   for (let i = 0; i < FILLER; i++) fillerFiles[`Notes/filler-${i}.md`] = fillerBody(i);
-  let n = 0;
   const base = {
     embedStub: true,
     settingsOverride: { sourceCaptureEnabled: true, sourceEnrichOnCreate: false, sourceCaptureConsent: "allow", enrichmentDiagnostics: true, semanticEnabled: true },
-    providerReply: (body: string) => (/summary/i.test(body) ? reply(n++) : null),
+    providerReply: [{ match: "summary", flags: "i", replies: Array.from({ length: CLIPS }, (_, i) => reply(i)) }],
     providerDelayMs: 2000,
   };
-  const seed = await launchObsidianHarness({ ...base, extraFiles: fillerFiles });
-  await primeSemanticIndex(seed);
-  const { vault, profile } = seed.paths;
-  await seed.close({ keep: true });
+  const harness = await rig.reset({ ...base, extraFiles: fillerFiles });
+  await primeSemanticIndex(harness);
+  const { vault } = harness.paths;
   for (let i = 0; i < CLIPS; i++) {
     const dest = join(vault, "Clippings", `clip-${i}.md`);
     await mkdir(dirname(dest), { recursive: true });
     await writeFile(dest, clipBody(i, 5 + ((i * 37) % 196)));
   }
-  return launchObsidianHarness({ ...base, reuse: { vault, profile } });
+  return harness;
 }
 
 /** Kick off a full semantic rebuild and wait until no "semantic" activity record is still running,
  *  so the index holds the filler notes before either enrichment run and every save serializes a
  *  realistic size instead of an empty index. */
-async function primeSemanticIndex(harness: ObsidianHarness): Promise<void> {
+async function primeSemanticIndex(harness: Rig): Promise<void> {
   await harness.page.evaluate(async () => {
     await (window as unknown as { app: { commands: { executeCommandById(id: string): Promise<void> } } }).app.commands.executeCommandById("claude-companion:rebuild-semantic-index");
   });
@@ -63,7 +61,7 @@ async function primeSemanticIndex(harness: ObsidianHarness): Promise<void> {
   }), { timeout: 15 * 60_000, intervals: [1000] }).toBe(false);
 }
 
-async function semanticIndexBytes(harness: ObsidianHarness): Promise<number> {
+async function semanticIndexBytes(harness: Rig): Promise<number> {
   const path = join(harness.paths.vault, ".obsidian", "plugins", "claude-companion", "semantic-index.json");
   try {
     return (await stat(path)).size;
@@ -72,7 +70,7 @@ async function semanticIndexBytes(harness: ObsidianHarness): Promise<number> {
   }
 }
 
-async function sampleHeap(harness: ObsidianHarness, until: () => Promise<boolean>, file: string): Promise<{ peak: number; samples: number }> {
+async function sampleHeap(harness: Rig, until: () => Promise<boolean>, file: string): Promise<{ peak: number; samples: number }> {
   const cdp = await harness.page.context().newCDPSession(harness.page);
   await cdp.send("Performance.enable");
   const rows: string[] = ["t_ms,js_heap_used,js_heap_total"];
@@ -91,7 +89,7 @@ async function sampleHeap(harness: ObsidianHarness, until: () => Promise<boolean
   return { peak, samples: rows.length - 1 };
 }
 
-async function batchDone(harness: ObsidianHarness): Promise<boolean> {
+async function batchDone(harness: Rig): Promise<boolean> {
   return harness.page.evaluate(() => {
     const plugin = (window as unknown as { app: { plugins: { plugins: Record<string, { activity: { snapshot(): { records: Array<{ id: string; state: string }> } } }> } } }).app.plugins.plugins["claude-companion"];
     const rec = plugin.activity.snapshot().records.find((r) => r.id === "source-enrichment:inbox-batch");
@@ -101,7 +99,7 @@ async function batchDone(harness: ObsidianHarness): Promise<boolean> {
 
 /** True once a `save-done` line appears after the most recent `batch-end` line,
  *  i.e. the post-batch reindex flush (embed all clips, stringify, write) has finished. */
-async function flushSettled(harness: ObsidianHarness): Promise<boolean> {
+async function flushSettled(harness: Rig): Promise<boolean> {
   let log: string;
   try {
     log = await readFile(join(harness.paths.vault, "Claude", "enrichment-diagnostics.log"), "utf8");
@@ -115,7 +113,7 @@ async function flushSettled(harness: ObsidianHarness): Promise<boolean> {
   return lines.some((l) => l.split(" ")[2] === "save-done" && (l.split(" ")[0] ?? "") > batchEndTs);
 }
 
-async function enrichedCount(harness: ObsidianHarness): Promise<number> {
+async function enrichedCount(harness: Rig): Promise<number> {
   let count = 0;
   for (let i = 0; i < CLIPS; i++) {
     const text = await readFile(join(harness.paths.vault, "Clippings", `clip-${i}.md`), "utf8");
@@ -128,8 +126,8 @@ test.describe("batch enrichment memory", () => {
   test.skip(!ENABLED, "set CC_E2E_MEMORY=1");
   test.setTimeout(20 * 60_000);
 
-  test("Enrich all over 40 clips", async () => {
-    const harness = await launchPrimed();
+  test("Enrich all over 40 clips", async ({ rig }) => {
+    const harness = await launchPrimed(rig);
     try {
       const indexBytes = await semanticIndexBytes(harness);
       await harness.page.evaluate(async () => {
@@ -162,8 +160,8 @@ test.describe("batch enrichment memory", () => {
     }
   });
 
-  test("40 single enrichments 3 s apart", async () => {
-    const harness = await launchPrimed();
+  test("40 single enrichments 3 s apart", async ({ rig }) => {
+    const harness = await launchPrimed(rig);
     try {
       const indexBytes = await semanticIndexBytes(harness);
       await harness.page.evaluate(async () => {

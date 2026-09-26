@@ -100,6 +100,11 @@ export class SemanticIndexer {
     for (let i = 0; i < files.length; i++) {
       const f = files[i];
       if (!f) continue;
+      if (!opts.force && store.isCurrent(f.path, f.mtime)) {
+        skipped++;
+        opts.onProgress?.(i + 1, files.length);
+        continue;
+      }
       try {
         this.assertInputSize(f.path, f.size);
         const prepared = await this.prepare(f.path);
@@ -198,12 +203,14 @@ export class SemanticIndexer {
     });
   }
 
-  async renameNote(oldPath: string, newPath: string): Promise<void> {
+  /** False when oldPath was never indexed, so the caller must index newPath itself. */
+  async renameNote(oldPath: string, newPath: string): Promise<boolean> {
     return this.runMutation(async () => {
       const store = await this.ensureLoaded();
-      if (!store.hasNote(oldPath)) return;
+      if (!store.hasNote(oldPath)) return false;
       store.renameNote(oldPath, newPath);
       await this.deps.save(store.toJSON());
+      return true;
     });
   }
 

@@ -162,8 +162,10 @@ export class InboxView extends ItemView {
           ? `Inbox zero — every clip in “${this.plugin.settings.sourceInboxFolder}” is typed already.`
           : `Inbox zero — nothing in “${this.plugin.settings.sourceInboxFolder}” needs typing. Clip something and it'll show up here.`,
       });
-      const clipper = root.createEl("button", { cls: "cc-inbox-clipper-setup", text: "Set up Web Clipper" });
-      clipper.addEventListener("click", () => this.plugin.openClipperSetup());
+      if (this.plugin.clipperSetupNeeded()) {
+        const clipper = root.createEl("button", { cls: "cc-inbox-clipper-setup", text: "Set up Web Clipper" });
+        clipper.addEventListener("click", () => this.plugin.openClipperSetup());
+      }
     } else {
       const bar = root.createDiv({ cls: "cc-inbox-bar" });
       bar.createSpan({

@@ -199,6 +199,20 @@ describe("plugin Claude CLI lifecycle", () => {
     expect(p.router().claudeCli.hasCredentials()).toBe(false);
   });
 
+  it("opens one wizard when layout-ready and the chat setup card both continue onboarding", async () => {
+    const rt = runtime();
+    const p = plugin(rt);
+    forWizardRace(p);
+    p.settings = { ...p.settings, desktopIntegrationsOffered: false, semanticEnabled: true, semanticModelPrompted: false };
+    await p.router().claudeCli.refresh();
+    const openSpy = vi.spyOn(SetupWizardModal.prototype, "open");
+    await Promise.all([p.continueOnboarding(), p.continueOnboarding()]);
+    expect(openSpy).toHaveBeenCalledTimes(1);
+    (openSpy.mock.contexts[0] as SetupWizardModal).close();
+    p.openSetupWizard();
+    expect(openSpy).toHaveBeenCalledTimes(2);
+  });
+
   it("no credential → layout-ready opens no wizard", async () => {
     const rt = runtime();
     rt.probe = async () => ({ loggedIn: false, method: "" });

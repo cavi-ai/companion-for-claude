@@ -11,7 +11,7 @@ export interface CliAuthStatus {
 }
 
 export interface CliRuntime {
-  /** Locates the backend's binary (special-cased search paths for Claude; PATH-only for the others) and its version. */
+  /** Locates the backend's binary (Claude's install locations, then the login-shell PATH and common install dirs) and its version. */
   find(backend: CliBackend): Promise<{ executable: string; version: string } | null>;
   /** Runs the backend's own auth probe against the found executable. */
   probe(backend: CliBackend, executable: string): Promise<CliAuthStatus>;
@@ -34,10 +34,33 @@ export function parseAuthStatus(stdout: string): CliAuthStatus {
 const PROBE_TIMEOUT_MS = 5_000;
 const MISSING = new Set(["ENOENT", "ENOTDIR", "EACCES", "EPERM"]);
 
-/** Executable search paths: Claude gets its historically verified multi-path search, the others resolve via PATH only. */
-export function executableCandidates(backend: CliBackend, platform: DesktopPlatform, homeDir: string): string[] {
-  if (backend.id === "claude-cli") return claudeExecutableCandidates(platform, homeDir);
-  return [backend.binary];
+const SHELL_PATH_MARKER = "__CC_PATH__";
+const SHELL_PATH_TIMEOUT_MS = 5_000;
+
+/** The PATH a login shell prints between markers; rc files may print anything around it. */
+export function parseShellPath(stdout: string): string[] {
+  const start = stdout.indexOf(SHELL_PATH_MARKER);
+  const end = stdout.indexOf(SHELL_PATH_MARKER, start + SHELL_PATH_MARKER.length);
+  if (start < 0 || end < 0) return [];
+  return stdout.slice(start + SHELL_PATH_MARKER.length, end).split(":").filter(Boolean);
+}
+
+export function parseVersion(stdout: string): string {
+  const tokens = stdout.trim().split(/\s+/);
+  return tokens.find((t) => /^v?\d+\.\d+/.test(t)) ?? tokens[0] ?? "";
+}
+
+/** GUI-launched apps on macOS get only /usr/bin:/bin:/usr/sbin:/sbin, so the login shell's PATH and common install dirs are searched too. */
+export function searchDirs(platform: DesktopPlatform, homeDir: string, shellPath: string[], envPath: string): string[] {
+  if (platform === "win32") return [];
+  const common = ["/opt/homebrew/bin", "/usr/local/bin", `${homeDir}/.local/bin`, `${homeDir}/.bun/bin`, `${homeDir}/.opencode/bin`, `${homeDir}/.npm-global/bin`];
+  return [...new Set([...envPath.split(":"), ...shellPath, ...common].filter(Boolean))];
+}
+
+/** Claude keeps its verified install locations first; every backend then tries each search dir. */
+export function executableCandidates(backend: CliBackend, platform: DesktopPlatform, homeDir: string, dirs: string[] = []): string[] {
+  const head = backend.id === "claude-cli" ? claudeExecutableCandidates(platform, homeDir) : [backend.binary];
+  return [...new Set([...head, ...dirs.map((d) => `${d}/${backend.binary}`)])];
 }
 
 export function createNodeCliRuntime(): CliRuntime {
@@ -52,28 +75,52 @@ export function createNodeCliRuntime(): CliRuntime {
 
   const runVersionCheck = (executable: string, args: string[]): Promise<string> =>
     new Promise((resolve, reject) => {
-      execFile(executable, args, { timeout: PROBE_TIMEOUT_MS, windowsHide: true }, (error, stdout) => {
+      execFile(executable, args, { timeout: PROBE_TIMEOUT_MS, windowsHide: true, env: childEnv() }, (error, stdout) => {
         if (error) reject(Object.assign(new Error(error.message), { code: (error as { code?: string }).code }));
         else resolve(stdout);
       });
     });
 
-  /** Never throws: a failed probe (missing binary, nonzero exit) resolves with whatever stdout came back. */
-  const runProbe = (executable: string, args: string[]): Promise<{ stdout: string; code: number }> =>
+  /** Never throws: a failed probe (missing binary, nonzero exit) resolves with whatever output came back. */
+  const runProbe = (executable: string, args: string[]): Promise<{ stdout: string; stderr: string; code: number }> =>
     new Promise((resolve) => {
-      execFile(executable, args, { timeout: PROBE_TIMEOUT_MS, windowsHide: true }, (error, stdout) => {
-        if (!error) { resolve({ stdout, code: 0 }); return; }
+      execFile(executable, args, { timeout: PROBE_TIMEOUT_MS, windowsHide: true, env: childEnv() }, (error, stdout, stderr) => {
+        if (!error) { resolve({ stdout, stderr, code: 0 }); return; }
         const code = (error as { code?: string | number }).code;
-        resolve({ stdout, code: typeof code === "number" ? code : 1 });
+        resolve({ stdout, stderr, code: typeof code === "number" ? code : 1 });
       });
     });
 
+  let shellPath: Promise<string[]> | null = null;
+  const loginShellPath = (): Promise<string[]> => {
+    if (platform === "win32" || platform === "unsupported") return Promise.resolve([]);
+    shellPath ??= new Promise((resolve) => {
+      const shell = proc.env.SHELL || "/bin/zsh";
+      execFile(shell, ["-ilc", `printf '%s%s%s' '${SHELL_PATH_MARKER}' "$PATH" '${SHELL_PATH_MARKER}'`], { timeout: SHELL_PATH_TIMEOUT_MS }, (error, stdout) => {
+        const found = parseShellPath(stdout ?? "");
+        if (found.length === 0) {
+          console.debug("Claude Companion: login shell PATH lookup failed", error);
+          shellPath = null;
+        }
+        resolve(found);
+      });
+    });
+    return shellPath;
+  };
+  let dirs: string[] = [];
+  const childEnv = (extra?: Record<string, string>): NodeJS.ProcessEnv => {
+    const env = { ...proc.env, ...extra };
+    if (dirs.length > 0) env.PATH = dirs.join(":");
+    return env;
+  };
+
   return {
     async find(backend) {
-      for (const executable of executableCandidates(backend, platform, os.homedir())) {
+      dirs = searchDirs(platform, os.homedir(), await loginShellPath(), proc.env.PATH ?? "");
+      for (const executable of executableCandidates(backend, platform, os.homedir(), dirs)) {
         try {
           const out = await runVersionCheck(executable, ["--version"]);
-          const version = out.trim().split(/\s+/, 1)[0] ?? "";
+          const version = parseVersion(out);
           if (version) return { executable, version };
         } catch (cause) {
           const code = (cause as { code?: string }).code;
@@ -100,7 +147,7 @@ export function createNodeCliRuntime(): CliRuntime {
       await fs.rm(file, { force: true });
     },
     spawn(executable, argv, cwd, env) {
-      return spawn(executable, argv, { cwd, stdio: ["pipe", "pipe", "pipe"], windowsHide: true, env: env ? { ...proc.env, ...env } : proc.env }) as unknown as CliChild;
+      return spawn(executable, argv, { cwd, stdio: ["pipe", "pipe", "pipe"], windowsHide: true, env: childEnv(env) }) as unknown as CliChild;
     },
   };
 }

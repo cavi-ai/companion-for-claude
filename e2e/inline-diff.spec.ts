@@ -1,6 +1,5 @@
 import type { Page } from "@playwright/test";
 import { expect, test } from "./fixtures";
-import { launchObsidianHarness } from "./obsidianHarness";
 
 type Pos = { line: number; ch: number };
 
@@ -38,8 +37,8 @@ const rewrite = async (page: Page): Promise<void> => {
   await modal.getByRole("button", { name: "Rewrite", exact: true }).click();
 };
 
-test("a rewrite reviews inline: accept applies, reject leaves the note alone", async () => {
-  const harness = await launchObsidianHarness({ providerReply: (body) => (/rewrite/i.test(body) ? "Build the tokenizer" : null) });
+test("a rewrite reviews inline: accept applies, reject leaves the note alone", async ({ rig }) => {
+  const harness = await rig.reset({ providerReply: [{ match: "rewrite", flags: "i", replies: ["Build the tokenizer"] }] });
   const { page } = harness;
   try {
     await openNote(page, "Build plan");
@@ -64,14 +63,14 @@ test("a rewrite reviews inline: accept applies, reject leaves the note alone", a
     await page.locator(".cc-inline-btn.is-reject").first().click();
     await expect(page.locator(".cc-inline-add")).toHaveCount(0);
     expect(await editorText(page)).toContain("- [ ] Wire the interface");
-    expect(harness.providerRequests()).toBe(2);
+    expect(await harness.providerRequests()).toBe(2);
   } finally {
     await harness.close();
   }
 });
 
-test("the selection action appears over a settled selection and opens the rewrite prompt", async () => {
-  const harness = await launchObsidianHarness();
+test("the selection action appears over a settled selection and opens the rewrite prompt", async ({ rig }) => {
+  const harness = await rig.reset();
   const { page } = harness;
   try {
     await openNote(page, "Build plan");

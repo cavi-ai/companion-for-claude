@@ -1,10 +1,9 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, test } from "./fixtures";
-import { launchObsidianHarness } from "./obsidianHarness";
 
-test("chat runs on the Claude Code backend with no API key and reuses the process across sends", async () => {
-  const harness = await launchObsidianHarness({ claudeCli: true });
+test("chat runs on the Claude Code backend with no API key and reuses the process across sends", async ({ rig }) => {
+  const harness = await rig.reset({ claudeCli: true });
   const { page } = harness;
   try {
     await page.evaluate(async () => {
@@ -33,7 +32,7 @@ test("chat runs on the Claude Code backend with no API key and reuses the proces
     expect(argvLines[0]).toContain("--session-id");
     expect(argvLines[0]).not.toContain("--bare");
     expect(argvLines[0]).not.toContain("mcp__obsidian-vault__*");
-    expect(harness.providerRequests()).toBe(0);
+    expect(await harness.providerRequests()).toBe(0);
 
     // The minted --session-id is persisted with the conversation so memory import can skip it.
     const dataPath = join(harness.paths.vault, ".obsidian", "plugins", "claude-companion", "data.json");
@@ -43,8 +42,8 @@ test("chat runs on the Claude Code backend with no API key and reuses the proces
   }
 });
 
-test("a failed Claude Code result shows an error, not an empty reply", async () => {
-  const harness = await launchObsidianHarness({ claudeCli: true });
+test("a failed Claude Code result shows an error, not an empty reply", async ({ rig }) => {
+  const harness = await rig.reset({ claudeCli: true });
   const { page } = harness;
   try {
     await page.evaluate(async () => {
@@ -64,8 +63,8 @@ test("a failed Claude Code result shows an error, not an empty reply", async () 
   }
 });
 
-test("a skill from the palette runs as a composed turn on the Claude Code backend", async () => {
-  const harness = await launchObsidianHarness({ claudeCli: true });
+test("a skill from the palette runs as a composed turn on the Claude Code backend", async ({ rig }) => {
+  const harness = await rig.reset({ claudeCli: true });
   const { page } = harness;
   try {
     await page.evaluate(async () => {
@@ -92,41 +91,37 @@ test("a skill from the palette runs as a composed turn on the Claude Code backen
   }
 });
 
-test("an unresponsive Claude Code turn survives restart and resumes explicitly", async () => {
-  const first = await launchObsidianHarness({ claudeCli: true });
-  const dataPath = join(first.paths.vault, ".obsidian", "plugins", "claude-companion", "data.json");
-  try {
-    await first.page.evaluate(async () => {
-      const app = (window as unknown as { app: { commands: { executeCommandById(id: string): Promise<void> } } }).app;
-      await app.commands.executeCommandById("claude-companion:open-chat");
-    });
-    const chat = first.page.locator(".cc-chat-root").first();
-    await expect(chat).toContainText("● Claude Code", { timeout: 15_000 });
-    await chat.locator(".cc-input").fill("hang forever");
-    await chat.locator(".cc-input").press("Enter");
-    await expect.poll(async () => {
-      const data = await readFile(dataPath, "utf8").catch(() => "");
-      return data.includes("hang forever") && /"activeTurn"\s*:\s*\{/.test(data) && /"state"\s*:\s*"running"/.test(data);
-    }, { timeout: 10_000 }).toBe(true);
-  } finally {
-    await first.close({ keep: true });
-  }
+test("an unresponsive Claude Code turn survives restart and resumes explicitly", async ({ rig }) => {
+  const harness = await rig.reset({ claudeCli: true });
+  const dataPath = join(harness.paths.vault, ".obsidian", "plugins", "claude-companion", "data.json");
+  await harness.page.evaluate(async () => {
+    const app = (window as unknown as { app: { commands: { executeCommandById(id: string): Promise<void> } } }).app;
+    await app.commands.executeCommandById("claude-companion:open-chat");
+  });
+  const chat = harness.page.locator(".cc-chat-root").first();
+  await expect(chat).toContainText("● Claude Code", { timeout: 15_000 });
+  await chat.locator(".cc-input").fill("hang forever");
+  await chat.locator(".cc-input").press("Enter");
+  await expect.poll(async () => {
+    const data = await readFile(dataPath, "utf8").catch(() => "");
+    return data.includes("hang forever") && /"activeTurn"\s*:\s*\{/.test(data) && /"state"\s*:\s*"running"/.test(data);
+  }, { timeout: 10_000 }).toBe(true);
 
-  const second = await launchObsidianHarness({ claudeCli: true, reuse: first.paths });
-  try {
-    await second.page.evaluate(async () => {
-      const app = (window as unknown as { app: { commands: { executeCommandById(id: string): Promise<void> } } }).app;
-      await app.commands.executeCommandById("claude-companion:open-chat");
-    });
-    const chat = second.page.locator(".cc-chat-root").first();
-    await expect(chat).toContainText("hang forever");
-    await expect(chat).toContainText("This task was interrupted");
-    await chat.getByRole("button", { name: "Resume", exact: true }).click();
-    await expect(chat.locator(".cc-msg.cc-assistant").last()).toContainText("pong from claude code", { timeout: 30_000 });
-    await expect.poll(async () => /"activeTurn"\s*:/.test(await readFile(dataPath, "utf8").catch(() => "")), { timeout: 10_000 }).toBe(false);
-    const log = await readFile(second.argvLog, "utf8");
-    expect(log.split("\n").filter((line) => line.startsWith("ARGV ")).at(-1)).toContain("--resume");
-  } finally {
-    await second.close();
-  }
+  // "Restart" = disable → enable the plugin in place: onunload() closes the
+  // in-flight CLI session (SIGTERM, then SIGKILL after the grace period), and
+  // the freshly onload()ed plugin discovers the interrupted turn from data.json
+  // exactly as it would after Obsidian itself restarted.
+  await harness.reloadPlugin();
+  await harness.page.evaluate(async () => {
+    const app = (window as unknown as { app: { commands: { executeCommandById(id: string): Promise<void> } } }).app;
+    await app.commands.executeCommandById("claude-companion:open-chat");
+  });
+  const reopened = harness.page.locator(".cc-chat-root").first();
+  await expect(reopened).toContainText("hang forever");
+  await expect(reopened).toContainText("This task was interrupted");
+  await reopened.getByRole("button", { name: "Resume", exact: true }).click();
+  await expect(reopened.locator(".cc-msg.cc-assistant").last()).toContainText("pong from claude code", { timeout: 30_000 });
+  await expect.poll(async () => /"activeTurn"\s*:/.test(await readFile(dataPath, "utf8").catch(() => "")), { timeout: 10_000 }).toBe(false);
+  const log = await readFile(harness.argvLog, "utf8");
+  expect(log.split("\n").filter((line) => line.startsWith("ARGV ")).at(-1)).toContain("--resume");
 });

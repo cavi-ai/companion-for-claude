@@ -48,4 +48,17 @@ describe("clipperSetupFor", () => {
     expect(setup.pageKnownFields).toEqual(expect.arrayContaining(["title", "author", "site", "published"]));
     expect(setup.companionFields).toEqual(expect.arrayContaining(["summary", "topics", "key_claims"]));
   });
+
+  it("reports verified once an arriving clip matched the current template", () => {
+    const current = clipperSetupFor("article", schemas(), { inboxFolder: "Clippings", baseTags: [], savedFingerprint: "" }).fingerprint;
+    const verified = clipperSetupFor("article", schemas(), {
+      inboxFolder: "Clippings", baseTags: [], savedFingerprint: current,
+      verification: { state: "verified", fingerprint: current },
+    });
+    expect(verified.status).toBe("verified");
+    expect(clipperSetupFor("article", schemas(), {
+      inboxFolder: "Clippings", baseTags: [], savedFingerprint: "older",
+      verification: { state: "verified", fingerprint: "older" },
+    }).status).toBe("update-available");
+  });
 });

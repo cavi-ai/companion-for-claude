@@ -1,6 +1,6 @@
 import type { Locator } from "@playwright/test";
 import { test, expect } from "./fixtures";
-import { launchObsidianHarness, type ObsidianHarness } from "./obsidianHarness";
+import type { Rig } from "./fixtures";
 
 // Settings-tab regression suite. Since 0.27.1 the tab is declarative
 // (getSettingDefinitions), so Obsidian owns the group/page chrome and this
@@ -8,7 +8,7 @@ import { launchObsidianHarness, type ObsidianHarness } from "./obsidianHarness";
 // controls respond, and a visibility predicate swaps a dependent row. The
 // shape of the definition tree itself is covered by test/settingsTabRender.
 
-async function openSettingsTab(harness: ObsidianHarness): Promise<Locator> {
+async function openSettingsTab(harness: Rig): Promise<Locator> {
   const settingsPage = await harness.openSettings();
   const tab = settingsPage.locator(".vertical-tab-content-container .vertical-tab-content").last();
   await expect(tab).toBeVisible();
@@ -18,8 +18,8 @@ async function openSettingsTab(harness: ObsidianHarness): Promise<Locator> {
   return tab;
 }
 
-test("settings tab renders, controls respond, dependent rows follow", async () => {
-  const harness = await launchObsidianHarness();
+test("settings tab renders, controls respond, dependent rows follow", async ({ rig }) => {
+  const harness = await rig.reset();
   const { page } = harness;
   const consoleErrors: string[] = [];
   page.on("console", (msg) => { if (msg.type() === "error") consoleErrors.push(msg.text()); });
@@ -45,14 +45,15 @@ test("settings tab renders, controls respond, dependent rows follow", async () =
     await auth.selectOption("apiKey");
     await expect(tab.locator("input[type='password'][placeholder*='sk-ant-api']")).toBeVisible();
 
-    // A toggle round-trips and persists.
+    // A field round-trips and persists: it survives a plugin restart, not just the live DOM.
     const maxTokens = tab.locator(".setting-item", { hasText: "Max response tokens" }).locator("input");
     await expect(maxTokens).toBeVisible();
     await maxTokens.fill("2048");
     await maxTokens.blur();
-    expect(
-      await page.evaluate(() => (window as unknown as { app: { plugins: { plugins: Record<string, { settings: { maxTokens: number } }> } } }).app.plugins.plugins["claude-companion"].settings.maxTokens),
-    ).toBe(2048);
+    await harness.reloadPlugin();
+    const reopened = await harness.openSettings();
+    const reopenedTab = reopened.locator(".vertical-tab-content-container .vertical-tab-content").last();
+    await expect(reopenedTab.locator(".setting-item", { hasText: "Max response tokens" }).locator("input")).toHaveValue("2048");
 
     const fatal = consoleErrors.filter((e) => !e.includes("e2e-key") && !e.includes("127.0.0.1"));
     expect(fatal).toEqual([]);
@@ -61,8 +62,8 @@ test("settings tab renders, controls respond, dependent rows follow", async () =
   }
 });
 
-test("the advanced toggle hides irrelevant pages and reveals them on", async () => {
-  const harness = await launchObsidianHarness({ settingsOverride: { settingsShowAdvanced: false } });
+test("the advanced toggle hides irrelevant pages and reveals them on", async ({ rig }) => {
+  const harness = await rig.reset({ settingsOverride: { settingsShowAdvanced: false } });
   const { page } = harness;
   try {
     const tab = await openSettingsTab(harness);

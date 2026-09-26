@@ -307,6 +307,8 @@ export default class ClaudeCompanionPlugin extends Plugin {
   private persistChain: Promise<void> = Promise.resolve();
   /** Credentials live here, not in data.json. Lazy so tests can construct the plugin. */
   private _secrets: SecretStore | null = null;
+  /** Layout-ready and the chat setup card can both continue onboarding; only one wizard may be open. */
+  private setupWizardOpen = false;
   /** Set by the last persist: credentials the store refused, still in data.json. */
   private unverifiedSecrets: SecretField[] = [];
   private _router: ProviderRouter | null = null;
@@ -698,7 +700,7 @@ export default class ClaudeCompanionPlugin extends Plugin {
     const cliProbe = Platform.isMobile ? undefined : this.router().claudeCli.refresh().then(() => this.refreshViews());
       void this.syncMcpServer();
       this.syncPlanBuildActions();
-      void this.runFirstRun(cliProbe);
+      void this.runFirstRun(cliProbe).then(() => this.semantic().catchUpIndex());
       // Schemas/inbox changed since the clipper templates were exported →
       // the clipper is clipping against a stale schema. Offer once per session.
       if (this.settings.sourceCaptureEnabled && this.clipperTemplatesStale()) {
@@ -707,8 +709,8 @@ export default class ClaudeCompanionPlugin extends Plugin {
 
       // Keep the semantic index fresh as notes change (debounced; no-op when
       // off). Registered AFTER layout-ready so Obsidian's initial vault scan
-      // doesn't fire create/modify for every note and stampede the indexer —
-      // a full build only happens via the explicit "Rebuild" command.
+      // doesn't fire create/modify for every note and stampede the indexer;
+      // catchUpIndex covers notes that changed while Obsidian was closed.
       this.registerEvent(this.app.vault.on("modify", (f) => { if (f instanceof TFile && (f.extension === "md" || (f.extension === "pdf" && this.settings.semanticIndexPdfs))) this.queueReindex(f.path); }));
       this.registerEvent(this.app.vault.on("create", (f) => { if (f instanceof TFile && (f.extension === "md" || (f.extension === "pdf" && this.settings.semanticIndexPdfs))) this.queueReindex(f.path); }));
       this.registerEvent(this.app.vault.on("create", (f) => {
@@ -718,7 +720,7 @@ export default class ClaudeCompanionPlugin extends Plugin {
         if (f instanceof TFile && f.extension === "md") this.queueClipperVerification(f);
       }));
       this.registerEvent(this.app.vault.on("delete", (f) => { if (f instanceof TFile && (f.extension === "md" || f.extension === "pdf")) void this.indexer()?.removeNote(f.path); }));
-      this.registerEvent(this.app.vault.on("rename", (f, oldPath) => { if (f instanceof TFile && (f.extension === "md" || f.extension === "pdf")) void this.indexer()?.renameNote(oldPath, f.path); }));
+      this.registerEvent(this.app.vault.on("rename", (f, oldPath) => { if (f instanceof TFile && (f.extension === "md" || f.extension === "pdf")) void this.semantic().renameNote(oldPath, f.path); }));
       this.registerEvent(this.app.vault.on("create", (f) => { if (f.path.endsWith(".md")) this.scheduleResearchRefresh(f.path); }));
       this.registerEvent(this.app.vault.on("delete", (f) => { if (f.path.endsWith(".md")) this.scheduleResearchRefresh(f.path); }));
       this.registerEvent(this.app.vault.on("rename", (f, oldPath) => { if (f.path.endsWith(".md") || oldPath.endsWith(".md")) this.scheduleResearchRefresh(f.path, oldPath); }));
@@ -1080,7 +1082,13 @@ export default class ClaudeCompanionPlugin extends Plugin {
       inboxFolder: this.settings.sourceInboxFolder,
       baseTags: this.settings.sourceBaseTags,
       savedFingerprint: this.settings.clipperVerification[type]?.fingerprint ?? this.settings.clipperTemplateFingerprint,
+      ...(this.settings.clipperVerification[type] ? { verification: this.settings.clipperVerification[type] } : {}),
     }));
+  }
+
+  /** False once any Web Clipper template is verified against the current schemas. */
+  clipperSetupNeeded(): boolean {
+    return !this.clipperSetups().some((setup) => setup.status === "verified");
   }
 
   openClipperSetup(): void {
@@ -1117,7 +1125,8 @@ export default class ClaudeCompanionPlugin extends Plugin {
     const waiting = Object.entries(this.settings.clipperVerification)
       .filter((entry): entry is [SourceType, NonNullable<typeof entry[1]>] => entry[1]?.state === "waiting")
       .sort((left, right) => right[1].startedAt - left[1].startedAt)[0];
-    if (!waiting) return;
+    const inbox = this.settings.sourceInboxFolder.replace(/\/+$/, "");
+    if (!waiting && !(inbox && file.path.startsWith(`${inbox}/`))) return;
     const previous = this.clipperVerificationTimers.get(file.path);
     if (previous !== undefined) window.clearTimeout(previous);
     const timer = window.setTimeout(() => {
@@ -1127,10 +1136,13 @@ export default class ClaudeCompanionPlugin extends Plugin {
         this.queueClipperVerification(file, attempt + 1);
         return;
       }
+      if (!waiting) {
+        if (frontmatter) void this.verifyStampedClip(file, frontmatter);
+        return;
+      }
       // A clip that lands in the inbox carrying nothing is proof the template
       // never applied — report it instead of waiting for a note that can't come.
       if (!frontmatter) {
-        const inbox = this.settings.sourceInboxFolder.replace(/\/+$/, "");
         if (inbox && file.path.startsWith(`${inbox}/`)) void this.verifyArrivingClip(file, waiting[0], {});
         return;
       }
@@ -1145,6 +1157,25 @@ export default class ClaudeCompanionPlugin extends Plugin {
       void this.verifyArrivingClip(file, expectedType, frontmatter);
     }, 600);
     this.clipperVerificationTimers.set(file.path, timer);
+  }
+
+  /** Templates imported without the setup modal still verify from a matching stamped clip; mismatches stay silent. */
+  private async verifyStampedClip(file: TFile, frontmatter: Record<string, unknown>): Promise<void> {
+    const type = frontmatter.type;
+    if ((type !== "article" && type !== "video" && type !== "dataset") || frontmatter.schema_version === undefined) return;
+    const setup = this.clipperSetups().find((candidate) => candidate.type === type);
+    if (!setup || setup.status === "verified") return;
+    const result = verifyClipperNote({ path: file.path, frontmatter }, {
+      type,
+      schemaVersion: setup.schemaVersion,
+      destination: this.settings.sourceInboxFolder,
+      fingerprint: setup.fingerprint,
+      baseTags: this.settings.sourceBaseTags,
+    });
+    if (result.state !== "verified") return;
+    const now = Date.now();
+    this.settings.clipperVerification[type] = { fingerprint: setup.fingerprint, state: "verified", startedAt: now, verifiedAt: now, path: result.path, mismatches: [] };
+    await this.persist();
   }
 
   private async verifyArrivingClip(file: TFile, type: SourceType, frontmatter: Record<string, unknown>): Promise<void> {
@@ -2385,6 +2416,8 @@ export default class ClaudeCompanionPlugin extends Plugin {
    * regardless of which button the user ends up clicking.
    */
   private openSetupWizardWithSteps(steps: WizardStep[]): void {
+    if (this.setupWizardOpen) return;
+    this.setupWizardOpen = true;
     if (steps.includes("vault-tools") && !this.settings.desktopIntegrationsOffered) {
       this.settings.desktopIntegrationsOffered = true;
       void this.saveSettings();
@@ -2418,6 +2451,7 @@ export default class ClaudeCompanionPlugin extends Plugin {
       downloadEmbeddings: () => this.wizardDownloadEmbeddings(),
       seedOntology: () => this.wizardSeedOntology(),
       finish: () => this.wizardFinish(),
+      onClosed: () => { this.setupWizardOpen = false; },
     };
   }
 
