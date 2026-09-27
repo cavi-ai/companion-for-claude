@@ -558,6 +558,30 @@ body:not(.is-mobile) .cc-user {
   background: #3a1610;
 }
 
+/* Semantic actions acknowledge the press immediately and stay distinct while work runs. */
+.cc-semantic-action {
+  transition: transform 100ms ease, box-shadow 100ms ease, background-color 100ms ease;
+}
+.cc-semantic-action:active:not(:disabled) {
+  transform: translateY(2px);
+  box-shadow: none;
+  filter: brightness(0.88);
+}
+.cc-semantic-action:focus-visible {
+  outline: 2px solid var(--cc-accent);
+  outline-offset: 2px;
+}
+.cc-semantic-action.is-running {
+  opacity: 1;
+  cursor: progress;
+  background: color-mix(in srgb, var(--cc-accent) 72%, var(--background-primary));
+  color: var(--cc-accent-fg);
+  box-shadow: inset 0 2px 5px color-mix(in srgb, black 22%, transparent);
+}
+@media (prefers-reduced-motion: reduce) {
+  .cc-semantic-action { transition: none; }
+}
+
 /* ---------- settings: MCP connection snippets ---------- */
 .cc-snippet {
   margin: 6px 0 14px;

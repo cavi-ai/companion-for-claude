@@ -25,6 +25,12 @@ function asText(v: unknown): string {
   return typeof v === "string" ? v : "";
 }
 
+function setSemanticActionBusy(button: ButtonComponent, busy: boolean, label: string): void {
+  button.setDisabled(busy).setButtonText(label);
+  button.buttonEl.toggleClass("is-running", busy);
+  button.buttonEl.setAttribute("aria-busy", String(busy));
+}
+
 /** Settings whose stored shape differs from the control's value. */
 const CODECS: Record<string, { read(s: PluginSettings): unknown; write(s: PluginSettings, v: unknown): void }> = {};
 
@@ -1103,33 +1109,62 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
 
           let mainBtn: ButtonComponent | null = null;
           let clearBtn: ButtonComponent | null = null;
+          let running = false;
+          let clearing = false;
           setting.addButton((btn) => {
             // Non-CTA: delete the downloaded model from the local cache. Hidden
             // until we know there is something to clear (loaded or cached).
             clearBtn = btn;
+            btn.buttonEl.addClass("cc-semantic-action");
             btn.setButtonText("Clear").onClick(async () => {
-              btn.setDisabled(true);
-              await this.plugin.clearBuiltinModel();
-              this.update(); // status returns to "Model not downloaded yet."
+              if (clearing || running) return;
+              clearing = true;
+              setSemanticActionBusy(btn, true, "Clearing…");
+              mainBtn?.setDisabled(true);
+              try {
+                await this.plugin.clearBuiltinModel();
+                this.update(); // status returns to "Model not downloaded yet."
+              } catch (e) {
+                status.setText(`Clear failed: ${e instanceof Error ? e.message : String(e)}`);
+                status.addClass("is-err");
+              } finally {
+                clearing = false;
+                setSemanticActionBusy(btn, false, "Clear");
+                mainBtn?.setDisabled(false);
+              }
             });
             if (!backend) btn.buttonEl.hide();
           });
           setting.addButton((btn) => {
             mainBtn = btn;
+            btn.buttonEl.addClass("cc-semantic-action");
             btn
               .setButtonText(backend ? "Re-check" : `Download (~${model.approxDownloadMB} MB)`)
               .setCta()
               .onClick(async () => {
-                btn.setDisabled(true);
+                if (running || clearing) return;
+                running = true;
+                setSemanticActionBusy(btn, true, backend ? "Checking…" : "Downloading…");
+                clearBtn?.setDisabled(true);
+                status.removeClass("is-ok");
+                status.removeClass("is-err");
+                status.setText(backend ? "Checking built-in model…" : "Downloading built-in model…");
                 try {
                   await this.plugin.builtinEmbedder().download((p) => status.setText(`Downloading… ${p.percent}% (${p.file})`));
                   const b = this.plugin.builtinEmbedder().backend();
+                  if (!b) throw new Error("model did not load");
                   status.setText(`Model ready · ${b === "webgpu" ? "WebGPU" : "WASM"}`);
+                  status.addClass("is-ok");
+                  btn.setButtonText("Re-check");
                   clearBtn?.buttonEl.show();
                 } catch (e) {
                   status.setText(`Download failed: ${e instanceof Error ? e.message : String(e)} — check your connection and retry.`);
+                  status.addClass("is-err");
+                  btn.setButtonText("Retry download");
                 } finally {
-                  btn.setDisabled(false);
+                  running = false;
+                  setSemanticActionBusy(btn, false, btn.buttonEl.textContent ?? "Re-check");
+                  clearBtn?.setDisabled(false);
                 }
               });
           });
@@ -1137,7 +1172,7 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
             // Distinguish "downloaded earlier, not loaded this session" (offline
             // load) from "never downloaded" (network download needing consent).
             void this.plugin.builtinModelCached().then((cached) => {
-              if (!cached) return;
+              if (!cached || running || this.plugin.builtinEmbedder().backend()) return;
               status.setText("Model cached — loads on first use.");
               mainBtn?.setButtonText("Load");
               clearBtn?.buttonEl.show();
@@ -1210,22 +1245,54 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
         desc: "Embed every note now. Re-embeds only changed notes on save afterward.",
         visible: enabled,
         render: (setting) => {
-          const status = setting.settingEl.createDiv({ cls: "cc-conn-status setting-item-description" });
+          const previousStatuses = Array.from(setting.settingEl.querySelectorAll(".cc-conn-status"));
+          const status = (previousStatuses[0] as HTMLElement | undefined)
+            ?? setting.settingEl.createDiv({ cls: "cc-conn-status setting-item-description" });
+          status.addClass("cc-semantic-index-status");
+          for (const duplicate of previousStatuses.slice(1)) duplicate.remove();
+          let running = false;
           void this.plugin
             .indexer()
             ?.stats()
-            .then((s) => status.setText(`Index: ${s.notes} note(s), ${s.chunks} chunk(s).`))
-            .catch(() => status.setText("Index: not built yet."));
-          setting.addButton((btn) =>
+            .then((s) => { if (!running) status.setText(`Index: ${s.notes} note(s), ${s.chunks} chunk(s).`); })
+            .catch(() => { if (!running) status.setText("Index: not built yet."); });
+          setting.addButton((btn) => {
+            btn.buttonEl.addClass("cc-semantic-action");
             btn
               .setButtonText("Rebuild")
               .setCta()
               .onClick(async () => {
-                await this.plugin.rebuildSemanticIndex();
-                const s = await this.plugin.indexer()?.stats();
-                if (s) status.setText(`Index: ${s.notes} note(s), ${s.chunks} chunk(s).`);
-              }),
-          );
+                if (running) return;
+                running = true;
+                setSemanticActionBusy(btn, true, "Rebuilding…");
+                status.removeClass("is-ok");
+                status.removeClass("is-err");
+                status.setText("Rebuilding index…");
+                try {
+                  await this.plugin.rebuildSemanticIndex();
+                  const s = await this.plugin.indexer()?.stats();
+                  const outcome = this.plugin.activity.snapshot().records.find((record) =>
+                    record.kind === "semantic-index" && record.title === "Building semantic index",
+                  );
+                  if (outcome?.state === "needs-attention") {
+                    status.setText("Index needs attention — open Companion activity for details.");
+                    status.addClass("is-err");
+                  } else if (outcome?.state === "succeeded" && s) {
+                    status.setText(`Index ready · ${s.notes} note(s), ${s.chunks} chunk(s).`);
+                    status.addClass("is-ok");
+                  } else {
+                    status.setText("Rebuild result unavailable — open Companion activity for details.");
+                    status.addClass("is-err");
+                  }
+                } catch (e) {
+                  status.setText(`Rebuild failed: ${e instanceof Error ? e.message : String(e)}`);
+                  status.addClass("is-err");
+                } finally {
+                  running = false;
+                  setSemanticActionBusy(btn, false, "Rebuild");
+                }
+              });
+          });
         },
       },
     ];

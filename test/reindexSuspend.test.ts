@@ -171,3 +171,33 @@ describe("rename and startup catch-up", () => {
     expect(build).not.toHaveBeenCalled();
   });
 });
+
+describe("built-in indexing memory bounds", () => {
+  it("embeds one chunk at a time on desktop so a large note cannot exhaust one inference batch", async () => {
+    const batches: number[] = [];
+    const deps = makeDeps(["large.md", "next.md"], {
+      settings: () => ({ ...DEFAULT_SETTINGS, semanticEnabled: true, embeddingEngine: "builtin" }),
+    });
+    deps.vault.getMarkdownFiles = () => [
+      { path: "large.md", mtime: 1, size: 24_000 },
+      { path: "next.md", mtime: 1, size: 4 },
+    ];
+    deps.vault.cachedRead = async (path: string) => path === "large.md" ? "large note. ".repeat(2_000) : "next";
+    const ctrl = new SemanticController(deps);
+    (ctrl as unknown as { builtinEmbedder: () => { embed: (input: string[]) => Promise<number[][]> } }).builtinEmbedder = () => ({
+      embed: async (input: string[]) => {
+        batches.push(input.length);
+        if (input.length > 1) throw new Error("memory access out of bounds");
+        return input.map(() => [1, 0]);
+      },
+    });
+    (ctrl as unknown as { canEmbedWithoutDownload: () => Promise<boolean> }).canEmbedWithoutDownload = async () => true;
+
+    const result = await ctrl.indexer()!.build();
+
+    expect(result.failureCount).toBe(0);
+    expect(result.indexed).toBe(2);
+    expect(batches.length).toBeGreaterThan(1);
+    expect(batches.every((size) => size === 1)).toBe(true);
+  });
+});

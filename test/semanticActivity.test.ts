@@ -5,6 +5,7 @@ import { DEFAULT_SETTINGS } from "../src/types";
 import type { BuildResult } from "../src/semantic/indexer";
 import { RelatedView } from "../src/view/RelatedView";
 import { SemanticController, type SemanticControllerDeps } from "../src/semantic/controller";
+import { ActivityStore } from "../src/activity/store";
 
 function deferred<T>(): { promise: Promise<T>; resolve(value: T): void } {
   let resolve!: (value: T) => void;
@@ -48,6 +49,29 @@ function makeDeps(overrides?: Partial<SemanticControllerDeps>): SemanticControll
 
 describe("semantic activity", () => {
   beforeEach(() => clearNotices());
+
+  it("clears obsolete index failures after a successful rebuild with a different model", async () => {
+    const activity = new ActivityStore();
+    activity.start({ id: "semantic-index:builtin:old", kind: "semantic-index", title: "Building semantic index" });
+    activity.fail("semantic-index:builtin:old", { failed: 1 });
+    activity.start({ id: "semantic-index:catch-up", kind: "semantic-index", title: "Semantic index needs attention" });
+    activity.fail("semantic-index:catch-up", { failed: 1 });
+    const deps = makeDeps({
+      settings: () => ({ ...DEFAULT_SETTINGS, semanticEnabled: true, embeddingEngine: "ollama", embeddingModel: "installed-model" }),
+      activity: () => activity,
+      router: () => ({ ollama: { hasCredentials: () => true } }) as never,
+    });
+    const ctrl = new SemanticController(deps);
+    (ctrl as unknown as { indexer: () => { build: () => Promise<BuildResult> } }).indexer = () => ({
+      build: async () => ({ indexed: 2, skipped: 0, removed: 0, failureCount: 0, failures: [] }),
+    });
+
+    await ctrl.rebuildSemanticIndex();
+
+    expect(activity.snapshot().records.map((record) => record.id)).toEqual(["semantic-index:installed-model"]);
+    expect(activity.snapshot().records[0]?.state).toBe("succeeded");
+    activity.dispose();
+  });
 
   it("moves determinate index progress and partial failures out of blocking Notices", async () => {
     const activityRecords: Array<Record<string, unknown>> = [];

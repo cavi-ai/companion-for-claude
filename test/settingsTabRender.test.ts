@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { App, FakeElement, openSettingTab, Platform, Setting, type SettingDefinitionItem } from "./fakes/obsidian";
+import { describe, expect, it, vi } from "vitest";
+import { App, FakeElement, openSettingTab, Platform, Setting, type ButtonComponent, type SettingDefinitionItem } from "./fakes/obsidian";
 import { ClaudeCompanionSettingTab } from "../src/settings";
 import { DEFAULT_SETTINGS } from "../src/types";
 import { unavailableStore } from "../src/secrets/store";
@@ -24,6 +24,7 @@ function stubPlugin(): ClaudeCompanionPlugin & { settings: Record<string, unknow
     builtinModelCached: async () => true,
     builtinEmbedder: () => ({ backend: () => "wasm", download: async () => {} }),
     indexer: () => undefined,
+    activity: { snapshot: () => ({ records: [{ kind: "semantic-index", title: "Building semantic index", state: "succeeded" }] }) },
     ontology: () => undefined,
     clipperTemplatesStale: () => false,
     refreshViews: () => {},
@@ -127,6 +128,132 @@ describe("settings tab render", () => {
       Platform.isMobile = false;
       Platform.isDesktop = true;
     }
+  });
+});
+
+describe("semantic settings action feedback", () => {
+  it("reuses the index status instead of showing conflicting counts", () => {
+    const plugin = stubPlugin();
+    plugin.settings.semanticEnabled = true;
+    const row = flatten(definitionsOf(plugin)).find((item) => item.name === "Rebuild index")!;
+    const setting = new Setting(new FakeElement() as unknown as HTMLElement);
+    setting.settingEl.createDiv({ cls: "cc-conn-status", text: "Index: 65 note(s), 694 chunk(s)." });
+
+    row.render!(setting, undefined);
+
+    expect(setting.settingEl.querySelectorAll(".cc-conn-status")).toHaveLength(1);
+  });
+
+  for (const engine of ["builtin", "ollama"] as const) {
+    it(`shows a busy button and live status while ${engine} rebuilds`, async () => {
+      const plugin = stubPlugin();
+      plugin.settings.semanticEnabled = true;
+      plugin.settings.embeddingEngine = engine;
+      let finish!: () => void;
+      plugin.rebuildSemanticIndex = vi.fn(() => new Promise<void>((resolve) => { finish = resolve; }));
+      plugin.indexer = () => ({ stats: async () => ({ notes: 2, chunks: 4 }) }) as never;
+      const row = flatten(definitionsOf(plugin)).find((item) => item.name === "Rebuild index")!;
+      const setting = new Setting(new FakeElement() as unknown as HTMLElement);
+      row.render!(setting, undefined);
+      const button = setting.components[0] as ButtonComponent;
+      const status = setting.settingEl.querySelectorAll(".cc-semantic-index-status")[0]!;
+
+      button.simulateClick();
+      button.simulateClick();
+      expect(plugin.rebuildSemanticIndex).toHaveBeenCalledTimes(1);
+      expect(button.buttonEl.textContent).toBe("Rebuilding…");
+      expect(button.buttonEl.getAttribute("aria-busy")).toBe("true");
+      expect(button.buttonEl.disabled).toBe(true);
+      expect(status.textContent).toBe("Rebuilding index…");
+
+      finish();
+      await vi.waitFor(() => expect(button.buttonEl.textContent).toBe("Rebuild"));
+      expect(button.buttonEl.getAttribute("aria-busy")).toBe("false");
+      expect(button.buttonEl.disabled).toBe(false);
+      expect(status.textContent).toContain("2 note(s), 4 chunk(s)");
+    });
+  }
+
+  it("shows a busy button while the built-in model loads and restores it afterward", async () => {
+    const plugin = stubPlugin();
+    plugin.settings.semanticEnabled = true;
+    plugin.settings.embeddingEngine = "builtin";
+    let finish!: () => void;
+    let loaded = false;
+    const download = vi.fn(() => new Promise<void>((resolve) => { finish = () => { loaded = true; resolve(); }; }));
+    plugin.builtinModelCached = async () => false;
+    plugin.builtinEmbedder = () => ({
+      backend: () => loaded ? "wasm" : null,
+      download,
+    }) as never;
+    const row = flatten(definitionsOf(plugin)).find((item) => item.name === "Embedding model")!;
+    const setting = new Setting(new FakeElement() as unknown as HTMLElement);
+    row.render!(setting, undefined);
+    const button = setting.components[1] as ButtonComponent;
+    const status = setting.settingEl.querySelectorAll(".cc-conn-status")[0]!;
+
+    button.simulateClick();
+    button.simulateClick();
+    expect(download).toHaveBeenCalledTimes(1);
+    expect(button.buttonEl.textContent).toBe("Downloading…");
+    expect(button.buttonEl.getAttribute("aria-busy")).toBe("true");
+    expect(button.buttonEl.disabled).toBe(true);
+    expect(status.textContent).toContain("Downloading");
+
+    finish();
+    await vi.waitFor(() => expect(button.buttonEl.textContent).toBe("Re-check"));
+    expect(button.buttonEl.getAttribute("aria-busy")).toBe("false");
+    expect(button.buttonEl.disabled).toBe(false);
+    expect(status.textContent).toContain("Model ready");
+  });
+
+  it("keeps model buttons responsive when clearing the built-in cache fails", async () => {
+    const plugin = stubPlugin();
+    plugin.settings.semanticEnabled = true;
+    plugin.settings.embeddingEngine = "builtin";
+    let fail!: (error: Error) => void;
+    plugin.clearBuiltinModel = vi.fn(() => new Promise<number>((_resolve, reject) => { fail = reject; }));
+    const row = flatten(definitionsOf(plugin)).find((item) => item.name === "Embedding model")!;
+    const setting = new Setting(new FakeElement() as unknown as HTMLElement);
+    row.render!(setting, undefined);
+    const clear = setting.components[0] as ButtonComponent;
+    const load = setting.components[1] as ButtonComponent;
+    const status = setting.settingEl.querySelectorAll(".cc-conn-status")[0]!;
+
+    clear.simulateClick();
+    clear.simulateClick();
+    expect(plugin.clearBuiltinModel).toHaveBeenCalledTimes(1);
+    expect(clear.buttonEl.textContent).toBe("Clearing…");
+    expect(clear.buttonEl.getAttribute("aria-busy")).toBe("true");
+    expect(clear.buttonEl.disabled).toBe(true);
+    expect(load.buttonEl.disabled).toBe(true);
+
+    fail(new Error("cache locked"));
+    await vi.waitFor(() => expect(status.textContent).toContain("Clear failed: cache locked"));
+    expect(clear.buttonEl.textContent).toBe("Clear");
+    expect(clear.buttonEl.disabled).toBe(false);
+    expect(load.buttonEl.disabled).toBe(false);
+  });
+
+  it("reports a failed rebuild and enables retry", async () => {
+    const plugin = stubPlugin();
+    plugin.settings.semanticEnabled = true;
+    plugin.settings.embeddingEngine = "ollama";
+    plugin.rebuildSemanticIndex = async () => {};
+    plugin.indexer = () => ({ stats: async () => ({ notes: 0, chunks: 0 }) }) as never;
+    Object.assign(plugin, {
+      activity: { snapshot: () => ({ records: [{ kind: "semantic-index", title: "Building semantic index", state: "needs-attention" }] }) },
+    });
+    const row = flatten(definitionsOf(plugin)).find((item) => item.name === "Rebuild index")!;
+    const setting = new Setting(new FakeElement() as unknown as HTMLElement);
+    row.render!(setting, undefined);
+    const button = setting.components[0] as ButtonComponent;
+    const status = setting.settingEl.querySelectorAll(".cc-semantic-index-status")[0]!;
+
+    button.simulateClick();
+    await vi.waitFor(() => expect(status.textContent).toContain("needs attention"));
+    expect(button.buttonEl.disabled).toBe(false);
+    expect(status.classList.has("is-err")).toBe(true);
   });
 });
 

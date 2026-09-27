@@ -107,7 +107,9 @@ export class SemanticController {
         }
         return embedder.embed(input);
       },
-      ...(this.deps.isMobile && s.embeddingEngine === "builtin" ? { embedBatchSize: 1 } : {}),
+      // The in-process ONNX worker can exhaust memory when a long desktop note
+      // sends every chunk in one inference, just as it can on mobile.
+      ...(s.embeddingEngine === "builtin" ? { embedBatchSize: 1 } : {}),
       onPhase: (phase, fields) => this.deps.enrichDiagnostics().log(phase, fields),
       ...(this.deps.isMobile
         ? { maxInputBytes: (p: string) => p.toLowerCase().endsWith(".pdf") ? this.deps.mobilePdfMaxBytes : this.deps.mobileSourceNoteMaxBytes }
@@ -305,6 +307,13 @@ export class SemanticController {
           succeeded: res.indexed,
           details: [{ label: "Index ready", message: summary, state: "success" }],
         });
+        // A fresh, complete index resolves failures from earlier models and
+        // catch-up attempts. Do not leave their warning as the status headline.
+        for (const record of activity.snapshot().records) {
+          if (record.id !== activityId && record.kind === "semantic-index" && record.state === "needs-attention") {
+            activity.dismiss(record.id);
+          }
+        }
       }
     } catch (error) {
       console.error("[Claude Companion] semantic index build failed", error);

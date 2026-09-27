@@ -330,6 +330,8 @@ export class FakeElement {
     this.parent = null;
   }
   setText(text: string): void { this.textContent = text; }
+  hide(): void { this.style.display = "none"; }
+  show(): void { delete this.style.display; }
   getAttribute(name: string): string | null { return this.attributes.get(name) ?? null; }
   getAttr(name: string): string | null { return this.attributes.get(name) ?? null; }
   querySelectorAll(selector: string): FakeElement[] { return this.walk().filter((item) => matches(item, selector)); }
@@ -452,6 +454,7 @@ export class SliderComponent extends BaseComponent {
 export class ButtonComponent extends BaseComponent {
   buttonEl = new FakeElement("button");
   private clickCb: (() => void) | null = null;
+  override setDisabled(disabled: boolean): this { this.disabled = disabled; this.buttonEl.disabled = disabled; return this; }
   setButtonText(text: string): this { this.buttonEl.setText(text); return this; }
   setCta(): this { this.buttonEl.addClass("mod-cta"); return this; }
   setWarning(): this { this.buttonEl.addClass("mod-warning"); return this; }
