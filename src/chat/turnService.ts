@@ -1,4 +1,4 @@
-import type { AgentTurnHandlers, AgentTurnResult } from "../agent/loop";
+import { toTraceEntry, type AgentTurnHandlers, type AgentTurnResult } from "../agent/loop";
 import type { ToolResultBlock, ToolUseBlock } from "../providers/types";
 
 type UsageArg = Parameters<NonNullable<AgentTurnHandlers["onUsage"]>>[0];
@@ -86,21 +86,35 @@ export class ChatTurnService {
       this.buffer(turn, event);
       for (const listener of turn.subscribers) listener(event);
     };
+    const emit = (event: TurnEvent): void => { if (!controller.signal.aborted) push(event); };
 
     const handlers: AgentTurnHandlers = {
-      onText: (delta) => push({ kind: "text", delta }),
-      onThinking: (delta) => push({ kind: "thinking", delta }),
-      onUsage: (usage) => push({ kind: "usage", usage }),
-      onTruncated: () => push({ kind: "truncated" }),
-      onToolStart: (block) => push({ kind: "toolStart", block }),
-      onToolResult: (block, result) => push({ kind: "toolResult", block, result }),
-      onNotice: (text) => push({ kind: "notice", text }),
+      onText: (delta) => emit({ kind: "text", delta }),
+      onThinking: (delta) => emit({ kind: "thinking", delta }),
+      onUsage: (usage) => emit({ kind: "usage", usage }),
+      onTruncated: () => emit({ kind: "truncated" }),
+      onToolStart: (block) => emit({ kind: "toolStart", block }),
+      onToolResult: (block, result) => emit({ kind: "toolResult", block, result }),
+      onNotice: (text) => emit({ kind: "notice", text }),
     };
 
     const unregister = input.registerTurn(() => controller.abort());
+    let running: Promise<AgentTurnResult>;
+    try { running = input.run(handlers, controller.signal); }
+    catch (error) { running = Promise.reject(error instanceof Error ? error : new Error(String(error))); }
+    let removeAbort: () => void = () => undefined;
+    const interrupted = new Promise<AgentTurnResult>((resolve) => {
+      const onAbort = (): void => resolve({
+        text: turn.events.filter((event): event is Extract<TurnEvent, { kind: "text" }> => event.kind === "text").map((event) => event.delta).join(""),
+        trace: turn.events.filter((event): event is Extract<TurnEvent, { kind: "toolResult" }> => event.kind === "toolResult").map((event) => toTraceEntry(event.block, event.result)),
+        aborted: true,
+      });
+      controller.signal.addEventListener("abort", onAbort, { once: true });
+      removeAbort = () => controller.signal.removeEventListener("abort", onAbort);
+      if (controller.signal.aborted) onAbort();
+    });
 
-    turn.result = input
-      .run(handlers, controller.signal)
+    turn.result = Promise.race([running, interrupted])
       .then(async (result) => {
         push({ kind: "done", result });
         if (result.aborted || result.error) await input.interruptTurn(result, result.error);
@@ -116,7 +130,7 @@ export class ChatTurnService {
         this.settle(conversationId, turn, result);
         throw err;
       })
-      .finally(() => unregister());
+      .finally(() => { removeAbort(); unregister(); });
 
     // A turn already live for this conversation is superseded — its own
     // settle() no-ops (this.liveTurns no longer points at it) once it finishes.

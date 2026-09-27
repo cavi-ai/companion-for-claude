@@ -53,6 +53,21 @@ function deps(script: Scripted[], overrides: Partial<AgentTurnDeps> = {}) {
 }
 
 describe("runAgentTurn", () => {
+  it("settles as interrupted when a tool never returns after Stop", async () => {
+    const controller = new AbortController();
+    const { stream } = fakeStream([{ text: "Working", toolUses: [use("t1")], stopReason: "tool_use" }]);
+    let toolStarted!: () => void;
+    const started = new Promise<void>((resolve) => { toolStarted = resolve; });
+    const execute = vi.fn(() => {
+      toolStarted();
+      return new Promise<ToolResultBlock>(() => undefined);
+    });
+    const turn = runAgentTurn({ stream, execute, maxIterations: 10, signal: controller.signal }, baseReq, { onText: vi.fn() });
+    await started;
+    controller.abort();
+    await expect(turn).resolves.toMatchObject({ text: "Working", aborted: true });
+  });
+
   it("plain answer: one iteration, no tools executed", async () => {
     const { deps: d, calls, execute } = deps([{ text: "hello", stopReason: "end_turn" }]);
     const onText = vi.fn();

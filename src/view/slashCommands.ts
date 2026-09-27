@@ -30,6 +30,8 @@ export interface SlashCommand {
   action?: string;
   /** For user-defined templates: the backing note, substituted at run time. */
   template?: PromptTemplate;
+  /** Keep the unfiltered menu focused; extended commands remain searchable. */
+  showOnEmptyQuery?: boolean;
 }
 
 /** A template note as a slash command (kind "prompt", substituted at run time). */
@@ -62,10 +64,10 @@ export function parseSlashQuery(input: string): string | null {
   return m?.[1] !== undefined ? m[1].toLowerCase() : null;
 }
 
-/** Filter + rank the catalog for a query (empty query → all, in catalog order). */
+/** Filter + rank the catalog; a bare slash shows the core commands. */
 export function filterCommands(commands: SlashCommand[], query: string): SlashCommand[] {
   const q = query.toLowerCase();
-  if (!q) return [...commands];
+  if (!q) return commands.filter((cmd) => cmd.showOnEmptyQuery !== false);
   const scored: { cmd: SlashCommand; score: number }[] = [];
   for (const cmd of commands) {
     const names = [cmd.name, ...(cmd.aliases ?? [])];
@@ -127,23 +129,59 @@ export function workflowSlashCommands(workflows: Workflow[]): SlashCommand[] {
     description: wf.description,
     kind: "action",
     action: `${WORKFLOW_ACTION_PREFIX}${wf.id}`,
+    showOnEmptyQuery: false,
   }));
 }
 
 /** Action-id prefix for an obsidian-agent skill run as a chat turn. */
 export const SKILL_ACTION_PREFIX = "skill:";
 
+const SKILL_MENU_DESCRIPTIONS: Record<string, string> = {
+  "build-retrospective": "Review a completed build against its tracker",
+  "connection-finder": "Find non-obvious relationships between notes (read-only)",
+  "consistent-tagging": "Apply the vault's existing tags consistently",
+  "dedup-merge": "Find and review duplicate notes for merging",
+  "meeting-cleanup": "Structure a raw meeting note",
+  "note-splitter": "Split a broad note into linked, focused notes",
+  "outline-to-draft": "Expand an outline into a draft",
+  "plan-to-spec": "Turn a plan note into a build spec",
+  "summarize-and-link": "Add a linked summary to a note",
+  "wikilink-weaver": "Add verified wikilinks to a note",
+};
+
 /** Skills without a Companion workflow adaptation; the adaptation wins when both exist. */
 export function skillSlashCommands(skills: SkillEntry[], workflows: Workflow[]): SlashCommand[] {
   const adapted = new Set(workflows.flatMap((w) => [w.id, w.capability ?? w.id]));
   return skills
     .filter((s) => !adapted.has(s.id))
-    .map((s) => ({
-      name: s.id,
-      description: s.argHint ? `${s.description} Usage: /${s.id} ${s.argHint}` : s.description,
-      kind: "action",
-      action: `${SKILL_ACTION_PREFIX}${s.id}`,
-    }));
+    .map((s) => {
+      const summary = SKILL_MENU_DESCRIPTIONS[s.id] ?? s.description;
+      return {
+        name: s.id,
+        description: s.argHint ? `${summary} · ${s.argHint}` : summary,
+        kind: "action",
+        action: `${SKILL_ACTION_PREFIX}${s.id}`,
+        showOnEmptyQuery: false,
+      };
+    });
+}
+
+/** Compose one unambiguous menu entry per token, including user templates. */
+export function buildSlashCatalog(workflows: Workflow[], skills: SkillEntry[], templates: PromptTemplate[]): SlashCommand[] {
+  const commands = [...SLASH_COMMANDS, ...workflowSlashCommands(workflows), ...skillSlashCommands(skills, workflows)];
+  const reserved = new Set(commands.flatMap((cmd) => [cmd.name, ...(cmd.aliases ?? [])]));
+  for (const template of templates) {
+    const command = templateSlashCommand(template);
+    let name = command.name;
+    if (reserved.has(name)) {
+      const base = `template-${name}`;
+      name = base;
+      for (let suffix = 2; reserved.has(name); suffix++) name = `${base}-${suffix}`;
+    }
+    reserved.add(name);
+    commands.push({ ...command, name });
+  }
+  return commands;
 }
 
 /** Move a selection index within [0, len) with wrap-around. */
@@ -243,7 +281,7 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   {
     name: "dailynote",
     aliases: ["today", "journal", "daily"],
-    description: "Draft or improve today's daily note (distinct from the /daily-rollup activity review)",
+    description: "Draft or improve today's daily note",
     kind: "prompt",
     prompt: "Draft today's daily note from my current context. Include priorities, open loops, decisions, and next actions.",
   },
@@ -285,7 +323,7 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   {
     name: "workflows",
     aliases: ["manifest", "manifests", "roadmap", "skills"],
-    description: "Run a vault workflow — manifests, daily rollup, MOC, source digest…",
+    description: "Browse vault workflows; type to search commands and skills",
     kind: "action",
     action: "workflows",
   },

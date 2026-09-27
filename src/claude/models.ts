@@ -7,17 +7,17 @@ export const CLAUDE_MODELS: ClaudeModel[] = [
   {
     id: "claude-opus-5-5",
     label: "Claude Opus 5.5",
-    hint: "Newest Opus — deep reasoning and agentic work, lower cost than Opus 5",
-  },
-  {
-    id: "claude-opus-5",
-    label: "Claude Opus 5",
-    hint: "Previous Opus — deep reasoning and agentic work",
+    hint: "Current Opus — deep reasoning and agentic work",
   },
   {
     id: "claude-opus-4-8",
     label: "Claude Opus 4.8",
-    hint: "Older Opus generation — deep reasoning, best artifacts",
+    hint: "Earlier Opus generation — deep reasoning",
+  },
+  {
+    id: "claude-opus-4-6",
+    label: "Claude Opus 4.6",
+    hint: "Earlier Opus generation — adjustable thinking and effort",
   },
   {
     id: "claude-sonnet-5",
@@ -33,11 +33,6 @@ export const CLAUDE_MODELS: ClaudeModel[] = [
     id: "claude-fable-5-1",
     label: "Claude Fable 5.1",
     hint: "Most capable — hardest reasoning and long agentic work, highest cost",
-  },
-  {
-    id: "claude-fable-5",
-    label: "Claude Fable 5",
-    hint: "Previous Fable — hardest reasoning, highest cost",
   },
 ];
 

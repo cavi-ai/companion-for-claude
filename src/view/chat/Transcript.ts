@@ -42,6 +42,7 @@ export interface TranscriptDeps {
   renderSetupCard(parent: HTMLElement): void;
   renderStreamingArtifactInto(el: HTMLElement, buffer: string): void;
   resumeInterruptedTurn(conversation: Conversation): Promise<void>;
+  reviewLastProposedEdit(conversation: Conversation): Promise<void>;
   restoreMediaAfterFailure(): void;
   setSending(sending: boolean): void;
   setupRequired(): boolean;
@@ -76,6 +77,7 @@ export class Transcript {
     if (m.role === "user" && m.display !== undefined) {
       const chipBubble = this.messagesEl.createDiv({ cls: "cc-msg cc-user cc-command" });
       this.renderCommandChip(chipBubble, m.display);
+      this.addUserActions(chipBubble, m.content);
       return;
     }
     const bubble = this.messagesEl.createDiv({ cls: `cc-msg cc-${m.role}` });
@@ -90,6 +92,7 @@ export class Transcript {
       body.setText(rendered);
     });
     if (m.role === "assistant" && m.content.trim().length > 0) this.addAssistantActions(bubble, m.content);
+    if (m.role === "user") this.addUserActions(bubble, m.content);
   }
 
   renderEmptyState(): void {
@@ -195,8 +198,10 @@ export class Transcript {
   startTurnRendering(conversationId: string, bubble: HTMLElement, body: HTMLElement, wantThinking: boolean, turnService: ChatTurnService): () => void {
     const renderer = new TurnRenderer(this.turnHost(), bubble, body, wantThinking);
     const chips = this.createToolChips(bubble, body);
+    const status = bubble.querySelector<HTMLElement>(".cc-turn-status");
     let unsubscribe: () => void = () => undefined;
     const settle = (result: AgentTurnResult): void => {
+      status?.remove();
       void this.settleTurnRendering(conversationId, bubble, body, renderer, result).finally(() => {
         unsubscribe();
         if (this.turn.turnRenderUnsubscribe === unsubscribe) this.turn.turnRenderUnsubscribe = null;
@@ -206,8 +211,8 @@ export class Transcript {
       switch (event.kind) {
         case "text": renderer.onText(event.delta); break;
         case "thinking": renderer.onThinking(event.delta); break;
-        case "toolStart": chips.start(event.block); break;
-        case "toolResult": chips.finish(event.block, event.result); renderer.markToolBoundary(); break;
+        case "toolStart": status?.setText("Using a tool…"); chips.start(event.block); break;
+        case "toolResult": status?.setText("Working…"); chips.finish(event.block, event.result); renderer.markToolBoundary(); break;
         case "notice": this.annotateAgentNotice(bubble, event.text); break;
         case "usage": renderer.onUsage(event.usage); break;
         case "truncated": renderer.onTruncated(); break;
@@ -325,6 +330,15 @@ export class Transcript {
     resume.addEventListener("click", () => void this.deps.resumeInterruptedTurn(conversation));
   }
 
+  renderRecoverableEdit(conversation: Conversation): void {
+    if (!conversation.lastEditProposal) return;
+    if (this.messagesEl.querySelector(".cc-edit-recovery")) return;
+    const row = this.messagesEl.createDiv({ cls: "cc-agent-notice cc-edit-recovery" });
+    row.createSpan({ text: `Proposed edit for ${conversation.lastEditProposal.path} is saved.` });
+    const review = row.createEl("button", { text: "Review proposed edit", cls: "mod-cta" });
+    review.addEventListener("click", () => void this.deps.reviewLastProposedEdit(conversation));
+  }
+
   /** The round spark mark before an assistant bubble's content (screen-reader label "Claude" is carried by .cc-role, not this icon). */
   private addSparkMark(bubble: HTMLElement): void {
     setIcon(bubble.createSpan({ cls: "cc-spark" }), "sparkles");
@@ -334,6 +348,7 @@ export class Transcript {
     const bubble = this.messagesEl.createDiv({ cls: "cc-msg cc-assistant" });
     bubble.createDiv({ cls: "cc-role", text: "Claude" });
     this.addSparkMark(bubble);
+    bubble.createSpan({ cls: "cc-turn-status", text: "Working…", attr: { role: "status", "aria-live": "polite" } });
     const body = bubble.createDiv({ cls: "cc-body" });
     // One indicator only: the breathing smiley in the thinking status. (The old
     // "▍" cursor was a second clay marker fighting it.)
@@ -391,11 +406,12 @@ export class Transcript {
     return pre;
   }
 
-  renderMessage(role: "user" | "assistant", text: string, opts?: { command?: boolean }): void {
+  renderMessage(role: "user" | "assistant", text: string, opts?: { command?: boolean; prompt?: string }): void {
     if (this.messages.length === 1) this.messagesEl.empty();
     const bubble = this.messagesEl.createDiv({ cls: `cc-msg cc-${role}${opts?.command ? " cc-command" : ""}` });
     if (opts?.command) {
       this.renderCommandChip(bubble, text);
+      if (role === "user") this.addUserActions(bubble, opts.prompt ?? text);
       this.scrollToBottom();
       return;
     }
@@ -403,6 +419,7 @@ export class Transcript {
     if (role === "assistant") this.addSparkMark(bubble);
     const body = bubble.createDiv({ cls: "cc-body" });
     void this.deps.renderMarkdownInto(body, text);
+    if (role === "user") this.addUserActions(bubble, opts?.prompt ?? text);
     this.scrollToBottom();
   }
 
@@ -491,6 +508,16 @@ export class Transcript {
     if (isLast && this.lastUserText) {
       this.actionBtn(bar, "Regenerate", "refresh-cw", () => void this.deps.regenerate());
     }
+  }
+
+  private addUserActions(bubble: HTMLElement, prompt: string): void {
+    const bar = bubble.createDiv({ cls: "cc-actions" });
+    this.actionBtn(bar, "Copy prompt", "copy", () => void navigator.clipboard.writeText(prompt));
+    this.actionBtn(bar, "Use again", "text-cursor-input", () => {
+      this.inputEl.value = prompt;
+      this.inputEl.focus();
+      this.deps.autosizeInput();
+    });
   }
 
   /** Add a hover "copy" button to each <pre><code> block in a rendered reply. */

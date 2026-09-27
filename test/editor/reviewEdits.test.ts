@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { MarkdownView, TFile, WorkspaceLeaf, type App } from "obsidian";
+import { getLastOpenedModal, MarkdownView, TFile, WorkspaceLeaf, type App } from "obsidian";
 import { planEdits } from "../../src/edit/diff";
 import { reviewEdits, findOpenMarkdownView, editorViewOf } from "../../src/editor/reviewEdits";
 
@@ -45,6 +45,33 @@ describe("findOpenMarkdownView", () => {
 });
 
 describe("reviewEdits", () => {
+  it("dismisses an open modal when the turn is stopped", async () => {
+    const { app } = appWith([]);
+    const controller = new AbortController();
+    const review = reviewEdits(app, input("A.md"), { inlineEnabled: false, signal: controller.signal });
+    const modal = getLastOpenedModal();
+    controller.abort();
+    await expect(review).resolves.toEqual({ mode: "modal", accepted: null });
+    expect(modal?.closed).toBe(true);
+  });
+
+  it("cancels an inline review when the turn is stopped", async () => {
+    const { view, cm } = openView("A.md");
+    const { app } = appWith([view]);
+    const controller = new AbortController();
+    let finish!: (accepted: boolean[] | null) => void;
+    const cancelInline = vi.fn(() => finish(null));
+    const review = reviewEdits(app, input("A.md"), { inlineEnabled: true, signal: controller.signal }, {
+      reviewInline: () => new Promise((resolve) => { finish = resolve; }),
+      cancelInline,
+      openModal: vi.fn(),
+    });
+    await Promise.resolve();
+    controller.abort();
+    await expect(review).resolves.toEqual({ mode: "inline", accepted: null });
+    expect(cancelInline).toHaveBeenCalledWith(cm);
+  });
+
   it("reviews inline when the note is open and inline is enabled, revealing its leaf", async () => {
     const { view, cm } = openView("A.md");
     const { app, revealed } = appWith([view]);

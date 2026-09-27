@@ -257,6 +257,11 @@ describe("cliSessionId", () => {
 });
 
 describe("transcriptText", () => {
+  it("excludes interrupted requests from fresh CLI context", () => {
+    const messages = [u("hello"), a("hi"), { ...u("hang forever"), contextExcluded: true }, { ...a("partial"), contextExcluded: true }, u("ping")];
+    expect(transcriptText(messages)).not.toContain("hang forever");
+    expect(transcriptText(messages)).toContain("User: ping");
+  });
   it("renders prior turns under a header, using content never display labels", () => {
     const text = transcriptText([u("first"), { role: "assistant", content: "answer" }, { role: "user", content: "raw", display: "pretty" }]);
     expect(text).toBe("Conversation so far (for context; reply only to the newest message):\n\nUser: first\n\nAssistant: answer\n\nUser: raw");

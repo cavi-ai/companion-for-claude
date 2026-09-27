@@ -88,6 +88,18 @@ describe("isWriteTool", () => {
 });
 
 describe("executeTool", () => {
+  it("never starts a write after Stop while its confirmation was open", async () => {
+    const controller = new AbortController();
+    let approve!: (allowed: boolean) => void;
+    const call = vi.fn(async () => "written");
+    const pending = executeTool({ call, signal: controller.signal, confirmWrite: () => new Promise((resolve) => { approve = resolve; }) }, use("note_create"));
+    controller.abort();
+    approve(true);
+    const result = await pending;
+    expect(result.is_error).toBe(true);
+    expect(call).not.toHaveBeenCalled();
+  });
+
   it("runs a read tool and returns its text", async () => {
     const call = vi.fn().mockResolvedValue("## A.md\nsnippet");
     const r = await executeTool({ call }, use("vault_search", { query: "x" }));

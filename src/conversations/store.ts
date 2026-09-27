@@ -5,6 +5,14 @@
 
 import type { ChatMessage } from "../types";
 import type { ApiMessage } from "../providers/types";
+import type { ProposedEdit } from "../edit/diff";
+
+export interface RecoverableEditProposal {
+  path: string;
+  edits: ProposedEdit[];
+  description?: string;
+  proposedAt: number;
+}
 
 export interface Conversation {
   id: string;
@@ -20,6 +28,8 @@ export interface Conversation {
   cliSessionHistory?: string[];
   /** Durable receipt for the one turn that has not reached a persisted success. */
   activeTurn?: ChatTurnReceipt;
+  /** Last unaccepted edit proposal, retained so review can be reopened after interruption. */
+  lastEditProposal?: RecoverableEditProposal;
   /** The chat project (note path or research Project.md path) this conversation is scoped to. */
   projectId?: string;
 }
@@ -113,6 +123,7 @@ export function toApiMessages(messages: ChatMessage[]): ApiMessage[] {
   // String content throughout: the inputs are chat turns, never tool-use blocks.
   const out: Array<{ role: ChatMessage["role"]; content: string }> = [];
   for (const m of messages) {
+    if (m.contextExcluded) continue;
     const prev = out[out.length - 1];
     if (prev && prev.role === m.role) {
       prev.content = `${prev.content}\n\n${m.content}`;
@@ -183,6 +194,15 @@ export function settleConversationTurn(
   return saveConversation(state, { ...conversation, activeTurn, updatedAt: now }, 0);
 }
 
+/** Preserve an interrupted exchange in Chat while excluding it from future model context. */
+export function excludeTurnMessages(state: ConversationState, conversationId: string, turnId: string): ConversationState {
+  const conversation = state.conversations.find((entry) => entry.id === conversationId);
+  if (!conversation?.activeTurn || conversation.activeTurn.id !== turnId) return state;
+  const start = conversation.activeTurn.userMessageIndex;
+  const messages = conversation.messages.map((message, index) => index >= start ? { ...message, contextExcluded: true } : message);
+  return saveConversation(state, { ...conversation, messages }, 0);
+}
+
 export function clearConversationTurn(state: ConversationState, conversationId: string, turnId: string, now: number): ConversationState {
   const conversation = state.conversations.find((entry) => entry.id === conversationId);
   if (!conversation?.activeTurn || conversation.activeTurn.id !== turnId) return state;
@@ -221,13 +241,15 @@ export function fromPersisted(raw: unknown): ConversationState {
   const o = raw as { conversations?: unknown; activeId?: unknown };
   const conversations = Array.isArray(o.conversations)
     ? o.conversations.filter(isConversation).map((c) => {
-        const { activeTurn: rawTurn, projectId: rawProjectId, ...conversation } = c;
+        const { activeTurn: rawTurn, projectId: rawProjectId, lastEditProposal: rawProposal, ...conversation } = c;
         const activeTurn = normalizeTurnReceipt(rawTurn);
+        const lastEditProposal = normalizeEditProposal(rawProposal);
         const projectId = typeof rawProjectId === "string" && rawProjectId.length > 0 ? rawProjectId : undefined;
         return {
           ...conversation,
           messages: compactMessages(c.messages),
           ...(projectId !== undefined ? { projectId } : {}),
+          ...(lastEditProposal ? { lastEditProposal } : {}),
           ...(activeTurn ? { activeTurn: activeTurn.state === "running"
             ? { ...activeTurn, state: "interrupted" as const }
             : activeTurn } : {}),
@@ -240,6 +262,14 @@ export function fromPersisted(raw: unknown): ConversationState {
 }
 
 const TURN_STATES = new Set<ChatTurnState>(["running", "interrupted", "failed"]);
+
+function normalizeEditProposal(value: unknown): RecoverableEditProposal | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const proposal = value as Partial<RecoverableEditProposal>;
+  if (typeof proposal.path !== "string" || !proposal.path || !Array.isArray(proposal.edits) || proposal.edits.length === 0 || proposal.edits.length > 20 || typeof proposal.proposedAt !== "number" || !Number.isFinite(proposal.proposedAt)) return undefined;
+  if (!proposal.edits.every((edit) => edit && typeof edit.old_str === "string" && edit.old_str.length > 0 && typeof edit.new_str === "string")) return undefined;
+  return { path: proposal.path, edits: proposal.edits.map((edit) => ({ old_str: edit.old_str, new_str: edit.new_str })), proposedAt: proposal.proposedAt, ...(typeof proposal.description === "string" ? { description: proposal.description } : {}) };
+}
 const TURN_MODES = new Set<ChatTurnMode>(["ask", "plan", "act"]);
 
 function normalizeTurnReceipt(value: unknown): ChatTurnReceipt | undefined {
@@ -316,7 +346,8 @@ const TRANSCRIPT_HEADER = "Conversation so far (for context; reply only to the n
 
 /** Prior turns flattened for a fresh Claude Code process, which holds no history yet. */
 export function transcriptText(messages: ChatMessage[]): string {
-  if (messages.length === 0) return "";
-  const lines = messages.map((m) => `${m.role === "user" ? "User" : "Assistant"}: ${m.content}`);
+  const included = messages.filter((message) => !message.contextExcluded);
+  if (included.length === 0) return "";
+  const lines = included.map((m) => `${m.role === "user" ? "User" : "Assistant"}: ${m.content}`);
   return [TRANSCRIPT_HEADER, ...lines].join("\n\n");
 }

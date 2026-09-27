@@ -2073,6 +2073,14 @@ export default class ClaudeCompanionPlugin extends Plugin {
     return this.conversations().stopTurn(conversationId, turnId);
   }
 
+  async saveChatEditProposal(conversationId: string, proposal: Omit<import("./conversations/store").RecoverableEditProposal, "proposedAt">): Promise<void> {
+    return this.conversations().saveEditProposal(conversationId, proposal);
+  }
+
+  async clearChatEditProposal(conversationId: string): Promise<void> {
+    return this.conversations().clearEditProposal(conversationId);
+  }
+
   async completeActiveConversationTurn(conversationId: string, turnId: string, messages: ChatMessage[]): Promise<void> {
     return this.conversations().completeTurn(conversationId, turnId, messages);
   }

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { dispatchNativeSlashAction, parseSlashQuery, filterCommands, moveSelection, REGISTERED_ACTION_COMMANDS, runNativeSlashCommand, SLASH_COMMANDS, workflowSlashCommands, WORKFLOW_ACTION_PREFIX, skillSlashCommands, SKILL_ACTION_PREFIX } from "../src/view/slashCommands";
+import { buildSlashCatalog, dispatchNativeSlashAction, parseSlashQuery, filterCommands, moveSelection, REGISTERED_ACTION_COMMANDS, runNativeSlashCommand, SLASH_COMMANDS, workflowSlashCommands, WORKFLOW_ACTION_PREFIX, skillSlashCommands, SKILL_ACTION_PREFIX } from "../src/view/slashCommands";
 import { WORKFLOWS } from "../src/workflows/catalog";
 import { SKILLS } from "../src/workflows/skillRegistry.generated";
 
@@ -89,6 +89,33 @@ describe("skillSlashCommands", () => {
     const weaver = cmds.find((c) => c.name === "wikilink-weaver")!;
     expect(weaver).toMatchObject({ kind: "action", action: `${SKILL_ACTION_PREFIX}wikilink-weaver` });
     expect(weaver.description).toContain("<note path>");
+    expect(cmds.every((command) => !command.description.startsWith("Use when"))).toBe(true);
+  });
+});
+
+describe("composed slash catalog", () => {
+  const template = (name: string) => ({ name, description: name, prompt: name, path: `Templates/${name}.md` });
+
+  it("shows core commands for a bare slash and keeps every workflow and skill searchable", () => {
+    const catalog = buildSlashCatalog(WORKFLOWS, SKILLS, []);
+    expect(new Set(catalog.map((command) => command.name)).size).toBe(catalog.length);
+    const initial = filterCommands(catalog, "").map((command) => command.name);
+    expect(initial).toContain("workflows");
+    expect(initial).not.toContain("manifest-vault");
+    expect(initial).not.toContain("wikilink-weaver");
+    expect(filterCommands(catalog, "manifest-vault").map((command) => command.name)).toContain("manifest-vault");
+    expect(filterCommands(catalog, "wikilink-weaver").map((command) => command.name)).toContain("wikilink-weaver");
+  });
+
+  it("reserves built-in names and aliases for their existing actions", () => {
+    const catalog = buildSlashCatalog(WORKFLOWS, SKILLS, [template("ask"), template("paper"), template("ask")]);
+    const names = catalog.map((command) => command.name);
+    expect(new Set(names).size).toBe(names.length);
+    expect(names).toContain("template-ask");
+    expect(names).toContain("template-paper");
+    expect(names).toContain("template-ask-2");
+    expect(filterCommands(catalog, "ask")[0].action).toBe("ask-vault");
+    expect(filterCommands(catalog, "paper")[0].action).toBe("open-research-desk");
   });
 });
 

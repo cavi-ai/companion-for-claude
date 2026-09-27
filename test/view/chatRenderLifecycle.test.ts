@@ -1,4 +1,4 @@
-import { App, FakeElement, WorkspaceLeaf } from "obsidian";
+import { App, FakeElement, getLastOpenedModal, WorkspaceLeaf } from "obsidian";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ActivityStore } from "../../src/activity/store";
 import type { AgentTurnHandlers } from "../../src/agent/loop";
@@ -167,6 +167,7 @@ describe("Chat render lifecycle", () => {
 
     const running = seam.run("Hello");
     await started;
+    expect(seam.messagesEl.querySelector(".cc-turn-status")?.textContent).toContain("Working");
 
     // Close mid-turn: unsubscribes, does not stop the turn.
     await seam.onClose();
@@ -247,6 +248,26 @@ describe("Chat render lifecycle", () => {
     expect(result).toEqual({ text: "answer", trace: [] });
   });
 
+  it("streamTurn settles with partial text when an unresponsive provider is stopped", async () => {
+    let handlers!: { onText(text: string): void };
+    const provider = { id: "anthropic", hasCredentials: () => true, stream: async (_request: unknown, h: typeof handlers) => {
+      handlers = h;
+      return new Promise<void>(() => undefined);
+    } };
+    const plugin = { settings: structuredClone(DEFAULT_SETTINGS), router: () => ({ anthropic: provider }), composeSystemPrompt: () => "system" } as unknown as ClaudeCompanionPlugin;
+    const view = new ChatView(new WorkspaceLeaf(new App()), plugin);
+    const seam = view as unknown as {
+      controls: ReturnType<typeof defaultChatControls>;
+      streamTurn(target: "claude", messages: [], handlers: AgentTurnHandlers, signal: AbortSignal): Promise<{ text: string; aborted?: boolean }>;
+    };
+    seam.controls = defaultChatControls(DEFAULT_SETTINGS.model);
+    const controller = new AbortController();
+    const turn = seam.streamTurn("claude", [], { onText: vi.fn() }, controller.signal);
+    handlers.onText("Partial");
+    controller.abort();
+    await expect(turn).resolves.toMatchObject({ text: "Partial", aborted: true });
+  });
+
   it("agentTurn resolves an AgentTurnResult error when building the turn runner throws", async () => {
     const provider = { id: "anthropic", stream: async () => undefined };
     const plugin = {
@@ -273,6 +294,33 @@ describe("Chat render lifecycle", () => {
     expect(result.error?.message).toBe("router unavailable");
   });
 
+  it("does not start a CLI runner after Stop during tool discovery", async () => {
+    let finishDiscovery!: () => void;
+    const discovery = new Promise<void>((resolve) => { finishDiscovery = resolve; });
+    const provider = { id: "claude-cli", stream: async () => undefined };
+    const plugin = {
+      settings: structuredClone(DEFAULT_SETTINGS),
+      router: () => ({ chatProvider: () => ({ provider, model: DEFAULT_SETTINGS.model }) }),
+      externalMcpTools: async () => { await discovery; return []; },
+      agentTools: () => ({ definitions: () => [] }),
+      composeSystemPrompt: () => "system",
+    } as unknown as ClaudeCompanionPlugin;
+    const view = new ChatView(new WorkspaceLeaf(new App()), plugin);
+    const seam = view as unknown as {
+      controls: ReturnType<typeof defaultChatControls>;
+      agentTurn(messages: [], handlers: AgentTurnHandlers, signal: AbortSignal, conversationId: string): Promise<{ aborted?: boolean }>;
+      turnRunnerFor: ReturnType<typeof vi.fn>;
+    };
+    seam.controls = defaultChatControls(DEFAULT_SETTINGS.model);
+    seam.turnRunnerFor = vi.fn();
+    const controller = new AbortController();
+    const running = seam.agentTurn([], { onText: vi.fn() }, controller.signal, "c1");
+    controller.abort();
+    finishDiscovery();
+    await expect(running).resolves.toMatchObject({ aborted: true });
+    expect(seam.turnRunnerFor).not.toHaveBeenCalled();
+  });
+
   it("falls back to readable text when one stored message cannot render as markdown", async () => {
     const plugin = { settings: structuredClone(DEFAULT_SETTINGS) } as unknown as ClaudeCompanionPlugin;
     const view = new ChatView(new WorkspaceLeaf(new App()), plugin);
@@ -290,6 +338,59 @@ describe("Chat render lifecycle", () => {
     await Promise.resolve();
 
     expect(messagesEl.querySelector(".cc-body")?.textContent).toBe("Still readable");
+  });
+
+  it("lets the user copy an earlier prompt after reopening a chat", () => {
+    const plugin = { settings: structuredClone(DEFAULT_SETTINGS) } as unknown as ClaudeCompanionPlugin;
+    const view = new ChatView(new WorkspaceLeaf(new App()), plugin);
+    const seam = view as unknown as { messagesEl: HTMLElement; renderMarkdownInto(el: HTMLElement, text: string): Promise<void>; renderStoredMessage(message: { role: "user"; content: string }): void };
+    seam.messagesEl = fakeElement();
+    seam.renderMarkdownInto = async () => undefined;
+    seam.renderStoredMessage({ role: "user", content: "Please revise the note" });
+    expect(seam.messagesEl.querySelector(".cc-actions")?.querySelector("button")?.getAttribute("aria-label")).toBe("Copy prompt");
+  });
+
+  it("offers to review the saved edit proposal when a conversation is reopened", () => {
+    const plugin = { settings: structuredClone(DEFAULT_SETTINGS), turnService: () => new ChatTurnService(), chatProjectFor: async () => null } as unknown as ClaudeCompanionPlugin;
+    const view = new ChatView(new WorkspaceLeaf(new App()), plugin);
+    const seam = view as unknown as { messagesEl: HTMLElement; sendBtn: HTMLButtonElement; usageEl: HTMLElement; gaugeFillEl: HTMLElement; controls: ReturnType<typeof defaultChatControls>; renderMarkdownInto(el: HTMLElement, text: string): Promise<void>; updateUsageBar(): void; loadConversation(conversation: Conversation): void };
+    seam.messagesEl = fakeElement();
+    seam.sendBtn = fakeElement() as unknown as HTMLButtonElement;
+    seam.usageEl = fakeElement();
+    seam.gaugeFillEl = fakeElement();
+    seam.controls = defaultChatControls(DEFAULT_SETTINGS.model);
+    seam.renderMarkdownInto = async () => undefined;
+    seam.updateUsageBar = () => undefined;
+    seam.loadConversation({
+      id: "c1", title: "Revise", createdAt: 1, updatedAt: 2,
+      messages: [{ role: "user", content: "Revise A.md" }, { role: "assistant", content: "Draft" }],
+      lastEditProposal: { path: "A.md", edits: [{ old_str: "old", new_str: "new" }], proposedAt: 2 },
+    });
+    expect(seam.messagesEl.querySelector(".cc-edit-recovery")?.querySelector("button")?.textContent).toBe("Review proposed edit");
+    expect([...seam.messagesEl.querySelectorAll("button")].some((button) => button.getAttribute("aria-label") === "Regenerate")).toBe(true);
+  });
+
+  it("revalidates and applies a recovered edit only after renewed review", async () => {
+    const app = new App();
+    const file = app.vault.seed("A.md", "alpha beta\n");
+    const conversation = {
+      id: "c1", title: "Revise", createdAt: 1, updatedAt: 2, messages: [],
+      lastEditProposal: { path: "A.md", edits: [{ old_str: "beta", new_str: "gamma" }], proposedAt: 2 },
+    } satisfies Conversation;
+    const clearChatEditProposal = vi.fn(async () => undefined);
+    const plugin = {
+      settings: { ...structuredClone(DEFAULT_SETTINGS), inlineDiffEnabled: false },
+      listConversations: () => [conversation], clearChatEditProposal,
+    } as unknown as ClaudeCompanionPlugin;
+    const view = new ChatView(new WorkspaceLeaf(app), plugin);
+    const seam = view as unknown as { reviewLastProposedEdit(conversation: Conversation): Promise<void> };
+    const reviewing = seam.reviewLastProposedEdit(conversation);
+    await vi.waitFor(() => expect(getLastOpenedModal()?.titleEl.textContent).toContain("A.md"));
+    expect(file._content).toBe("alpha beta\n");
+    (getLastOpenedModal()!.contentEl.querySelector(".cc-diff-buttons")!.querySelector("button") as unknown as FakeElement).dispatchEvent({ type: "click" });
+    await reviewing;
+    expect(file._content).toBe("alpha gamma\n");
+    expect(clearChatEditProposal).toHaveBeenCalledWith("c1");
   });
 
   it("names the local provider that actually failed, not always Ollama, in the fallback error hint", async () => {

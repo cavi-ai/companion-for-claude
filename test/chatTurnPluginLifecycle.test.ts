@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { ActivityStore } from "../src/activity/store";
 import ClaudeCompanionPlugin from "../src/main";
 import { DEFAULT_SETTINGS, type ChatMessage } from "../src/types";
+import { fromPersisted } from "../src/conversations/store";
 
 const user = (content: string): ChatMessage => ({ role: "user", content });
 
@@ -21,6 +22,20 @@ function harness(): { plugin: ClaudeCompanionPlugin; saves: unknown[] } {
 }
 
 describe("plugin durable Chat turn lifecycle", () => {
+  it("saves the last proposed edit for review after a restart and clears it after application", async () => {
+    const { plugin, saves } = harness();
+    const active = await plugin.beginActiveConversationTurn(null, [user("Revise A.md")], {
+      backend: "claude-cli", model: "claude-sonnet-5", mode: "act",
+    });
+    const proposal = { path: "A.md", edits: [{ old_str: "old", new_str: "new" }], description: "Clarity" };
+    await plugin.saveChatEditProposal(active.conversationId, proposal);
+    expect(plugin.getActiveConversation()?.lastEditProposal).toMatchObject(proposal);
+    const saved = saves.at(-1) as { conversations: unknown[]; activeConversationId: string };
+    expect(fromPersisted({ conversations: saved.conversations, activeId: saved.activeConversationId }).conversations[0]?.lastEditProposal).toMatchObject(proposal);
+
+    await plugin.clearChatEditProposal(active.conversationId);
+    expect(plugin.getActiveConversation()?.lastEditProposal).toBeUndefined();
+  });
   it("persists the submitted message before returning a running turn", async () => {
     const { plugin, saves } = harness();
 
@@ -128,6 +143,7 @@ describe("plugin durable Chat turn lifecycle", () => {
 
     expect(stop).toHaveBeenCalledOnce();
     expect(plugin.getActiveConversation()?.activeTurn).toMatchObject({ state: "interrupted" });
+    expect(plugin.getActiveConversation()?.messages[0]).toMatchObject({ content: "Research this", contextExcluded: true });
     expect(plugin.activity.snapshot().records[0]).toMatchObject({
       state: "paused",
       recovery: expect.arrayContaining([expect.objectContaining({ id: "resume-chat-turn" })]),
@@ -196,5 +212,23 @@ describe("plugin durable Chat turn lifecycle", () => {
 
     expect(stop).toHaveBeenCalledOnce();
     expect(plugin.getActiveConversation()?.activeTurn?.state).toBe("interrupted");
+  });
+
+  it("stops the runtime before a slow persistence write settles", async () => {
+    const { plugin } = harness();
+    const active = await plugin.beginActiveConversationTurn(null, [user("Research this")], {
+      backend: "claude-cli", model: "claude-sonnet-5", mode: "act",
+    });
+    const stop = vi.fn();
+    plugin.registerActiveChatTurn(active.conversationId, active.turnId, stop);
+    let releaseSave!: () => void;
+    vi.spyOn(plugin, "saveData").mockImplementationOnce(() => new Promise<void>((resolve) => { releaseSave = resolve; }));
+
+    const stopping = plugin.stopActiveChatTurn(active.conversationId, active.turnId);
+    expect(stop).toHaveBeenCalledOnce();
+    expect(plugin.getActiveConversation()?.activeTurn?.state).toBe("interrupted");
+    await vi.waitFor(() => expect(releaseSave).toBeTypeOf("function"));
+    releaseSave();
+    await stopping;
   });
 });

@@ -15,7 +15,9 @@ import {
   touch,
   settleConversationTurn,
   clearConversationTurn,
+  excludeTurnMessages,
   type ChatTurnMode,
+  type RecoverableEditProposal,
 } from "./store";
 
 export interface ConversationsControllerDeps {
@@ -111,7 +113,7 @@ export class ConversationsController {
     const { state, persist } = this.deps;
     const turn = state.get().conversations.find(({ id }) => id === conversationId)?.activeTurn;
     if (!turn || turn.id !== turnId || turn.state === "interrupted") return;
-    state.set(settleConversationTurn(state.get(), conversationId, turnId, "interrupted", Date.now(), "Stopped by user"));
+    state.set(excludeTurnMessages(settleConversationTurn(state.get(), conversationId, turnId, "interrupted", Date.now(), "Stopped by user"), conversationId, turnId));
     this.deps.activity().update(this.activityId(conversationId), {
       state: "paused",
       currentItem: "Interrupted — review any partial changes before resuming",
@@ -120,11 +122,10 @@ export class ConversationsController {
         { id: "resume-chat-turn", label: "Resume", kind: "resume" },
       ],
     });
-    try {
-      await persist();
-    } finally {
-      this.lifecycle().stop(conversationId, turnId);
-    }
+    // Stop the live runner synchronously. A stalled save must not keep a CLI
+    // process or tool loop running after the user pressed Stop.
+    this.lifecycle().stop(conversationId, turnId);
+    await persist();
   }
 
   async completeTurn(conversationId: string, turnId: string, messages: ChatMessage[]): Promise<void> {
@@ -147,7 +148,8 @@ export class ConversationsController {
     const { state, persist } = this.deps;
     const conversation = state.get().conversations.find(({ id }) => id === conversationId);
     if (!conversation?.activeTurn || conversation.activeTurn.id !== turnId) return;
-    state.set(saveConversation(state.get(), touch(conversation, messages, Date.now()), this.maxConversations()));
+    const interruptedMessages = messages.map((message, index) => index >= conversation.activeTurn!.userMessageIndex ? { ...message, contextExcluded: true } : message);
+    state.set(saveConversation(state.get(), touch(conversation, interruptedMessages, Date.now()), this.maxConversations()));
     state.set(settleConversationTurn(state.get(), conversationId, turnId, "interrupted", Date.now(), error));
     try {
       await persist();
@@ -212,6 +214,25 @@ export class ConversationsController {
     const updated = { ...conversation };
     if (projectId) updated.projectId = projectId;
     else delete updated.projectId;
+    state.set(saveConversation(state.get(), updated, 0));
+    await persist();
+  }
+
+  async saveEditProposal(conversationId: string, proposal: Omit<RecoverableEditProposal, "proposedAt">): Promise<void> {
+    const { state, persist } = this.deps;
+    const conversation = state.get().conversations.find((c) => c.id === conversationId);
+    if (!conversation) throw new Error("Conversation not found for edit recovery.");
+    const before = state.get();
+    state.set(saveConversation(before, { ...conversation, lastEditProposal: { ...proposal, proposedAt: Date.now() } }, 0));
+    try { await persist(); } catch (error) { state.set(before); throw error; }
+  }
+
+  async clearEditProposal(conversationId: string): Promise<void> {
+    const { state, persist } = this.deps;
+    const conversation = state.get().conversations.find((c) => c.id === conversationId);
+    if (!conversation?.lastEditProposal) return;
+    const updated = { ...conversation };
+    delete updated.lastEditProposal;
     state.set(saveConversation(state.get(), updated, 0));
     await persist();
   }

@@ -56,6 +56,21 @@ const ARGS_SUMMARY_MAX = 120;
 const RESULT_PREVIEW_MAX = 400;
 const SUMMARY_KEYS = ["query", "path", "title", "field", "value", "url", "project"] as const;
 
+/** Let the turn settle on Stop even when a provider or tool ignores its signal. */
+async function awaitOrAbort<T>(work: Promise<T>, signal?: AbortSignal): Promise<{ aborted: true } | { aborted: false; value: T }> {
+  if (!signal) return { aborted: false, value: await work };
+  if (signal.aborted) return { aborted: true };
+  return new Promise((resolve, reject) => {
+    const onAbort = () => { cleanup(); resolve({ aborted: true }); };
+    const cleanup = () => signal.removeEventListener("abort", onAbort);
+    signal.addEventListener("abort", onAbort, { once: true });
+    work.then(
+      (value) => { cleanup(); resolve({ aborted: false, value }); },
+      (error: unknown) => { cleanup(); reject(error instanceof Error ? error : new Error(String(error))); },
+    );
+  });
+}
+
 /** The subset of input keys toolChipLabel actually reads — small enough to store in full, so replay renders the same chip as live. */
 function pick(input: unknown, keys: readonly string[]): Record<string, unknown> | undefined {
   if (input === null || typeof input !== "object") return undefined;
@@ -85,22 +100,24 @@ export async function runAgentTurn(deps: AgentTurnDeps, req: CompletionRequest, 
     let stopReason: string | undefined;
     let error: Error | undefined;
     const toolUses: ToolUseBlock[] = [];
-    await deps.stream(
+    const streamed = await awaitOrAbort(deps.stream(
       { ...req, messages },
       {
         onText: (delta) => {
+          if (deps.signal?.aborted) return;
           text += delta;
           handlers.onText(delta);
         },
         ...(handlers.onThinking ? { onThinking: (d: string) => handlers.onThinking?.(d) } : {}),
         ...(handlers.onUsage ? { onUsage: (u: Parameters<NonNullable<StreamHandlers["onUsage"]>>[0]) => handlers.onUsage?.(u) } : {}),
         ...(handlers.onTruncated ? { onTruncated: () => handlers.onTruncated?.() } : {}),
-        onToolUse: (block) => toolUses.push(block),
+        onToolUse: (block) => { if (!deps.signal?.aborted) toolUses.push(block); },
         onStopReason: (reason) => (stopReason = reason),
         onError: (err) => (error = err),
       },
-    );
+    ), deps.signal);
     segments.push(text);
+    if (streamed.aborted || deps.signal?.aborted) return { text: joined(), trace, aborted: true };
     if (error) return { text: joined(), trace, error };
     if (stopReason !== "tool_use" || toolUses.length === 0) return { text: joined(), trace };
 
@@ -111,7 +128,9 @@ export async function runAgentTurn(deps: AgentTurnDeps, req: CompletionRequest, 
       handlers.onToolStart?.(block);
       let result: ToolResultBlock;
       try {
-        result = await deps.execute(block, deps.signal);
+        const executed = await awaitOrAbort(deps.execute(block, deps.signal), deps.signal);
+        if (executed.aborted) return { text: joined(), trace, aborted: true };
+        result = executed.value;
       } catch (err) {
         // The executor is contracted to never throw (executeTool maps errors to
         // is_error results), but a mis-wired or custom executor must not kill the

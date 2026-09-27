@@ -5,7 +5,7 @@ import type { EditorView } from "@codemirror/view";
 import type { EditPlan } from "../edit/diff";
 import { DiffModal } from "../view/DiffModal";
 import { createSession, type InlineDiffSession } from "./inlineDiffState";
-import { reviewInline } from "./inlineDiffExtension";
+import { cancelInline, reviewInline } from "./inlineDiffExtension";
 
 export interface ReviewEditsInput {
   file: TFile;
@@ -17,13 +17,35 @@ export type ReviewOutcome = { mode: "inline"; accepted: boolean[] | null } | { m
 
 export interface ReviewEditsDeps {
   reviewInline: (view: EditorView, session: InlineDiffSession) => Promise<boolean[] | null>;
-  openModal: (app: App, input: { path: string; description?: string; plan: EditPlan }) => Promise<boolean[] | null>;
+  cancelInline?: (view: EditorView) => void;
+  openModal: (app: App, input: { path: string; description?: string; plan: EditPlan }, signal?: AbortSignal) => Promise<boolean[] | null>;
 }
 
 const defaultDeps: ReviewEditsDeps = {
   reviewInline,
-  openModal: (app, input) => new Promise((resolve) => new DiffModal(app, input, resolve).open()),
+  cancelInline,
+  openModal: (app, input, signal) => new Promise((resolve) => {
+    if (signal?.aborted) { resolve(null); return; }
+    const modal = new DiffModal(app, input, (accepted) => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve(accepted);
+    });
+    const onAbort = () => modal.close();
+    signal?.addEventListener("abort", onAbort, { once: true });
+    modal.open();
+  }),
 };
+
+function awaitReview(pending: Promise<boolean[] | null>, signal: AbortSignal | undefined, cancel: () => void): Promise<boolean[] | null> {
+  if (!signal) return pending;
+  return new Promise((resolve, reject) => {
+    const onAbort = () => { cancel(); finish(null); };
+    const finish = (accepted: boolean[] | null) => { signal.removeEventListener("abort", onAbort); resolve(accepted); };
+    signal.addEventListener("abort", onAbort, { once: true });
+    pending.then(finish, (error: unknown) => { signal.removeEventListener("abort", onAbort); reject(error instanceof Error ? error : new Error(String(error))); });
+    if (signal.aborted) onAbort();
+  });
+}
 
 /** Obsidian's Editor wraps a CM6 view as `cm`; absent on non-CM editors. */
 export function editorViewOf(editor: unknown): EditorView | null {
@@ -39,7 +61,7 @@ export function findOpenMarkdownView(app: App, path: string): MarkdownView | nul
   return null;
 }
 
-export async function reviewEdits(app: App, input: ReviewEditsInput, opts: { inlineEnabled: boolean }, deps: ReviewEditsDeps = defaultDeps): Promise<ReviewOutcome> {
+export async function reviewEdits(app: App, input: ReviewEditsInput, opts: { inlineEnabled: boolean; signal?: AbortSignal }, deps: ReviewEditsDeps = defaultDeps): Promise<ReviewOutcome> {
   const meta = { path: input.file.path, ...(input.description !== undefined ? { description: input.description } : {}) };
   if (opts.inlineEnabled) {
     const view = findOpenMarkdownView(app, input.file.path);
@@ -53,9 +75,9 @@ export async function reviewEdits(app: App, input: ReviewEditsInput, opts: { inl
       }
       if (session) {
         void app.workspace.revealLeaf(view.leaf);
-        return { mode: "inline", accepted: await deps.reviewInline(cm, session) };
+        return { mode: "inline", accepted: await awaitReview(deps.reviewInline(cm, session), opts.signal, () => deps.cancelInline?.(cm)) };
       }
     }
   }
-  return { mode: "modal", accepted: await deps.openModal(app, { ...meta, plan: input.plan }) };
+  return { mode: "modal", accepted: await awaitReview(deps.openModal(app, { ...meta, plan: input.plan }, opts.signal), opts.signal, () => undefined) };
 }

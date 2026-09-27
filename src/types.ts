@@ -4,6 +4,8 @@ export type ChatRole = "user" | "assistant";
 
 export interface ChatMessage {
   role: ChatRole;
+  /** Keep an interrupted exchange visible, but never replay it as a fresh instruction. */
+  contextExcluded?: boolean;
   /** Raw markdown content of the message — what's sent to the model. */
   content: string;
   /**

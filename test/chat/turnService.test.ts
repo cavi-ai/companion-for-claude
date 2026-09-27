@@ -125,6 +125,23 @@ describe("ChatTurnService", () => {
     expect(d.completeTurn).not.toHaveBeenCalled();
   });
 
+  it("settles a stopped turn even if its runner never returns", async () => {
+    const service = new ChatTurnService();
+    const d = deps();
+    const handle = service.start("c1", {
+      turnId: "t1", title: "Stuck",
+      run: async (handlers) => {
+        handlers.onText("Partial answer");
+        return new Promise<AgentTurnResult>(() => undefined);
+      },
+      ...d,
+    });
+    service.stop("c1");
+    await expect(handle.result).resolves.toMatchObject({ text: "Partial answer", aborted: true });
+    expect(service.live("c1")).toBeNull();
+    expect(d.interruptTurn).toHaveBeenCalledOnce();
+  });
+
   it("(e) a runner rejection results in interruptTurn with the error and an error event", async () => {
     const service = new ChatTurnService();
     const d = deps();

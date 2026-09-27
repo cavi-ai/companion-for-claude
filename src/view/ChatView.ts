@@ -16,7 +16,7 @@ import { shouldFallbackToLocal, fallbackReason } from "../providers/fallback";
 import type { CompletionRequest } from "../providers/types";
 import { SlashMenu } from "./SlashMenu";
 import type { ChatMode } from "./ModeControl";
-import { skillSlashCommands, workflowSlashCommands, SLASH_COMMANDS, type SlashCommand, runNativeSlashCommand, templateSlashCommand, WORKFLOW_ACTION_PREFIX, SKILL_ACTION_PREFIX } from "./slashCommands";
+import { buildSlashCatalog, type SlashCommand, runNativeSlashCommand, WORKFLOW_ACTION_PREFIX, SKILL_ACTION_PREFIX } from "./slashCommands";
 import { substitutePlaceholders } from "../templates/promptTemplates";
 import { type AttachedPage } from "../context/urlContext";
 import { WORKFLOWS } from "../workflows/catalog";
@@ -203,6 +203,7 @@ export class ChatView extends ItemView {
       renderSetupCard: (parent) => this.setupCard.render(parent),
       renderStreamingArtifactInto: (...args) => this.renderStreamingArtifactInto(...args),
       resumeInterruptedTurn: (...args) => this.resumeInterruptedTurn(...args),
+      reviewLastProposedEdit: (...args) => this.reviewLastProposedEdit(...args),
       restoreMediaAfterFailure: (...args) => this.restoreMediaAfterFailure(...args),
       setSending: (...args) => this.setSending(...args),
       setupRequired: (...args) => this.setupRequired(...args),
@@ -333,7 +334,7 @@ export class ChatView extends ItemView {
     // ---- composer ----
     this.composer.mount(
       root,
-      [...SLASH_COMMANDS, ...workflowSlashCommands(WORKFLOWS), ...skillSlashCommands(SKILLS, WORKFLOWS)],
+      buildSlashCatalog(WORKFLOWS, SKILLS, []),
     );
     this.renderContextManager();
 
@@ -392,6 +393,9 @@ export class ChatView extends ItemView {
     void this.refreshCurrentProject();
     this.session = { ...EMPTY_SESSION };
     this.messages = compactMessages(conversation.messages);
+    const lastUser = [...this.messages].reverse().find((message) => message.role === "user");
+    this.lastUserText = lastUser?.content ?? "";
+    this.lastDisplay = lastUser?.display;
     this.messagesEl.empty();
     if (this.messages.length === 0) {
       this.renderEmptyState();
@@ -400,6 +404,7 @@ export class ChatView extends ItemView {
       const live = this.plugin.turnService().live(conversation.id);
       if (live) this.attachLiveTurn(conversation.id, live.turnId);
       else if (conversation.activeTurn) this.transcript.renderInterruptedTurn(conversation);
+      this.transcript.renderRecoverableEdit(conversation);
     }
     this.updateUsageBar();
     this.transcript.scrollToBottom();
@@ -702,8 +707,9 @@ export class ChatView extends ItemView {
     const generation = ++this.templateReloadGeneration;
     const templates = await this.plugin.promptTemplates();
     if (generation !== this.templateReloadGeneration) return;
-    this.templateCommands = templates.map(templateSlashCommand);
-    this.slashMenu.setCommands([...SLASH_COMMANDS, ...workflowSlashCommands(WORKFLOWS), ...skillSlashCommands(SKILLS, WORKFLOWS), ...this.templateCommands]);
+    const commands = buildSlashCatalog(WORKFLOWS, SKILLS, templates);
+    this.templateCommands = commands.filter((command) => command.template);
+    this.slashMenu.setCommands(commands);
     this.syncSlashMenu();
   }
 
@@ -865,6 +871,10 @@ export class ChatView extends ItemView {
       return;
     }
 
+    const previousTurn = this.conversationId ? this.plugin.listConversations().find((entry) => entry.id === this.conversationId)?.activeTurn : undefined;
+    if (previousTurn && previousTurn.state !== "running") {
+      this.messages = this.messages.map((message, index) => index >= previousTurn.userMessageIndex ? { ...message, contextExcluded: true } : message);
+    }
     this.messages.push({ role: "user", content: userText, ...(display !== undefined ? { display } : {}) });
     // Snapshot now (not read from `this.messages` at completion) — the view may
     // switch conversations while this turn is still in flight.
@@ -902,7 +912,7 @@ export class ChatView extends ItemView {
     });
     this.setSending(true);
     this._turnUsage = null;
-    this.transcript.renderMessage("user", display ?? userText, { command: display !== undefined });
+    this.transcript.renderMessage("user", display ?? userText, { command: display !== undefined, prompt: userText });
 
     // Agent mode: the model pulls vault context itself via tools. Gated on the
     // provider actually round-tripping tool_use (Claude, and local models whose
@@ -980,7 +990,7 @@ export class ChatView extends ItemView {
     const fallbackProviderId: ErrorHintProvider = caps.cli ? (caps.cliBackend ?? "claude-cli") : startedOnLocal ? "ollama" : "anthropic";
     const coreRun = async (handlers: AgentTurnHandlers, signal: AbortSignal): Promise<AgentTurnResult> => {
       const primary = agentActive || caps.cli
-        ? await this.agentTurn(apiMessages, handlers, signal)
+        ? await this.agentTurn(apiMessages, handlers, signal, turn.conversationId)
         : startedOnLocal
           ? await this.streamTurn("local", apiMessages, handlers, signal)
           : await this.streamTurn("claude", apiMessages, handlers, signal);
@@ -1008,13 +1018,22 @@ export class ChatView extends ItemView {
     // subscribe() below must land on the same ChatTurnService (plugin.turnService()
     // is a memoized singleton in production, but nothing here should rely on that).
     const turnService = this.plugin.turnService();
+    this.unregisterCurrentTurn?.();
+    this.unregisterCurrentTurn = null;
     const handle = turnService.start(turn.conversationId, {
       turnId: turn.turnId,
       title: display ?? userText,
       run: coreRun,
       completeTurn: (result) => this.plugin.completeActiveConversationTurn(turn.conversationId, turn.turnId, appendAssistantMessage(turnMessages, result)),
       interruptTurn: (result, error) => this.plugin.interruptActiveConversationTurn(turn.conversationId, turn.turnId, appendAssistantMessage(turnMessages, result), error?.message ?? "Interrupted"),
-      registerTurn: (stop) => this.plugin.registerActiveChatTurn(turn.conversationId, turn.turnId, stop),
+      registerTurn: (stop) => this.plugin.registerActiveChatTurn(turn.conversationId, turn.turnId, () => {
+        controller.abort();
+        stop();
+        if (this.currentTurn?.turnId === turn.turnId) {
+          this.currentTurn = null;
+          this.setSending(false);
+        }
+      }),
     });
     this.turnRenderUnsubscribe = this.transcript.startTurnRendering(turn.conversationId, bubble, body, wantThinking, turnService);
     await handle.result.catch(() => undefined);
@@ -1047,13 +1066,21 @@ export class ChatView extends ItemView {
     return new Promise((resolve) => {
       let settled = false;
       let buffer = "";
-      const fail = (error: unknown): void => {
+      const finish = (result: AgentTurnResult): void => {
         if (settled) return;
         settled = true;
+        signal.removeEventListener("abort", onAbort);
+        resolve(result);
+      };
+      const onAbort = (): void => finish({ text: buffer, trace: [], aborted: true });
+      signal.addEventListener("abort", onAbort, { once: true });
+      if (signal.aborted) { onAbort(); return; }
+      const fail = (error: unknown): void => {
+        if (settled) return;
         const status = (error as { status?: number } | null)?.status;
         const err = error instanceof Error ? error : new Error(String(error));
         if (status !== undefined) (err as Error & { status?: number }).status = status;
-        resolve({ text: buffer, trace: [], error: err });
+        finish({ text: buffer, trace: [], error: err });
       };
       const request: CompletionRequest = {
         system: this.plugin.composeSystemPrompt({ project: this.currentChatProject }),
@@ -1071,6 +1098,7 @@ export class ChatView extends ItemView {
         {
           onThinking: (delta) => handlers.onThinking?.(delta),
           onText: (delta) => {
+            if (settled) return;
             buffer += delta;
             handlers.onText(delta);
           },
@@ -1078,18 +1106,13 @@ export class ChatView extends ItemView {
           onUsage: (usage) => handlers.onUsage?.(usage),
           onTruncated: () => handlers.onTruncated?.(),
           onDone: (full) => {
-            if (settled) return;
-            settled = true;
-            resolve({ text: full, trace: [] });
+            finish({ text: full, trace: [] });
           },
         },
       ).then(() => {
         // stream() resolved without onError/onDone (e.g. aborted) — keep the
         // partial buffer, no error.
-        if (!settled) {
-          settled = true;
-          resolve({ text: buffer, trace: [], aborted: true });
-        }
+        finish({ text: buffer, trace: [], aborted: true });
       }).catch((error: unknown) => fail(error));
     });
   }
@@ -1104,10 +1127,12 @@ export class ChatView extends ItemView {
     apiMessages: ApiMessage[],
     handlers: AgentTurnHandlers,
     signal: AbortSignal,
+    conversationId?: string,
   ): Promise<AgentTurnResult> {
     const { provider, model: providerModel } = this.plugin.router().chatProvider();
     const shape = shapeRequest(this.controls, this.maxTokensOverride ?? this.plugin.settings.maxTokens);
     const externalTools = this.planMode ? [] : await this.plugin.externalMcpTools().catch(() => []);
+    if (signal.aborted) return { text: "", trace: [], aborted: true };
 
     const request: CompletionRequest = {
       system: this.plugin.composeSystemPrompt({ agent: true, plan: this.planMode, project: this.currentChatProject }),
@@ -1135,9 +1160,10 @@ export class ChatView extends ItemView {
           ? this.executeExternalMcp(block, sig)
           : executeTool(
               {
+                ...(sig ? { signal: sig } : {}),
                 call: (name, args) => this.plugin.agentTools().call(name, args),
                 confirmWrite: (b) => this.confirmAgentWrite(b),
-                proposeEdit: (b) => this.proposeAgentEdit(b),
+                proposeEdit: (b) => this.proposeAgentEdit(b, conversationId, signal),
               },
               block,
             ),
@@ -1147,26 +1173,27 @@ export class ChatView extends ItemView {
 
     let runner: AgentTurnRunner;
     try {
-      runner = await this.turnRunnerFor(deps, request, signal);
+      runner = await this.turnRunnerFor(deps, request, signal, conversationId);
     } catch (error) {
       return { text: "", trace: [], error: error instanceof Error ? error : new Error(String(error)) };
     }
+    if (signal.aborted) return { text: "", trace: [], aborted: true };
     return runner.run(request, handlers);
   }
 
   /** The CLI runs the turn when the backend is Claude Code; otherwise today's provider loop does. */
-  private async turnRunnerFor(deps: AgentTurnDeps, request: CompletionRequest, signal?: AbortSignal): Promise<AgentTurnRunner> {
+  private async turnRunnerFor(deps: AgentTurnDeps, request: CompletionRequest, signal?: AbortSignal, turnConversationId?: string): Promise<AgentTurnRunner> {
     const caps = this.plugin.router().chatCapabilities();
     if (!caps.cli) return providerTurnRunner(deps);
     if (!this.agentCapable) request.tools = [];
-    const conversationId = this.currentTurn?.conversationId ?? this.plugin.activeConversationId();
+    const conversationId = turnConversationId ?? this.currentTurn?.conversationId ?? this.plugin.activeConversationId();
     signal?.addEventListener("abort", () => this.plugin.interruptCliTurn(conversationId), { once: true });
     return this.plugin.cliTurnRunner({
       conversationId,
       planMode: this.planMode,
       agentMode: this.agentCapable,
       model: request.model,
-      deps: { confirmWrite: (b) => this.confirmAgentWrite(b), proposeEdit: (b) => this.proposeAgentEdit(b) },
+      deps: { confirmWrite: async (b) => (await this.confirmAgentWrite(b)) && !signal?.aborted, proposeEdit: (b) => this.proposeAgentEdit(b, conversationId, signal) },
       transcript: this.resumeCliSessionId ? "" : transcriptText(this.messages.slice(0, -1)),
       ...(this.resumeCliSessionId ? { resumeSessionId: this.resumeCliSessionId } : {}),
     });
@@ -1178,7 +1205,7 @@ export class ChatView extends ItemView {
    * atomically, and report the true outcome back to the model. Throws are
    * mapped to is_error tool_results by the executor (model self-corrects).
    */
-  private async proposeAgentEdit(block: ToolUseBlock): Promise<string> {
+  private async proposeAgentEdit(block: ToolUseBlock, conversationId?: string, signal?: AbortSignal): Promise<string> {
     const input = block.input;
     const path = typeof input.path === "string" ? input.path : "";
     if (!path) throw new Error("propose_note_edit requires a 'path'.");
@@ -1189,23 +1216,55 @@ export class ChatView extends ItemView {
 
     const content = await this.app.vault.cachedRead(file);
     const plan = planEdits(content, edits);
+    if (signal?.aborted) return "Turn stopped before the edit review opened.";
+    const id = conversationId ?? this.currentTurn?.conversationId ?? this.conversationId;
+    if (!id) throw new Error("Conversation not found for edit recovery.");
+    await this.plugin.saveChatEditProposal(id, { path, edits, ...(description ? { description } : {}) });
+    return this.applyReviewedEdit(id, file, plan, description, signal);
+  }
 
+  private async applyReviewedEdit(conversationId: string, file: TFile, plan: ReturnType<typeof planEdits>, description?: string, signal?: AbortSignal): Promise<string> {
     const outcome = await reviewEdits(
       this.app,
       { file, plan, ...(description !== undefined ? { description } : {}) },
-      { inlineEnabled: this.plugin.settings.inlineDiffEnabled },
+      { inlineEnabled: this.plugin.settings.inlineDiffEnabled, ...(signal ? { signal } : {}) },
     );
+    if (signal?.aborted) return "Turn stopped. The proposed edit is saved for later review.";
     const accepted = outcome.accepted;
-    if (!accepted) return "User rejected the proposed edit.";
+    if (!accepted) {
+      const conversation = this.plugin.listConversations().find((entry) => entry.id === conversationId);
+      if (conversation && this.conversationId === conversationId) this.transcript.renderRecoverableEdit(conversation);
+      return "User rejected the proposed edit. It is saved for later review.";
+    }
 
     // Inline review already edited the live buffer; the modal path applies under the write lock.
     if (outcome.mode === "modal") {
       await this.app.vault.process(file, (current) => applyPlan(current, plan, accepted));
     }
     const applied = accepted.filter(Boolean).length;
+    if (applied === plan.hunks.length) {
+      await this.plugin.clearChatEditProposal(conversationId).catch((error: unknown) => console.error("[Claude Companion] could not clear applied edit recovery record", error));
+      if (this.conversationId === conversationId) this.messagesEl.querySelector(".cc-edit-recovery")?.remove();
+    } else {
+      const edits = plan.hunks.filter((_, index) => !accepted[index]).map((hunk) => ({ old_str: hunk.oldText, new_str: hunk.newText }));
+      await this.plugin.saveChatEditProposal(conversationId, { path: file.path, edits, ...(description ? { description } : {}) }).catch((error: unknown) => console.error("[Claude Companion] could not retain rejected edit recovery record", error));
+    }
     return applied === plan.hunks.length
-      ? `Applied all ${applied} edit${applied === 1 ? "" : "s"} to ${path}.`
-      : `Applied ${applied} of ${plan.hunks.length} edits to ${path} (the user rejected the rest).`;
+      ? `Applied all ${applied} edit${applied === 1 ? "" : "s"} to ${file.path}.`
+      : `Applied ${applied} of ${plan.hunks.length} edits to ${file.path} (the user rejected the rest).`;
+  }
+
+  private async reviewLastProposedEdit(conversation: Conversation): Promise<void> {
+    const proposal = this.plugin.listConversations().find((entry) => entry.id === conversation.id)?.lastEditProposal;
+    if (!proposal) return;
+    try {
+      const file = this.app.vault.getAbstractFileByPath(proposal.path);
+      if (!(file instanceof TFile)) throw new Error(`Note not found: ${proposal.path}`);
+      const plan = planEdits(await this.app.vault.cachedRead(file), proposal.edits);
+      new Notice(await this.applyReviewedEdit(conversation.id, file, plan, proposal.description));
+    } catch (error) {
+      new Notice(`Could not reopen the proposed edit: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 
   /**
@@ -1224,6 +1283,7 @@ export class ChatView extends ItemView {
     // Stop was pressed while a prior tool was running — don't fire another call.
     if (signal?.aborted) return result("Turn stopped before this tool ran.", true);
     if (!(await this.confirmAgentWrite(block))) return result("User declined.", true);
+    if (signal?.aborted) return result("Turn stopped before this tool ran.", true);
     try {
       return result(truncateResult(await this.plugin.callExternalMcp(block.name, block.input)));
     } catch (err) {

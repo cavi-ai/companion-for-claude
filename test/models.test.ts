@@ -16,12 +16,12 @@ describe("resolveModelId", () => {
 });
 
 describe("modelLabel", () => {
-  it("offers the current Opus 5 API model", () => {
-    expect(CLAUDE_MODELS).toContainEqual(expect.objectContaining({ id: "claude-opus-5", label: "Claude Opus 5" }));
-  });
-  it("offers Opus 5.5 and Fable 5.1", () => {
+  it("curates Opus 5.5 and 4.6 plus Fable 5.1 without the removed picker choices", () => {
     expect(CLAUDE_MODELS).toContainEqual(expect.objectContaining({ id: "claude-opus-5-5", label: "Claude Opus 5.5" }));
+    expect(CLAUDE_MODELS).toContainEqual(expect.objectContaining({ id: "claude-opus-4-6", label: "Claude Opus 4.6" }));
     expect(CLAUDE_MODELS).toContainEqual(expect.objectContaining({ id: "claude-fable-5-1", label: "Claude Fable 5.1" }));
+    expect(CLAUDE_MODELS.map((model) => model.id)).not.toContain("claude-opus-5");
+    expect(CLAUDE_MODELS.map((model) => model.id)).not.toContain("claude-fable-5");
   });
   it("returns the friendly label for known ids", () => {
     expect(modelLabel("claude-sonnet-5")).toBe("Claude Sonnet 5");

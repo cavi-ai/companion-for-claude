@@ -189,6 +189,7 @@ body:not(.is-mobile) .cc-model.cc-model-tappable:hover {
   font-size: var(--cc-chat-font, 14px);
   line-height: 1.55;
 }
+.cc-turn-status { display: block; font-size: var(--font-smallest); color: var(--text-muted); margin: 0 0 4px; }
 /* Obsidian sets user-select: none on body. */
 .cc-body,
 .cc-tool-chip-result,
@@ -949,8 +950,7 @@ body:not(.is-mobile) .cc-composer-bar { container-type: inline-size; }
 .cc-backend-pill {
   font-size: var(--cc-text-2xs);
   font-family: var(--cc-mono, "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace);
-  /* Lives in the title's flex COLUMN under the model name, so it must hug the
-     left edge (no indent) and size to its content rather than stretch. */
+  /* Lives below the model chip in the title's flex column. */
   align-self: flex-start;
   margin-top: 3px;
   padding: 1px 7px;
@@ -958,6 +958,12 @@ body:not(.is-mobile) .cc-composer-bar { container-type: inline-size; }
   border: 1px solid var(--cc-border);
   color: var(--cc-text-muted);
   white-space: nowrap;
+}
+/* Align the status pills under the model text, past the chip's padding, MCP
+   dot, and gap. Mobile uses a one-row title and hides the backend pill. */
+body:not(.is-mobile) .cc-title > .cc-backend-pill,
+body:not(.is-mobile) .cc-title > .cc-write-grant-pill {
+  margin-left: calc(var(--cc-space-2) + var(--cc-space-2) + 9px);
 }
 .cc-backend-pill:empty {
   display: none;
@@ -1241,6 +1247,7 @@ pre.cc-has-copy:hover .cc-code-copy { opacity: 1; }
 .cc-slash-item {
   display: flex;
   align-items: baseline;
+  justify-content: flex-start;
   gap: 8px;
   padding: 5px 8px;
   width: 100%;
@@ -1250,7 +1257,7 @@ pre.cc-has-copy:hover .cc-code-copy { opacity: 1; }
   color: inherit;
   cursor: pointer;
   font: inherit;
-  text-align: start;
+  text-align: left;
 }
 .cc-slash-item.is-selected { background: var(--cc-surface-raised); }
 /* "@" picker rows: an icon + label + path. */
@@ -1460,6 +1467,7 @@ pre.cc-has-copy:hover .cc-code-copy { opacity: 1; }
 .cc-slash-desc {
   font-size: var(--cc-text-sm);
   color: var(--text-muted);
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

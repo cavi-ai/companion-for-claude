@@ -65,6 +65,7 @@ export const PROPOSE_EDIT_TOOL: AnthropicToolDef = {
 };
 
 export interface ToolExecutorDeps {
+  signal?: AbortSignal;
   /** Runs the tool (VaultTools.call). Throws on failure. */
   call(name: string, args: Record<string, unknown>): Promise<string>;
   /**
@@ -93,6 +94,7 @@ export async function executeTool(deps: ToolExecutorDeps, block: ToolUseBlock): 
   });
 
   if (block.parseError) return result(block.parseError, true);
+  if (deps.signal?.aborted) return result("Turn stopped before this tool ran.", true);
   if (block.name === PROPOSE_EDIT_TOOL.name) {
     if (!deps.proposeEdit) return result("Edit proposals are unavailable in this chat.", true);
     try {
@@ -104,7 +106,9 @@ export async function executeTool(deps: ToolExecutorDeps, block: ToolUseBlock): 
   if (isWriteTool(block.name)) {
     if (!deps.confirmWrite) return result("Write tools are unavailable in this chat.", true);
     if (!(await deps.confirmWrite(block))) return result("User declined.", true);
+    if (deps.signal?.aborted) return result("Turn stopped before this write ran.", true);
   }
+  if (deps.signal?.aborted) return result("Turn stopped before this tool ran.", true);
   try {
     return result(truncateResult(await deps.call(block.name, block.input)));
   } catch (err) {
