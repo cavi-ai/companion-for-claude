@@ -35,13 +35,19 @@ const SOURCE_IMPORT_TITLE_RULE = {
 };
 
 export class ResearchTools {
-  constructor(private readonly repository: Repository, private readonly captureWeb?: WebCapture, private readonly resolveZotero?: ZoteroResolve) {}
+  constructor(
+    private readonly repository: Repository,
+    private readonly captureWeb?: WebCapture,
+    private readonly resolveZotero?: ZoteroResolve,
+    /** Runs the source-enrichment pipeline on a freshly imported source note. */
+    private readonly enrichSource?: (path: string) => Promise<void>,
+  ) {}
 
   definitions(): McpToolDef[] {
     const project = { project: text("Vault path to the research Project.md note.") };
     return [
       { name: "research_project_create", description: "Create a canonical vault-native research project after user confirmation.", inputSchema: object({ title: text("Project title."), question: text("Research question."), folder: text("Vault-relative project folder."), audience: text("Optional audience.") }, ["title", "question", "folder"]) },
-      { name: "research_source_import", description: "Import a canonical text capture or metadata-only source into a research project. Web sources with a url and no captured_text are fetched and reduced to clean readable markdown automatically. Zotero sources with a zotero_key resolve the title and bibliographic metadata from the configured Zotero library when missing. Binary sources require an existing vault asset and an adapter-supported path.", inputSchema: object({ ...project, title: text("Source title (optional for zotero sources whose key resolves)."), source_kind: text("pdf, web, doi, arxiv, zotero, or vault."), canonical_id: text("Optional stable identifier."), url: text("Optional source URL."), asset: text("Optional existing vault asset path."), captured_text: text("Optional canonical captured text (omit for web sources to auto-capture the page)."), doi: text("Optional DOI."), arxiv_id: text("Optional arXiv id."), zotero_key: text("Optional Zotero item key."), authors: { type: "array", items: { type: "string" } }, published: text("Optional publication date."), publication: text("Optional publication title."), abstract: text("Optional abstract.") }, ["project", "source_kind"], SOURCE_IMPORT_TITLE_RULE) },
+      { name: "research_source_import", description: "Import a canonical text capture or metadata-only source into a research project. Web sources with a url and no captured_text are fetched and reduced to clean readable markdown automatically. Zotero sources with a zotero_key resolve the title and bibliographic metadata from the configured Zotero library when missing. Newly imported sources are enriched with a summary, key claims, and topic tags. Binary sources require an existing vault asset and an adapter-supported path.", inputSchema: object({ ...project, title: text("Source title (optional for zotero sources whose key resolves)."), source_kind: text("pdf, web, doi, arxiv, zotero, or vault."), canonical_id: text("Optional stable identifier."), url: text("Optional source URL."), asset: text("Optional existing vault asset path."), captured_text: text("Optional canonical captured text (omit for web sources to auto-capture the page)."), doi: text("Optional DOI."), arxiv_id: text("Optional arXiv id."), zotero_key: text("Optional Zotero item key."), authors: { type: "array", items: { type: "string" } }, published: text("Optional publication date."), publication: text("Optional publication title."), abstract: text("Optional abstract.") }, ["project", "source_kind"], SOURCE_IMPORT_TITLE_RULE) },
       { name: "research_project_read", description: "Read a compact research project snapshot with sources, evidence, claims, issues, and health.", inputSchema: object(project, ["project"]) },
       { name: "research_evidence_capture", description: "Create a provenance-linked evidence card inside a research project.", inputSchema: object({ ...project, source: text("Source record path in this project."), title: text("Evidence title."), excerpt: text("Exact source excerpt."), locator_kind: text("page, section, paragraph, timestamp, or quote."), locator_value: text("Exact locator text."), interpretation: text("Optional interpretation."), review_state: text("proposed, reviewed, or rejected.") }, ["project", "source", "title", "excerpt"]) },
       { name: "research_evidence_review", description: "Mark an evidence card as reviewed or rejected.", inputSchema: object({ evidence: text("Evidence record path."), review_state: text("reviewed or rejected.") }, ["evidence", "review_state"]) },
@@ -121,6 +127,16 @@ export class ResearchTools {
         const extras: Record<string, unknown> = {};
         if (autoCapture !== undefined) extras.captured = autoCapture;
         if (zoteroResolved !== undefined) extras.zotero_resolved = zoteroResolved;
+        // Freshly created sources get the same summary/key-claims/topics pass a
+        // clipped source gets; a duplicate already carries (or skips) its own.
+        if (result.kind === "created" && this.enrichSource) {
+          try {
+            await this.enrichSource(result.path);
+            extras.enriched = true;
+          } catch {
+            extras.enriched = false;
+          }
+        }
         return JSON.stringify({ ...result, ...extras });
       }
       case "research_project_read": {

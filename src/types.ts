@@ -182,6 +182,8 @@ export interface PluginSettings {
   selectionActionEnabled: boolean;
   /** Max stream→tools→stream iterations per turn. */
   agentMaxIterations: number;
+  /** When a turn hits the iteration cap, continue it automatically (bounded chain). */
+  agentAutoContinue: boolean;
   /** Show a Notice + status-bar item when a turn finishes while its chat view is closed. */
   notifyOnTurnComplete: boolean;
   /** Offer the web_search agent tool (explicit calls only). */
@@ -353,6 +355,7 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   inlineDiffEnabled: true,
   selectionActionEnabled: true,
   agentMaxIterations: 10,
+  agentAutoContinue: false,
   notifyOnTurnComplete: true,
   webSearchEnabled: false,
   webSearchEngine: "duckduckgo",

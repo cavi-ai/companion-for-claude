@@ -45,7 +45,7 @@ test("completed activity clears and Quick Options stays inside compact viewports
     await expect(completedIndex).toBeHidden({ timeout: 5_000 });
 
     const promptCards = page.locator(".cc-empty-examples .cc-example");
-    await expect(promptCards).toHaveCount(4);
+    await expect(promptCards).toHaveCount(5);
     const promptGeometry = await promptCards.evaluateAll((cards) => cards.map((card) => {
       const rect = card.getBoundingClientRect();
       return {

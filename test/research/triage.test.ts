@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { TRIAGE_SYSTEM, buildTriageUser, parseTriageResponse, renderTriageNote, themeTagSlug, noteExcerpt, type TriageNote } from "../../src/research/triage";
+import { TRIAGE_SYSTEM, buildTriageUser, parseTriageResponse, renderTriageNote, themeTagSlug, noteExcerpt, triageFolderChoices, type TriageNote } from "../../src/research/triage";
 
 const notes: TriageNote[] = [
   { path: "Clippings/a.md", title: "Attention residue study", type: "article", url: "https://example.com/a", tags: ["clipping"], excerpt: "Participants took 23 minutes to refocus after an interruption." },
@@ -91,5 +91,26 @@ describe("TRIAGE_SYSTEM", () => {
   it("demands JSON-only output and single membership", () => {
     expect(TRIAGE_SYSTEM).toContain("ONLY JSON");
     expect(TRIAGE_SYSTEM).toContain("at most one group");
+  });
+});
+
+describe("triageFolderChoices", () => {
+  it("lists the inbox first, then the organized folder", () => {
+    expect(triageFolderChoices({ sourceInboxFolder: "Clippings", clipOrganizedFolder: "Library" })).toEqual([
+      { folder: "Clippings", label: "Clippings (inbox)" },
+      { folder: "Library", label: "Library (organized)" },
+    ]);
+  });
+
+  it("dedupes when inbox and organized folder are the same", () => {
+    expect(triageFolderChoices({ sourceInboxFolder: "Clippings", clipOrganizedFolder: "Clippings" })).toEqual([
+      { folder: "Clippings", label: "Clippings (inbox)" },
+    ]);
+  });
+
+  it("trims trailing slashes and drops empty folders", () => {
+    expect(triageFolderChoices({ sourceInboxFolder: "Inbox/", clipOrganizedFolder: "  " })).toEqual([
+      { folder: "Inbox", label: "Inbox (inbox)" },
+    ]);
   });
 });

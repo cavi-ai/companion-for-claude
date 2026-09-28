@@ -97,6 +97,35 @@ describe("ResearchTools", () => {
     expect(noDep).not.toHaveProperty("captured");
   });
 
+  it("enriches a freshly created source and reports it", async () => {
+    const repo = repository();
+    const enrichSource = vi.fn().mockResolvedValue(undefined);
+    const tools = new ResearchTools(repo as never, undefined, undefined, enrichSource);
+    const result = JSON.parse(await tools.call("research_source_import", { project: "P/Project.md", title: "Paper", source_kind: "doi", captured_text: "Canonical text" }));
+    expect(enrichSource).toHaveBeenCalledWith("Research/P/Sources/S.md");
+    expect(result.enriched).toBe(true);
+  });
+
+  it("does not fail the import when enrichment fails, and skips duplicates", async () => {
+    const repo = repository();
+    const enrichSource = vi.fn().mockRejectedValue(new Error("utility offline"));
+    const tools = new ResearchTools(repo as never, undefined, undefined, enrichSource);
+    const result = JSON.parse(await tools.call("research_source_import", { project: "P/Project.md", title: "Paper", source_kind: "doi", captured_text: "Canonical text" }));
+    expect(result).toMatchObject({ kind: "created", enriched: false });
+
+    repo.importSource.mockResolvedValue({ kind: "duplicate", path: "Research/P/Sources/S.md" });
+    const dupe = JSON.parse(await tools.call("research_source_import", { project: "P/Project.md", title: "Paper", source_kind: "doi", captured_text: "Canonical text" }));
+    expect(dupe).toMatchObject({ kind: "duplicate" });
+    expect(dupe).not.toHaveProperty("enriched");
+    expect(enrichSource).toHaveBeenCalledTimes(1);
+  });
+
+  it("omits enrichment entirely when no callback is wired", async () => {
+    const repo = repository();
+    const result = JSON.parse(await new ResearchTools(repo as never).call("research_source_import", { project: "P/Project.md", title: "Paper", source_kind: "doi", captured_text: "Canonical text" }));
+    expect(result).not.toHaveProperty("enriched");
+  });
+
   const zoteroWork = {
     adapter: "zotero" as const,
     externalId: "ABCD2345",

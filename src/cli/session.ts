@@ -2,6 +2,7 @@
 
 import type { AgentTurnHandlers, AgentTurnResult, AgentTurnRunner } from "../agent/loop";
 import { toTraceEntry } from "../agent/loop";
+import { buildHandoffPacket, formatHandoff } from "../agent/handoff";
 import type { CompletionRequest, ContentBlock, ToolResultBlock, ToolUseBlock } from "../providers/types";
 import type { ToolTraceEntry } from "../types";
 import { StreamJsonParser, type CliEvent } from "./streamJson";
@@ -293,8 +294,8 @@ export class CliSession implements AgentTurnRunner {
         } else if (ev.subtype === "success") {
           turn.settle({ text, trace: turn.trace });
         } else if (ev.subtype === "error_max_turns") {
-          turn.handlers.onNotice?.("Stopped after the tool iteration cap — ask me to continue if the answer is incomplete.");
-          turn.settle({ text, trace: turn.trace, capped: true });
+          turn.handlers.onNotice?.("Stopped after the tool iteration cap — press Continue below to pick up where it left off.");
+          turn.settle({ text, trace: turn.trace, capped: true, handoff: formatHandoff(buildHandoffPacket(turn.trace)) });
         } else {
           turn.settle({ text, trace: turn.trace, error: new Error(ev.text || ev.subtype) });
         }

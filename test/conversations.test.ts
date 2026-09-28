@@ -324,4 +324,39 @@ describe("durable chat turn receipts", () => {
     expect(clearConversationTurn(interrupted, "c1", "stale", 300)).toEqual(interrupted);
     expect(clearConversationTurn(interrupted, "c1", "turn-1", 300).conversations[0]?.activeTurn).toBeUndefined();
   });
+
+  it("a capped receipt keeps its handoff and survives a restart", () => {
+    const started = startConversationTurn(emptyState(), "c1", [u("Research everything")], receipt(), 10);
+    const capped = settleConversationTurn(started, "c1", "turn-1", "capped", 200, undefined, "Tools used: vault_search");
+
+    const restored = fromPersisted(JSON.parse(JSON.stringify(capped)));
+
+    expect(restored.conversations[0]?.activeTurn).toMatchObject({ id: "turn-1", state: "capped", handoff: "Tools used: vault_search" });
+  });
+
+  it("a persisted continuationDepth survives a restart", () => {
+    const conversation = {
+      ...newConversation("c1", 1),
+      messages: [u("Keep going")],
+      activeTurn: { ...receipt("capped"), handoff: "Tools used: note_read", continuationDepth: 2 },
+    };
+
+    const restored = fromPersisted({ conversations: [conversation], activeId: "c1" });
+
+    expect(restored.conversations[0]?.activeTurn).toMatchObject({ state: "capped", continuationDepth: 2, handoff: "Tools used: note_read" });
+  });
+
+  it("drops a malformed handoff or continuationDepth without dropping the receipt", () => {
+    const conversation = {
+      ...newConversation("c1", 1),
+      messages: [u("Keep me")],
+      activeTurn: { ...receipt("capped"), handoff: 42, continuationDepth: -1 },
+    };
+
+    const restored = fromPersisted({ conversations: [conversation], activeId: "c1" });
+
+    expect(restored.conversations[0]?.activeTurn).toMatchObject({ state: "capped" });
+    expect(restored.conversations[0]?.activeTurn?.handoff).toBeUndefined();
+    expect(restored.conversations[0]?.activeTurn?.continuationDepth).toBeUndefined();
+  });
 });

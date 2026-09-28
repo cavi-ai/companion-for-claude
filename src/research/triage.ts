@@ -12,6 +12,26 @@ export interface TriageNote {
   excerpt: string;
 }
 
+export interface TriageFolderChoice {
+  folder: string;
+  label: string;
+}
+
+/** The known folders worth triaging: the clippings inbox and the organized library (deduped). */
+export function triageFolderChoices(settings: { sourceInboxFolder: string; clipOrganizedFolder: string }): TriageFolderChoice[] {
+  const seen = new Set<string>();
+  const out: TriageFolderChoice[] = [];
+  const add = (folder: string, suffix: string): void => {
+    const clean = folder.replace(/\/+$/, "").trim();
+    if (!clean || seen.has(clean)) return;
+    seen.add(clean);
+    out.push({ folder: clean, label: `${clean} (${suffix})` });
+  };
+  add(settings.sourceInboxFolder, "inbox");
+  add(settings.clipOrganizedFolder, "organized");
+  return out;
+}
+
 export interface TriageGroup {
   theme: string;
   summary: string;

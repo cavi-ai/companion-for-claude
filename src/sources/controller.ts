@@ -7,6 +7,9 @@ import { KeyedSerialQueue } from "./keyedSerialQueue";
 import { errorHint, type ErrorHintProvider } from "../providers/errorHints";
 import { UtilityUnavailableError } from "../providers/endpointPolicy";
 import type { EnrichDiagnostics } from "./enrichDiagnostics";
+import { TFile } from "obsidian";
+import { applySourceFrontmatter } from "./frontmatterMerge";
+import { extractResearchSourceEnrichment } from "../research/enrichSource";
 
 export interface FileRef {
   path: string;
@@ -179,6 +182,88 @@ export class SourceEnrichmentController {
       }
       return this.performEnrichFile(file, notify);
     });
+  }
+
+  /**
+   * Enrich a research-source note created outside the inbox (chat imports,
+   * discovery): summary / key claims / topics from its captured content,
+   * merged additively so the research record keys stay untouched. Same consent
+   * and endpoint gates as inbox enrichment.
+   */
+  enrichResearchSource(file: FileRef): Promise<EnrichRunOutcome> {
+    const lifecycleGeneration = this.deps.utilityLifecycleGeneration();
+    const coordinator = this._coordinator ??= new KeyedSerialQueue<string, EnrichRunOutcome>();
+    return coordinator.run(`research:${file.path}`, async () => {
+      if (!this.deps.isUtilityLifecycleActive(lifecycleGeneration)) {
+        return {
+          status: "failed",
+          error: new Error("Companion unloaded before source enrichment started; no content was sent."),
+        };
+      }
+      return this.performEnrichResearchSource(file, lifecycleGeneration);
+    });
+  }
+
+  private async performEnrichResearchSource(file: FileRef, lifecycleGeneration: number): Promise<EnrichRunOutcome> {
+    const sizeFailure = this.mobileSourceSizeFailure(file);
+    if (sizeFailure) return sizeFailure;
+    if (file.extension !== "md") return { status: "skipped", reason: `${file.basename} is not a markdown note.` };
+    if (this.deps.settings().sourceCaptureConsent === "deny") {
+      return { status: "skipped", reason: "automatic source enrichment is set to manual only." };
+    }
+    if (this.deps.settings().sourceCaptureConsent !== "allow" && !(await this.askSourceCaptureConsent())) {
+      return { status: "skipped", reason: "automatic source enrichment was not approved." };
+    }
+    const activityId = this.deps.activity().start({
+      id: `source-enrichment:research:${file.path}`,
+      kind: "source-enrichment",
+      title: `Enriching ${file.basename}`,
+      total: 1,
+    });
+    try {
+      const content = await this.deps.vault.cachedRead(file.path);
+      const selection = await this.deps.router().utilitySelection();
+      const enrichDeps = this.buildEnrichDeps(selection, lifecycleGeneration);
+      const enrichment = await extractResearchSourceEnrichment({ content }, { complete: enrichDeps.complete });
+      if (!enrichment) {
+        this.deps.activity().finish(activityId, { completed: 1, total: 1, succeeded: 1, details: [{ label: file.path, message: "Nothing new to enrich", state: "success" }] });
+        return { status: "skipped", reason: `${file.basename} has nothing new to enrich.` };
+      }
+      const target = this.deps.enrichApp.vault.getAbstractFileByPath(file.path);
+      if (!(target instanceof TFile)) throw new Error(`note not found: ${file.path}`);
+      this.deps.assertUtilityLifecycleActive(lifecycleGeneration);
+      await applySourceFrontmatter(this.deps.enrichApp, target, {
+        summary: enrichment.summary,
+        ...(enrichment.key_claims ? { key_claims: enrichment.key_claims } : {}),
+        ...(enrichment.topics ? { topics: enrichment.topics } : {}),
+        tags: [...this.deps.settings().sourceBaseTags, ...(enrichment.topics ?? [])],
+        enriched_by: enrichDeps.enrichedBy,
+      });
+      this.deps.assertUtilityLifecycleActive(lifecycleGeneration);
+      this.markEnrichRecentlyWritten(file.path, lifecycleGeneration);
+      this.deps.activity().finish(activityId, {
+        completed: 1,
+        total: 1,
+        succeeded: 1,
+        details: [{ label: file.path, message: "Added summary, key claims, and topics", state: "success" }],
+      });
+      return { status: "enriched" };
+    } catch (e) {
+      if (!this.deps.isUtilityLifecycleActive(lifecycleGeneration)) {
+        return { status: "failed", error: e instanceof Error ? e : new Error(String(e)) };
+      }
+      if (!(e instanceof UtilityUnavailableError)) console.warn("[companion] research source enrichment failed", e);
+      const detail = sourceActivityDetail(e instanceof Error ? e.message : String(e));
+      this.deps.activity().fail(activityId, {
+        completed: 1,
+        total: 1,
+        failed: 1,
+        technicalDetails: detail,
+        details: [{ label: file.path, message: detail, state: "error" }],
+        recovery: [{ id: "utility-settings", label: "Open utility settings", kind: "settings" }],
+      });
+      return { status: "failed", error: e instanceof Error ? e : new Error(String(e)) };
+    }
   }
 
   private async performEnrichFile(file: FileRef, notify = true): Promise<EnrichRunOutcome> {

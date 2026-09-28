@@ -65,7 +65,7 @@ export class ConversationsController {
   async beginTurn(
     conversationId: string | null,
     messages: ChatMessage[],
-    input: { backend: string; model: string; mode: ChatTurnMode },
+    input: { backend: string; model: string; mode: ChatTurnMode; continuationDepth?: number },
   ): Promise<{ conversationId: string; turnId: string }> {
     const { state, persist } = this.deps;
     const previousState = state.get();
@@ -81,6 +81,7 @@ export class ConversationsController {
       userMessageIndex: messages.length - 1,
       createdAt: now,
       updatedAt: now,
+      ...(input.continuationDepth !== undefined && input.continuationDepth > 0 ? { continuationDepth: input.continuationDepth } : {}),
     };
     state.set(startConversationTurn(state.get(), id, messages, receipt, this.maxConversations()));
     // The leaf that starts a turn is the focused leaf — starting a turn makes its conversation active.
@@ -112,7 +113,7 @@ export class ConversationsController {
   async stopTurn(conversationId: string, turnId: string): Promise<void> {
     const { state, persist } = this.deps;
     const turn = state.get().conversations.find(({ id }) => id === conversationId)?.activeTurn;
-    if (!turn || turn.id !== turnId || turn.state === "interrupted") return;
+    if (!turn || turn.id !== turnId || turn.state !== "running") return;
     state.set(excludeTurnMessages(settleConversationTurn(state.get(), conversationId, turnId, "interrupted", Date.now(), "Stopped by user"), conversationId, turnId));
     this.deps.activity().update(this.activityId(conversationId), {
       state: "paused",
@@ -142,6 +143,34 @@ export class ConversationsController {
       throw error;
     }
     this.deps.activity().dismiss(this.activityId(conversationId));
+  }
+
+  /**
+   * A turn that hit the tool-iteration cap: work so far is real and stays in
+   * context (unlike an interruption), but the receipt survives with its
+   * handoff packet so the user — or auto-continue — can pick the task back up.
+   */
+  async capTurn(conversationId: string, turnId: string, messages: ChatMessage[], handoff?: string): Promise<void> {
+    const { state, persist } = this.deps;
+    const conversation = state.get().conversations.find(({ id }) => id === conversationId);
+    if (!conversation?.activeTurn || conversation.activeTurn.id !== turnId || conversation.activeTurn.state !== "running") return;
+    const previousState = state.get();
+    state.set(saveConversation(state.get(), touch(conversation, messages, Date.now()), this.maxConversations()));
+    state.set(settleConversationTurn(state.get(), conversationId, turnId, "capped", Date.now(), undefined, handoff));
+    try {
+      await persist();
+    } catch (error) {
+      state.set(previousState);
+      throw error;
+    }
+    this.deps.activity().update(this.activityId(conversationId), {
+      state: "paused",
+      currentItem: "Reached the tool-iteration limit — continue when ready",
+      recovery: [
+        { id: "open-chat", label: "Open Chat", kind: "open" },
+        { id: "resume-chat-turn", label: "Continue", kind: "resume" },
+      ],
+    });
   }
 
   async interruptTurn(conversationId: string, turnId: string, messages: ChatMessage[], error = "Interrupted"): Promise<void> {
@@ -176,13 +205,15 @@ export class ConversationsController {
     for (const conversation of this.deps.state.get().conversations) {
       if (!conversation.activeTurn) continue;
       const id = this.activityId(conversation.id);
+      const capped = conversation.activeTurn.state === "capped";
       activity.start({ id, kind: "chat-turn", title: conversation.title });
       activity.update(id, {
         state: conversation.activeTurn.state === "failed" ? "needs-attention" : "paused",
-        currentItem: conversation.activeTurn.error ?? "Interrupted — review any partial changes before resuming",
+        currentItem: conversation.activeTurn.error
+          ?? (capped ? "Reached the tool-iteration limit — continue when ready" : "Interrupted — review any partial changes before resuming"),
         recovery: [
           { id: "open-chat", label: "Open Chat", kind: "open" },
-          { id: "resume-chat-turn", label: "Resume", kind: "resume" },
+          { id: "resume-chat-turn", label: capped ? "Continue" : "Resume", kind: "resume" },
         ],
       });
     }

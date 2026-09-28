@@ -1,3 +1,6 @@
+import type { ResearchDeskAction } from "../research/deskViewModel";
+import { researchQuickActions, type ResearchQuickAction } from "./chat/researchQuickActions";
+
 export interface ActiveCompanionNote {
   path: string;
   title: string;
@@ -9,6 +12,8 @@ export interface ActiveResearchWorkspace {
   stage: string;
   nextAction?: string;
   nextReason?: string;
+  /** Ranked desk actions; the top few become chat quick actions. */
+  actions?: ResearchDeskAction[];
 }
 
 export interface CompanionWorkspaceInput {
@@ -25,6 +30,8 @@ export interface CompanionWorkspaceCard {
   primaryAction: string;
   secondaryAction: string;
   contextPath: string;
+  /** Research projects only: the desk's next actions as ready-to-send prompts. */
+  quickActions?: ResearchQuickAction[];
 }
 
 function titleCase(value: string): string {
@@ -36,6 +43,7 @@ export function resolveCompanionWorkspace(input: CompanionWorkspaceInput): Compa
   if (!input.activeNote) return null;
   if (input.research) {
     const next = input.research.nextAction;
+    const quickActions = input.research.actions ? researchQuickActions(input.research.actions, input.research.projectPath) : [];
     return {
       kind: "research",
       eyebrow: "CURRENT WORKSPACE · RESEARCH",
@@ -45,6 +53,7 @@ export function resolveCompanionWorkspace(input: CompanionWorkspaceInput): Compa
       primaryAction: "Open Research Desk",
       secondaryAction: "Ask Companion",
       contextPath: input.research.projectPath,
+      ...(quickActions.length > 0 ? { quickActions } : {}),
     };
   }
   return {

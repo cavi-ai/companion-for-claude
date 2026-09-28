@@ -128,11 +128,12 @@ import { clipperTemplateFor, clipperTemplateFileName, serializeClipperTemplate, 
 import type { SourceType } from "./sources/types";
 import { errorHint } from "./providers/errorHints";
 import { ChoiceModal } from "./view/ChoiceModal";
+import { TriageFolderModal } from "./view/TriageFolderModal";
 import { OntologyRegistry } from "./ontology/registry";
 import { seedFiles } from "./ontology/seed";
 import { auditProject } from "./research/audit";
 import { buildResearchDeskViewModel } from "./research/deskViewModel";
-import { TRIAGE_SYSTEM, buildTriageUser, parseTriageResponse, renderTriageNote, themeTagSlug, noteExcerpt, type TriageNote } from "./research/triage";
+import { TRIAGE_SYSTEM, buildTriageUser, parseTriageResponse, renderTriageNote, themeTagSlug, noteExcerpt, triageFolderChoices, type TriageNote, type TriageFolderChoice } from "./research/triage";
 import { captureWebSource } from "./research/webCapture";
 import type { WebCapture } from "./context/webCapture";
 import { summarizeAndTag } from "./indexing/autoTagger";
@@ -356,6 +357,7 @@ export default class ClaudeCompanionPlugin extends Plugin {
         ontology: () => this.ontology(),
         ontologyFolder: () => this.settings.ontologyFolder,
         zotero: () => this.zoteroLibrary(),
+        enrichSource: (path: string) => this.enrichImportedResearchSource(path),
         ...this.webToolImpls(),
       }),
       createTools: (opts) => new VaultTools(this.app, opts),
@@ -603,7 +605,9 @@ export default class ClaudeCompanionPlugin extends Plugin {
       openWorkbench: (projectPath, target, path) => this.activateResearchWorkbench(projectPath, target, path),
       askCompanion: (projectPath) => this.askCompanionAboutProject(projectPath),
       createProject: () => this.activateResearchWorkbench(undefined, "Overview"),
-      triageClippings: () => this.triageClippings(),
+      triageClippings: (folder) => this.triageClippings(folder),
+      triageFolderChoices: () => triageFolderChoices(this.settings),
+      pickTriageFolder: () => this.pickTriageFolder(),
       startFromActiveNote: () => void this.startResearchFromActiveNote(),
     }));
     this.registerView(RESEARCH_WORKBENCH_VIEW_TYPE, (leaf: WorkspaceLeaf) => new ResearchWorkbenchView(
@@ -829,7 +833,7 @@ export default class ClaudeCompanionPlugin extends Plugin {
       openRelatedNotes: () => void this.activateRelatedView(),
       openResearchDesk: () => void this.activateResearchDesk(),
       openResearchWorkbench: () => void this.activateResearchWorkbench(),
-      triageClippings: () => void this.triageClippings(),
+      triageClippings: () => void this.triageClippingsWithPicker(),
       startResearchFromActiveNote: () => void this.startResearchFromActiveNote(),
       showSemanticIndexStatus: () => void this.showSemanticIndexStatus(),
       browseConversations: () => void this.browseConversations(),
@@ -1498,12 +1502,12 @@ export default class ClaudeCompanionPlugin extends Plugin {
 
   /**
    * One-click clippings triage (Research Desk): enrich any un-typed clips in
-   * the inbox, group them into research themes with one chat call, tag each
-   * note with its theme, and write a `Triage.md` board with links and a
+   * the chosen folder, group them into research themes with one chat call, tag
+   * each note with its theme, and write a `Triage.md` board with links and a
    * potential project per theme. Manual action — no consent gate.
    */
-  private async triageClippings(): Promise<void> {
-    const folder = this.settings.sourceInboxFolder.replace(/\/+$/, "");
+  private async triageClippings(folderOverride?: string): Promise<void> {
+    const folder = (folderOverride ?? this.settings.sourceInboxFolder).replace(/\/+$/, "");
     if (!folder) {
       new Notice("Set a clippings inbox folder in Companion settings first.");
       return;
@@ -1577,6 +1581,36 @@ export default class ClaudeCompanionPlugin extends Plugin {
     } finally {
       progress.hide();
     }
+  }
+
+  /** Every vault folder holding at least one markdown file, minus the given paths. */
+  private triageableFolders(exclude: ReadonlySet<string>): TriageFolderChoice[] {
+    const folders = new Set<string>();
+    for (const file of this.app.vault.getMarkdownFiles()) {
+      let dir = file.path.includes("/") ? file.path.slice(0, file.path.lastIndexOf("/")) : "";
+      while (dir) {
+        folders.add(dir);
+        const parent = dir.lastIndexOf("/");
+        dir = parent > 0 ? dir.slice(0, parent) : "";
+      }
+    }
+    return [...folders]
+      .filter((folder) => !exclude.has(folder))
+      .sort((a, b) => a.localeCompare(b))
+      .map((folder) => ({ folder, label: folder }));
+  }
+
+  /** Known inbox/library choices plus every other folder with notes; resolves undefined on dismiss. */
+  private pickTriageFolder(): Promise<string | undefined> {
+    const known = triageFolderChoices(this.settings);
+    const choices = [...known, ...this.triageableFolders(new Set(known.map((choice) => choice.folder)))];
+    return new Promise((resolve) => new TriageFolderModal(this.app, choices, resolve).open());
+  }
+
+  /** Command-palette entry: pick the folder first so moved/organized notes can be triaged too. */
+  private async triageClippingsWithPicker(): Promise<void> {
+    const folder = await this.pickTriageFolder();
+    if (folder) await this.triageClippings(folder);
   }
 
   /**
@@ -2060,7 +2094,7 @@ export default class ClaudeCompanionPlugin extends Plugin {
   async beginActiveConversationTurn(
     conversationId: string | null,
     messages: ChatMessage[],
-    input: { backend: string; model: string; mode: ChatTurnMode },
+    input: { backend: string; model: string; mode: ChatTurnMode; continuationDepth?: number },
   ): Promise<{ conversationId: string; turnId: string }> {
     return this.conversations().beginTurn(conversationId, messages, input);
   }
@@ -2087,6 +2121,10 @@ export default class ClaudeCompanionPlugin extends Plugin {
 
   async interruptActiveConversationTurn(conversationId: string, turnId: string, messages: ChatMessage[], error = "Interrupted"): Promise<void> {
     return this.conversations().interruptTurn(conversationId, turnId, messages, error);
+  }
+
+  async capActiveConversationTurn(conversationId: string, turnId: string, messages: ChatMessage[], handoff?: string): Promise<void> {
+    return this.conversations().capTurn(conversationId, turnId, messages, handoff);
   }
 
   activeConversationId(): string {
@@ -2931,11 +2969,25 @@ export default class ClaudeCompanionPlugin extends Plugin {
       ontology: () => this.ontology(),
       ontologyFolder: () => this.settings.ontologyFolder,
       zotero: () => this.zoteroLibrary(),
+      enrichSource: (path: string) => this.enrichImportedResearchSource(path),
       ...this.webToolImpls(),
     };
     if (!this.agentVaultTools) this.agentVaultTools = new VaultTools(this.app, opts);
     else this.agentVaultTools.setOptions(opts);
     return this.agentVaultTools;
+  }
+
+  /** Run the source-enrichment pipeline on a research source the agent just imported. */
+  private async enrichImportedResearchSource(path: string): Promise<void> {
+    const file = this.app.vault.getAbstractFileByPath(path);
+    if (!(file instanceof TFile)) return;
+    const outcome = await this.enrichment().enrichResearchSource({
+      path: file.path,
+      basename: file.basename,
+      extension: file.extension,
+      stat: { size: file.stat.size },
+    });
+    if (outcome.status === "failed") throw outcome.error;
   }
 
   /** Desktop only: the Node ports shared by every CLI chat backend. Tests override this. */
@@ -3275,6 +3327,7 @@ export default class ClaudeCompanionPlugin extends Plugin {
             title: vm.title,
             stage: vm.stage.current,
             ...(vm.nextAction ? { nextAction: vm.nextAction.label, nextReason: vm.nextAction.reason } : {}),
+            actions: vm.actions.slice(0, 3),
           },
         });
       } catch (e) { console.debug("Claude Companion: research workspace resolution failed, using active note", e); }

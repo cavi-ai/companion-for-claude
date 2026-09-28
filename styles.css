@@ -1096,6 +1096,10 @@ body:not(.is-mobile) .cc-title > .cc-write-grant-pill {
 .cc-context-workspace-meta { margin-top: 8px; color: var(--text-faint); font-family: var(--cc-mono); font-size: var(--cc-text-2xs); overflow-wrap: anywhere; }
 .cc-context-workspace-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 12px; }
 .cc-context-workspace-actions button { min-width: 0; min-height: 40px; white-space: normal; }
+.cc-research-quick-actions { margin-top: 10px; }
+.cc-research-quick-label { margin-bottom: 6px; color: var(--text-faint); font-family: var(--cc-mono); font-size: var(--cc-text-2xs); letter-spacing: 0.08em; }
+.cc-research-quick-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.cc-research-quick-action { min-height: 34px; white-space: normal; font-size: var(--cc-text-xs); }
 /* Buttons that opt into wrapping keep the theme's fixed button height, which
    clips the second line. Every wrapping control grows to its text instead. */
 .cc-context-workspace-actions button,
@@ -2587,6 +2591,9 @@ pre.cc-has-copy:hover .cc-code-copy { opacity: 1; }
 .cc-desk-switcher label { display: block; margin-bottom: 5px; color: var(--text-muted); font-size: var(--cc-text-xs); }
 .cc-desk-switcher select { width: 100%; min-height: 40px; }
 .cc-desk-header-actions > button { flex: 0 0 auto; min-height: 40px; white-space: nowrap; }
+.cc-desk-triage { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.cc-desk-triage select { min-width: 0; min-height: 40px; max-width: 180px; }
+.cc-desk-triage button { flex: 0 0 auto; min-height: 40px; white-space: nowrap; }
 
 .cc-desk-stage { margin-bottom: 16px; padding: 12px 14px; border: 1px solid var(--cc-research-line); border-radius: var(--cc-radius-md); background: var(--cc-surface-sunken); }
 .cc-desk-section-heading { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; margin-bottom: 9px; }
@@ -2829,6 +2836,8 @@ pre.cc-has-copy:hover .cc-code-copy { opacity: 1; }
   .cc-research-workbench { padding: 10px; }
   .cc-desk-header { display: block; }
   .cc-desk-header-actions { display: grid; grid-template-columns: minmax(0, 1fr) auto; width: 100%; margin-top: 10px; }
+  .cc-desk-triage { grid-column: 1 / -1; }
+  .cc-desk-triage select { flex: 1 1 auto; max-width: none; }
   .cc-desk-grid { grid-template-columns: 1fr; }
   .cc-desk-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .cc-desk-stage-step span:last-child { display: none; }
@@ -2848,6 +2857,8 @@ pre.cc-has-copy:hover .cc-code-copy { opacity: 1; }
 @container research-desk (max-width: 520px) {
   .cc-desk-header { display: block; }
   .cc-desk-header-actions { display: grid; grid-template-columns: minmax(0, 1fr) auto; width: 100%; margin-top: 10px; }
+  .cc-desk-triage { grid-column: 1 / -1; }
+  .cc-desk-triage select { flex: 1 1 auto; max-width: none; }
   .cc-desk-grid { grid-template-columns: 1fr; }
   .cc-desk-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
@@ -2856,6 +2867,7 @@ pre.cc-has-copy:hover .cc-code-copy { opacity: 1; }
   .cc-research-desk { padding: 10px; }
   .cc-desk-next-meta { align-items: flex-start; flex-direction: column; gap: 4px; }
   .cc-desk-header-actions { display: grid; grid-template-columns: minmax(0, 1fr); }
+  .cc-desk-triage select { flex: 1 1 auto; max-width: none; }
   .cc-desk-next-controls { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .cc-desk-next-controls button:last-child { grid-column: 1 / -1; }
 }

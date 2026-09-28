@@ -16,6 +16,9 @@ import { addUsage, type SessionUsage } from "../../usage/tokens";
 import { mergeUsage, type TokenUsage } from "../../claude/sse";
 import type { CompanionWorkspaceCard } from "../companionWorkspace";
 import { quickNotice } from "../../notice";
+import { removeInterruptedTurnRow, renderInterruptedTurnRow, renderRecoverableEditRow } from "./recoveryRows";
+import { renderResearchQuickActions } from "./researchQuickActions";
+import { ThinkingStatus } from "./thinkingStatus";
 
 /** Truncate a tool result for the expandable chip body. */
 function previewText(text: string): string {
@@ -59,9 +62,7 @@ export interface TranscriptDeps {
 export class Transcript {
   messagesEl!: HTMLElement;
   /** Rotating "thinking" status word timer + per-turn start offset. */
-  private thinkingTimer: number | null = null;
-  private claudianSeq = 0;
-
+  private readonly thinking = new ThinkingStatus();
   constructor(private app: App, private plugin: ClaudeCompanionPlugin, private turn: TurnState, private deps: TranscriptDeps) {}
 
   private get controls(): ChatControls { return this.deps.controls(); }
@@ -119,6 +120,7 @@ export class Transcript {
       { label: "📊 Turn this into a dashboard", prompt: "Turn my current note into a single beautiful, self-contained interactive dashboard artifact using the design system.", needsActiveNote: true },
       { label: "🗺️ Plan a feature", prompt: "Help me plan a feature. Ask me clarifying questions first, then produce an implementation plan." },
       { label: "🔍 Ask across my vault", prompt: "Search my vault and answer: what have I written about " },
+      { label: "🔬 Research a question", prompt: "Help me start a research project. Ask what question I'm investigating, then create the project, and suggest the first sources to capture." },
     ];
     const grid = empty.createDiv({ cls: "cc-empty-examples" });
     for (const ex of examples) {
@@ -153,6 +155,16 @@ export class Transcript {
     if (workspace.kind === "research") {
       primary.addEventListener("click", () => void this.plugin.activateResearchDesk(workspace.contextPath));
       secondary.addEventListener("click", () => void this.deps.prepareWorkspaceQuestion(workspace));
+      // The project's actual next steps as one-click chat turns.
+      if (workspace.quickActions?.length) {
+        renderResearchQuickActions(mount, workspace.quickActions, (prompt) => {
+          this.inputEl.value = prompt;
+          this.inputEl.focus();
+          this.deps.autosizeInput();
+          this.deps.updateUsageBar();
+          void this.deps.onSend();
+        });
+      }
     } else {
       primary.addEventListener("click", () => void this.deps.prepareWorkspaceQuestion(workspace));
       secondary.addEventListener("click", () => void this.plugin.activateRelatedView());
@@ -324,19 +336,16 @@ export class Transcript {
   }
 
   renderInterruptedTurn(conversation: Conversation): void {
-    const row = this.messagesEl.createDiv({ cls: "cc-agent-notice cc-interrupted-turn" });
-    row.createSpan({ text: "This task was interrupted. Review any partial changes before resuming." });
-    const resume = row.createEl("button", { text: "Resume", cls: "mod-cta" });
-    resume.addEventListener("click", () => void this.deps.resumeInterruptedTurn(conversation));
+    renderInterruptedTurnRow(this.messagesEl, conversation, (c) => void this.deps.resumeInterruptedTurn(c));
+  }
+
+  /** A new send supersedes the interrupted/capped row; the receipt still drives reload rendering. */
+  clearInterruptedTurnRow(): void {
+    if (this.messagesEl) removeInterruptedTurnRow(this.messagesEl);
   }
 
   renderRecoverableEdit(conversation: Conversation): void {
-    if (!conversation.lastEditProposal) return;
-    if (this.messagesEl.querySelector(".cc-edit-recovery")) return;
-    const row = this.messagesEl.createDiv({ cls: "cc-agent-notice cc-edit-recovery" });
-    row.createSpan({ text: `Proposed edit for ${conversation.lastEditProposal.path} is saved.` });
-    const review = row.createEl("button", { text: "Review proposed edit", cls: "mod-cta" });
-    review.addEventListener("click", () => void this.deps.reviewLastProposedEdit(conversation));
+    renderRecoverableEditRow(this.messagesEl, conversation, (c) => void this.deps.reviewLastProposedEdit(c));
   }
 
   /** The round spark mark before an assistant bubble's content (screen-reader label "Claude" is carried by .cc-role, not this icon). */
@@ -352,43 +361,13 @@ export class Transcript {
     const body = bubble.createDiv({ cls: "cc-body" });
     // One indicator only: the breathing smiley in the thinking status. (The old
     // "▍" cursor was a second clay marker fighting it.)
-    this.startThinkingStatus(body);
+    this.thinking.start(body);
     this.scrollToBottom();
     return { bubble, body };
   }
 
-  /** Playful "Claudian" gerunds shown while Claude works, before text arrives. */
-  private static readonly CLAUDIAN = [
-    "Manifesting", "Synthesizing", "Philosophising", "Pondering",
-    "Actualizing", "Synergizing", "Ruminating", "Clauding",
-  ];
-
-  /**
-   * Show a single breathing smiley on the left with a whimsical word cycling
-   * beside it until the first token lands. The smiley is fixed-position so the
-   * word's changing length never shifts it. The smiley pulses 4× per word-fade
-   * cycle (80 bpm vs 20 bpm) — driven by CSS; the word swaps on the fade trough.
-   */
-  private startThinkingStatus(body: HTMLElement): void {
-    const status = body.createSpan({ cls: "cc-thinking-status" });
-    setIcon(status.createSpan({ cls: "cc-thinking-dot" }), "smile");
-    const word = status.createSpan({ cls: "cc-thinking-word" });
-    let i = this.claudianSeq++;
-    const tick = () => {
-      word.setText(`${Transcript.CLAUDIAN[i % Transcript.CLAUDIAN.length]}…`);
-      i++;
-    };
-    tick();
-    this.clearThinkingStatus();
-    // 3000ms = the 20-bpm word-fade period, so the swap lands at the fade trough.
-    this.thinkingTimer = window.setInterval(tick, 3000);
-  }
-
   clearThinkingStatus(): void {
-    if (this.thinkingTimer != null) {
-      window.clearInterval(this.thinkingTimer);
-      this.thinkingTimer = null;
-    }
+    this.thinking.clear();
   }
 
   /**

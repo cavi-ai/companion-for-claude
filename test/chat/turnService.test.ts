@@ -125,6 +125,35 @@ describe("ChatTurnService", () => {
     expect(d.completeTurn).not.toHaveBeenCalled();
   });
 
+  it("a capped result routes to capTurn with its handoff, not completeTurn", async () => {
+    const service = new ChatTurnService();
+    const capTurn = vi.fn().mockResolvedValue(undefined);
+    const d = deps();
+    const capped: AgentTurnResult = { text: "half-done", trace: [], capped: true, handoff: "Tools used: vault_search" };
+    const run = vi.fn(async (): Promise<AgentTurnResult> => capped);
+
+    const handle = service.start("c1", { turnId: "t1", title: "Chat", run, ...d, capTurn });
+    const result = await handle.result;
+
+    expect(result.capped).toBe(true);
+    expect(capTurn).toHaveBeenCalledWith(capped);
+    expect(d.completeTurn).not.toHaveBeenCalled();
+    expect(d.interruptTurn).not.toHaveBeenCalled();
+  });
+
+  it("a capped result falls back to completeTurn when no capTurn handler is wired", async () => {
+    const service = new ChatTurnService();
+    const d = deps();
+    const capped: AgentTurnResult = { text: "half-done", trace: [], capped: true };
+    const run = vi.fn(async (): Promise<AgentTurnResult> => capped);
+
+    const handle = service.start("c1", { turnId: "t1", title: "Chat", run, ...d });
+    await handle.result;
+
+    expect(d.completeTurn).toHaveBeenCalledWith(capped);
+    expect(d.interruptTurn).not.toHaveBeenCalled();
+  });
+
   it("settles a stopped turn even if its runner never returns", async () => {
     const service = new ChatTurnService();
     const d = deps();

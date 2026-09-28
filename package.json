@@ -1,6 +1,6 @@
 {
   "name": "claude-companion",
-  "version": "0.32.3",
+  "version": "0.33.0",
   "description": "Chat with Claude inside your Obsidian vault, generate beautiful interactive artifacts, and sync them back into your notes.",
   "main": "main.js",
   "type": "module",
@@ -49,28 +49,28 @@
   ],
   "license": "MIT",
   "devDependencies": {
-    "@codemirror/state": "6.7.4",
-    "@codemirror/view": "6.43.11",
+    "@codemirror/state": "6.7.6",
+    "@codemirror/view": "6.43.13",
     "@eslint/js": "^10.0.1",
     "@playwright/test": "^1.63.0",
-    "@types/node": "^26.5.1",
+    "@types/node": "^26.6.2",
     "@typescript/native": "npm:typescript@^7.0.2",
-    "@vitest/coverage-v8": "^5.0.1",
+    "@vitest/coverage-v8": "^5.0.2",
     "esbuild": "0.28.2",
-    "eslint": "^10.10.0",
+    "eslint": "^10.11.0",
     "eslint-plugin-obsidianmd": "^0.4.2",
     "globals": "^17.12.0",
     "linkedom": "^0.18.13",
     "obsidian": "^1.13.0",
     "tslib": "^2.6.3",
     "typescript": "npm:@typescript/typescript6@^6.0.2",
-    "typescript-eslint": "^8.70.0",
-    "vitest": "^5.0.0",
-    "yaml": "^2.9.0"
+    "typescript-eslint": "^8.70.1",
+    "vitest": "^5.0.2",
+    "yaml": "^2.9.1"
   },
   "dependencies": {
-    "@huggingface/transformers": "^4.2.0",
-    "defuddle": "^0.19.3",
+    "@huggingface/transformers": "^4.3.0",
+    "defuddle": "^0.19.4",
     "pdfjs-dist": "~6.2.108"
   }
 }

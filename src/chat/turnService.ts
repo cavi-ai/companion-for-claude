@@ -36,6 +36,8 @@ export interface StartTurnInput {
   run: (handlers: AgentTurnHandlers, signal: AbortSignal) => Promise<AgentTurnResult>;
   /** Persists a successful/aborted-but-not-erroring turn — matches conversations/controller.completeTurn. */
   completeTurn: (result: AgentTurnResult) => Promise<void>;
+  /** Persists a turn stopped by the tool-iteration cap (receipt + handoff survive for Continue). */
+  capTurn?: (result: AgentTurnResult) => Promise<void>;
   /** Persists an interrupted or errored turn — matches conversations/controller.interruptTurn. */
   interruptTurn: (result: AgentTurnResult, error?: Error) => Promise<void>;
   /** Registers the abort callback with the cross-view stop path (conversations/controller.registerTurn). */
@@ -118,6 +120,7 @@ export class ChatTurnService {
       .then(async (result) => {
         push({ kind: "done", result });
         if (result.aborted || result.error) await input.interruptTurn(result, result.error);
+        else if (result.capped && input.capTurn) await input.capTurn(result);
         else await input.completeTurn(result);
         this.settle(conversationId, turn, result);
         return result;

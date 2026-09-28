@@ -2,11 +2,15 @@ import { ItemView, Notice, type WorkspaceLeaf } from "obsidian";
 import { auditProject } from "../research/audit";
 import { dismissDeskAction, pinDeskAction } from "../research/deskPreferences";
 import { buildResearchDeskViewModel, type ResearchDeskPreferences, type ResearchDeskTarget } from "../research/deskViewModel";
+import type { TriageFolderChoice } from "../research/triage";
 import type { ProjectSnapshot } from "../research/graph";
 import type { ResearchRepository } from "../research/repository";
 import { renderCompanionChrome, type CompanionChromeDependencies } from "./companionChrome";
 
 export const RESEARCH_DESK_VIEW_TYPE = "claude-research-desk";
+
+/** Dropdown sentinel: pick a folder outside the known inbox/library choices. */
+const TRIAGE_PICK_OTHER = "__pick__";
 
 export interface ResearchDeskDependencies {
   chrome?: CompanionChromeDependencies;
@@ -15,8 +19,12 @@ export interface ResearchDeskDependencies {
   openWorkbench(projectPath: string, target: ResearchDeskTarget, path?: string): void | Promise<void>;
   askCompanion?(projectPath: string): void | Promise<void>;
   createProject?(): void | Promise<void>;
-  /** Group the clippings inbox into research themes (one click, project-independent). */
-  triageClippings?(): void | Promise<void>;
+  /** Group a folder of clippings into research themes (one click, project-independent); defaults to the inbox. */
+  triageClippings?(folder?: string): void | Promise<void>;
+  /** Known triage folders (inbox + organized library) for the dropdown. */
+  triageFolderChoices?(): TriageFolderChoice[];
+  /** Folder picker for triaging a folder outside the known choices; undefined on dismiss. */
+  pickTriageFolder?(): Promise<string | undefined>;
   /** Start a research project seeded from the most recently focused markdown note. */
   startFromActiveNote?(): void | Promise<void>;
 }
@@ -92,10 +100,7 @@ export class ResearchDeskView extends ItemView {
     for (const project of projects) select.createEl("option", { text: project.title, value: project.path, attr: { selected: project.path === snapshot.project.path ? "selected" : null } });
     select.value = snapshot.project.path;
     select.addEventListener("change", () => void this.setProjectPath(select.value));
-    if (this.deps.triageClippings) {
-      const triage = headerActions.createEl("button", { text: "Triage clippings", attr: { title: "Group your clippings inbox into research themes with tags and links" } });
-      triage.addEventListener("click", () => void this.deps.triageClippings?.());
-    }
+    if (this.deps.triageClippings) this.renderTriageControls(headerActions);
     if (this.deps.startFromActiveNote) {
       const fromNote = headerActions.createEl("button", { text: "New project from active note", attr: { title: "Seed a research project from the note you have open" } });
       fromNote.addEventListener("click", () => void this.deps.startFromActiveNote?.());
@@ -163,10 +168,30 @@ export class ResearchDeskView extends ItemView {
       const fromNote = controls.createEl("button", { text: "Start from active note", attr: { title: "Seed a research project from the note you have open" } });
       fromNote.addEventListener("click", () => void this.deps.startFromActiveNote?.());
     }
-    if (!loadError && this.deps.triageClippings) {
-      const triage = controls.createEl("button", { text: "Triage clippings", attr: { title: "Group your clippings inbox into research themes with tags and links" } });
-      triage.addEventListener("click", () => void this.deps.triageClippings?.());
+    if (!loadError && this.deps.triageClippings) this.renderTriageControls(controls);
+  }
+
+  /** Folder dropdown (inbox / organized library / any other folder) + the triage button. */
+  private renderTriageControls(container: HTMLElement): void {
+    const group = container.createDiv({ cls: "cc-desk-triage" });
+    let select: HTMLSelectElement | undefined;
+    const choices = this.deps.triageFolderChoices?.() ?? [];
+    if (choices.length > 0) {
+      select = group.createEl("select", { attr: { "aria-label": "Folder to triage" } });
+      for (const choice of choices) select.createEl("option", { text: choice.label, value: choice.folder });
+      if (this.deps.pickTriageFolder) select.createEl("option", { text: "Other folder…", value: TRIAGE_PICK_OTHER });
     }
+    const triage = group.createEl("button", { text: "Triage clippings", attr: { title: "Group the selected folder into research themes with tags and links" } });
+    triage.addEventListener("click", () => {
+      void (async () => {
+        let folder = select?.value;
+        if (folder === TRIAGE_PICK_OTHER) {
+          folder = await this.deps.pickTriageFolder?.();
+          if (!folder) return;
+        }
+        await this.deps.triageClippings?.(folder || undefined);
+      })();
+    });
   }
 
   private async updatePreferences(path: string, update: (current: ResearchDeskPreferences) => ResearchDeskPreferences): Promise<void> { await this.deps.updatePreferences(path, update); await this.render(); }

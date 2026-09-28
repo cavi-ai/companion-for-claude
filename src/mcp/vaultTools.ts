@@ -58,6 +58,8 @@ export interface VaultToolsOptions {
   webFetch?: ((url: string) => Promise<string>) | undefined;
   /** Semantic neighbours of a note; absent disables related_notes. */
   related?: ((path: string, k: number) => Promise<{ path: string; score: number }[]>) | undefined;
+  /** Enrichment pipeline for newly imported research sources; absent imports stay unenriched. */
+  enrichSource?: ((path: string) => Promise<void>) | undefined;
 }
 
 export const SEMANTIC_OFF_MESSAGE = "Semantic search is off. Enable it in Companion settings → Semantic search.";
@@ -409,7 +411,7 @@ export class VaultTools {
   async call(name: string, args: Record<string, unknown>): Promise<string> {
     if (name.startsWith("research_")) {
       if (RESEARCH_WRITE_TOOLS.has(name)) this.assertWrites();
-      return new ResearchTools(this.researchRepository(), this.webCapture(), this.zoteroResolve()).call(name, args);
+      return new ResearchTools(this.researchRepository(), this.webCapture(), this.zoteroResolve(), this.opts.enrichSource).call(name, args);
     }
     // Single write gate driven by the canonical registry, instead of an
     // assertWrites() call per case that could drift from agent/tools.ts.

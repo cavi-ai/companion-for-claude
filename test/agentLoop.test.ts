@@ -143,6 +143,20 @@ describe("runAgentTurn", () => {
     expect(r.capped).toBe(true);
   });
 
+  it("attaches a handoff packet when the cap stops the turn", async () => {
+    const always: Scripted[] = [
+      { toolUses: [use("t0", "note_read", { path: "Notes/A.md" })], stopReason: "tool_use" },
+      { toolUses: [use("t1", "web_fetch", { url: "https://example.com/x" })], stopReason: "tool_use" },
+    ];
+    const { deps: d } = deps(always, { maxIterations: 2 });
+    const r = await runAgentTurn(d, baseReq, { onText: vi.fn() });
+    expect(r.capped).toBe(true);
+    expect(r.handoff).toContain("Tool iterations used: 2");
+    expect(r.handoff).toContain("note_read");
+    expect(r.handoff).toContain("Notes/A.md");
+    expect(r.handoff).toContain("https://example.com/x");
+  });
+
   it("aborts between iterations without a further stream call", async () => {
     const ac = new AbortController();
     const { deps: d, calls } = deps([{ toolUses: [use("t1")], stopReason: "tool_use" }, { text: "never", stopReason: "end_turn" }]);

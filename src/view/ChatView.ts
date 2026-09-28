@@ -2,6 +2,7 @@ import { ItemView, MarkdownRenderer, MarkdownView, Notice, Platform, WorkspaceLe
 import type ClaudeCompanionPlugin from "../main";
 import type { ChatMessage, ContextToggles } from "../types";
 import { providerTurnRunner, type AgentTurnDeps, type AgentTurnHandlers, type AgentTurnResult, type AgentTurnRunner } from "../agent/loop";
+import { continuationFor, shouldAutoContinue } from "./chat/continuation";
 import { toAnthropicTools, executeTool, readOnlyAnthropicTools, PROPOSE_EDIT_TOOL, truncateResult } from "../agent/tools";
 import { parseExternalToolName } from "../mcp/external";
 import { WriteConfirmModal } from "./WriteConfirmModal";
@@ -110,6 +111,7 @@ export class ChatView extends ItemView {
   private get turnRenderUnsubscribe(): (() => void) | null { return this.turn.turnRenderUnsubscribe; }
   private set turnRenderUnsubscribe(v: (() => void) | null) { this.turn.turnRenderUnsubscribe = v; }
   private resumeCliSessionId: string | null = null;
+  private continuationDepth = 0;
   private get session(): SessionUsage { return this.turn.session; }
   private set session(v: SessionUsage) { this.turn.session = v; }
   /** Usage for the in-flight turn; folded into the session once on completion. */
@@ -838,6 +840,7 @@ export class ChatView extends ItemView {
     this.turnModelOverride = opts?.model ?? null;
     this.turnContextOverride = opts?.context ?? null;
     this._lastBuffer = ""; // never let a previous turn's partial leak into this one
+    this.transcript.clearInterruptedTurnRow();
     void this.refreshBackendPill();
     const router = this.plugin.router();
     let { provider, model } = router.chatProvider();
@@ -872,7 +875,9 @@ export class ChatView extends ItemView {
     }
 
     const previousTurn = this.conversationId ? this.plugin.listConversations().find((entry) => entry.id === this.conversationId)?.activeTurn : undefined;
-    if (previousTurn && previousTurn.state !== "running") {
+    // A capped turn's partial work stays in context — the continuation needs to
+    // see what was already done. Interrupted/failed turns are excluded as before.
+    if (previousTurn && previousTurn.state !== "running" && previousTurn.state !== "capped") {
       this.messages = this.messages.map((message, index) => index >= previousTurn.userMessageIndex ? { ...message, contextExcluded: true } : message);
     }
     this.messages.push({ role: "user", content: userText, ...(display !== undefined ? { display } : {}) });
@@ -885,6 +890,7 @@ export class ChatView extends ItemView {
         backend,
         model: this.turnModelOverride ?? model,
         mode: this.currentMode(),
+        ...(this.continuationDepth > 0 ? { continuationDepth: this.continuationDepth } : {}),
       });
     } catch (error) {
       this.messages.pop();
@@ -1025,6 +1031,7 @@ export class ChatView extends ItemView {
       title: display ?? userText,
       run: coreRun,
       completeTurn: (result) => this.plugin.completeActiveConversationTurn(turn.conversationId, turn.turnId, appendAssistantMessage(turnMessages, result)),
+      capTurn: (result) => this.plugin.capActiveConversationTurn(turn.conversationId, turn.turnId, appendAssistantMessage(turnMessages, result), result.handoff),
       interruptTurn: (result, error) => this.plugin.interruptActiveConversationTurn(turn.conversationId, turn.turnId, appendAssistantMessage(turnMessages, result), error?.message ?? "Interrupted"),
       registerTurn: (stop) => this.plugin.registerActiveChatTurn(turn.conversationId, turn.turnId, () => {
         controller.abort();
@@ -1036,7 +1043,15 @@ export class ChatView extends ItemView {
       }),
     });
     this.turnRenderUnsubscribe = this.transcript.startTurnRendering(turn.conversationId, bubble, body, wantThinking, turnService);
-    await handle.result.catch(() => undefined);
+    const outcome = await handle.result.catch(() => undefined);
+    // A capped turn keeps its receipt + handoff: show Continue, or chain the
+    // next turn when auto-continue is on — only while this view shows the
+    // conversation; a backgrounded turn waits for the user.
+    if (!outcome?.capped || this.conversationId !== turn.conversationId) return;
+    const conversation = this.plugin.listConversations().find((entry) => entry.id === turn.conversationId);
+    if (!conversation || conversation.activeTurn?.state !== "capped") return;
+    this.transcript.renderInterruptedTurn(conversation);
+    if (shouldAutoContinue(this.plugin.settings.agentAutoContinue, conversation.activeTurn)) await this.resumeInterruptedTurn(conversation);
   }
 
   /**
@@ -1364,15 +1379,15 @@ export class ChatView extends ItemView {
 
   async resumeInterruptedTurn(conversation: Conversation): Promise<void> {
     const receipt = conversation.activeTurn;
-    if (!receipt || (receipt.state !== "interrupted" && receipt.state !== "failed")) return;
+    const continuation = receipt ? continuationFor(receipt) : null;
+    if (!receipt || !continuation) return;
     this.resumeCliSessionId = receipt.cliSessionId ?? conversation.cliSessionId ?? null;
+    this.continuationDepth = continuation.depth;
     try {
-      await this.run(
-        "Inspect the current vault state, report what the interrupted task already completed, and continue only unfinished work. Do not repeat completed writes.",
-        "Resume interrupted task",
-      );
+      await this.run(continuation.prompt, continuation.display);
     } finally {
       this.resumeCliSessionId = null;
+      this.continuationDepth = 0;
     }
   }
 

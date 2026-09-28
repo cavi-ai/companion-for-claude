@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { ConversationsController } from "../src/conversations/controller";
 import { emptyState, saveConversation, newConversation, type ConversationState } from "../src/conversations/store";
 import type { ActivityStore } from "../src/activity/store";
@@ -7,13 +7,14 @@ import type { PluginSettings } from "../src/types";
 function harness(seed: ConversationState = emptyState()) {
   let state = seed;
   const persisted: ConversationState[] = [];
+  const activity = { start: vi.fn(), update: vi.fn(), dismiss: vi.fn() };
   const controller = new ConversationsController({
     state: { get: () => state, set: (next) => { state = next; } },
     persist: async () => { persisted.push(state); },
-    activity: () => ({} as ActivityStore),
+    activity: () => activity as unknown as ActivityStore,
     settings: () => ({ maxConversations: 0 } as PluginSettings),
   });
-  return { controller, persisted, state: () => state };
+  return { controller, persisted, state: () => state, activity };
 }
 
 describe("ConversationsController.setProject", () => {
@@ -37,5 +38,56 @@ describe("ConversationsController.setProject", () => {
     const { controller, persisted } = harness();
     await controller.setProject("ghost", "p.md");
     expect(persisted).toHaveLength(0);
+  });
+});
+
+describe("ConversationsController.capTurn", () => {
+  const messages = [{ role: "user" as const, content: "Research everything" }];
+
+  it("settles the receipt as capped with its handoff and keeps messages in context", async () => {
+    const { controller, state } = harness();
+    const { conversationId, turnId } = await controller.beginTurn(null, messages, { backend: "anthropic", model: "m", mode: "act" });
+    const withReply = [...messages, { role: "assistant" as const, content: "partial answer" }];
+
+    await controller.capTurn(conversationId, turnId, withReply, "Tools used: vault_search");
+
+    const conversation = state().conversations.find((c) => c.id === conversationId);
+    expect(conversation?.activeTurn).toMatchObject({ id: turnId, state: "capped", handoff: "Tools used: vault_search" });
+    expect(conversation?.messages).toHaveLength(2);
+    expect(conversation?.messages.every((m) => !m.contextExcluded)).toBe(true);
+  });
+
+  it("carries continuationDepth from beginTurn through to the capped receipt", async () => {
+    const { controller, state } = harness();
+    const { conversationId, turnId } = await controller.beginTurn(null, messages, { backend: "anthropic", model: "m", mode: "act", continuationDepth: 2 });
+
+    await controller.capTurn(conversationId, turnId, messages, "handoff");
+
+    expect(state().conversations[0]?.activeTurn).toMatchObject({ state: "capped", continuationDepth: 2 });
+  });
+
+  it("is a no-op when the receipt is not running", async () => {
+    const { controller, persisted, state } = harness();
+    const { conversationId, turnId } = await controller.beginTurn(null, messages, { backend: "anthropic", model: "m", mode: "act" });
+    await controller.capTurn(conversationId, turnId, messages, "handoff");
+    const before = state();
+    const persistedBefore = persisted.length;
+
+    await controller.capTurn(conversationId, turnId, messages, "other");
+
+    expect(state()).toBe(before);
+    expect(persisted).toHaveLength(persistedBefore);
+  });
+
+  it("marks the activity paused with a Continue recovery", async () => {
+    const { controller, activity } = harness();
+    const { conversationId, turnId } = await controller.beginTurn(null, messages, { backend: "anthropic", model: "m", mode: "act" });
+
+    await controller.capTurn(conversationId, turnId, messages, "handoff");
+
+    expect(activity.update).toHaveBeenLastCalledWith(`chat-turn:${conversationId}`, expect.objectContaining({
+      state: "paused",
+      recovery: expect.arrayContaining([expect.objectContaining({ id: "resume-chat-turn", label: "Continue" })]),
+    }));
   });
 });

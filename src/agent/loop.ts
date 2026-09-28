@@ -5,6 +5,7 @@
 
 import type { StreamHandlers, ToolTraceEntry } from "../types";
 import type { ApiMessage, CompletionRequest, ContentBlock, ToolResultBlock, ToolUseBlock } from "../providers/types";
+import { buildHandoffPacket, formatHandoff } from "./handoff";
 
 export interface AgentTurnDeps {
   /** Provider streaming call (AnthropicProvider.stream). */
@@ -40,6 +41,8 @@ export interface AgentTurnResult {
   trace: ToolTraceEntry[];
   aborted?: boolean;
   capped?: boolean;
+  /** Compact record of what a capped turn already did — resumes unfinished work. */
+  handoff?: string;
   error?: Error;
 }
 
@@ -152,8 +155,9 @@ export async function runAgentTurn(deps: AgentTurnDeps, req: CompletionRequest, 
     messages.push({ role: "user", content: results });
   }
 
-  handlers.onNotice?.(`Stopped after ${deps.maxIterations} tool iterations — ask me to continue if the answer is incomplete.`);
-  return { text: joined(), trace, capped: true };
+  const handoff = formatHandoff(buildHandoffPacket(trace, deps.maxIterations));
+  handlers.onNotice?.(`Stopped after ${deps.maxIterations} tool iterations — press Continue below to pick up where it left off.`);
+  return { text: joined(), trace, capped: true, handoff };
 }
 
 export function toTraceEntry(block: ToolUseBlock, result: ToolResultBlock): ToolTraceEntry {

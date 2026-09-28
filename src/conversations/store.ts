@@ -34,7 +34,7 @@ export interface Conversation {
   projectId?: string;
 }
 
-export type ChatTurnState = "running" | "interrupted" | "failed";
+export type ChatTurnState = "running" | "interrupted" | "failed" | "capped";
 export type ChatTurnMode = "ask" | "plan" | "act";
 
 export interface ChatTurnReceipt {
@@ -48,6 +48,10 @@ export interface ChatTurnReceipt {
   updatedAt: number;
   cliSessionId?: string;
   error?: string;
+  /** Handoff packet from a capped turn — injected into the continuation prompt. */
+  handoff?: string;
+  /** How many continuations preceded this turn; bounds auto-continue chains. */
+  continuationDepth?: number;
 }
 
 export interface ConversationState {
@@ -182,6 +186,7 @@ export function settleConversationTurn(
   turnState: Exclude<ChatTurnState, "running">,
   now: number,
   error?: string,
+  handoff?: string,
 ): ConversationState {
   const conversation = state.conversations.find((entry) => entry.id === conversationId);
   if (!conversation?.activeTurn || conversation.activeTurn.id !== turnId) return state;
@@ -190,6 +195,7 @@ export function settleConversationTurn(
     state: turnState,
     updatedAt: now,
     ...(error ? { error: error.slice(0, 500) } : {}),
+    ...(handoff ? { handoff } : {}),
   };
   return saveConversation(state, { ...conversation, activeTurn, updatedAt: now }, 0);
 }
@@ -261,7 +267,7 @@ export function fromPersisted(raw: unknown): ConversationState {
   return { conversations, activeId };
 }
 
-const TURN_STATES = new Set<ChatTurnState>(["running", "interrupted", "failed"]);
+const TURN_STATES = new Set<ChatTurnState>(["running", "interrupted", "failed", "capped"]);
 
 function normalizeEditProposal(value: unknown): RecoverableEditProposal | undefined {
   if (!value || typeof value !== "object") return undefined;
@@ -297,6 +303,8 @@ function normalizeTurnReceipt(value: unknown): ChatTurnReceipt | undefined {
     updatedAt: receipt.updatedAt,
     ...(typeof receipt.cliSessionId === "string" ? { cliSessionId: receipt.cliSessionId } : {}),
     ...(typeof receipt.error === "string" ? { error: receipt.error.slice(0, 500) } : {}),
+    ...(typeof receipt.handoff === "string" && receipt.handoff.length > 0 ? { handoff: receipt.handoff.slice(0, 1500) } : {}),
+    ...(typeof receipt.continuationDepth === "number" && Number.isInteger(receipt.continuationDepth) && receipt.continuationDepth > 0 ? { continuationDepth: receipt.continuationDepth } : {}),
   };
 }
 
