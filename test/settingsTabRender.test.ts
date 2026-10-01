@@ -94,6 +94,26 @@ describe("settings definitions", () => {
     await tab.setControlValue("discoveryMaxResults", 9999);
     expect(plugin.settings.discoveryMaxResults).toBe(100);
   });
+
+  it("edits the new-chat context defaults through nested codec keys", async () => {
+    const plugin = stubPlugin();
+    const tab = new ClaudeCompanionSettingTab(new App() as never, plugin);
+    const context = plugin.settings.context as { activeNote: boolean; searchVault: boolean };
+
+    expect(tab.getControlValue("context.activeNote")).toBe(context.activeNote);
+    await tab.setControlValue("context.searchVault", true);
+    expect(context.searchVault).toBe(true);
+    await tab.setControlValue("context.activeNote", false);
+    expect(context.activeNote).toBe(false);
+    expect(tab.getControlValue("context.activeNote")).toBe(false);
+  });
+
+  it("declares the four new-chat context rows", () => {
+    const plugin = stubPlugin();
+    plugin.settings.settingsShowAdvanced = true;
+    const keys = flatten(definitionsOf(plugin)).flatMap((item) => (item.control ? [item.control.key] : []));
+    expect(keys).toEqual(expect.arrayContaining(["context.activeNote", "context.selection", "context.linkedNotes", "context.searchVault"]));
+  });
 });
 
 describe("settings tab render", () => {

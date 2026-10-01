@@ -71,6 +71,14 @@ interface Seam {
   getState(): Record<string, unknown>;
   setState(state: unknown, result: unknown): Promise<void>;
   clearChat(): void;
+  contextToggles: { activeNote: boolean; selection: boolean; linkedNotes: boolean; searchVault: boolean };
+  attachedPaths: Array<{ path: string; kind: "note" | "folder" }>;
+  inputEl: { value: string; focus(): void };
+  composer: { autosizeInput(): void };
+  resolveMarkdownContextView(): { file: { path: string } } | null;
+  toggleAutomaticContext(key: "activeNote" | "selection" | "linkedNotes" | "searchVault", enabled: boolean): void;
+  loadConversation(c: Conversation): void;
+  prepareWorkspaceQuestion(workspace: { kind: "research" | "note"; title: string; contextPath: string }): void;
 }
 
 function buildView(plugin: ClaudeCompanionPlugin): Seam {
@@ -182,5 +190,74 @@ describe("ChatView per-leaf conversation state", () => {
     expect(setChatProject).toHaveBeenCalledOnce();
     expect(setChatProject).toHaveBeenCalledWith("conversation-1", project.id);
     expect(seam.pendingProjectId).toBeNull();
+  });
+});
+
+describe("ChatView chat-scoped context toggles", () => {
+  const OFF = { activeNote: false, selection: false, linkedNotes: false, searchVault: false };
+
+  function viewWith(plugin: ClaudeCompanionPlugin): Seam {
+    const seam = buildView(plugin);
+    (seam as unknown as { updateUsageBar(): void }).updateUsageBar = () => undefined;
+    (seam as unknown as { renderContextManager(): void }).renderContextManager = () => undefined;
+    return seam;
+  }
+
+  it("two tabs do not share toggles", () => {
+    const plugin = statePlugin();
+    plugin.settings.context = { ...OFF };
+    const a = viewWith(plugin);
+    const b = viewWith(plugin);
+
+    a.toggleAutomaticContext("searchVault", true);
+
+    expect(a.contextToggles.searchVault).toBe(true);
+    expect(b.contextToggles.searchVault).toBe(false);
+    expect(plugin.settings.context.searchVault).toBe(false);
+  });
+
+  it("a new view starts from the current defaults", () => {
+    const plugin = statePlugin();
+    plugin.settings.context = { ...OFF, linkedNotes: true };
+    expect(viewWith(plugin).contextToggles).toEqual({ ...OFF, linkedNotes: true });
+  });
+
+  it("clearChat re-reads current defaults", () => {
+    const plugin = statePlugin();
+    plugin.settings.context = { ...OFF };
+    const seam = viewWith(plugin);
+    seam.toggleAutomaticContext("searchVault", true);
+    plugin.settings.context = { ...OFF, selection: true };
+
+    seam.clearChat();
+
+    expect(seam.contextToggles).toEqual({ ...OFF, selection: true });
+  });
+
+  it("loadConversation keeps the tab's toggles", () => {
+    const conversation: Conversation = { id: "b", title: "T", createdAt: 1, updatedAt: 2, messages: [{ role: "user", content: "hi" }] };
+    const plugin = statePlugin({ listConversations: () => [conversation] });
+    plugin.settings.context = { ...OFF };
+    const seam = viewWith(plugin);
+    seam.toggleAutomaticContext("searchVault", true);
+
+    seam.loadConversation(conversation);
+
+    expect(seam.contextToggles.searchVault).toBe(true);
+  });
+
+  it("workspace question attaches when the tab's active note is off", () => {
+    const plugin = statePlugin();
+    plugin.settings.context = { ...OFF, activeNote: true };
+    const seam = viewWith(plugin);
+    seam.attachedPaths = [];
+    seam.inputEl = { value: "", focus: () => undefined };
+    seam.composer.autosizeInput = () => undefined;
+    seam.resolveMarkdownContextView = () => ({ file: { path: "Notes/Alpha.md" } });
+    seam.toggleAutomaticContext("activeNote", false);
+
+    seam.prepareWorkspaceQuestion({ kind: "note", title: "Continue with Alpha", contextPath: "Notes/Alpha.md" });
+
+    expect(seam.attachedPaths).toEqual([{ path: "Notes/Alpha.md", kind: "note" }]);
   });
 });

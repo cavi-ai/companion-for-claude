@@ -113,7 +113,7 @@ export function quickOptionsFor(page: CompanionPage, state: QuickOptionsState): 
       return [
         { id: "chat-backend", label: "Chat backend", kind: "select", value: state.chatBackend, choices: chatBackends, description: state.chatModel },
         { id: "agent-mode", label: "Agent mode", kind: "toggle", value: state.agentModeEnabled },
-        { id: "vault-context", label: "Vault context", kind: "toggle", value: state.vaultContextEnabled },
+        { id: "vault-context", label: "Vault search in new chats", kind: "toggle", value: state.vaultContextEnabled },
         { id: "memory-capture", label: "Capture sessions on save", kind: "toggle", value: state.memoryIngestOnSave },
         desktopIntegrations(),
         allSettings(),

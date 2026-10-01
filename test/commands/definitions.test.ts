@@ -67,6 +67,14 @@ describe("command surface", () => {
     const mobile = companionCommands(harness({ desktop: false }).actions).map((c) => c.id);
     expect(desktop.filter((id) => !mobile.includes(id))).toEqual(["capture-session-memory"]);
   });
+
+  it("keeps enrich, tidy, and themes names distinct", () => {
+    const { actions } = harness();
+    expect(byId(actions, "open-source-inbox").name).toBe("Open source inbox");
+    expect(byId(actions, "triage-clippings").name).toBe("Find research themes in a folder…");
+    expect(byId(actions, "enrich-note").name).toBe("Tidy current note with Claude… (rename, tags, links, lint)");
+    expect(byId(actions, "enrich-note-as-source").name).toBe("Enrich note as source (typed frontmatter)");
+  });
 });
 
 describe("plain commands", () => {

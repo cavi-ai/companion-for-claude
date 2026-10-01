@@ -181,7 +181,7 @@ export class ResearchDeskView extends ItemView {
       for (const choice of choices) select.createEl("option", { text: choice.label, value: choice.folder });
       if (this.deps.pickTriageFolder) select.createEl("option", { text: "Other folder…", value: TRIAGE_PICK_OTHER });
     }
-    const triage = group.createEl("button", { text: "Triage clippings", attr: { title: "Group the selected folder into research themes with tags and links" } });
+    const triage = group.createEl("button", { text: "Find themes", attr: { title: "Group the selected folder into research themes with tags and links" } });
     triage.addEventListener("click", () => {
       void (async () => {
         let folder = select?.value;

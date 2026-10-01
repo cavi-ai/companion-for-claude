@@ -194,6 +194,7 @@ export class InboxView extends ItemView {
     }
 
     this.renderTyped(root, typed);
+    this.renderThemes(root);
 
     // Wire-up section: enriched notes that mention other notes without linking
     // them. Async (mention scan reads bodies) — guarded against stale renders.
@@ -220,6 +221,24 @@ export class InboxView extends ItemView {
         meta: { cls: `cc-inbox-type cc-inbox-type-${item.type}`, text: item.type },
       });
     }
+  }
+
+  /** Stays visible after Organize empties the inbox; the triage board is not a clip. */
+  private renderThemes(root: HTMLElement): void {
+    const { sourceInboxFolder, clipOrganizedFolder } = this.plugin.settings;
+    const folders = [sourceInboxFolder, clipOrganizedFolder].map((f) => f.replace(/\/+$/, "")).filter(Boolean);
+    const hasClips = this.entries().some((e) =>
+      e.ext === "md" &&
+      e.frontmatter?.source_enriched === true &&
+      e.frontmatter?.type !== "triage" &&
+      folders.some((f) => e.path.startsWith(`${f}/`)));
+    if (!hasClips) return;
+    const section = root.createDiv({ cls: "cc-inbox-themes" });
+    const header = section.createDiv({ cls: "cc-inbox-typed-header" });
+    header.createDiv({ cls: "cc-eyebrow", text: "RESEARCH THEMES" });
+    const run = header.createEl("button", { cls: "cc-inbox-themes-run", text: "Find research themes…" });
+    run.disabled = this.batchOperation !== null;
+    run.addEventListener("click", () => void this.plugin.triageClippingsWithPicker());
   }
 
   /**

@@ -1,6 +1,7 @@
 import { ItemView, MarkdownRenderer, MarkdownView, Notice, Platform, WorkspaceLeaf, setIcon, type ViewStateResult } from "obsidian";
 import type ClaudeCompanionPlugin from "../main";
 import type { ChatMessage, ContextToggles } from "../types";
+import { effectiveToggles } from "./chat/contextScope";
 import { providerTurnRunner, type AgentTurnDeps, type AgentTurnHandlers, type AgentTurnResult, type AgentTurnRunner } from "../agent/loop";
 import { continuationFor, shouldAutoContinue } from "./chat/continuation";
 import { toAnthropicTools, executeTool, readOnlyAnthropicTools, PROPOSE_EDIT_TOOL, truncateResult } from "../agent/tools";
@@ -129,6 +130,8 @@ export class ChatView extends ItemView {
   /** PDFs/images attached via "@" or paste — cleared after the next send. */
   private get attachedMedia(): MediaAttachment[] { return this.composer.attachedMedia; }
   private set attachedMedia(v: MediaAttachment[]) { this.composer.attachedMedia = v; }
+  private get contextToggles(): ContextToggles { return this.composer.contextToggles; }
+  private set contextToggles(v: ContextToggles) { this.composer.contextToggles = v; }
   /** Media consumed by the last send — restored on failure, re-sent on Regenerate. */
   private lastUserMedia: MediaAttachment[] = [];
   /** Per-turn max-output override (artifact/plan/workflow flows need headroom). */
@@ -257,7 +260,7 @@ export class ChatView extends ItemView {
       mountUsage: (parent) => this.header.mountUsage(parent),
       onSlashCommand: (cmd) => void this.runSlashCommand(cmd),
       pickAtItems: () => (this.activeMenuTrigger === "#" ? this.hashItems() : this.atItems()),
-      onAtChoose: (item) => void this.onAtChoose(item),
+      onAtChoose: (item) => this.onAtChoose(item),
       toggleAutomatic: (key, enabled) => this.toggleAutomaticContext(key, enabled),
       removeSource: (id) => this.removeContextSource(id),
       retrySource: (id) => this.retryContextSource(id),
@@ -576,7 +579,7 @@ export class ChatView extends ItemView {
     if (project) void this.applyChosenProject(project);
   }
 
-  private onAtChoose(item: AtItem): Promise<void> { return this.composer.onAtChoose(item); }
+  private onAtChoose(item: AtItem): void { this.composer.onAtChoose(item); }
 
   private renderContextManager(): void { return this.composer.renderContextManager(); }
 
@@ -620,7 +623,7 @@ export class ChatView extends ItemView {
   /** Attach canonical workspace context and hand control back to the user. */
   prepareWorkspaceQuestion(workspace: Pick<CompanionWorkspaceCard, "kind" | "title" | "contextPath">): void {
     const active = this.resolveMarkdownContextView()?.file ?? this.app.workspace.getActiveFile();
-    const alreadyIncludedAsActiveNote = this.plugin.settings.context.activeNote && active?.path === workspace.contextPath;
+    const alreadyIncludedAsActiveNote = this.contextToggles.activeNote && active?.path === workspace.contextPath;
     if (!alreadyIncludedAsActiveNote && !this.attachedPaths.some(({ path, kind }) => path === workspace.contextPath && kind === "note")) {
       this.attachedPaths.push({ path: workspace.contextPath, kind: "note" });
     }
@@ -632,6 +635,8 @@ export class ChatView extends ItemView {
     this.updateUsageBar();
     this.inputEl.focus();
   }
+
+  enableVaultSearchForChat(): void { this.toggleAutomaticContext("searchVault", true); }
 
   clearChat(): void {
     this.detachTurnRendering();
@@ -647,6 +652,7 @@ export class ChatView extends ItemView {
     this.setLocalProject(null);
     this.attachedPaths = [];
     this.attachedPages = [];
+    this.composer.resetContextToggles();
     this.composer.dismissedPageUrl = null;
     this.composer.pageOfferEl?.setCssStyles({ display: "none" });
     this.renderContextManager();
@@ -725,6 +731,7 @@ export class ChatView extends ItemView {
         this.composer.autosizeInput();
       },
       activateResearchDesk: () => this.plugin.activateResearchDesk(),
+      activateResearchWorkbench: () => this.plugin.activateResearchWorkbench(),
       requestCompletion: (prompt, display) => this.submitPrompt(prompt, display),
     })) return;
 
@@ -802,12 +809,11 @@ export class ChatView extends ItemView {
         await this.plugin.deleteActiveConversation();
         break;
       case "ask-vault":
-        this.plugin.settings.context.searchVault = true;
-        await this.plugin.saveSettings();
+        this.enableVaultSearchForChat();
         this.inputEl.value = "";
         this.inputEl.setAttr("placeholder", "Vault search on — ask your question…");
         this.inputEl.focus();
-        quickNotice("Vault search enabled for your next message.");
+        quickNotice("Vault search on for this chat.");
         break;
       case "artifact":
         await this.plugin.generateArtifactFromContext();
@@ -935,9 +941,7 @@ export class ChatView extends ItemView {
     // Build context-augmented copy of the message list for the API. In agent
     // mode the pre-emptive vault-search stuffing is skipped — the vault_search
     // tool replaces it with better, model-chosen queries.
-    const toggles = agentActive
-      ? { ...this.plugin.settings.context, ...this.turnContextOverride, searchVault: false }
-      : { ...this.plugin.settings.context, ...this.turnContextOverride };
+    const toggles = effectiveToggles(this.contextToggles, this.turnContextOverride, agentActive);
     // A chat project's pinned notes join the attach list for this turn only —
     // the composer's own attachedPaths (session-scoped) stay untouched.
     const pinnedPaths: AttachedPath[] = (this.currentChatProject?.pinned ?? [])

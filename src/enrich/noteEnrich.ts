@@ -1,4 +1,4 @@
-// Note enrichment (right-click "Enrich with Claude"): model-driven lint of a
+// Note enrichment (right-click "Tidy with Claude"): model-driven lint of a
 // note's markdown, returned as a full cleaned copy and turned into reviewable
 // edits by diffToEdits in main.ts. Pure — the model call is injected there.
 

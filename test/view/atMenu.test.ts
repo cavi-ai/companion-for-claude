@@ -33,7 +33,7 @@ function fixture() {
     resolveMarkdownContextView(): null;
     atItems(): AtItem[];
     hashItems(): AtItem[];
-    onAtChoose(item: AtItem): Promise<void>;
+    onAtChoose(item: AtItem): void;
     scheduleReloadClaims(): void;
     claimReloadTimer: number | null;
   };
@@ -101,6 +101,26 @@ describe("'@'/'#' picker: bases, claims, recents", () => {
     const claimItem = seam.hashItems()[0]!;
     await seam.onAtChoose(claimItem);
     expect(seam.inputEl.value).toBe("check ");
+  });
+
+  it("@vault turns on the tab toggle only", async () => {
+    const { seam, plugin, saveSettings } = fixture();
+    const vault = seam.atItems().find((i) => i.kind === "vault")!;
+
+    await seam.onAtChoose(vault);
+
+    expect((seam as unknown as { contextToggles: { searchVault: boolean } }).contextToggles.searchVault).toBe(true);
+    expect(plugin.settings.context.searchVault).toBe(false);
+    expect(saveSettings).not.toHaveBeenCalled();
+  });
+
+  it("@note, @selection and @linked turn on their tab toggles and leave settings untouched", async () => {
+    const { seam, plugin } = fixture();
+    for (const kind of ["note", "selection", "linked"] as const) {
+      await seam.onAtChoose(seam.atItems().find((i) => i.kind === kind)!);
+    }
+    expect((seam as unknown as { contextToggles: unknown }).contextToggles).toEqual({ activeNote: true, selection: true, linkedNotes: true, searchVault: false });
+    expect(plugin.settings.context).toEqual({ activeNote: false, selection: false, linkedNotes: false, searchVault: false });
   });
 });
 

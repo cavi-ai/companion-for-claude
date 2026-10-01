@@ -7,19 +7,21 @@ const settle = async (turns = 24): Promise<void> => {
   for (let turn = 0; turn < turns; turn++) await Promise.resolve();
 };
 
-function harness(clipperSetupNeeded = true): { app: App; view: InboxView; organizeClippings: ReturnType<typeof vi.fn> } {
+function harness(clipperSetupNeeded = true): { app: App; view: InboxView; organizeClippings: ReturnType<typeof vi.fn>; triageClippingsWithPicker: ReturnType<typeof vi.fn> } {
   const app = new App();
   const plugin = Object.create(ClaudeCompanionPlugin.prototype) as ClaudeCompanionPlugin;
   const organizeClippings = vi.fn(async () => undefined);
+  const triageClippingsWithPicker = vi.fn(async () => undefined);
   Object.assign(plugin, {
     app,
     settings: { sourceCaptureEnabled: true, sourceInboxFolder: "Clippings", clipOrganizedFolder: "Library" },
     sourceEnrichmentBackendLabel: () => "Claude",
     linkCandidates: () => [],
     organizeClippings,
+    triageClippingsWithPicker,
     clipperSetupNeeded: () => clipperSetupNeeded,
   });
-  return { app, view: new InboxView(new WorkspaceLeaf(app), plugin), organizeClippings };
+  return { app, view: new InboxView(new WorkspaceLeaf(app), plugin), organizeClippings, triageClippingsWithPicker };
 }
 
 const html = (view: InboxView): string => {
@@ -70,6 +72,43 @@ describe("Inbox typed clips", () => {
     expect(organize?.textContent).toBe("Organize into folders");
     organize?.dispatchEvent({ type: "click" });
     expect(organizeClippings).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps Find research themes reachable when only the organized folder holds enriched clips", async () => {
+    const { app, view, triageClippingsWithPicker } = harness();
+    app.vault.seed("Library/ai/a.md", "Body", { mtime: 1, frontmatter: { source_enriched: true, type: "article" } });
+
+    await view.render();
+    await settle();
+
+    const root = view.contentEl as unknown as FakeElement;
+    expect(root.querySelector(".cc-inbox-themes")?.querySelector(".cc-eyebrow")?.textContent).toBe("RESEARCH THEMES");
+    const run = root.querySelector(".cc-inbox-themes-run");
+    expect(run?.textContent).toBe("Find research themes…");
+    run?.dispatchEvent({ type: "click" });
+    expect(triageClippingsWithPicker).toHaveBeenCalledTimes(1);
+  });
+
+  it("hides research themes when only the board and raw clips exist", async () => {
+    const { app, view } = harness();
+    app.vault.seed("Clippings/Triage.md", "Board", { mtime: 1, frontmatter: { source_enriched: true, type: "triage" } });
+    app.vault.seed("Clippings/raw.md", "Body", { mtime: 2 });
+
+    await view.render();
+    await settle();
+
+    expect((view.contentEl as unknown as FakeElement).querySelector(".cc-inbox-themes")).toBeNull();
+  });
+
+  it("disables Find research themes during a batch", async () => {
+    const { app, view } = harness();
+    app.vault.seed("Clippings/a.md", "Body", { mtime: 1, frontmatter: { source_enriched: true, type: "article" } });
+    (view as unknown as { batchOperation: "enrich" | "link" | null }).batchOperation = "enrich";
+
+    await view.render();
+    await settle();
+
+    expect((view.contentEl as unknown as FakeElement).querySelector(".cc-inbox-themes-run")?.disabled).toBe(true);
   });
 
   it("counts every enriched clip but lists the ten newest", async () => {

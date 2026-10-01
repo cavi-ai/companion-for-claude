@@ -32,6 +32,26 @@ export function triageFolderChoices(settings: { sourceInboxFolder: string; clipO
   return out;
 }
 
+export type EnrichOutcomeLike = { status: "enriched" } | { status: "skipped"; reason: string } | { status: "failed"; error: Error };
+
+export interface EnrichPartition {
+  include: string[];
+  failed: number;
+  stopReason?: string;
+}
+
+/** A failure drops one clip; a skip is systemic (consent, policy, backend) and stops the run. */
+export function partitionEnrichOutcomes(results: Array<{ path: string; outcome: EnrichOutcomeLike | null }>): EnrichPartition {
+  const include: string[] = [];
+  let failed = 0;
+  for (const { path, outcome } of results) {
+    if (outcome?.status === "skipped") return { include, failed, stopReason: outcome.reason };
+    if (outcome?.status === "failed") failed += 1;
+    else include.push(path);
+  }
+  return include.length === 0 ? { include, failed, stopReason: "No clips could be enriched." } : { include, failed };
+}
+
 export interface TriageGroup {
   theme: string;
   summary: string;
@@ -129,7 +149,7 @@ export function renderTriageNote(groups: TriageGroup[], notesByPath: Map<string,
     "",
     "# Clippings triage",
     "",
-    `_${total} clippings grouped into ${groups.length} theme${groups.length === 1 ? "" : "s"}. Re-run Triage from the Research Desk after new clips arrive._`,
+    `_${total} clippings grouped into ${groups.length} theme${groups.length === 1 ? "" : "s"}. Re-run Find themes from the Inbox or Research Desk after new clips arrive._`,
     "",
   ];
   for (const group of groups) {

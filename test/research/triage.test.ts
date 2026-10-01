@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { TRIAGE_SYSTEM, buildTriageUser, parseTriageResponse, renderTriageNote, themeTagSlug, noteExcerpt, triageFolderChoices, type TriageNote } from "../../src/research/triage";
+import { TRIAGE_SYSTEM, buildTriageUser, parseTriageResponse, renderTriageNote, themeTagSlug, noteExcerpt, triageFolderChoices, partitionEnrichOutcomes, type TriageNote } from "../../src/research/triage";
 
 const notes: TriageNote[] = [
   { path: "Clippings/a.md", title: "Attention residue study", type: "article", url: "https://example.com/a", tags: ["clipping"], excerpt: "Participants took 23 minutes to refocus after an interruption." },
@@ -112,5 +112,32 @@ describe("triageFolderChoices", () => {
     expect(triageFolderChoices({ sourceInboxFolder: "Inbox/", clipOrganizedFolder: "  " })).toEqual([
       { folder: "Inbox", label: "Inbox (inbox)" },
     ]);
+  });
+});
+
+describe("partitionEnrichOutcomes", () => {
+  const fail = { status: "failed" as const, error: new Error("boom") };
+
+  it("already-enriched clips are included without enrichment", () => {
+    expect(partitionEnrichOutcomes([{ path: "a.md", outcome: null }, { path: "b.md", outcome: { status: "enriched" } }]))
+      .toEqual({ include: ["a.md", "b.md"], failed: 0 });
+  });
+
+  it("drops a failed clip and counts it", () => {
+    expect(partitionEnrichOutcomes([{ path: "a.md", outcome: { status: "enriched" } }, { path: "b.md", outcome: fail }]))
+      .toEqual({ include: ["a.md"], failed: 1 });
+  });
+
+  it("stops on the first skip with its reason", () => {
+    expect(partitionEnrichOutcomes([
+      { path: "a.md", outcome: { status: "enriched" } },
+      { path: "b.md", outcome: { status: "skipped", reason: "Consent declined" } },
+      { path: "c.md", outcome: null },
+    ])).toEqual({ include: ["a.md"], failed: 0, stopReason: "Consent declined" });
+  });
+
+  it("stops when every clip failed", () => {
+    expect(partitionEnrichOutcomes([{ path: "a.md", outcome: fail }]))
+      .toEqual({ include: [], failed: 1, stopReason: "No clips could be enriched." });
   });
 });

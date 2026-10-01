@@ -16,6 +16,7 @@ describe("native research desk command", () => {
     const opened: string[] = [];
     const handled = await dispatchNativeSlashAction("open-research-desk", {
       openResearchDesk: async () => { opened.push("opened"); },
+      openResearchWorkbench: async () => undefined,
     });
     expect(handled).toBe(true);
     expect(opened).toEqual(["opened"]);
@@ -25,10 +26,43 @@ describe("native research desk command", () => {
     const opened: string[] = [];
     expect(await dispatchNativeSlashAction("history", {
       openResearchDesk: async () => { opened.push("opened"); },
+      openResearchWorkbench: async () => undefined,
     })).toBe(false);
     expect(opened).toEqual([]);
     expect(JSON.stringify(SLASH_COMMANDS)).not.toContain("research_project_create");
     expect(JSON.stringify(SLASH_COMMANDS)).not.toContain("Use the Research Workbench tools");
+  });
+
+  it("registers /workbench for the workbench and keeps /research on the desk", () => {
+    expect(SLASH_COMMANDS.find(({ name }) => name === "workbench")).toMatchObject({ kind: "action", action: "open-research-workbench" });
+    expect(SLASH_COMMANDS.find(({ name }) => name === "research")?.aliases).not.toContain("workbench");
+    expect(filterCommands(SLASH_COMMANDS, "workbench")[0]?.name).toBe("workbench");
+  });
+
+  it("routes the workbench action to the workbench, not the desk", async () => {
+    const opened: string[] = [];
+    const handlers = {
+      openResearchDesk: async () => { opened.push("desk"); },
+      openResearchWorkbench: async () => { opened.push("workbench"); },
+    };
+    expect(await dispatchNativeSlashAction("open-research-workbench", handlers)).toBe(true);
+    expect(await dispatchNativeSlashAction("open-research-desk", handlers)).toBe(true);
+    expect(opened).toEqual(["workbench", "desk"]);
+  });
+
+  it("runs /workbench without a completion", async () => {
+    let desk = 0;
+    let workbench = 0;
+    const handled = await runNativeSlashCommand({
+      command: SLASH_COMMANDS.find(({ name }) => name === "workbench")!,
+      backend: "claude",
+      clearComposer: () => undefined,
+      activateResearchDesk: async () => { desk += 1; },
+      activateResearchWorkbench: async () => { workbench += 1; },
+      requestCompletion: async () => { throw new Error("no completion"); },
+    });
+    expect(handled).toBe(true);
+    expect([desk, workbench]).toEqual([0, 1]);
   });
 
   it.each(["claude", "auto", "local"] as const)(
@@ -45,6 +79,7 @@ describe("native research desk command", () => {
         backend,
         clearComposer: () => { composer = ""; },
         activateResearchDesk: async () => { activations += 1; },
+        activateResearchWorkbench: async () => undefined,
         requestCompletion: async () => { completions += 1; },
       });
 

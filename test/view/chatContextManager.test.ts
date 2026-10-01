@@ -61,14 +61,15 @@ function fixture(capture: () => Promise<{ markdown: string; title?: string } | n
 }
 
 describe("ChatView context manager wiring", () => {
-  it("persists automatic toggles and refreshes the presentation model", async () => {
+  it("keeps automatic toggles on the tab, never in settings, and refreshes the presentation model", async () => {
     const { seam, plugin, saveSettings, rendered } = fixture();
 
     seam.toggleAutomaticContext("activeNote", true);
     await Promise.resolve();
 
-    expect(plugin.settings.context.activeNote).toBe(true);
-    expect(saveSettings).toHaveBeenCalledOnce();
+    expect((seam as unknown as { contextToggles: { activeNote: boolean } }).contextToggles.activeNote).toBe(true);
+    expect(plugin.settings.context.activeNote).toBe(false);
+    expect(saveSettings).not.toHaveBeenCalled();
     expect(rendered).toHaveLength(1);
     expect(rendered[0]).toMatchObject({ activeCount: 1, summary: "Context · This note" });
   });

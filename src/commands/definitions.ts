@@ -96,13 +96,13 @@ export function companionCommands(actions: CommandActions): Command[] {
         return true;
       },
     },
-    onActiveFile("enrich-note", "Enrich current note with Claude… (rename, tags, links, lint)", actions, (file) => actions.enrichNote(file)),
+    onActiveFile("enrich-note", "Tidy current note with Claude… (rename, tags, links, lint)", actions, (file) => actions.enrichNote(file)),
     { id: "ask-vault", name: "Ask Claude about my vault (search-augmented)", callback: () => actions.enableVaultSearch() },
     { id: "rebuild-semantic-index", name: "Rebuild semantic index (local embeddings)", callback: () => actions.rebuildSemanticIndex() },
     { id: "open-related-notes", name: "Open related notes panel", callback: () => actions.openRelatedNotes() },
     { id: "open-research-desk", name: "Open research desk", callback: () => actions.openResearchDesk() },
     { id: "open-research-workbench", name: "Open advanced research workbench", callback: () => actions.openResearchWorkbench() },
-    { id: "triage-clippings", name: "Triage clippings folder into research themes", callback: () => actions.triageClippings() },
+    { id: "triage-clippings", name: "Find research themes in a folder…", callback: () => actions.triageClippings() },
     {
       id: "research-from-active-note",
       name: "Start research project from active note",
@@ -144,7 +144,7 @@ export function companionCommands(actions: CommandActions): Command[] {
         return true;
       },
     },
-    { id: "open-source-inbox", name: "Open source inbox (clip triage)", callback: () => actions.openSourceInbox() },
+    { id: "open-source-inbox", name: "Open source inbox", callback: () => actions.openSourceInbox() },
     whenEnabled("export-clipper-templates", "Export Web Clipper templates (typed clipping)", () => actions.sourceCaptureEnabled(), () => actions.exportClipperTemplates()),
     whenEnabled("seed-ontology", "Seed ontology (default type schemas)", () => actions.ontologyEnabled(), () => actions.seedOntology()),
     { id: "open-setup-wizard", name: "Open setup wizard", callback: () => actions.openSetupWizard() },

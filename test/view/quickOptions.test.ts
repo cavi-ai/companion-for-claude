@@ -38,6 +38,10 @@ const state = (overrides: Partial<QuickOptionsState> = {}): QuickOptionsState =>
 });
 
 describe("quickOptionsFor", () => {
+  it("labels the chat vault toggle as the new-chat default", () => {
+    expect(quickOptionsFor("chat", state()).find((o) => o.id === "vault-context")?.label).toBe("Vault search in new chats");
+  });
+
   it("keeps Source Inbox options contextual and orders all settings last", () => {
     expect(quickOptionsFor("inbox", state()).map((item) => item.id)).toEqual([
       "utility-backend",

@@ -58,7 +58,7 @@ async function seedFixture(page: Page, fixture: Fixture): Promise<void> {
   await page.evaluate(({ name, longFolder }) => {
     const app = (window as unknown as { app: { workspace: { getLeavesOfType(type: string): Array<{ view: unknown }> } } }).app;
     const view = app.workspace.getLeavesOfType("claude-companion-chat")[0]?.view as {
-      plugin: { settings: { context: { activeNote: boolean; selection: boolean; linkedNotes: boolean; searchVault: boolean } } };
+      contextToggles: { activeNote: boolean; selection: boolean; linkedNotes: boolean; searchVault: boolean };
       attachedPaths: Array<{ kind: "note" | "folder"; path: string }>;
       attachedMedia: Array<{ kind: "pdf" | "image"; label: string; mime: string; path: string }>;
       attachedPages: Array<{ url: string; title?: string; markdown: string; pending?: boolean; error?: string }>;
@@ -67,7 +67,7 @@ async function seedFixture(page: Page, fixture: Fixture): Promise<void> {
     };
     if (!view) throw new Error("Chat view is not open");
     const off = { activeNote: false, selection: false, linkedNotes: false, searchVault: false };
-    view.plugin.settings.context = name === "one"
+    view.contextToggles = name === "one"
       ? { ...off, activeNote: true }
       : name === "automatic" || name === "dense"
         ? { activeNote: true, selection: true, linkedNotes: true, searchVault: true }

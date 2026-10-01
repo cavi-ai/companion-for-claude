@@ -81,6 +81,13 @@ for (const key of ["discoveryMaxResults", "discoveryExpansionLimit", "discoveryC
   };
 }
 
+for (const key of ["activeNote", "selection", "linkedNotes", "searchVault"] as const) {
+  CODECS[`context.${key}`] = {
+    read: (s) => s.context[key],
+    write: (s, v) => { s.context[key] = v === true; },
+  };
+}
+
 // ---------- settings diet: basic vs advanced ----------
 
 export type SettingsTier = "basic" | "advanced";
@@ -679,6 +686,26 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
         name: "Max context notes",
         desc: "How many linked / search-matched notes to include.",
         control: { type: "number", key: "maxContextNotes", min: 0, step: 1 },
+      },
+      {
+        name: "New chat context: active note",
+        desc: "Each new chat starts with the active note attached. @mentions and the context menu change only that chat.",
+        control: { type: "toggle", key: "context.activeNote" },
+      },
+      {
+        name: "New chat context: selection",
+        desc: "Each new chat starts with your highlighted text attached.",
+        control: { type: "toggle", key: "context.selection" },
+      },
+      {
+        name: "New chat context: linked notes",
+        desc: "Each new chat starts with notes linked to and from the active note.",
+        control: { type: "toggle", key: "context.linkedNotes" },
+      },
+      {
+        name: "New chat context: vault search",
+        desc: "Each new chat starts with keyword or semantic vault search on (off in agent mode, where Claude searches with tools).",
+        control: { type: "toggle", key: "context.searchVault" },
       },
     ];
   }

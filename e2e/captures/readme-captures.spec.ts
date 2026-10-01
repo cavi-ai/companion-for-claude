@@ -195,7 +195,7 @@ test.describe("README captures", () => {
       });
 
       test("diff-review.png", async () => {
-        // "Enrich with Claude…" (not the single-edit rewrite path): its lint step
+        // "Tidy with Claude…" (not the single-edit rewrite path): its lint step
         // sends the whole note to the utility (here: chat-role/Anthropic-stub)
         // model and diffToEdits() turns the returned full copy into edits, one per
         // LCS-changed region merged only when within MERGE_GAP (3) lines of each

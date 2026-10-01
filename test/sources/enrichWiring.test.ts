@@ -548,7 +548,26 @@ describe("source enrichment wiring", () => {
 
     expect(claudeComplete).not.toHaveBeenCalled();
     expect(app.vault.getAbstractFileByPath("Clippings/Triage.md")).toBeNull();
-    expect(getNoticeMessages().at(-1)).toMatch(/triage failed.*not approved/i);
+    expect(getNoticeMessages().at(-1)).toMatch(/^Finding themes stopped — .*not approved/i);
+  });
+
+  it("a denial stops theme finding even when other clips are already enriched", async () => {
+    Platform.isMobile = true;
+    Platform.isDesktop = false;
+    const { app, plugin, router } = mobilePlugin();
+    app.vault.seed("Clippings/done.md", "---\nsource_enriched: true\ntitle: Done\n---\nDone body.");
+    const claudeComplete = vi.spyOn(router.anthropic, "complete").mockResolvedValue(
+      JSON.stringify({ groups: [{ theme: "Done", paths: ["Clippings/done.md"] }] }),
+    );
+
+    const pending = (plugin as unknown as PrivateEnrich).triageClippings();
+    await settle();
+    choose("Don't send");
+    await pending;
+
+    expect(claudeComplete).not.toHaveBeenCalled();
+    expect(app.vault.getAbstractFileByPath("Clippings/Triage.md")).toBeNull();
+    expect(getNoticeMessages().at(-1)).toMatch(/^Finding themes stopped — .*not approved/i);
   });
 
   it("propagates denied utility tagging so note enrichment cannot continue into chat lint or review", async () => {

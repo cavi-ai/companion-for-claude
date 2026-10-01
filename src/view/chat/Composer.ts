@@ -17,6 +17,8 @@ import { type ChatControls, knobVisibility } from "../../claude/chatControls";
 import { mergeDetectedModels } from "../../providers/localModels";
 import { quickNotice } from "../../notice";
 import type ClaudeCompanionPlugin from "../../main";
+import type { ContextToggles } from "../../types";
+import { applyMention, initialToggles } from "./contextScope";
 
 export interface ComposerDeps {
   applyChatFontSize(): void;
@@ -67,6 +69,8 @@ export class Composer {
   attachedMedia: MediaAttachment[] = [];
   /** Web pages attached via "Attach page content" (captured markdown). */
   attachedPages: AttachedPage[] = [];
+  /** This tab's automatic context; settings.context only seeds it. */
+  contextToggles: ContextToggles;
   /** Which trigger ("@" or "#") the open at-menu is currently showing matches for. */
   activeMenuTrigger: "@" | "#" = "@";
   /** Last visible context-manager state; skip DOM rebuilds when nothing changed. */
@@ -189,7 +193,13 @@ export class Composer {
     this.contextManager?.destroy();
   }
 
-  constructor(private app: App, private plugin: ClaudeCompanionPlugin, private deps: ComposerDeps) {}
+  constructor(private app: App, private plugin: ClaudeCompanionPlugin, private deps: ComposerDeps) {
+    this.contextToggles = initialToggles(plugin.settings.context);
+  }
+
+  resetContextToggles(): void {
+    this.contextToggles = initialToggles(this.plugin.settings.context);
+  }
 
   private get cachedClaims(): ClaimAtSource[] { return this.deps.cachedClaims(); }
   private get controls(): ChatControls { return this.deps.controls(); }
@@ -358,7 +368,7 @@ export class Composer {
   }
 
   /** Apply a chosen "@"/"#" source: toggle a context flag or attach a note/folder. */
-  async onAtChoose(item: AtItem): Promise<void> {
+  onAtChoose(item: AtItem): void {
     // Strip the "@query"/"#query" token the user typed.
     const cursor = this.inputEl.selectionStart ?? this.inputEl.value.length;
     const hit = this.activeMenuTrigger === "#" ? activeHashQuery(this.inputEl.value, cursor) : activeAtQuery(this.inputEl.value, cursor);
@@ -369,11 +379,9 @@ export class Composer {
     }
     this.inputEl.focus();
 
-    if (item.kind === "note") this.plugin.settings.context.activeNote = true;
-    else if (item.kind === "selection") this.plugin.settings.context.selection = true;
-    else if (item.kind === "linked") this.plugin.settings.context.linkedNotes = true;
-    else if (item.kind === "vault") this.plugin.settings.context.searchVault = true;
-    else if (item.kind === "project" && item.path) {
+    if (item.kind === "note" || item.kind === "selection" || item.kind === "linked" || item.kind === "vault") {
+      this.contextToggles = applyMention(this.contextToggles, item.kind);
+    } else if (item.kind === "project" && item.path) {
       this.deps.chooseProject(item.path);
       return; // chooseProject persists + re-renders the context row asynchronously
     }
@@ -391,7 +399,6 @@ export class Composer {
         this.attachedMedia.push({ label: item.label, kind, mime: mediaMime(item.path), path: item.path });
       }
     }
-    await this.plugin.saveSettings();
     this.renderContextManager();
     this.deps.updateUsageBar();
   }
@@ -400,7 +407,7 @@ export class Composer {
     if (!this.contextManager) return;
     const active = this.deps.resolveMarkdownContextView()?.file ?? this.app.workspace.getActiveFile();
     const model = buildContextManagerModel({
-      toggles: this.plugin.settings.context,
+      toggles: this.contextToggles,
       activeNotePath: active?.path ?? null,
       paths: this.attachedPaths,
       media: this.attachedMedia,
@@ -412,8 +419,7 @@ export class Composer {
   }
 
   toggleAutomaticContext(key: AutomaticContextKey, enabled: boolean): void {
-    this.plugin.settings.context[key] = enabled;
-    void this.plugin.saveSettings();
+    this.contextToggles = { ...this.contextToggles, [key]: enabled };
     this.renderContextManager();
     this.deps.updateUsageBar();
   }
@@ -421,7 +427,7 @@ export class Composer {
   removeContextSource(id: string): void {
     const active = this.deps.resolveMarkdownContextView()?.file ?? this.app.workspace.getActiveFile();
     const model = buildContextManagerModel({
-      toggles: this.plugin.settings.context,
+      toggles: this.contextToggles,
       activeNotePath: active?.path ?? null,
       paths: this.attachedPaths,
       media: this.attachedMedia,
@@ -681,7 +687,7 @@ export class Composer {
   }
 
   anyContextEnabled(): boolean {
-    const c = this.plugin.settings.context;
+    const c = this.contextToggles;
     return c.activeNote || c.selection || c.linkedNotes || c.searchVault || this.attachedPaths.length > 0 || this.attachedMedia.length > 0 || this.attachedPages.length > 0;
   }
 }

@@ -26,7 +26,7 @@ export interface EnrichDecision {
 
 /**
  * Step picker for Enrich (note + folder batch): one toggle per step, all on
- * by default; "Enrich" resolves the options, Cancel/close resolves null.
+ * by default; "Tidy" resolves the options, Cancel/close resolves null.
  */
 export class EnrichOptionsModal extends Modal {
   private decided = false;
@@ -41,7 +41,7 @@ export class EnrichOptionsModal extends Modal {
   }
 
   override onOpen(): void {
-    this.titleEl.setText(this.count === 1 ? "Enrich note" : `Enrich ${this.count} notes`);
+    this.titleEl.setText(this.count === 1 ? "Tidy note" : `Tidy ${this.count} notes`);
     const { contentEl } = this;
 
     new Setting(contentEl).setName("Rename note").setDesc("Meaningful filename from a model-generated title.").addToggle((t) =>
@@ -75,7 +75,7 @@ export class EnrichOptionsModal extends Modal {
       )
       .addButton((b) =>
         b
-          .setButtonText("Enrich")
+          .setButtonText("Tidy")
           .setCta()
           .onClick(() => {
             this.decided = true;
@@ -113,7 +113,7 @@ export class EnrichReviewModal extends Modal {
   }
 
   override onOpen(): void {
-    this.titleEl.setText(`Enrich — ${this.proposal.path}`);
+    this.titleEl.setText(`Tidy — ${this.proposal.path}`);
     const { contentEl } = this;
     contentEl.addClass("cc-diff-modal");
 

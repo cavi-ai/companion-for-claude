@@ -29,7 +29,7 @@ function createHarness(): InboxHarness {
   const plugin = Object.create(ClaudeCompanionPlugin.prototype) as ClaudeCompanionPlugin;
   Object.assign(plugin, {
     app,
-    settings: { sourceCaptureEnabled: true, sourceInboxFolder: "Clippings" },
+    settings: { sourceCaptureEnabled: true, sourceInboxFolder: "Clippings", clipOrganizedFolder: "Library" },
     clipperSetupNeeded: () => true,
   });
   return { app, plugin, view: new InboxView(new WorkspaceLeaf(app), plugin), alpha, beta };
