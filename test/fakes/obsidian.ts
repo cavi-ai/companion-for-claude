@@ -459,7 +459,7 @@ export class ButtonComponent extends BaseComponent {
   setCta(): this { this.buttonEl.addClass("mod-cta"); return this; }
   setWarning(): this { this.buttonEl.addClass("mod-warning"); return this; }
   setIcon(icon: string): this { this.buttonEl.attributes.set("data-icon", icon); return this; }
-  onClick(cb: () => void): this { this.clickCb = cb; return this; }
+  onClick(cb: () => void): this { this.clickCb = cb; this.buttonEl.addEventListener("click", () => cb()); return this; }
   simulateClick(): void { this.clickCb?.(); }
 }
 export class ExtraButtonComponent extends ButtonComponent {}

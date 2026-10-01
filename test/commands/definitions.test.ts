@@ -9,7 +9,7 @@ const ACTION_NAMES = [
   "browseConversations", "deleteActiveConversation", "handoffToBuild", "markNoteAsPlan", "organizeClippings",
   "dispatchCloudSession", "pullCloudReplies", "reviewLinkSuggestions", "openWorkflowPicker",
   "createPromptTemplate", "openSessionPicker", "openMemoryView", "consolidateMemory", "enrichNoteAsSource",
-  "openSourceInbox", "exportClipperTemplates", "seedOntology",
+  "openSourceInbox", "openSystem", "exportClipperTemplates", "seedOntology",
 ] as const;
 
 interface Harness { actions: CommandActions; calls: Record<string, ReturnType<typeof vi.fn>> }
@@ -71,6 +71,7 @@ describe("command surface", () => {
   it("keeps enrich, tidy, and themes names distinct", () => {
     const { actions } = harness();
     expect(byId(actions, "open-source-inbox").name).toBe("Open source inbox");
+    expect(byId(actions, "open-system").name).toBe("Open system status");
     expect(byId(actions, "triage-clippings").name).toBe("Find research themes in a folder…");
     expect(byId(actions, "enrich-note").name).toBe("Tidy current note with Claude… (rename, tags, links, lint)");
     expect(byId(actions, "enrich-note-as-source").name).toBe("Enrich note as source (typed frontmatter)");
@@ -101,6 +102,7 @@ describe("plain commands", () => {
     ["open-memory-view", "openMemoryView"],
     ["consolidate-memory", "consolidateMemory"],
     ["open-source-inbox", "openSourceInbox"],
+    ["open-system", "openSystem"],
   ])("%s runs %s and nothing else", (id, action) => {
     const h = harness();
     byId(h.actions, id).callback?.();

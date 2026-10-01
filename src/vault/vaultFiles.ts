@@ -2,6 +2,8 @@
 // vault tools, and main.ts — one implementation instead of four copies.
 
 import { App, normalizePath, TFile } from "obsidian";
+import type { OntologyRegistry } from "../ontology/registry";
+import type { ResolvedType } from "../ontology/types";
 
 /** Create `folder` (and any missing parents) segment by segment; races are tolerated. */
 export async function ensureVaultFolder(app: App, folder: string): Promise<void> {
@@ -45,4 +47,19 @@ export async function writeOrReplaceFile(app: App, path: string, content: string
     return existing;
   }
   return app.vault.create(path, content);
+}
+
+/** Resolve a relation target (basename/path as written) to that note's ResolvedType. */
+export function lookupRelationTargetType(app: App, registry: OntologyRegistry, target: string): ResolvedType | undefined {
+  // Real Obsidian resolves linkpaths via metadataCache; the test fake doesn't
+  // implement that method, so fall back to a basename/path scan.
+  const cache: { getFirstLinkpathDest?: (linkpath: string, sourcePath: string) => TFile | null } = app.metadataCache;
+  const file =
+    typeof cache.getFirstLinkpathDest === "function"
+      ? cache.getFirstLinkpathDest(target, "")
+      : (app.vault.getMarkdownFiles().find((f) => f.basename === target || f.path === normalizePath(target)) ?? null);
+  if (!file) return undefined;
+  const fm = app.metadataCache.getFileCache(file)?.frontmatter as Record<string, unknown> | undefined;
+  const t = fm?.type;
+  return typeof t === "string" ? registry.resolve(t) : undefined;
 }

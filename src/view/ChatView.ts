@@ -30,7 +30,7 @@ import { type MediaAttachment } from "../context/attachments";
 import { type AtItem, type ClaimAtSource } from "../context/atMention";
 import { isProjectChange, projectSearchScope, type ChatProject } from "../projects/model";
 import { type ErrorHintProvider } from "../providers/errorHints";
-import { needsCredentialSetup } from "../providers/setupState";
+import { credentialSetupInputs, needsCredentialSetup } from "../providers/setupState";
 import { claudeBackend } from "../cli/backends/claude";
 import { codexBackend } from "../cli/backends/codex";
 import { opencodeBackend } from "../cli/backends/opencode";
@@ -607,16 +607,7 @@ export class ChatView extends ItemView {
 
   /** True when chatting requires configuration the user hasn't done yet. */
   private setupRequired(): boolean {
-    const router = this.plugin.router();
-    const entries = this.cliEntries(router);
-    const signedIn = (id: string) => entries.find((e) => e.backend.id === id)?.provider.hasCredentials() ?? false;
-    return needsCredentialSetup({
-      backend: router.chatBackend,
-      hasAnthropicCredential: router.anthropic.hasCredentials(),
-      hasClaudeCli: signedIn("claude-cli"),
-      hasCodexCli: signedIn("codex-cli"),
-      hasOpencodeCli: signedIn("opencode-cli"),
-    });
+    return needsCredentialSetup(credentialSetupInputs(this.plugin.router()));
   }
 
 

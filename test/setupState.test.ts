@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { needsCredentialSetup } from "../src/providers/setupState";
+import { credentialSetupInputs, needsCredentialSetup } from "../src/providers/setupState";
 
 describe("needsCredentialSetup", () => {
   it("gates the claude backend when no Anthropic credential exists", () => {
@@ -20,5 +20,16 @@ describe("needsCredentialSetup — claude-cli", () => {
     expect(needsCredentialSetup({ backend: "claude-cli", hasAnthropicCredential: false, hasClaudeCli: true })).toBe(false);
     expect(needsCredentialSetup({ backend: "claude-cli", hasAnthropicCredential: true, hasClaudeCli: false })).toBe(true);
     expect(needsCredentialSetup({ backend: "claude", hasAnthropicCredential: false, hasClaudeCli: true })).toBe(true);
+  });
+});
+
+describe("credentialSetupInputs", () => {
+  const signed = (v: boolean) => ({ hasCredentials: () => v });
+
+  it("reads each provider and treats a missing CLI provider as signed out", () => {
+    const inputs = credentialSetupInputs({ chatBackend: "claude-cli", anthropic: signed(false), claudeCli: signed(true) });
+    expect(inputs).toEqual({ backend: "claude-cli", hasAnthropicCredential: false, hasClaudeCli: true, hasCodexCli: false, hasOpencodeCli: false });
+    expect(needsCredentialSetup(inputs)).toBe(false);
+    expect(needsCredentialSetup(credentialSetupInputs({ chatBackend: "codex-cli", anthropic: signed(true) }))).toBe(true);
   });
 });

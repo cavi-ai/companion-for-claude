@@ -12,6 +12,25 @@ export interface SetupInputs {
   hasOpencodeCli?: boolean;
 }
 
+interface CliSignedIn { hasCredentials(): boolean }
+
+/** Builds the gate inputs from a router; tolerates a router missing a CLI provider. */
+export function credentialSetupInputs(router: {
+  chatBackend: SetupInputs["backend"];
+  anthropic: CliSignedIn;
+  claudeCli?: CliSignedIn | undefined;
+  codexCli?: CliSignedIn | undefined;
+  opencodeCli?: CliSignedIn | undefined;
+}): SetupInputs {
+  return {
+    backend: router.chatBackend,
+    hasAnthropicCredential: router.anthropic.hasCredentials(),
+    hasClaudeCli: router.claudeCli?.hasCredentials() ?? false,
+    hasCodexCli: router.codexCli?.hasCredentials() ?? false,
+    hasOpencodeCli: router.opencodeCli?.hasCredentials() ?? false,
+  };
+}
+
 /**
  * True when the user must add a credential before chatting. "local" never
  * gates (the host has a default and reachability is a runtime concern, not a

@@ -23,6 +23,7 @@ const pageLabel = (page: CompanionPage): string => ({
   memory: "Session Memory",
   "research-desk": "Research Desk",
   "research-workbench": "Research Workbench",
+  system: "System",
 })[page];
 
 export class QuickOptionsModal extends Modal {

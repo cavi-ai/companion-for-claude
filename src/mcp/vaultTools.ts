@@ -3,13 +3,12 @@ import type { McpToolDef } from "./protocol";
 import { tokenize } from "../context/search";
 import { fuseKeywordAndSemantic, keywordVaultSearch, type SemanticSearch } from "../context/hybridSearch";
 import { describeFilter, hitMetadata, matchesSearchFilter, parseSearchFilter, type SearchFilter } from "../context/searchFilter";
-import { ensureVaultFolder } from "../vault/vaultFiles";
+import { ensureVaultFolder, lookupRelationTargetType } from "../vault/vaultFiles";
 import { buildFrontmatter, normalizeTags, type FrontmatterData } from "../indexing/frontmatter";
 import { conform } from "../ontology/conform";
 import { describeOntology } from "../ontology/describe";
 import { validateProposal } from "../ontology/propose";
 import type { OntologyRegistry } from "../ontology/registry";
-import type { ResolvedType } from "../ontology/types";
 import { replaceSection } from "./edit";
 import { readFrontmatter } from "./frontmatterRead";
 import { applyPatch, type PatchTarget } from "./patch";
@@ -643,7 +642,7 @@ export class VaultTools {
       const safeProps: Record<string, unknown> = {};
       for (const [k, v] of Object.entries(properties ?? {})) if (!PROTECTED_KEYS.has(k)) safeProps[k] = v;
       const merged: Record<string, unknown> = { ...base, type: typeName, ...safeProps };
-      const r = conform(merged, resolved, (target) => this.lookupTargetType(registry, target));
+      const r = conform(merged, resolved, (target) => lookupRelationTargetType(this.app, registry, target));
       // Unknown type: fall back to the untyped legacy frontmatter — advisory, never blocking.
       data = resolved ? toFrontmatterData(r.fixed) : base;
       if (r.issues.length > 0) {
@@ -691,24 +690,9 @@ export class VaultTools {
       return "";
     }
     if (!fm || typeof fm.type !== "string") return "";
-    const r = conform(fm, registry.resolve(fm.type), (target) => this.lookupTargetType(registry, target));
+    const r = conform(fm, registry.resolve(fm.type), (target) => lookupRelationTargetType(this.app, registry, target));
     if (r.issues.length === 0) return "\nConformance: ok";
     return `\nConformance: ${r.issues.length} issue(s): ${r.issues.map((i) => i.message).join("; ")}`;
-  }
-
-  /** Resolve a relation target (basename/path as written) to that note's ResolvedType. */
-  private lookupTargetType(registry: OntologyRegistry, target: string): ResolvedType | undefined {
-    // Real Obsidian resolves linkpaths via metadataCache; the test fake doesn't
-    // implement that method, so fall back to a basename/path scan.
-    const cache: { getFirstLinkpathDest?: (linkpath: string, sourcePath: string) => TFile | null } = this.app.metadataCache;
-    const file =
-      typeof cache.getFirstLinkpathDest === "function"
-        ? cache.getFirstLinkpathDest(target, "")
-        : (this.app.vault.getMarkdownFiles().find((f) => f.basename === target || f.path === normalizePath(target)) ?? null);
-    if (!file) return undefined;
-    const fm = this.app.metadataCache.getFileCache(file)?.frontmatter as Record<string, unknown> | undefined;
-    const t = fm?.type;
-    return typeof t === "string" ? registry.resolve(t) : undefined;
   }
 
   private async append(path: string, content: string): Promise<string> {

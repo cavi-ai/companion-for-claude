@@ -108,7 +108,7 @@ export function createNodeCliRuntime(): CliRuntime {
     return shellPath;
   };
   let dirs: string[] = [];
-  const childEnv = (extra?: Record<string, string>): NodeJS.ProcessEnv => {
+  const childEnv = (extra?: Record<string, string>): typeof proc.env => {
     const env = { ...proc.env, ...extra };
     if (dirs.length > 0) env.PATH = dirs.join(":");
     return env;

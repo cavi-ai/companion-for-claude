@@ -2,6 +2,9 @@ import { App, FileSystemAdapter, MarkdownView, Notice, parseYaml, Platform, Plug
 import { ChatView, CHAT_VIEW_TYPE } from "./view/ChatView";
 import { MemoryView, MEMORY_VIEW_TYPE } from "./view/MemoryView";
 import { InboxView, INBOX_VIEW_TYPE } from "./view/InboxView";
+import { SystemView, SYSTEM_VIEW_TYPE, type SystemViewDeps } from "./view/SystemView";
+import { SafeFixModal } from "./view/SafeFixModal";
+import { HealthController } from "./health/controller";
 import { RelatedView, RELATED_VIEW_TYPE } from "./view/RelatedView";
 import { ResearchWorkbenchView, RESEARCH_WORKBENCH_VIEW_TYPE, ProjectCreateModal, QUESTION_INSTRUCTION, type ResearchWorkbenchTab } from "./view/ResearchWorkbenchView";
 import { ResearchDeskView, RESEARCH_DESK_VIEW_TYPE } from "./view/ResearchDeskView";
@@ -10,7 +13,7 @@ import { SimilarBasesView, SIMILAR_BASES_VIEW_TYPE } from "./view/SimilarBasesVi
 import { normalizeDeskPreferenceMap, type ResearchDeskPreferenceMap } from "./research/deskPreferences";
 import { ResearchRepository } from "./research/repository";
 import { createResearchRepository } from "./research/repositoryFactory";
-import { ensureVaultFolder, uniqueNotePath, writeOrReplaceFile } from "./vault/vaultFiles";
+import { ensureVaultFolder, lookupRelationTargetType, uniqueNotePath, writeOrReplaceFile } from "./vault/vaultFiles";
 import { listChatProjects } from "./projects/registry";
 import { ProjectPicker } from "./projects/ProjectPicker";
 import { projectSystemPrompt, projectNoteBody, type ChatProject } from "./projects/model";
@@ -103,7 +106,7 @@ import { SemanticController } from "./semantic/controller";
 import { isNamespacedData, resolveSettings } from "./settingsLoad";
 import { createSecretStore, hydrate, stripVerifiedSecrets, syncSecrets, type SecretField, type SecretStore } from "./secrets/store";
 import { migrateSecrets, migrationNotice } from "./secrets/migrate";
-import { needsCredentialSetup } from "./providers/setupState";
+import { credentialSetupInputs, needsCredentialSetup, type SetupInputs } from "./providers/setupState";
 import { pendingFirstRunPrompts, type FirstRunState } from "./onboarding/firstRun";
 import { wizardPlan, wizardPlanExplicit, WIZARD_DISMISSED_SETTINGS, type WizardState, type WizardStep } from "./onboarding/wizard";
 import { SetupWizardModal, type SetupWizardDependencies } from "./view/SetupWizardModal";
@@ -596,6 +599,7 @@ export default class ClaudeCompanionPlugin extends Plugin {
     this.registerView(CHAT_VIEW_TYPE, (leaf: WorkspaceLeaf) => new ChatView(leaf, this));
     this.registerView(MEMORY_VIEW_TYPE, (leaf: WorkspaceLeaf) => new MemoryView(leaf, this));
     this.registerView(INBOX_VIEW_TYPE, (leaf: WorkspaceLeaf) => new InboxView(leaf, this));
+    this.registerView(SYSTEM_VIEW_TYPE, (leaf: WorkspaceLeaf) => new SystemView(leaf, this, this.systemDeps()));
     this.registerView(RELATED_VIEW_TYPE, (leaf: WorkspaceLeaf) => new RelatedView(leaf, this));
     this.registerView(BUILD_VIEW_TYPE, (leaf: WorkspaceLeaf) => new BuildView(leaf, this.build().viewDependencies()));
     this.registerView(RESEARCH_DESK_VIEW_TYPE, (leaf: WorkspaceLeaf) => new ResearchDeskView(leaf, this.researchRepository(), {
@@ -851,6 +855,7 @@ export default class ClaudeCompanionPlugin extends Plugin {
       consolidateMemory: () => void this.memory().consolidateMemory(),
       enrichNoteAsSource: (file) => void this.enrichment().runEnrich(file),
       openSourceInbox: () => void this.activateInboxView(),
+      openSystem: () => void this.activateSystem(),
       exportClipperTemplates: () => void this.exportClipperTemplates(),
       seedOntology: () => void this.seedOntology(),
       openSetupWizard: () => this.openSetupWizard(),
@@ -1740,13 +1745,13 @@ export default class ClaudeCompanionPlugin extends Plugin {
     };
   }
 
+  private clipperStatus(): "not-set-up" | "current" | "update-available" {
+    const statuses = this.clipperSetups().map(({ status }) => status);
+    return statuses.includes("update-available") ? "update-available" : statuses.every((status) => status === "current") ? "current" : "not-set-up";
+  }
+
   private quickOptionsSnapshot(): QuickOptionsState {
-    const clipperStatuses = this.clipperSetups().map(({ status }) => status);
-    const clipperStatus = clipperStatuses.includes("update-available")
-      ? "update-available" as const
-      : clipperStatuses.every((status) => status === "current")
-        ? "current" as const
-        : "not-set-up" as const;
+    const clipperStatus = this.clipperStatus();
     const embeddingModel = this.settings.embeddingEngine === "builtin"
       ? builtinModelById(this.settings.builtinEmbeddingModel).hfRepo.split("/").at(-1) ?? "Built-in model"
       : this.settings.embeddingEngine === "ollama"
@@ -1826,6 +1831,9 @@ export default class ClaudeCompanionPlugin extends Plugin {
       case "rebuild-index":
       case "retry-index": await this.rebuildSemanticIndex(); return;
       case "consolidate-memory": await this.memory().consolidateMemory(); return;
+      case "refresh-system":
+        for (const leaf of this.app.workspace.getLeavesOfType(SYSTEM_VIEW_TYPE)) if (leaf.view instanceof SystemView) await leaf.view.render();
+        return;
       case "clippings-inbox": await this.activateInboxView(); return;
       case "review-inbox-failures": await this.activateInboxView(); return;
       case "utility-settings": this.openCompanionSettings(); return;
@@ -2393,6 +2401,11 @@ export default class ClaudeCompanionPlugin extends Plugin {
   }
 
   // ---------- first run ----------
+
+  /** Inputs for needsCredentialSetup; ChatView's send gate and System share them. */
+  credentialSetupInputs(): SetupInputs {
+    return credentialSetupInputs(this.router());
+  }
 
   /** Settings-level view of what a fresh install still owes the user. */
   private firstRunState(): FirstRunState {
@@ -3424,6 +3437,73 @@ export default class ClaudeCompanionPlugin extends Plugin {
       if (leaf) await leaf.setViewState({ type: INBOX_VIEW_TYPE, active: true });
     }
     if (leaf) await workspace.revealLeaf(leaf);
+  }
+
+  async activateSystem(): Promise<void> {
+    const { workspace } = this.app;
+    let leaf: WorkspaceLeaf | null = workspace.getLeavesOfType(SYSTEM_VIEW_TYPE)[0] ?? null;
+    if (!leaf) {
+      leaf = workspace.getRightLeaf(false);
+      if (leaf) await leaf.setViewState({ type: SYSTEM_VIEW_TYPE, active: true });
+    }
+    if (leaf) await workspace.revealLeaf(leaf);
+  }
+
+  private healthController(): HealthController {
+    const repo = (): ResearchRepository => this.researchRepository();
+    return new HealthController({
+      markdownFiles: () => this.app.vault.getMarkdownFiles().map((f) => ({ path: f.path, frontmatter: this.app.metadataCache.getFileCache(f)?.frontmatter })),
+      unresolvedLinks: () => this.app.metadataCache.unresolvedLinks,
+      ontology: () => this.ontology(),
+      lookupTargetType: (target) => { const registry = this.ontology(); return registry ? lookupRelationTargetType(this.app, registry, target) : undefined; },
+      listProjects: () => repo().listProjects(),
+      auditProject: async (path) => auditProject(await repo().loadProject(path)),
+      index: async () => {
+        const indexer = this.indexer();
+        const failed = this.activity.snapshot().records
+          .filter((r) => r.kind === "semantic-index" && r.state === "needs-attention")
+          .sort((a, b) => b.updatedAt - a.updatedAt)[0]?.details ?? [];
+        return {
+          enabled: this.settings.semanticEnabled,
+          built: indexer ? (await indexer.stats()).notes > 0 : false,
+          failed: failed.map((d) => ({ path: d.label, message: d.message })),
+        };
+      },
+      inboxPending: () => this.inboxPendingCount(),
+      companion: () => ({
+        connection: { backend: this.router().chatBackend, needsCredential: needsCredentialSetup(this.credentialSetupInputs()) },
+        activity: this.activity.snapshot().records
+          .filter((r) => r.state === "needs-attention")
+          .map((r) => ({ id: r.id, title: r.title, failed: r.failed, recovery: r.recovery.map(({ id, label }) => ({ id, label })) })),
+        bridge: { applicable: !Platform.isMobile, enabled: this.settings.mcpEnabled, running: this.mcpRunning(), port: this.settings.mcpPort },
+        clipper: { applicable: this.settings.sourceCaptureEnabled, status: this.clipperStatus() },
+      }),
+      now: () => new Date().toISOString(),
+    });
+  }
+
+  private systemDeps(): SystemViewDeps {
+    const controller = this.healthController();
+    return {
+      scan: () => controller.scan(),
+      safeFixes: () => controller.safeFixes(),
+      openNote: (path) => void this.app.workspace.openLinkText(path, ""),
+      openResearchDesk: (path) => this.activateResearchDesk(path),
+      buildIndex: () => this.rebuildSemanticIndex(),
+      catchUpIndex: () => this.semantic().catchUpIndex(),
+      openInbox: () => this.activateInboxView(),
+      openSetupWizard: () => this.openSetupWizard(),
+      openSettings: () => this.openCompanionSettings(),
+      openClipperSetup: () => this.openClipperSetup(),
+      runActivityRecovery: (activityId, id) => {
+        const chrome = this.companionChrome();
+        return chrome.runActivityRecovery ? chrome.runActivityRecovery(activityId, id) : chrome.run({ id, page: "system", activityId });
+      },
+      reviewSafeFixes: (fixes, done) => new SafeFixModal(this.app, fixes, async (path, patch) => {
+        const file = this.app.vault.getFileByPath(path);
+        if (file) await this.app.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => { Object.assign(fm, patch); });
+      }, () => done()).open(),
+    };
   }
 
   /** Inbox-view entry point: guard + consent + enrich, then refresh open inbox views. */
