@@ -10,7 +10,7 @@ const snapshot = (): QuickOptionsState => ({
   sourceInboxFolder: "Clippings", sourceCaptureEnabled: true, clipperStatus: "not-set-up",
   semanticEnabled: true, embeddingEngine: "builtin", embeddingModel: "EmbeddingGemma",
   embeddingHealth: "Ready", indexHealth: "Ready", memoryEnabled: true, memoryFolder: "Memory",
-  memoryAutoConsolidate: true, discoveryEnabled: true, discoveryReranker: "current",
+  memoryAutoConsolidate: true, discoveryEnabled: true, researchModel: "chat",
 });
 
 describe("renderCompanionChrome", () => {

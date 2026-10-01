@@ -1,6 +1,7 @@
 import { parse } from "yaml";
 import { describe, expect, it, vi } from "vitest";
 import { ResearchRepository, type ImportSourceInput, type ResearchRepositoryIO } from "../../src/research/repository";
+import { isStaleEvidence } from "../../src/research/graph";
 import { draftMarkdownFingerprint, parseDraftSections } from "../../src/research/draftSections";
 
 class MemoryIO implements ResearchRepositoryIO {
@@ -46,7 +47,8 @@ class MemoryIO implements ResearchRepositoryIO {
     mutator(frontmatter);
     let block = match[1] ?? "";
     for (const [key, value] of Object.entries(frontmatter)) {
-      if (before[key] !== value) block = block.replace(new RegExp(`^${key}:.*(?:\n  - .*)*`, "m"), `${key}: ${Array.isArray(value) ? JSON.stringify(value) : String(value)}`);
+      if (before[key] !== value && !(key in before)) block += `\n${key}: ${JSON.stringify(value)}`;
+      else if (before[key] !== value) block = block.replace(new RegExp(`^${key}:.*(?:\n  - .*)*`, "m"), `${key}: ${Array.isArray(value) ? JSON.stringify(value) : String(value)}`);
     }
     this.files.set(path, content.replace(match[0], `---\n${block}\n---`));
   }
@@ -403,5 +405,84 @@ describe("ResearchRepository", () => {
     await expect(repo.importSource("Research/AI Reviews/Other.md", { title: "Paper", sourceKind: "web" })).rejects.toThrow("Project path must end with /Project.md");
     io.files.set("Research/AI Reviews/Sources/Paper.md", "user content");
     await expect(repo.importSource(project.path, { title: "Paper", sourceKind: "web", url: "https://new.test" })).rejects.toThrow("Research record already exists");
+  });
+
+  describe("completing review work", () => {
+    async function staleSetup() {
+      const io = new MemoryIO();
+      const repo = new ResearchRepository(io);
+      const project = await repo.createProject(projectInput);
+      const asset = "Files/Paper.pdf";
+      io.binaryFiles.set(asset, new Uint8Array([1]));
+      const source = await repo.importSource(project.path, { title: "Paper", sourceKind: "pdf", asset, capturedContent: new Uint8Array([1]) });
+      if (source.kind !== "created") throw new Error("expected source");
+      const evidence = await repo.createEvidence({ project: project.path, source: source.path, title: "Stale result", excerpt: "Quote.", locatorKind: "page", locatorValue: "1" });
+      io.binaryFiles.set(asset, new Uint8Array([2]));
+      return { io, repo, project, asset, evidence };
+    }
+
+    it("reviewing stale evidence re-stamps the fingerprint and clears staleness", async () => {
+      const { repo, project, evidence } = await staleSetup();
+      const before = await repo.loadProject(project.path, { refreshBinaryFingerprints: true });
+      expect(isStaleEvidence(before.evidence[0]!, before.sources[0])).toBe(true);
+      await repo.reviewEvidence(evidence.path, "reviewed");
+      const after = await repo.loadProject(project.path, { refreshBinaryFingerprints: true });
+      expect(isStaleEvidence(after.evidence[0]!, after.sources[0])).toBe(false);
+      expect(after.evidence[0]!.reviewState).toBe("reviewed");
+    });
+
+    it("rejecting keeps the old fingerprint", async () => {
+      const { repo, project, evidence } = await staleSetup();
+      await repo.reviewEvidence(evidence.path, "rejected");
+      const after = await repo.loadProject(project.path, { refreshBinaryFingerprints: true });
+      expect(after.evidence[0]!.sourceFingerprint).toBe(evidence.sourceFingerprint);
+    });
+
+    it("throws when the source file can't be read", async () => {
+      const { io, repo, asset, evidence } = await staleSetup();
+      io.binaryFiles.delete(asset);
+      await expect(repo.reviewEvidence(evidence.path, "reviewed")).rejects.toThrow("The source file can't be read, so this passage can't be re-checked. Restore the file and try again.");
+    });
+
+    it("updates a locator and validates it", async () => {
+      const io = new MemoryIO();
+      const repo = new ResearchRepository(io);
+      const project = await repo.createProject(projectInput);
+      const source = await repo.importSource(project.path, { title: "Paper", sourceKind: "vault" });
+      if (source.kind !== "created") throw new Error("expected source");
+      const evidence = await repo.createEvidence({ project: project.path, source: source.path, title: "No locator", excerpt: "Quote." });
+      await expect(repo.updateEvidenceLocator(evidence.path, "chapter" as never, "3")).rejects.toThrow(/locator kind/i);
+      await expect(repo.updateEvidenceLocator(evidence.path, "page", "  ")).rejects.toThrow(/empty/i);
+      await repo.updateEvidenceLocator(evidence.path, "page", "12");
+      const reloaded = (await repo.loadProject(project.path)).evidence[0]!;
+      expect(reloaded.locatorKind).toBe("page");
+      expect(reloaded.locatorValue).toBe("12");
+    });
+
+    it("reviews a claim and appends a limitation once", async () => {
+      const io = new MemoryIO();
+      const repo = new ResearchRepository(io);
+      const project = await repo.createProject(projectInput);
+      const claim = await repo.createClaim({ project: project.path, title: "Claim", proposition: "Result." });
+      await repo.reviewClaim(claim.path, "reviewed", "Small sample");
+      await repo.reviewClaim(claim.path, "reviewed", "Small sample");
+      const reloaded = (await repo.loadProject(project.path)).claims[0]!;
+      expect(reloaded.reviewState).toBe("reviewed");
+      expect(reloaded.limitations).toEqual(["Small sample"]);
+      await expect(repo.reviewClaim(claim.path, "bogus" as never)).rejects.toThrow(/review state/i);
+    });
+
+    it("writes the limitation into the claim note body, replacing the earlier callout", async () => {
+      const io = new MemoryIO();
+      const repo = new ResearchRepository(io);
+      const project = await repo.createProject(projectInput);
+      const claim = await repo.createClaim({ project: project.path, title: "Claim", proposition: "Result." });
+      await repo.reviewClaim(claim.path, "reviewed", "Small sample");
+      await repo.reviewClaim(claim.path, "reviewed", "Only adults");
+      const body = io.files.get(claim.path)!;
+      expect(body.match(/\[!warning\]- Limitations/g)).toHaveLength(1);
+      expect(body).toContain("> - Small sample\n> - Only adults");
+      expect(body.indexOf("Result.")).toBeLessThan(body.indexOf("Limitations"));
+    });
   });
 });

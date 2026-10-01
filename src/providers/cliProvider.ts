@@ -4,6 +4,8 @@ import type { CompletionRequest, Provider, ProviderStatus } from "./types";
 import type { StreamHandlers } from "../types";
 import type { CliRuntime } from "../cli/runtime";
 import type { CliBackend } from "../cli/backends/types";
+import type { CliChild } from "../cli/session";
+import { runCliCompletion } from "../cli/completion";
 
 export interface CliProbe {
   executable: string;
@@ -22,7 +24,9 @@ export class CliProvider implements Provider {
   readonly supportsTools = true;
   private cached: CliProbe | null = null;
 
-  constructor(private readonly backend: CliBackend, private readonly runtime: CliRuntime | null) {
+  private readonly active = new Set<CliChild>();
+
+  constructor(private readonly backend: CliBackend, private readonly runtime: CliRuntime | null, private readonly cwd?: () => string | null) {
     this.id = backend.id;
     this.label = backend.label;
   }
@@ -72,12 +76,42 @@ export class CliProvider implements Provider {
     return this.refresh();
   }
 
-  stream(_req: CompletionRequest, handlers: StreamHandlers): Promise<void> {
-    handlers.onError?.(new Error(`The ${this.label} backend streams through its turn runner, not the provider.`));
-    return Promise.resolve();
+  cancelAll(): void {
+    for (const child of [...this.active]) child.kill("SIGTERM");
+    this.active.clear();
   }
 
-  complete(): Promise<string> {
-    return Promise.reject(new Error(`The ${this.label} backend streams through its turn runner, not the provider.`));
+  private async run(req: CompletionRequest, onText?: (delta: string) => void): Promise<string> {
+    const runtime = this.runtime;
+    if (!runtime) throw new Error(this.desktopOnlyMessage());
+    if (this.executable() === null) await this.refresh();
+    const exe = this.executable();
+    if (exe === null) throw new Error(this.cached === null ? this.notFoundMessage() : this.notSignedInMessage());
+    const cwd = this.cwd?.() ?? null;
+    if (cwd === null) throw new Error(this.desktopOnlyMessage());
+    return runCliCompletion({
+      backend: this.backend,
+      spawn: (argv, env) => {
+        const child = runtime.spawn(exe, argv, cwd, env);
+        this.active.add(child);
+        child.on("exit", () => this.active.delete(child));
+        return child;
+      },
+      writeSystemPromptFile: (t) => runtime.writeSystemPromptFile(t),
+      removeFile: (p) => runtime.removeFile(p),
+    }, req, cwd, onText);
+  }
+
+  async stream(req: CompletionRequest, handlers: StreamHandlers): Promise<void> {
+    try {
+      const full = await this.run(req, handlers.onText);
+      handlers.onDone?.(full);
+    } catch (e) {
+      handlers.onError?.(e instanceof Error ? e : new Error(String(e)));
+    }
+  }
+
+  complete(req: CompletionRequest): Promise<string> {
+    return this.run(req);
   }
 }

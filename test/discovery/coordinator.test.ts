@@ -23,7 +23,7 @@ function deferred<T>() {
 
 function harness(overrides: Partial<DiscoveryCoordinatorDeps> = {}) {
   const imports: unknown[] = [];
-  const deps: DiscoveryCoordinatorDeps = {
+  const deps = {
     openAlex: { search: vi.fn(async () => ({ items: [work("W1", { doi: "10.1/x" })], nextCursor: "next" })), expand: vi.fn(async ({ direction }) => ({ items: [work("W2")], nextCursor: direction })) },
     crossref: { lookupDoi: vi.fn(async () => ({ adapter: "crossref", externalId: "10.1/x", doi: "10.1/x", title: "Enriched", authors: ["Ada"] })) },
     arxiv: { lookup: vi.fn(async () => undefined) },
@@ -37,7 +37,8 @@ function harness(overrides: Partial<DiscoveryCoordinatorDeps> = {}) {
     localAvailable: async () => false,
     now: () => new Date("2026-01-01T00:00:00Z"),
     ...overrides,
-  };
+  } as DiscoveryCoordinatorDeps;
+  deps.chat ??= () => (deps.chatBackend() === "local" ? deps.local() : deps.anthropic());
   return { deps, coordinator: new DiscoveryCoordinator(deps), imports };
 }
 

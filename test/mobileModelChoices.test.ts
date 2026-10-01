@@ -22,7 +22,7 @@ describe("mobileModelChoices", () => {
       openaiCompatModel: "",
     });
 
-    expect(choices.filter((choice) => isMobileModelChoiceActive(choice, "anthropic", "claude-sonnet-5")))
-      .toEqual([{ value: "claude-sonnet-5", label: "Claude Sonnet 5", provider: "claude" }]);
+    expect(choices.filter((choice) => isMobileModelChoiceActive(choice, "anthropic", "claude-sonnet-5-5")))
+      .toEqual([{ value: "claude-sonnet-5-5", label: "Claude Sonnet 5.5", provider: "claude" }]);
   });
 });

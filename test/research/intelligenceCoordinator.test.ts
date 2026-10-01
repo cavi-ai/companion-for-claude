@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { Provider } from "../../src/providers/types";
 import { IntelligenceCoordinator, type IntelligenceCoordinatorDeps, type IntelligenceNarratorMode } from "../../src/research/intelligenceCoordinator";
 import { buildProjectSnapshot } from "../../src/research/graph";
@@ -26,7 +26,7 @@ const findings: IntelligenceFinding[] = [{
 
 type HarnessOptions = {
   mode: IntelligenceNarratorMode;
-  chatBackend: "claude" | "local" | "auto";
+  chatBackend: "claude" | "local" | "auto" | "claude-cli";
   anthropicResults?: Array<string | Error | { status: number; message: string }>;
   ollamaResults?: Array<string | Error | { status: number; message: string }>;
   localAvailable?: boolean;
@@ -56,6 +56,7 @@ function harness(options: HarnessOptions) {
     mode: () => mode, chatBackend: () => options.chatBackend,
     anthropic: () => ({ provider: anthropic, model: anthropicModel }),
     local: () => ({ provider: ollama, model: localModel }),
+    chat: () => options.chatBackend === "local" ? { provider: ollama, model: localModel } : { provider: anthropic, model: anthropicModel },
     localAvailable: async () => options.localAvailable ?? true,
     maxTokens: () => 777,
   };
@@ -68,6 +69,19 @@ function harness(options: HarnessOptions) {
 }
 
 describe("IntelligenceCoordinator", () => {
+  it("routes current mode through the chat provider and claude mode through Anthropic", async () => {
+    const cli = { ...harness({ mode: "current", chatBackend: "claude-cli" }) };
+    const cliProvider = { id: "claude-cli", label: "Claude Code", hasCredentials: () => true, stream: async () => undefined, test: async () => ({ ok: true, detail: "ok" }), complete: vi.fn(async () => valid) } as unknown as Provider;
+    cli.deps.chat = () => ({ provider: cliProvider, model: "cli-model" });
+    const coordinator = new IntelligenceCoordinator(cli.deps);
+    const state = await coordinator.analyze(cli.snapshot, cli.findings);
+    expect(state).toEqual(expect.objectContaining({ providerId: "claude-cli", model: "cli-model" }));
+    expect(cli.calls).toEqual([]);
+    const strict = harness({ mode: "claude", chatBackend: "claude-cli" });
+    await strict.coordinator.analyze(strict.snapshot, strict.findings);
+    expect(strict.calls).toEqual(["anthropic"]);
+  });
+
   it.each([
     ["current", "local", "ollama"], ["current", "claude", "anthropic"], ["claude", "local", "anthropic"], ["local", "claude", "ollama"],
   ] as const)("routes %s with chat %s to %s", async (mode, chatBackend, expected) => {

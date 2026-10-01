@@ -31,6 +31,14 @@ export interface CliArgvInput {
   systemPromptText?: string;
 }
 
+export interface CliCompletionArgvInput {
+  model: string;
+  cwd: string;
+  systemPromptFile?: string;
+  message?: string;
+  systemPromptText?: string;
+}
+
 /**
  * `parseLine` returns an array, not the single `CliEvent | null` in the brief: Claude's
  * stream-json assistant message can carry several tool_use blocks in one line, and
@@ -50,6 +58,8 @@ export interface CliBackend {
   readonly signInHint: string;
   probe(run: (argv: string[]) => Promise<{ stdout: string; stderr?: string; code: number }>): Promise<CliAuthStatus>;
   buildArgv(input: CliArgvInput): string[];
+  /** One tool-less, MCP-less, single-turn argv for buffered completions. */
+  buildCompletionArgv(input: CliCompletionArgvInput): string[];
   env?(input: CliArgvInput): Record<string, string>;
   parseLine(line: string): CliEvent[];
   /** The stream-json line (or backend-native message) for the request's last user message. Backends without stdin messaging return null; the caller appends the message to argv/env instead. */

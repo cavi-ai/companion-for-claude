@@ -131,6 +131,12 @@ describe("buildRequestBody", () => {
     },
   );
 
+  it("maps a utility call's disabled thinking to between_tools on Sonnet 5.5 and caps effort at high", () => {
+    const body = JSON.parse(buildRequestBody({ ...baseReq, model: "claude-sonnet-5-5", thinking: { type: "disabled" }, thinkingDisplay: "omitted", outputConfig: { effort: "xhigh" } }, false, apiKeyAuth));
+    expect(body.thinking).toEqual({ type: "between_tools" });
+    expect(body.output_config).toEqual({ effort: "high" });
+  });
+
   it("still sends disabled thinking to models that accept it", () => {
     const body = JSON.parse(buildRequestBody({ ...baseReq, model: "claude-sonnet-5", thinking: { type: "disabled" } }, false, apiKeyAuth));
     expect(body.thinking).toEqual({ type: "disabled" });

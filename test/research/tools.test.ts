@@ -6,6 +6,8 @@ function repository() {
     loadProject: vi.fn().mockResolvedValue({ project: { path: "P/Project.md", title: "P", question: "Why?", stage: "frame", status: "active" }, sources: [], evidence: [], claims: [], questions: [], documents: [], issues: [], health: { claimCount: 0, trustedSupportCount: 0, supportedClaimCount: 0 } }),
     createEvidence: vi.fn().mockResolvedValue({ path: "P/Evidence/E.md" }),
     reviewEvidence: vi.fn(),
+    updateEvidenceLocator: vi.fn().mockResolvedValue({ path: "P/Evidence/E.md", locatorKind: "page", locatorValue: "4" }),
+    reviewClaim: vi.fn().mockResolvedValue({ path: "P/Claims/C.md", reviewState: "reviewed", limitations: ["Small sample"] }),
     createClaim: vi.fn().mockResolvedValue({ path: "P/Claims/C.md" }),
     linkClaimEvidence: vi.fn().mockResolvedValue(undefined),
     createOutline: vi.fn().mockResolvedValue({ path: "P/Documents/Outline.md" }),
@@ -47,6 +49,35 @@ describe("ResearchTools", () => {
     repo.reviewEvidence.mockResolvedValue({ path: "P/Evidence/E.md", reviewState: "reviewed" });
     expect(JSON.parse(await new ResearchTools(repo as never).call("research_evidence_review", { evidence: "P/Evidence/E.md", review_state: "reviewed" }))).toEqual({ path: "P/Evidence/E.md", review_state: "reviewed" });
     await expect(new ResearchTools(repo as never).call("research_evidence_review", { evidence: "P/Evidence/E.md", review_state: "proposed" })).rejects.toThrow(/review state/i);
+  });
+
+  it("defines and gates the locate and claim review tools", async () => {
+    const { RESEARCH_WRITE_TOOLS } = await import("../../src/research/tools");
+    const names = new ResearchTools(repository() as never).definitions().map(({ name }) => name);
+    expect(names).toEqual(expect.arrayContaining(["research_evidence_locate", "research_claim_review"]));
+    expect(RESEARCH_WRITE_TOOLS.has("research_evidence_locate")).toBe(true);
+    expect(RESEARCH_WRITE_TOOLS.has("research_claim_review")).toBe(true);
+  });
+
+  it("locates evidence, applying the locator before review, and validates enums", async () => {
+    const repo = repository();
+    repo.reviewEvidence.mockResolvedValue({ path: "P/Evidence/E.md", reviewState: "reviewed" });
+    const tools = new ResearchTools(repo as never);
+    await tools.call("research_evidence_locate", { evidence: "P/Evidence/E.md", locator_kind: "page", locator_value: "4" });
+    expect(repo.updateEvidenceLocator).toHaveBeenCalledWith("P/Evidence/E.md", "page", "4");
+    await expect(tools.call("research_evidence_locate", { evidence: "P/Evidence/E.md", locator_kind: "chapter", locator_value: "4" })).rejects.toThrow(/locator kind/i);
+    repo.updateEvidenceLocator.mockClear();
+    await tools.call("research_evidence_review", { evidence: "P/Evidence/E.md", review_state: "reviewed", locator_kind: "page", locator_value: "4" });
+    expect(repo.updateEvidenceLocator.mock.invocationCallOrder[0]!).toBeLessThan(repo.reviewEvidence.mock.invocationCallOrder[0]!);
+  });
+
+  it("reviews claims with an optional limitation and validates the state", async () => {
+    const repo = repository();
+    const tools = new ResearchTools(repo as never);
+    const result = JSON.parse(await tools.call("research_claim_review", { claim: "P/Claims/C.md", review_state: "reviewed", limitation: "Small sample" }));
+    expect(repo.reviewClaim).toHaveBeenCalledWith("P/Claims/C.md", "reviewed", "Small sample");
+    expect(result.review_state).toBe("reviewed");
+    await expect(tools.call("research_claim_review", { claim: "P/Claims/C.md", review_state: "bogus" })).rejects.toThrow(/review state/i);
   });
 
   it("validates and delegates project creation and metadata/text source import", async () => {

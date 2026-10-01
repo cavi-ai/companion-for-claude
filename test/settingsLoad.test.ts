@@ -22,7 +22,6 @@ const LEGACY_FLAT = {
   context: { activeNote: true, selection: false, linkedNotes: true, searchVault: false },
   contextCharBudget: 24000,
   maxContextNotes: 6,
-  artifactHeight: 640,
   maxConversations: 200,
   ollamaHost: "http://localhost:11434",
   ollamaModel: "mistral",
@@ -39,7 +38,27 @@ const LEGACY_FLAT = {
   embeddingModel: "nomic-embed-text",
 };
 
+describe("resolveSettings research model migration", () => {
+  it("moves the narrator choice to researchModel and drops both legacy keys", () => {
+    const out = resolveSettings({ settings: { intelligenceNarrator: "local", discoveryReranker: "claude" } as never });
+    expect(out.researchModel).toBe("local");
+    expect(out).not.toHaveProperty("intelligenceNarrator");
+    expect(out).not.toHaveProperty("discoveryReranker");
+  });
+  it("falls to the reranker when the narrator was current, and keeps an existing researchModel", () => {
+    expect(resolveSettings({ settings: { intelligenceNarrator: "current", discoveryReranker: "disabled" } as never }).researchModel).toBe("off");
+    expect(resolveSettings({ settings: { researchModel: "claude", intelligenceNarrator: "local" } as never }).researchModel).toBe("claude");
+    expect(resolveSettings(null).researchModel).toBe("chat");
+  });
+});
+
 describe("resolveSettings with legacy configs", () => {
+  it("defaults to Sonnet 5.5 and moves a stored Sonnet 5 selection to it", () => {
+    expect(DEFAULT_SETTINGS.model).toBe("claude-sonnet-5-5");
+    expect(resolveSettings({ settings: { model: "claude-sonnet-5" } } as never).model).toBe("claude-sonnet-5-5");
+    expect(resolveSettings({ settings: { model: "claude-opus-4-8" } } as never).model).toBe("claude-opus-4-8");
+  });
+
   it("treats the flat shape as settings, not namespaced data", () => {
     expect(isNamespacedData(LEGACY_FLAT)).toBe(false);
     expect(isNamespacedData({ settings: { apiKey: "x" } })).toBe(true);
@@ -60,7 +79,18 @@ describe("resolveSettings with legacy configs", () => {
     expect(s.artifactBaseTags).toEqual(["claude", "artifact"]);
     // New-feature defaults fill in.
     expect(s.mcpClientServers).toEqual([]);
-    expect(s.discoveryMaxResults).toBe(DEFAULT_SETTINGS.discoveryMaxResults);
+  });
+
+  it("still reads enrichmentDiagnostics from stored data", () => {
+    expect(resolveSettings({ settings: { enrichmentDiagnostics: true } }).enrichmentDiagnostics).toBe(true);
+  });
+
+  it("ignores removed tuning keys in stored data", () => {
+    const stored = { artifactHeight: 900, discoveryMaxResults: 99, discoveryExpansionLimit: 7, discoveryCacheHours: 3, cloudRoutineBetaHeader: "x" };
+    for (const raw of [stored, { settings: stored }]) {
+      const settings = resolveSettings(raw as never);
+      for (const key of Object.keys(stored)) expect(settings).not.toHaveProperty(key);
+    }
   });
 
   it("keeps a customized system prompt verbatim", () => {
@@ -83,6 +113,7 @@ describe("resolveSettings with legacy configs", () => {
       saveSettings: async () => {},
       secrets: () => unavailableStore(),
       router: () => ({
+      chatProvider: () => ({ provider: { id: "anthropic", label: "Claude (Anthropic API)" }, model: "claude-test" }), providerLabel: () => "Claude API", 
         anthropic: { hasCredentials: () => true },
         ollama: { listModels: async () => [], capabilities: async () => [], test: async () => ({ ok: true, detail: "" }) },
         openaiCompat: { test: async () => ({ ok: true, detail: "" }) },

@@ -36,7 +36,7 @@ describe("ResearchDeskView", () => {
     await view.setProjectPath(project.path);
     expect(elements(view, "h2")[0]?.textContent).toBe("Continuity");
     expect(elements(view, ".cc-desk-next")).toHaveLength(1);
-    expect(elements(view, ".cc-desk-next-reason")[0]?.textContent).toMatch(/changed after this evidence was reviewed/i);
+    expect(elements(view, ".cc-desk-next-reason")[0]?.textContent).toMatch(/source changed/i);
     expect(elements(view, ".cc-desk-stage-step")).toHaveLength(7);
     expect(elements(view, ".is-current")).toHaveLength(1);
     expect(elements(view, ".cc-desk-document-progress")[0]?.getAttribute("aria-valuenow")).toBe("50");
@@ -50,6 +50,24 @@ describe("ResearchDeskView", () => {
     click(elements(view, "button").find(({ textContent }) => textContent === "Ask Companion"));
     await Promise.resolve();
     expect(askCompanion).toHaveBeenCalledWith(project.path);
+  });
+
+  it("shows the research model chip and opens settings from it", async () => {
+    const openResearchSettings = vi.fn();
+    const status = { model: "chat" as const, providerLabel: "Claude Code", modelId: "sonnet", available: true };
+    const make = (researchStatus: () => typeof status) => new ResearchDeskView(new WorkspaceLeaf(), { listProjects: async () => [project], loadProject: async () => snapshot } as never, { preferencesFor: () => ({ dismissedActionIds: [] }), updatePreferences: vi.fn(), openWorkbench: vi.fn(), researchStatus, openResearchSettings });
+    const view = make(() => status);
+    await view.setProjectPath(project.path);
+    const chip = elements(view, ".cc-research-model-chip")[0];
+    expect(chip?.textContent).toBe("AI · Claude Code · sonnet");
+    expect(chip?.getAttribute("aria-label")).toBe("Research model: AI · Claude Code · sonnet. Open settings");
+    click(chip);
+    expect(openResearchSettings).toHaveBeenCalledOnce();
+    const down = make(() => ({ ...status, available: false }));
+    await down.setProjectPath(project.path);
+    const unavailable = elements(down, ".cc-research-model-chip")[0];
+    expect(unavailable?.textContent).toBe("AI · set up Claude Code");
+    expect(unavailable?.classList.has("is-unavailable")).toBe(true);
   });
 
   it("supports project switching plus dismiss and pin controls without implicit work", async () => {
@@ -97,10 +115,52 @@ describe("ResearchDeskView", () => {
 
     await view.setProjectPath(project.path);
 
-    expect(elements(view, ".cc-desk-next-reason")[0]?.textContent).toMatch(/could not be read/i);
+    expect(elements(view, ".cc-desk-next-reason")[0]?.textContent).toMatch(/can't be read/i);
     expect(elements(view, ".cc-desk-next-reason")[0]?.textContent).not.toMatch(/source changed/i);
     click(elements(view, "button").find(({ textContent }) => textContent === "Start this task"));
     await Promise.resolve();
     expect(openWorkbench).toHaveBeenCalledWith(project.path, "Audit", "Research/P/Sources/S.md");
+  });
+
+  it("runs the top action through the shared actions instead of switching tabs", async () => {
+    const actions = { run: vi.fn(async () => undefined), createProject: vi.fn(), addSource: vi.fn(), extractEvidence: vi.fn(), createClaim: vi.fn(), buildOutline: vi.fn() };
+    const openWorkbench = vi.fn(async () => undefined);
+    const view = new ResearchDeskView(new WorkspaceLeaf(), { listProjects: async () => [project], loadProject: async () => snapshot, loadDraftSections: async () => ({ issues: [], sections: [] }) } as never, { preferencesFor: () => ({ dismissedActionIds: [] }), updatePreferences: vi.fn(), openWorkbench, actions: actions as never });
+    await view.setProjectPath(project.path);
+    click(elements(view, "button").find(({ textContent }) => textContent === "Start this task"));
+    await Promise.resolve();
+    expect(actions.run).toHaveBeenCalledWith(expect.objectContaining({ id: "stale-evidence:Research/P/Evidence/E.md", run: "review-evidence" }), snapshot);
+    expect(openWorkbench).not.toHaveBeenCalled();
+    click(elements(view, ".cc-desk-attention-row")[0]);
+    await Promise.resolve();
+    expect(actions.run).toHaveBeenCalledTimes(2);
+    expect(elements(view, "span").map(({ textContent }) => textContent)).toContain("Start →");
+    click(elements(view, "button").find(({ textContent }) => textContent === "Add source"));
+    expect(actions.addSource).toHaveBeenCalledWith(project.path);
+    click(elements(view, "button").find(({ textContent }) => textContent === "Develop claim"));
+    expect(actions.createClaim).toHaveBeenCalledWith(snapshot);
+    click(elements(view, "button").find(({ textContent }) => textContent === "Extract evidence"));
+    expect(actions.extractEvidence).toHaveBeenCalledWith(snapshot, "Research/P/Sources/S.md");
+  });
+
+  it("disables quick actions that have nothing to work on and offers Build outline before a draft exists", async () => {
+    const bare = buildProjectSnapshot(project.path, [project], []);
+    const view = new ResearchDeskView(new WorkspaceLeaf(), { listProjects: async () => [project], loadProject: async () => bare } as never, { preferencesFor: () => ({ dismissedActionIds: [] }), updatePreferences: vi.fn(), openWorkbench: vi.fn(), actions: {} as never });
+    await view.setProjectPath(project.path);
+    const button = (label: string) => elements(view, "button").find(({ textContent }) => textContent === label) as unknown as { disabled?: boolean; getAttribute(name: string): string | null };
+    expect(button("Extract evidence").disabled).toBe(true);
+    expect(button("Extract evidence").getAttribute("title")).toBe("Add a source first");
+    expect(button("Develop claim").disabled).toBe(true);
+    expect(button("Develop claim").getAttribute("title")).toBe("Check a passage first");
+    expect(button("Build outline")).toBeDefined();
+    expect(button("Continue draft")).toBeUndefined();
+  });
+
+  it("creates a project from the empty state through the shared actions", async () => {
+    const actions = { createProject: vi.fn() };
+    const view = new ResearchDeskView(new WorkspaceLeaf(), { listProjects: async () => [] } as never, { preferencesFor: () => ({ dismissedActionIds: [] }), updatePreferences: vi.fn(), openWorkbench: vi.fn(), actions: actions as never });
+    await view.render();
+    click(elements(view, "button").find(({ textContent }) => textContent === "Create project"));
+    expect(actions.createProject).toHaveBeenCalledOnce();
   });
 });

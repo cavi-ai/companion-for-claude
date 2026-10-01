@@ -2,6 +2,8 @@ import { setIcon, Notice, Modal, App } from "obsidian";
 import { validateArtifactInteractivity } from "./parse";
 import type { ArtifactOpenTarget } from "../types";
 
+export const ARTIFACT_HEIGHT = 640;
+
 /** Sandbox CSP shared by the inline iframe and the fullscreen modal: scripts run
  *  but can't reach the vault, cookies, forms, or the network. `connect-src 'none'`
  *  + data/blob-only assets is the load-bearing guarantee (blocks fetch/XHR/beacon

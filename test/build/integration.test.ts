@@ -2,6 +2,7 @@ import { App, FakeElement, Platform, TFile, clearNotices, getLastOpenedModal, ge
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import ClaudeCompanionPlugin from "../../src/main";
 import { DEFAULT_SETTINGS } from "../../src/types";
+import { CLOUD_ROUTINE_BETA_HEADER } from "../../src/cloud/routines";
 import type { BuildRun } from "../../src/build/run";
 
 const flush = async (): Promise<void> => { await Promise.resolve(); await Promise.resolve(); };
@@ -70,7 +71,6 @@ describe("managed Build handoff", () => {
       cloudDispatchEnabled: true,
       cloudRoutineFireUrl: "https://api.anthropic.com/v1/claude_code/routines/r1/fire",
       cloudRoutineToken: "routine-token",
-      cloudRoutineBetaHeader: "beta",
       cloudReplyRepo: "cavi-ai/vault",
       cloudReplyBranch: "main",
       cloudReplyFolder: "Claude/Replies",
@@ -88,7 +88,7 @@ describe("managed Build handoff", () => {
         dispatchConfig: () => ({
           fireUrl: plugin.settings.cloudRoutineFireUrl,
           token: plugin.settings.cloudRoutineToken,
-          betaHeader: plugin.settings.cloudRoutineBetaHeader,
+          betaHeader: CLOUD_ROUTINE_BETA_HEADER,
         }),
         repliesConfig: () => ({
           repo: plugin.settings.cloudReplyRepo,

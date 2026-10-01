@@ -1,5 +1,7 @@
+import { EventEmitter } from "node:events";
 import { describe, it, expect, vi } from "vitest";
 import { ProviderRouter, migrateUtilityBackend } from "../../src/providers/router";
+import { resolveModelId } from "../../src/claude/models";
 import { DEFAULT_SETTINGS, type PluginSettings } from "../../src/types";
 import type { Provider } from "../../src/providers/types";
 
@@ -346,6 +348,21 @@ describe("ProviderRouter — claude-cli backend", () => {
     expect(r.chatProvider().model).toBe(DEFAULT_SETTINGS.model);
     expect(r.get("claude-cli")).toBeInstanceOf(CliProvider);
   });
+  it("complete(chat) returns the CLI text once signed in", async () => {
+    const children: EventEmitter[] = [];
+    const runtime = { ...cliRuntime(true), spawn: () => {
+      const c = Object.assign(new EventEmitter(), { stdin: { write: () => true, end: () => undefined }, stdout: new EventEmitter(), stderr: new EventEmitter(), kill: () => true });
+      children.push(c);
+      return c;
+    } };
+    const cli = new CliProvider(claudeBackend, runtime as never, () => "/vault");
+    const r = new ProviderRouter(settings({ chatBackend: "claude-cli", apiKey: "" }), undefined, { cliRuntime: runtime as never, cliProvider: cli });
+    await cli.refresh();
+    const done = r.complete("chat", { system: "s", user: "hi", maxTokens: 10 });
+    await new Promise<void>((res) => setImmediate(res));
+    (children[0] as unknown as { stdout: EventEmitter }).stdout.emit("data", Buffer.from('{"type":"result","subtype":"success","result":"cli text","session_id":"s","is_error":false}\n'));
+    await expect(done).resolves.toMatchObject({ text: "cli text" });
+  });
   it("falls back to the API key when the CLI is signed out or the runtime is absent (mobile)", async () => {
     const out = new ProviderRouter(settings({ chatBackend: "claude-cli" }), undefined, { cliRuntime: cliRuntime(false) });
     await out.claudeCli.refresh();
@@ -396,5 +413,31 @@ describe("ProviderRouter — codex-cli and opencode-cli backends", () => {
     const r = new ProviderRouter(settings({}));
     expect(r.claudeCli.label).toBe(claudeBackend.label);
     expect(r.codexCli.label).toBe(codexBackend.label);
+  });
+});
+
+describe("ProviderRouter research model", () => {
+  it("resolves each researchModel to its provider", () => {
+    const base = { chatBackend: "custom" as const, openaiCompatHost: "http://localhost:1234", openaiCompatModel: "oc", ollamaModel: "qwen", model: "claude-sonnet-4-6" };
+    const chat = new ProviderRouter(settings({ ...base, researchModel: "chat" })).researchSelection();
+    expect(chat?.provider.id).toBe("openai-compat");
+    expect(chat?.model).toBe("oc");
+    const claude = new ProviderRouter(settings({ ...base, researchModel: "claude" })).researchSelection();
+    expect(claude?.provider.id).toBe("anthropic");
+    expect(claude?.model).toBe(resolveModelId("claude-sonnet-4-6", ""));
+    const local = new ProviderRouter(settings({ ...base, researchModel: "local" })).researchSelection();
+    expect(local?.provider.id).toBe("ollama");
+    expect(local?.model).toBe("qwen");
+    expect(new ProviderRouter(settings({ ...base, researchModel: "off" })).researchSelection()).toBeNull();
+  });
+
+  it("labels status for Claude Code and the API", async () => {
+    const r = new ProviderRouter(settings({ chatBackend: "claude-cli", apiKey: "", researchModel: "chat" }), undefined, { cliRuntime: cliRuntime(true) });
+    expect(r.researchStatus()).toMatchObject({ providerLabel: "Claude API", available: false });
+    await r.claudeCli.refresh();
+    expect(r.researchStatus()).toEqual({ model: "chat", providerLabel: "Claude Code", modelId: DEFAULT_SETTINGS.model, available: true });
+    const api = new ProviderRouter(settings({ researchModel: "claude", model: "claude-sonnet-4-6" }));
+    expect(api.researchStatus()).toEqual({ model: "claude", providerLabel: "Claude API", modelId: resolveModelId("claude-sonnet-4-6", ""), available: true });
+    expect(new ProviderRouter(settings({ researchModel: "off" })).researchStatus().model).toBe("off");
   });
 });

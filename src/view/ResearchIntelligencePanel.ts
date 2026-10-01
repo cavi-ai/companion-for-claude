@@ -79,7 +79,7 @@ export class ResearchIntelligencePanel {
     const stale = state.status === "stale" || (state.status === "failed" && Boolean(state.previous));
     const section = root.createDiv({ cls: `cc-intelligence-narrative${stale ? " cc-intelligence-stale" : ""}` });
     if (state.status === "disabled") {
-      section.createEl("p", { text: "Model analysis is disabled in settings." });
+      section.createEl("p", { text: "Research AI is off. Turn it on in Settings → Research Desk & discovery." });
       return;
     }
     if (state.status === "not-analyzed") section.createEl("p", { text: "Analyze this project when you want a model-written briefing." });

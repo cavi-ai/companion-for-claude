@@ -1,5 +1,6 @@
 import type { AuditFinding } from "./audit";
 import { compareCodeUnits, type ProjectSnapshot } from "./graph";
+import { challengedClaimCopy, findingCopy } from "./findingCopy";
 import { researchContinuationStep, recordBasename as basename } from "./nextStep";
 import type { ResearchProjectRecord } from "./types";
 
@@ -11,11 +12,14 @@ export interface ResearchDeskPreferences {
   pinnedActionId?: string;
 }
 
+export type ResearchDeskRun = "add-source" | "extract-evidence" | "review-evidence" | "review-claim" | "create-claim" | "build-outline" | "continue-draft" | "audit" | "open-record";
+
 export interface ResearchDeskAction {
   id: string;
   label: string;
   reason: string;
   target: ResearchDeskTarget;
+  run: ResearchDeskRun;
   priority: number;
   path?: string;
   tone: "blocked" | "attention" | "continue" | "assure";
@@ -47,42 +51,46 @@ export interface ResearchDeskViewModel {
 
 function title(value: string): string { return value[0]?.toUpperCase() + value.slice(1); }
 
-function findingAction(finding: AuditFinding): ResearchDeskAction | undefined {
+export function findingAction(finding: AuditFinding): ResearchDeskAction | undefined {
   const name = basename(finding.path);
-  if (finding.code === "unused-evidence") return undefined;
-  if (finding.code === "unverifiable-source") return { id: `unverifiable-source:${finding.path}`, label: `Restore ${name}`, reason: finding.explanation, target: "Audit", priority: 0, path: finding.path, tone: "blocked" };
-  if (finding.code === "stale-evidence") return { id: `stale-evidence:${finding.path}`, label: `Re-check ${name}`, reason: "The source changed after this evidence was reviewed.", target: "Evidence", priority: 0, path: finding.path, tone: "blocked" };
-  if (finding.code === "broken-reference" || finding.code === "invalid-record") return { id: `${finding.code}:${finding.path}`, label: `Repair ${name}`, reason: finding.explanation, target: "Audit", priority: 0, path: finding.path, tone: "blocked" };
-  if (finding.code === "rejected-claim") return { id: `rejected-claim:${finding.path}`, label: `Rework ${name}`, reason: finding.explanation, target: "Claims", priority: 1, path: finding.path, tone: "blocked" };
-  if (finding.code === "unsupported-claim") return { id: `unsupported-claim:${finding.path}`, label: `Review support for ${name}`, reason: finding.explanation, target: "Claims", priority: 1, path: finding.path, tone: "blocked" };
-  if (finding.code === "missing-locator") return { id: `missing-locator:${finding.path}`, label: `Locate ${name}`, reason: finding.explanation, target: "Evidence", priority: 2, path: finding.path, tone: "attention" };
-  if (finding.code === "unreviewed-claim") return { id: `review-claim:${finding.path}`, label: `Review ${name}`, reason: finding.explanation, target: "Claims", priority: 2, path: finding.path, tone: "attention" };
-  if (finding.code === "unreviewed-evidence") return { id: `review-evidence:${finding.path}`, label: `Review ${name}`, reason: finding.explanation, target: "Evidence", priority: 3, path: finding.path, tone: "attention" };
-  return undefined;
+  const copy = findingCopy(finding.code, name);
+  const base = { ...copy, path: finding.path };
+  switch (finding.code) {
+    case "unused-evidence": return undefined;
+    case "unverifiable-source": return { id: `unverifiable-source:${finding.path}`, ...base, target: "Audit", run: "open-record", priority: 0, tone: "blocked" };
+    case "stale-evidence": return { id: `stale-evidence:${finding.path}`, ...base, target: "Evidence", run: "review-evidence", priority: 0, tone: "blocked" };
+    case "broken-reference":
+    case "invalid-record": return { id: `${finding.code}:${finding.path}`, ...base, target: "Audit", run: "open-record", priority: 0, tone: "blocked" };
+    case "rejected-claim": return { id: `rejected-claim:${finding.path}`, ...base, target: "Claims", run: "review-claim", priority: 1, tone: "blocked" };
+    case "unsupported-claim": return { id: `unsupported-claim:${finding.path}`, ...base, target: "Claims", run: "review-claim", priority: 1, tone: "blocked" };
+    case "missing-locator": return { id: `missing-locator:${finding.path}`, ...base, target: "Evidence", run: "review-evidence", priority: 2, tone: "attention" };
+    case "unreviewed-claim": return { id: `review-claim:${finding.path}`, ...base, target: "Claims", run: "review-claim", priority: 2, tone: "attention" };
+    case "unreviewed-evidence": return { id: `review-evidence:${finding.path}`, ...base, target: "Evidence", run: "review-evidence", priority: 3, tone: "attention" };
+  }
 }
 
 function continuationActions(snapshot: ProjectSnapshot): ResearchDeskAction[] {
   const { step, path } = researchContinuationStep(snapshot);
   switch (step) {
     case "add-source":
-      return [{ id: `add-source:${path}`, label: "Capture the first source", reason: "A project needs source material before evidence and claims can be developed.", target: "Sources", priority: 4, path, tone: "continue" }];
+      return [{ id: `add-source:${path}`, label: "Capture the first source", reason: "A project needs source material before evidence and claims can be developed.", target: "Sources", run: "add-source", priority: 4, path, tone: "continue" }];
     case "create-evidence":
-      return [{ id: `create-evidence:${path}`, label: "Extract the first evidence", reason: "Turn a precise source passage into reviewable evidence.", target: "Evidence", priority: 4, path, tone: "continue" }];
+      return [{ id: `create-evidence:${path}`, label: "Extract the first evidence", reason: "Turn a precise source passage into reviewable evidence.", target: "Evidence", run: "extract-evidence", priority: 4, path, tone: "continue" }];
     case "create-claim":
-      return [{ id: `create-claim:${path}`, label: "Develop the first claim", reason: "Connect reviewed evidence to a proposition the document can use.", target: "Claims", priority: 4, path, tone: "continue" }];
+      return [{ id: `create-claim:${path}`, label: "Develop the first claim", reason: "Connect reviewed evidence to a proposition the document can use.", target: "Claims", run: "create-claim", priority: 4, path, tone: "continue" }];
     case "build-outline":
-      return [{ id: `build-outline:${path}`, label: "Build the evidence-backed outline", reason: "The reviewed claims are ready to become a document structure.", target: "Outline", priority: 6, path, tone: "continue" }];
+      return [{ id: `build-outline:${path}`, label: "Build the evidence-backed outline", reason: "The reviewed claims are ready to become a document structure.", target: "Outline", run: "build-outline", priority: 6, path, tone: "continue" }];
     case "continue-outline":
-      return [{ id: `continue-outline:${path}`, label: "Continue into the draft", reason: "The outline is ready for claim-grounded section drafting.", target: "Draft", priority: 6, path, tone: "continue" }];
+      return [{ id: `continue-outline:${path}`, label: "Continue into the draft", reason: "The outline is ready for claim-grounded section drafting.", target: "Draft", run: "continue-draft", priority: 6, path, tone: "continue" }];
     case "assure-document":
-      return [{ id: `assure-document:${path}`, label: "Assure the current draft", reason: "Audit the document for grounding, evidence drift, and unresolved research gaps.", target: "Audit", priority: 8, path, tone: "assure" }];
+      return [{ id: `assure-document:${path}`, label: "Assure the current draft", reason: "Audit the document for grounding, evidence drift, and unresolved research gaps.", target: "Audit", run: "audit", priority: 8, path, tone: "assure" }];
   }
 }
 
 export function buildResearchDeskViewModel(snapshot: ProjectSnapshot, findings: AuditFinding[], preferences: ResearchDeskPreferences, document?: ResearchDeskDocumentProgress): ResearchDeskViewModel {
   const actions = findings.map(findingAction).filter((action): action is ResearchDeskAction => Boolean(action));
-  for (const claim of snapshot.claims) if (claim.challenging.length) actions.push({ id: `challenged-claim:${claim.path}`, label: `Respond to challenges for ${claim.title}`, reason: `${claim.challenging.length} challenging evidence record${claim.challenging.length === 1 ? "" : "s"} need an explicit response.`, target: "Claims", priority: 1, path: claim.path, tone: "attention" });
-  for (const question of snapshot.questions) if (question.status === "open") actions.push({ id: `open-question:${question.path}`, label: question.title, reason: question.question, target: "Overview", priority: 5, path: question.path, tone: "attention" });
+  for (const claim of snapshot.claims) if (claim.challenging.length && !claim.limitations.length) actions.push({ id: `challenged-claim:${claim.path}`, ...challengedClaimCopy(claim.title, claim.challenging.length), target: "Claims", run: "review-claim", priority: 1, path: claim.path, tone: "attention" });
+  for (const question of snapshot.questions) if (question.status === "open") actions.push({ id: `open-question:${question.path}`, label: question.title, reason: question.question, target: "Overview", run: "open-record", priority: 5, path: question.path, tone: "attention" });
   actions.push(...continuationActions(snapshot));
   actions.sort((left, right) => left.priority - right.priority || compareCodeUnits(left.path ?? "", right.path ?? "") || compareCodeUnits(left.id, right.id));
 

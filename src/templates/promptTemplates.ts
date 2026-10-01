@@ -92,7 +92,7 @@ export function substitutePlaceholders(prompt: string, values: PlaceholderValues
 export const TEMPLATE_SCAFFOLD = `---
 name: My template
 description: One line on what this prompt does
-# model: claude-sonnet-5        # optional per-turn model override
+# model: claude-sonnet-5-5      # optional per-turn model override
 # context:                      # optional per-turn context toggles
 #   searchVault: true
 #   activeNote: true

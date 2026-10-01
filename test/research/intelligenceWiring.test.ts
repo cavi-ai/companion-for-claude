@@ -48,7 +48,7 @@ describe("research intelligence plugin wiring", () => {
   });
   it("owns one coordinator whose dependencies resolve live settings and router values", async () => {
     const plugin = Object.create(ClaudeCompanionPlugin.prototype) as ClaudeCompanionPlugin;
-    plugin.settings = { ...DEFAULT_SETTINGS, intelligenceNarrator: "disabled" };
+    plugin.settings = { ...DEFAULT_SETTINGS, researchModel: "off" };
     const calls: string[] = [];
     const anthropic = provider("anthropic", calls);
     const ollama = provider("ollama", calls);
@@ -65,11 +65,11 @@ describe("research intelligence plugin wiring", () => {
     expect(plugin.intelligenceCoordinator()).toBe(coordinator);
     expect(coordinator.stateFor(snapshot, findings)).toEqual({ status: "disabled" });
 
-    plugin.settings.intelligenceNarrator = "claude";
+    plugin.settings.researchModel = "claude";
     plugin.settings.chatBackend = "claude";
     expect(await coordinator.analyze(snapshot, findings)).toEqual(expect.objectContaining({ status: "current", providerId: "anthropic" }));
 
-    plugin.settings.intelligenceNarrator = "local";
+    plugin.settings.researchModel = "local";
     plugin.settings.ollamaModel = "local-two";
     expect(await coordinator.analyze(snapshot, findings)).toEqual(expect.objectContaining({ status: "current", providerId: "ollama", model: "local-two" }));
     expect(calls).toEqual(["anthropic", "ollama"]);

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildClaudeArgv, cliToolName, mcpConfigJson, stripCliToolName, CLI_PERMISSION_TOOL } from "../../src/cli/argv";
+import { buildClaudeArgv, buildClaudeCompletionArgv, cliToolName, mcpConfigJson, stripCliToolName, CLI_PERMISSION_TOOL } from "../../src/cli/argv";
 
 const input = {
   model: "claude-sonnet-5",
@@ -69,5 +69,24 @@ describe("tool names and mcp config", () => {
     expect(JSON.parse(mcpConfigJson(7, "t"))).toEqual({
       mcpServers: { "obsidian-vault": { type: "http", url: "http://127.0.0.1:7/mcp", headers: { Authorization: "Bearer t" } } },
     });
+  });
+});
+
+describe("buildClaudeCompletionArgv", () => {
+  it("emits the exact tool-less single-turn argv", () => {
+    expect(buildClaudeCompletionArgv({ model: "m", systemPromptFile: "/tmp/p.md" })).toEqual([
+      "-p", "--output-format", "stream-json", "--input-format", "stream-json", "--verbose", "--include-partial-messages",
+      "--tools", "", "--strict-mcp-config", "--setting-sources", "", "--no-session-persistence", "--max-turns", "1",
+      "--model", "m", "--system-prompt-file", "/tmp/p.md",
+    ]);
+  });
+  it("omits --model when empty and rejects a missing prompt file", () => {
+    expect(buildClaudeCompletionArgv({ model: "", systemPromptFile: "/tmp/p.md" })).not.toContain("--model");
+    expect(() => buildClaudeCompletionArgv({ model: "m", systemPromptFile: "" })).toThrow();
+    expect(() => buildClaudeCompletionArgv({ model: "m" })).toThrow();
+  });
+  it("never carries MCP, permission, session, or bare flags", () => {
+    const argv = buildClaudeCompletionArgv({ model: "m", systemPromptFile: "/tmp/p.md" });
+    for (const f of ["--mcp-config", "--permission-prompt-tool", "--allowedTools", "--session-id", "--resume", "--bare"]) expect(argv).not.toContain(f);
   });
 });

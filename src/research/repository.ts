@@ -20,6 +20,8 @@ import type {
   EvidenceRelation,
   DiscoverySourceProvenance,
 } from "./types";
+import { isReviewState } from "./types";
+import { upsertLimitations } from "./limitations";
 
 export interface ResearchRepositoryIO {
   listMarkdown(): Promise<ResearchNoteInput[]>;
@@ -95,6 +97,8 @@ export interface AcceptDraftSectionInput {
   currentClaimFingerprint: string;
 }
 export interface AcceptRevisionSectionInput extends AcceptDraftSectionInput { packet: DraftGroundingPacket; request: RevisionRequest; response: unknown; }
+
+const LOCATOR_KINDS: readonly SourceLocatorKind[] = ["page", "section", "paragraph", "timestamp", "quote"];
 
 const LAYOUT = {
   "research-source": "Sources",
@@ -399,15 +403,55 @@ export class ResearchRepository {
     }
   }
 
+  private async findRecord(path: string): Promise<ResearchRecord | undefined> {
+    safePath(path);
+    const note = (await this.io.listMarkdown()).find((candidate) => candidate.path === path);
+    return note ? parseResearchRecord(note).record ?? undefined : undefined;
+  }
+
   async reviewEvidence(path: string, state: "reviewed" | "rejected"): Promise<EvidenceRecord> {
     safePath(path);
     if (state !== "reviewed" && state !== "rejected") throw new Error(`Unsupported evidence review target: ${String(state)}`);
-    const note = (await this.io.listMarkdown()).find((candidate) => candidate.path === path);
-    if (!note) throw new Error(`Research evidence not found: ${path}`);
-    const result = parseResearchRecord(note);
-    if (!result.record || result.record.type !== "evidence") throw new Error(`Research record is not evidence: ${path}`);
-    await this.io.updateFrontmatter(path, (frontmatter) => { frontmatter.review_state = state; });
-    return { ...result.record, reviewState: state };
+    const record = await this.findRecord(path);
+    if (!record) throw new Error(`Research evidence not found: ${path}`);
+    if (record.type !== "evidence") throw new Error(`Research record is not evidence: ${path}`);
+    let fingerprint: string | undefined;
+    if (state === "reviewed") {
+      const source = (await this.loadProject(record.project, { refreshBinaryFingerprints: true })).sources.find((candidate) => candidate.path === record.source);
+      if (source?.contentFingerprintUnavailable) throw new Error("The source file can't be read, so this passage can't be re-checked. Restore the file and try again.");
+      fingerprint = source?.contentFingerprint;
+    }
+    await this.io.updateFrontmatter(path, (frontmatter) => {
+      frontmatter.review_state = state;
+      if (fingerprint) frontmatter.source_fingerprint = fingerprint;
+    });
+    return { ...record, reviewState: state, ...(fingerprint ? { sourceFingerprint: fingerprint } : {}) };
+  }
+
+  async updateEvidenceLocator(path: string, kind: SourceLocatorKind, value: string): Promise<EvidenceRecord> {
+    if (!LOCATOR_KINDS.includes(kind)) throw new Error(`Unsupported locator kind: ${String(kind)}`);
+    const locator = typeof value === "string" ? value.trim() : "";
+    if (!locator) throw new Error("Locator value must not be empty");
+    const record = await this.findRecord(path);
+    if (!record) throw new Error(`Research evidence not found: ${path}`);
+    if (record.type !== "evidence") throw new Error(`Research record is not evidence: ${path}`);
+    await this.io.updateFrontmatter(path, (frontmatter) => { frontmatter.locator_kind = kind; frontmatter.locator_value = locator; });
+    return { ...record, locatorKind: kind, locatorValue: locator };
+  }
+
+  async reviewClaim(path: string, state: ReviewState, limitation?: string): Promise<ClaimRecord> {
+    if (!isReviewState(state)) throw new Error(`Unsupported review state: ${String(state)}`);
+    const record = await this.findRecord(path);
+    if (!record) throw new Error(`Research claim not found: ${path}`);
+    if (record.type !== "claim") throw new Error(`Research record is not a claim: ${path}`);
+    const note = limitation?.trim();
+    const limitations = note && !record.limitations.includes(note) ? [...record.limitations, note] : record.limitations;
+    await this.io.updateFrontmatter(path, (frontmatter) => {
+      frontmatter.review_state = state;
+      if (limitations !== record.limitations) frontmatter.limitations = limitations;
+    });
+    if (limitations !== record.limitations && this.io.updateText) await this.io.updateText(path, (current) => upsertLimitations(current, limitations));
+    return { ...record, reviewState: state, limitations };
   }
 
   /** Replace (or append) the evidence note's Interpretation block. */

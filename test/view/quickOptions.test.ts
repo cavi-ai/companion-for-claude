@@ -33,7 +33,7 @@ const state = (overrides: Partial<QuickOptionsState> = {}): QuickOptionsState =>
   activeProject: "Field study",
   discoveryEnabled: true,
   activeResearchTab: "Overview",
-  discoveryReranker: "current",
+  researchModel: "chat",
   ...overrides,
 });
 
@@ -64,6 +64,17 @@ describe("quickOptionsFor", () => {
       expect(options.slice(-2).map(({ id }) => id)).toEqual(["desktop-integrations", "all-settings"]);
       expect(new Set(options.map(({ id }) => id)).size).toBe(options.length);
     }
+  });
+
+  it("offers one research model control and no utility backend or reranker on research pages", () => {
+    for (const page of ["research-desk", "research-workbench"] as const) {
+      const ids = quickOptionsFor(page, state({ researchModelLabel: "AI · Claude Code · sonnet" })).map((o) => o.id);
+      expect(ids).toContain("research-model");
+      expect(ids).not.toContain("utility-backend");
+      expect(ids).not.toContain("discovery-reranker");
+    }
+    expect(quickOptionsFor("research-desk", state({ researchModelLabel: "AI · Claude Code · sonnet" })).find((o) => o.id === "research-model"))
+      .toMatchObject({ label: "Research model", value: "chat", description: "AI · Claude Code · sonnet" });
   });
 
   it("offers a refresh action on the system page", () => {

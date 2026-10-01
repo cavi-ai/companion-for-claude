@@ -10,7 +10,7 @@ export type ZoteroResolve = (itemKey: string) => Promise<AdapterWork | undefined
 
 export const RESEARCH_WRITE_TOOLS = new Set([
   "research_project_create", "research_source_import",
-  "research_evidence_capture", "research_evidence_review",
+  "research_evidence_capture", "research_evidence_review", "research_evidence_locate", "research_claim_review",
   "research_claim_create", "research_claim_link", "research_outline_generate",
   "research_evidence_create", "research_outline_create",
 ]);
@@ -21,7 +21,7 @@ export const HIDDEN_RESEARCH_TOOL_ALIASES: ReadonlySet<string> = new Set([
   "research_outline_create",
 ]);
 
-type Repository = Pick<ResearchRepository, "loadProject" | "createProject" | "importSource" | "createEvidence" | "reviewEvidence" | "createClaim" | "linkClaimEvidence" | "createOutline">;
+type Repository = Pick<ResearchRepository, "loadProject" | "createProject" | "importSource" | "createEvidence" | "reviewEvidence" | "updateEvidenceLocator" | "reviewClaim" | "createClaim" | "linkClaimEvidence" | "createOutline">;
 
 const object = (properties: Record<string, unknown>, required: string[], extra: Record<string, unknown> = {}): McpToolDef["inputSchema"] => ({ type: "object", properties, required, ...extra });
 const text = (description: string) => ({ type: "string", description });
@@ -50,7 +50,9 @@ export class ResearchTools {
       { name: "research_source_import", description: "Import a canonical text capture or metadata-only source into a research project. Web sources with a url and no captured_text are fetched and reduced to clean readable markdown automatically. Zotero sources with a zotero_key resolve the title and bibliographic metadata from the configured Zotero library when missing. Newly imported sources are enriched with a summary, key claims, and topic tags. Binary sources require an existing vault asset and an adapter-supported path.", inputSchema: object({ ...project, title: text("Source title (optional for zotero sources whose key resolves)."), source_kind: text("pdf, web, doi, arxiv, zotero, or vault."), canonical_id: text("Optional stable identifier."), url: text("Optional source URL."), asset: text("Optional existing vault asset path."), captured_text: text("Optional canonical captured text (omit for web sources to auto-capture the page)."), doi: text("Optional DOI."), arxiv_id: text("Optional arXiv id."), zotero_key: text("Optional Zotero item key."), authors: { type: "array", items: { type: "string" } }, published: text("Optional publication date."), publication: text("Optional publication title."), abstract: text("Optional abstract.") }, ["project", "source_kind"], SOURCE_IMPORT_TITLE_RULE) },
       { name: "research_project_read", description: "Read a compact research project snapshot with sources, evidence, claims, issues, and health.", inputSchema: object(project, ["project"]) },
       { name: "research_evidence_capture", description: "Create a provenance-linked evidence card inside a research project.", inputSchema: object({ ...project, source: text("Source record path in this project."), title: text("Evidence title."), excerpt: text("Exact source excerpt."), locator_kind: text("page, section, paragraph, timestamp, or quote."), locator_value: text("Exact locator text."), interpretation: text("Optional interpretation."), review_state: text("proposed, reviewed, or rejected.") }, ["project", "source", "title", "excerpt"]) },
-      { name: "research_evidence_review", description: "Mark an evidence card as reviewed or rejected.", inputSchema: object({ evidence: text("Evidence record path."), review_state: text("reviewed or rejected.") }, ["evidence", "review_state"]) },
+      { name: "research_evidence_review", description: "Mark an evidence card reviewed or rejected. Reviewing re-checks the passage against the current source, which clears a stale warning. Optionally set the locator first.", inputSchema: object({ evidence: text("Evidence record path."), review_state: text("reviewed or rejected."), locator_kind: text("Optional: page, section, paragraph, timestamp, or quote."), locator_value: text("Optional exact locator text; requires locator_kind.") }, ["evidence", "review_state"]) },
+      { name: "research_evidence_locate", description: "Record where in the source an evidence card's passage comes from, which clears a missing-locator finding.", inputSchema: object({ evidence: text("Evidence record path."), locator_kind: text("page, section, paragraph, timestamp, or quote."), locator_value: text("Exact locator text, e.g. a page number.") }, ["evidence", "locator_kind", "locator_value"]) },
+      { name: "research_claim_review", description: "Mark a claim reviewed or rejected; optionally record a limitation that answers challenging evidence.", inputSchema: object({ claim: text("Claim record path."), review_state: text("proposed, reviewed, or rejected."), limitation: text("Optional limitation to record on the claim.") }, ["claim", "review_state"]) },
       { name: "research_claim_create", description: "Create a claim with separate supporting, challenging, and contextual evidence relations.", inputSchema: object({ ...project, title: text("Claim title."), proposition: text("Claim proposition."), confidence: text("low, moderate, or high."), review_state: text("proposed, reviewed, or rejected."), supports: { type: "array", items: { type: "string" } }, challenges: { type: "array", items: { type: "string" } }, contextualizes: { type: "array", items: { type: "string" } }, limitations: { type: "array", items: { type: "string" } } }, ["project", "title", "proposition"]) },
       { name: "research_claim_link", description: "Link evidence to a claim as supporting, challenging, or contextualizing.", inputSchema: object({ ...project, claim: text("Claim path."), evidence: text("Evidence path."), relation: text("supports, challenges, or contextualizes.") }, ["project", "claim", "evidence", "relation"]) },
       { name: "research_audit", description: "Audit a research project and return actionable JSON findings.", inputSchema: object(project, ["project"]) },
@@ -172,8 +174,22 @@ export class ResearchTools {
       case "research_evidence_review": {
         const state = requiredString(args.review_state);
         if (state !== "reviewed" && state !== "rejected") throw new Error(`Unsupported evidence review state: ${state}`);
-        const record = await this.repository.reviewEvidence(requiredString(args.evidence), state);
+        const evidence = requiredString(args.evidence);
+        const locatorKind = optionalString(args.locator_kind);
+        const locatorValue = optionalString(args.locator_value);
+        if (locatorKind || locatorValue) await this.repository.updateEvidenceLocator(evidence, locatorKindArg(locatorKind), requiredString(locatorValue));
+        const record = await this.repository.reviewEvidence(evidence, state);
         return JSON.stringify({ path: record.path, review_state: record.reviewState });
+      }
+      case "research_evidence_locate": {
+        const record = await this.repository.updateEvidenceLocator(requiredString(args.evidence), locatorKindArg(optionalString(args.locator_kind)), requiredString(args.locator_value));
+        return JSON.stringify({ path: record.path, locator_kind: record.locatorKind, locator_value: record.locatorValue });
+      }
+      case "research_claim_review": {
+        const state = requiredString(args.review_state);
+        if (!isReviewState(state)) throw new Error(`Unsupported review state: ${state}`);
+        const record = await this.repository.reviewClaim(requiredString(args.claim), state, optionalString(args.limitation));
+        return JSON.stringify({ path: record.path, review_state: record.reviewState, limitations: record.limitations });
       }
       case "research_claim_create": {
         const project = requiredString(args.project);
@@ -198,6 +214,10 @@ export class ResearchTools {
   }
 }
 
+function locatorKindArg(value: string | undefined): SourceLocatorKind {
+  if (!value || !["page", "section", "paragraph", "timestamp", "quote"].includes(value)) throw new Error(`Unsupported locator kind: ${value ?? "(missing)"}`);
+  return value as SourceLocatorKind;
+}
 function requiredString(value: unknown): string { if (typeof value !== "string" || !value.trim()) throw new Error("Expected a non-empty string argument"); return value; }
 function optionalString(value: unknown): string | undefined { if (value === undefined) return undefined; return requiredString(value); }
 function optionalField<K extends string>(key: K, value: unknown): Partial<Record<K, string>> { const parsed = optionalString(value); return parsed ? { [key]: parsed } as Record<K, string> : {}; }

@@ -78,6 +78,8 @@ describe("isWriteTool", () => {
       "research_source_import",
       "research_evidence_capture",
       "research_evidence_review",
+      "research_evidence_locate",
+      "research_claim_review",
       "research_claim_create",
       "research_claim_link",
       "research_outline_generate",

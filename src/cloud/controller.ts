@@ -1,4 +1,4 @@
-import { type CloudDispatchConfig, buildFireRequest, parseFireResponse, composeDispatchText, configError } from "./routines";
+import { type CloudDispatchConfig, buildFireRequest, parseFireResponse, composeDispatchText, configError, CLOUD_ROUTINE_BETA_HEADER } from "./routines";
 import { type RepliesConfig, buildContentsRequest, parseDirListing, parseFileResponse, isMarkdown, configError as repliesConfigError } from "./replies";
 import type { CloudBuildHttpRequest } from "../build/cloudExecutor";
 import type { PluginSettings } from "../types";
@@ -29,7 +29,7 @@ export class CloudController {
     return {
       fireUrl: s.cloudRoutineFireUrl,
       token: s.cloudRoutineToken,
-      betaHeader: s.cloudRoutineBetaHeader,
+      betaHeader: CLOUD_ROUTINE_BETA_HEADER,
     };
   }
 

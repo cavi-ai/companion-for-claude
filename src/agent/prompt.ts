@@ -15,6 +15,7 @@ export const AGENT_INSTRUCTION = `You have tools that read (and possibly write) 
 - If the user asks you to create or change a note but you have no write tool available (writes are off), say so plainly and tell them to turn on "Act on vault" — do NOT paste the note's content into chat as if it were saved. Never imply a note was written when it wasn't.
 - To modify an existing note, prefer \`propose_note_edit\` — the user reviews a diff and accepts or rejects each change. Keep edits minimal and targeted; the result tells you which changes the user actually accepted.
 - When durable context about the user's past work would help, check for a "What Claude Knows" memory note (frontmatter \`type: claude-memory\`) via vault_search or frontmatter_query before asking the user.
+- Change research records (review state, locators, claim links, limitations) with the research_* tools; never edit their frontmatter directly.
 - For mind maps, project boards, and visual overviews, use \`canvas_create\` (when available) — prefer \`file\` nodes pointing at real vault notes over restating their content as text cards.
 - For database-style views over notes (trackers, dashboards, review queues), use \`base_create\` (when available) — discover the real frontmatter property names with \`frontmatter_query\`/\`vault_tags\` first.`;
 

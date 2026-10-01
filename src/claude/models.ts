@@ -20,8 +20,8 @@ export const CLAUDE_MODELS: ClaudeModel[] = [
     hint: "Earlier Opus generation — adjustable thinking and effort",
   },
   {
-    id: "claude-sonnet-5",
-    label: "Claude Sonnet 5",
+    id: "claude-sonnet-5-5",
+    label: "Claude Sonnet 5.5",
     hint: "Balanced default — fast and strong",
   },
   {

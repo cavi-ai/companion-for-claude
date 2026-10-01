@@ -82,3 +82,11 @@ describe("opencodeBackend metadata", () => {
     expect(opencodeBackend.binary).toBe("opencode");
   });
 });
+
+describe("opencode completion argv", () => {
+  it("folds the system prompt into the trailing prompt with no MCP config", () => {
+    const argv = opencodeBackend.buildCompletionArgv({ model: "m", cwd: "/v", message: "hi", systemPromptText: "sys" });
+    expect(argv).toEqual(["run", "--format", "json", "--dir", "/v", "--pure", "-m", "m", "sys\n\nhi"]);
+    expect(argv.join(" ")).not.toContain("mcp");
+  });
+});

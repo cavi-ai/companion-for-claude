@@ -1,3 +1,5 @@
+import type { ResearchModel } from "../research/researchModel";
+
 export type CompanionPage =
   | "chat"
   | "inbox"
@@ -48,7 +50,8 @@ export interface QuickOptionsState {
   activeProject?: string;
   discoveryEnabled: boolean;
   activeResearchTab?: string;
-  discoveryReranker: "current" | "claude" | "local" | "disabled";
+  researchModel: ResearchModel;
+  researchModelLabel?: string;
 }
 
 export interface QuickOptionChange {
@@ -82,11 +85,11 @@ const embeddingEngines: QuickOptionChoice[] = [
   { value: "custom", label: "Custom endpoint" },
 ];
 
-const rerankers: QuickOptionChoice[] = [
-  { value: "current", label: "Current backend" },
-  { value: "claude", label: "Claude" },
-  { value: "local", label: "Local" },
-  { value: "disabled", label: "Disabled" },
+const researchModels: QuickOptionChoice[] = [
+  { value: "chat", label: "Same as chat" },
+  { value: "claude", label: "Claude API" },
+  { value: "local", label: "Local model" },
+  { value: "off", label: "Off" },
 ];
 
 const allSettings = (): QuickOptionDefinition => ({ id: "all-settings", label: "Open all settings", kind: "action" });
@@ -99,6 +102,15 @@ const utilityBackend = (state: QuickOptionsState): QuickOptionDefinition => ({
   value: state.utilityBackend,
   choices: utilityBackends,
   ...(state.utilityEndpoint ? { description: state.utilityEndpoint } : {}),
+});
+
+const researchModel = (state: QuickOptionsState): QuickOptionDefinition => ({
+  id: "research-model",
+  label: "Research model",
+  kind: "select",
+  value: state.researchModel,
+  choices: researchModels,
+  ...(state.researchModelLabel ? { description: state.researchModelLabel } : {}),
 });
 
 const activeProject = (state: QuickOptionsState): QuickOptionDefinition => ({
@@ -157,7 +169,7 @@ export function quickOptionsFor(page: CompanionPage, state: QuickOptionsState): 
     case "research-desk":
       return [
         activeProject(state),
-        utilityBackend(state),
+        researchModel(state),
         { id: "discovery-enabled", label: "Scholarly discovery", kind: "toggle", value: state.discoveryEnabled },
         { id: "clippings-inbox", label: "Open clippings inbox", kind: "action" },
         desktopIntegrations(),
@@ -167,8 +179,7 @@ export function quickOptionsFor(page: CompanionPage, state: QuickOptionsState): 
       return [
         activeProject(state),
         { id: "research-section", label: "Research section", kind: "status", value: state.activeResearchTab ?? "Overview" },
-        utilityBackend(state),
-        { id: "discovery-reranker", label: "Discovery reranker", kind: "select", value: state.discoveryReranker, choices: rerankers },
+        researchModel(state),
         { id: "discovery-enabled", label: "Scholarly discovery", kind: "toggle", value: state.discoveryEnabled },
         desktopIntegrations(),
         allSettings(),

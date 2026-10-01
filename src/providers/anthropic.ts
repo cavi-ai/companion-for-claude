@@ -58,14 +58,20 @@ export function buildRequestBody(req: CompletionRequest, stream: boolean, auth: 
   if (req.temperature !== undefined && capabilitiesFor(req.model).temperature) {
     payload.temperature = req.temperature;
   }
-  const thinkingAlwaysOn = capabilitiesFor(req.model).thinking === "always";
-  if (req.thinking && !(thinkingAlwaysOn && req.thinking.type !== "adaptive")) {
+  const caps = capabilitiesFor(req.model);
+  const thinkingAlwaysOn = caps.thinking === "always";
+  // Utility calls send `disabled`; a model with a different off switch gets that instead.
+  const thinking = req.thinking?.type === "disabled" && caps.thinkingOff ? { type: caps.thinkingOff } : req.thinking;
+  if (thinking && !(thinkingAlwaysOn && thinking.type !== "adaptive")) {
     payload.thinking =
-      req.thinkingDisplay && req.thinking.type === "adaptive"
-        ? { ...req.thinking, display: req.thinkingDisplay }
-        : req.thinking;
+      req.thinkingDisplay && thinking.type === "adaptive"
+        ? { ...thinking, display: req.thinkingDisplay }
+        : thinking;
   }
-  if (req.outputConfig) payload.output_config = req.outputConfig;
+  if (req.outputConfig) {
+    const capped = thinking?.type === "between_tools" && caps.maxEffortWithoutThinking && (req.outputConfig.effort === "xhigh" || req.outputConfig.effort === "max");
+    payload.output_config = capped ? { ...req.outputConfig, effort: caps.maxEffortWithoutThinking } : req.outputConfig;
+  }
   return JSON.stringify(payload);
 }
 

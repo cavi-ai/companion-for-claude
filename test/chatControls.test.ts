@@ -25,6 +25,17 @@ describe("shapeRequest — thinking", () => {
     const s = shapeRequest(ctl({ model: "claude-sonnet-4-6", thinking: false }), 4096);
     expect(s.thinking).toEqual({ type: "disabled" });
   });
+  it("Sonnet 5.5 + thinking off → bare between_tools, effort clamped to high", () => {
+    const s = shapeRequest(ctl({ model: "claude-sonnet-5-5", thinking: false, showThinking: true, effort: "max" }), 4096);
+    expect(s.thinking).toEqual({ type: "between_tools" });
+    expect(s.thinkingDisplay).toBeUndefined();
+    expect(s.outputConfig).toEqual({ effort: "high" });
+  });
+  it("Sonnet 5.5 + thinking on keeps max effort", () => {
+    const s = shapeRequest(ctl({ model: "claude-sonnet-5-5", thinking: true, effort: "max" }), 4096);
+    expect(s.thinking).toEqual({ type: "adaptive" });
+    expect(s.outputConfig).toEqual({ effort: "max" });
+  });
   it("always-thinking model + thinking off → no thinking field (disabled would 400), effort still sent", () => {
     for (const model of ["claude-opus-5-5", "claude-fable-5-1"]) {
       const s = shapeRequest(ctl({ model, thinking: false, effort: "medium" }), 4096);

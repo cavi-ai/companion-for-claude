@@ -66,7 +66,7 @@ describe("ResearchIntelligencePanel", () => {
 
   it.each([
     ["not-analyzed", "Analyze this project"], ["analyzing", "Analyzing"], ["stale", "Out of date"],
-    ["disabled", "Model analysis is disabled"], ["failed", "could not be verified"],
+    ["disabled", "Research AI is off"], ["failed", "could not be verified"],
   ] as const)("renders %s", (status, copy) => {
     const result = { briefing: "Brief", groups: [] };
     const state = status === "analyzing" ? { status, cacheKey: "k", providerId: "anthropic", model: "claude-test" }
@@ -142,7 +142,7 @@ describe("ResearchIntelligencePanel", () => {
     h.setState({ status: "disabled" });
     const refreshed = root();
     h.panel.render(refreshed, snapshot);
-    expect(allText(refreshed)).toContain("Model analysis is disabled in settings.");
+    expect(allText(refreshed)).toContain("Research AI is off. Turn it on in Settings → Research Desk & discovery.");
     expect([...refreshed.querySelectorAll("button")].some(({ textContent }) => textContent?.includes("Analyze"))).toBe(false);
   });
 

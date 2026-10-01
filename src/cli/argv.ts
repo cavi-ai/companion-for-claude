@@ -69,3 +69,21 @@ export function buildClaudeArgv(i: CliArgvInput): string[] {
     ...(i.allowedTools.length > 0 ? ["--allowedTools", i.allowedTools.join(",")] : []),
   ];
 }
+
+export function buildClaudeCompletionArgv(i: { model: string; systemPromptFile?: string }): string[] {
+  if (!i.systemPromptFile) throw new Error("systemPromptFile is required");
+  return [
+    "-p",
+    "--output-format", "stream-json",
+    "--input-format", "stream-json",
+    "--verbose",
+    "--include-partial-messages",
+    "--tools", "",
+    "--strict-mcp-config",
+    "--setting-sources", "",
+    "--no-session-persistence",
+    "--max-turns", "1",
+    ...(i.model ? ["--model", i.model] : []),
+    "--system-prompt-file", i.systemPromptFile,
+  ];
+}

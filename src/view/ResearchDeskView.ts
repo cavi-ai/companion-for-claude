@@ -1,10 +1,13 @@
 import { ItemView, Notice, type WorkspaceLeaf } from "obsidian";
 import { auditProject } from "../research/audit";
 import { dismissDeskAction, pinDeskAction } from "../research/deskPreferences";
-import { buildResearchDeskViewModel, type ResearchDeskPreferences, type ResearchDeskTarget } from "../research/deskViewModel";
+import { buildResearchDeskViewModel, type ResearchDeskAction, type ResearchDeskPreferences, type ResearchDeskTarget } from "../research/deskViewModel";
 import type { TriageFolderChoice } from "../research/triage";
 import type { ProjectSnapshot } from "../research/graph";
 import type { ResearchRepository } from "../research/repository";
+import type { ResearchModelStatus } from "../research/researchModel";
+import { renderResearchModelChip } from "./researchModelChip";
+import type { ResearchActions } from "./research/actions";
 import { renderCompanionChrome, type CompanionChromeDependencies } from "./companionChrome";
 
 export const RESEARCH_DESK_VIEW_TYPE = "claude-research-desk";
@@ -19,6 +22,8 @@ export interface ResearchDeskDependencies {
   openWorkbench(projectPath: string, target: ResearchDeskTarget, path?: string): void | Promise<void>;
   askCompanion?(projectPath: string): void | Promise<void>;
   createProject?(): void | Promise<void>;
+  /** Shared step runner: each button does its step instead of switching tabs. */
+  actions?: ResearchActions;
   /** Group a folder of clippings into research themes (one click, project-independent); defaults to the inbox. */
   triageClippings?(folder?: string): void | Promise<void>;
   /** Known triage folders (inbox + organized library) for the dropdown. */
@@ -27,6 +32,8 @@ export interface ResearchDeskDependencies {
   pickTriageFolder?(): Promise<string | undefined>;
   /** Start a research project seeded from the most recently focused markdown note. */
   startFromActiveNote?(): void | Promise<void>;
+  researchStatus?(): ResearchModelStatus;
+  openResearchSettings?(): void;
 }
 
 function errorMessage(error: unknown): string {
@@ -100,6 +107,7 @@ export class ResearchDeskView extends ItemView {
     for (const project of projects) select.createEl("option", { text: project.title, value: project.path, attr: { selected: project.path === snapshot.project.path ? "selected" : null } });
     select.value = snapshot.project.path;
     select.addEventListener("change", () => void this.setProjectPath(select.value));
+    renderResearchModelChip(headerActions, this.deps.researchStatus?.(), () => this.deps.openResearchSettings?.());
     if (this.deps.triageClippings) this.renderTriageControls(headerActions);
     if (this.deps.startFromActiveNote) {
       const fromNote = headerActions.createEl("button", { text: "New project from active note", attr: { title: "Seed a research project from the note you have open" } });
@@ -122,7 +130,7 @@ export class ResearchDeskView extends ItemView {
       next.createEl("p", { cls: "cc-desk-next-reason", text: vm.nextAction.reason });
       const controls = next.createDiv({ cls: "cc-desk-next-controls" });
       const start = controls.createEl("button", { cls: "mod-cta", text: "Start this task" });
-      start.addEventListener("click", () => void this.deps.openWorkbench(snapshot.project.path, vm.nextAction!.target, vm.nextAction!.path));
+      start.addEventListener("click", () => void this.start(snapshot, vm.nextAction!));
       const pin = controls.createEl("button", { text: vm.nextAction.pinned ? "Unpin" : "Pin" });
       pin.addEventListener("click", () => void this.updatePreferences(snapshot.project.path, (current) => pinDeskAction(current, vm.nextAction!.id)));
       const dismiss = controls.createEl("button", { text: "Dismiss" });
@@ -145,7 +153,7 @@ export class ResearchDeskView extends ItemView {
     const attention = grid.createEl("section", { cls: "cc-desk-card cc-desk-attention" });
     attention.createDiv({ cls: "cc-desk-card-label", text: "NEEDS ATTENTION" }); attention.createEl("h3", { text: vm.attention.length ? `${vm.attention.length} focused item${vm.attention.length === 1 ? "" : "s"}` : "Nothing is blocking you" });
     if (!vm.attention.length) attention.createEl("p", { text: "The current project is clear for its next stage." });
-    for (const item of vm.attention) { const row = attention.createEl("button", { cls: `cc-desk-attention-row is-${item.tone}` }); row.createSpan({ text: item.label }); row.createSpan({ text: "Open →" }); row.addEventListener("click", () => void this.deps.openWorkbench(snapshot.project.path, item.target, item.path)); }
+    for (const item of vm.attention) { const row = attention.createEl("button", { cls: `cc-desk-attention-row is-${item.tone}` }); row.createSpan({ text: item.label }); row.createSpan({ text: "Start →" }); row.addEventListener("click", () => void this.start(snapshot, item)); }
 
     const metrics = root.createEl("section", { cls: "cc-desk-metrics", attr: { "aria-label": "Project record counts" } });
     for (const [label, count, target] of [["Sources", vm.counts.sources, "Sources"], ["Evidence", vm.counts.evidence, "Evidence"], ["Claims", vm.counts.claims, "Claims"], ["Open questions", vm.counts.openQuestions, "Overview"]] as const) {
@@ -154,7 +162,28 @@ export class ResearchDeskView extends ItemView {
 
     const quick = root.createEl("section", { cls: "cc-desk-quick" }); quick.createEl("h3", { text: "Quick actions" });
     const quickRow = quick.createDiv({ cls: "cc-desk-quick-row" });
-    for (const [label, target] of [["Capture source", "Sources"], ["Review evidence", "Evidence"], ["Develop claim", "Claims"], ["Continue draft", "Draft"], ["Run audit", "Audit"]] as const) { const button = quickRow.createEl("button", { text: label }); button.addEventListener("click", () => void this.deps.openWorkbench(snapshot.project.path, target)); }
+    const actions = this.deps.actions;
+    const open = (target: ResearchDeskTarget) => () => void this.deps.openWorkbench(snapshot.project.path, target);
+    const hasOutline = snapshot.documents.length > 0;
+    const quickActions: Array<{ label: string; disabled?: string; run: () => void }> = [
+      { label: "Add source", run: actions ? () => actions.addSource(snapshot.project.path) : open("Sources") },
+      { label: "Extract evidence", ...(snapshot.sources.length ? {} : { disabled: "Add a source first" }), run: actions ? () => actions.extractEvidence(snapshot, snapshot.sources[0]?.path) : open("Evidence") },
+      { label: "Develop claim", ...(snapshot.evidence.some(({ reviewState }) => reviewState === "reviewed") ? {} : { disabled: "Check a passage first" }), run: actions ? () => actions.createClaim(snapshot) : open("Claims") },
+      hasOutline
+        ? { label: "Continue draft", run: () => void this.deps.openWorkbench(snapshot.project.path, "Draft", vm.activeDocument?.path) }
+        : { label: "Build outline", run: actions ? () => actions.buildOutline(snapshot) : open("Outline") },
+      { label: "Run audit", run: () => void this.deps.openWorkbench(snapshot.project.path, "Audit") },
+    ];
+    for (const item of quickActions) {
+      const button = quickRow.createEl("button", { text: item.label, ...(item.disabled ? { attr: { title: item.disabled } } : {}) });
+      if (item.disabled) button.disabled = true;
+      else button.addEventListener("click", item.run);
+    }
+  }
+
+  private async start(snapshot: ProjectSnapshot, action: ResearchDeskAction): Promise<void> {
+    if (this.deps.actions) await this.deps.actions.run(action, snapshot);
+    else await this.deps.openWorkbench(snapshot.project.path, action.target, action.path);
   }
 
   private renderEmpty(root: HTMLElement, projects: Array<{ path: string; title: string }>, loadError?: string): void {
@@ -163,7 +192,7 @@ export class ResearchDeskView extends ItemView {
     if (!loadError) empty.createEl("p", { cls: "cc-desk-empty-hint", text: "Create a project, capture your first source, and the Desk takes it from there." });
     const controls = empty.createDiv({ cls: "cc-desk-empty-controls" });
     if (projects.length) { const select = controls.createEl("select", { attr: { "aria-label": "Choose research project" } }); select.createEl("option", { text: "Choose a project", value: "" }); for (const project of projects) select.createEl("option", { text: project.title, value: project.path }); select.addEventListener("change", () => { if (select.value) void this.setProjectPath(select.value); }); }
-    const create = controls.createEl("button", { cls: "mod-cta", text: "Create project" }); create.addEventListener("click", () => this.deps.createProject ? void this.deps.createProject() : new Notice("Use the Research Workbench to create a project."));
+    const create = controls.createEl("button", { cls: "mod-cta", text: "Create project" }); create.addEventListener("click", () => this.deps.actions ? this.deps.actions.createProject() : this.deps.createProject ? void this.deps.createProject() : new Notice("Use the Research Workbench to create a project."));
     if (!loadError && this.deps.startFromActiveNote) {
       const fromNote = controls.createEl("button", { text: "Start from active note", attr: { title: "Seed a research project from the note you have open" } });
       fromNote.addEventListener("click", () => void this.deps.startFromActiveNote?.());

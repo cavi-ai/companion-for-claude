@@ -2,7 +2,7 @@
 
 import { CLI_MCP_SERVER, parseMcpConfig } from "../argv";
 import type { CliEvent } from "../streamJson";
-import type { CliArgvInput, CliBackend } from "./types";
+import type { CliArgvInput, CliBackend, CliCompletionArgvInput } from "./types";
 
 export const CODEX_MCP_TOKEN_ENV = "CLAUDE_COMPANION_CODEX_MCP_TOKEN";
 
@@ -28,6 +28,12 @@ export function buildCodexArgv(input: CliArgvInput): string[] {
   if (input.resumeSessionId) argv.push("resume", input.resumeSessionId);
   if (input.message !== undefined) argv.push(codexPrompt(input));
   return argv;
+}
+
+export function buildCodexCompletionArgv(input: CliCompletionArgvInput): string[] {
+  const message = input.message ?? "";
+  const prompt = input.systemPromptText ? `${input.systemPromptText}\n\n${message}` : message;
+  return ["exec", "--json", "-C", input.cwd, "--sandbox", "read-only", "--ignore-user-config", ...(input.model ? ["-m", input.model] : []), prompt];
 }
 
 /** The message, with the system prompt prepended when this is the first turn (codex has no system-prompt-file flag). */
@@ -104,6 +110,7 @@ export const codexBackend: CliBackend = {
     return { loggedIn, method };
   },
   buildArgv: buildCodexArgv,
+  buildCompletionArgv: buildCodexCompletionArgv,
   env: codexEnv,
   parseLine: parseCodexLine,
 };

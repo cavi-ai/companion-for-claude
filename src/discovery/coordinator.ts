@@ -23,6 +23,7 @@ export interface DiscoveryCoordinatorDeps {
   chatBackend: () => ChatBackend;
   anthropic: () => { provider: Provider; model: string };
   local: () => { provider: Provider; model: string };
+  chat: () => { provider: Provider; model: string };
   localAvailable: () => Promise<boolean>;
   now?: () => Date;
 }
@@ -183,8 +184,7 @@ export class DiscoveryCoordinator {
     }
     const resolved = mode === "claude" ? this.deps.anthropic()
       : mode === "local" ? this.deps.local()
-      : chatBackend === "local" ? this.deps.local()
-      : this.deps.anthropic();
+      : this.deps.chat();
     const controller = new AbortController();
     const sequence = ++this.sequence;
     this.active = { key: current.key, sequence, controller, query, fingerprint: current.state.fingerprint, previous: current.state };
@@ -393,8 +393,8 @@ export class DiscoveryCoordinator {
 
   private withCurrentRerank(state: DiscoveryValidState): DiscoveryValidState {
     if (!state.modelOrder) return state;
-    const mode = this.deps.rerankerMode(); const backend = this.deps.chatBackend();
-    const resolved = mode === "local" || (mode === "current" && backend === "local") ? this.deps.local() : this.deps.anthropic();
+    const mode = this.deps.rerankerMode();
+    const resolved = mode === "claude" ? this.deps.anthropic() : mode === "local" ? this.deps.local() : this.deps.chat();
     const expected = this.rerankIdentity(state, state.usedFallback ? this.deps.local().provider.id : resolved.provider.id, state.usedFallback ? this.deps.local().model : resolved.model);
     if (state.rerankIdentity === expected) return state;
     const { modelOrder: _order, modelRanked: _ranked, providerId: _provider, model: _model, usedFallback: _fallback, rerankIdentity: _identity, ...deterministic } = state;

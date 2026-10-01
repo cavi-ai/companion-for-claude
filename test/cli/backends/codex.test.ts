@@ -106,3 +106,14 @@ describe("codexBackend metadata", () => {
     expect(codexBackend.binary).toBe("codex");
   });
 });
+
+describe("codex completion argv", () => {
+  it("folds the system prompt into the trailing prompt with no MCP config", () => {
+    const argv = codexBackend.buildCompletionArgv({ model: "m", cwd: "/v", message: "hi", systemPromptText: "sys" });
+    expect(argv).toEqual(["exec", "--json", "-C", "/v", "--sandbox", "read-only", "--ignore-user-config", "-m", "m", "sys\n\nhi"]);
+    expect(argv.join(" ")).not.toContain("mcp_servers");
+  });
+  it("omits -m when no model and passes the bare message without a system prompt", () => {
+    expect(codexBackend.buildCompletionArgv({ model: "", cwd: "/v", message: "hi" })).toEqual(["exec", "--json", "-C", "/v", "--sandbox", "read-only", "--ignore-user-config", "hi"]);
+  });
+});

@@ -1,0 +1,3 @@
+export const DISCOVERY_MAX_RESULTS = 20;
+export const DISCOVERY_EXPANSION_LIMIT = 20;
+export const DISCOVERY_CACHE_HOURS = 24;

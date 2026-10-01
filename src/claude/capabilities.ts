@@ -14,6 +14,8 @@
 //   - Sonnet 4.5 and older: classic `temperature`; thinking via
 //     `{type:"enabled",budget_tokens}`; no `effort`.
 //   - Haiku 4.5: thinking adaptive, no `effort`.
+//   - Sonnet 5.5: `disabled` returns 400; `between_tools` (bare, effort high or
+//     below) is its off switch. Sampling params 400; effort low..max.
 //   - Opus 5.5, Fable 5/5.1, Mythos 5/5.1: thinking cannot be disabled
 //     (`disabled` and `budget_tokens` return 400); effort is the only control.
 //   - Unknown / custom ids: conservative defaults (temperature on, no
@@ -32,6 +34,8 @@ export interface ModelCapabilities {
   effortMax: boolean;
   /** Highest effort accepted while adaptive thinking is explicitly disabled. */
   maxEffortWithoutThinking?: "high";
+  /** Off switch when `{type:"disabled"}` is rejected. */
+  thinkingOff?: "between_tools";
 }
 
 const CONSERVATIVE: ModelCapabilities = { temperature: true, thinking: "none", effort: false, effortMax: false };
@@ -59,6 +63,10 @@ export function capabilitiesFor(modelId: string): ModelCapabilities {
   // Opus 4.5 / 4.6 — temperature still ok, adaptive thinking, effort incl. max.
   if (f === "claude-opus-4-6" || f === "claude-opus-4-5") {
     return { temperature: true, thinking: "adaptive", effort: true, effortMax: true };
+  }
+  // Sonnet 5.5 — thinking off only via a bare between_tools at effort high or below.
+  if (f === "claude-sonnet-5-5") {
+    return { temperature: false, thinking: "adaptive", effort: true, effortMax: true, maxEffortWithoutThinking: "high", thinkingOff: "between_tools" };
   }
   // Sonnet 5 — sampling params removed; adaptive thinking + effort.
   if (f === "claude-sonnet-5") {

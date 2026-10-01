@@ -18,6 +18,7 @@ import {
   type UtilityRuntimeResolution,
 } from "./endpointPolicy";
 import { providerFailureMessage } from "./errorHints";
+import type { ResearchModelStatus } from "../research/researchModel";
 
 export interface ProviderSelection {
   provider: Provider;
@@ -188,6 +189,37 @@ export class ProviderRouter {
   /** The provider that powers the main chat panel. */
   chatProvider(): { provider: Provider; model: string } {
     return this.resolve("chat");
+  }
+
+  /** The model behind every explicit research action; null when research AI is off. */
+  researchSelection(): { provider: Provider; model: string } | null {
+    switch (this.settings.researchModel) {
+      case "off":
+        return null;
+      case "claude":
+        return { provider: this.anthropic, model: resolveModelId(this.settings.model, this.settings.customModel) };
+      case "local":
+        return { provider: this.ollama, model: this.settings.ollamaModel };
+      default:
+        return this.chatProvider();
+    }
+  }
+
+  /** Short user-facing provider name for status chips and option labels. */
+  providerLabel(provider: Provider): string {
+    switch (provider.id) {
+      case "anthropic": return "Claude API";
+      case "ollama": return "Ollama";
+      case "openai-compat": return "Custom endpoint";
+      default: return provider.label;
+    }
+  }
+
+  researchStatus(): ResearchModelStatus {
+    const selection = this.researchSelection();
+    if (!selection) return { model: "off", providerLabel: "Off", modelId: "", available: true };
+    const { provider, model } = selection;
+    return { model: this.settings.researchModel, providerLabel: this.providerLabel(provider), modelId: model, available: provider.hasCredentials() };
   }
 
   /** Resolve the configured utility backend against mobile endpoint reachability and session consent. */

@@ -1,7 +1,7 @@
 import { expect, test } from "./fixtures";
 
 test("model chip aligns with the backend pill and offers the curated models", async ({ rig }) => {
-  const harness = await rig.reset({ claudeCli: true, settingsOverride: { model: "claude-sonnet-5" } });
+  const harness = await rig.reset({ claudeCli: true, settingsOverride: { model: "claude-sonnet-5-5" } });
   try {
     await harness.page.evaluate(async () => {
       await (window as unknown as { app: { commands: { executeCommandById(id: string): Promise<void> } } }).app.commands.executeCommandById("claude-companion:open-chat");
@@ -20,6 +20,8 @@ test("model chip aligns with the backend pill and offers the curated models", as
     await expect(chooser.getByText("Claude Opus 5.5", { exact: true })).toBeVisible();
     await expect(chooser.getByText("Claude Opus 4.6", { exact: true })).toBeVisible();
     await expect(chooser.getByText("Claude Fable 5.1", { exact: true })).toBeVisible();
+    await expect(chooser.getByText("Claude Sonnet 5.5", { exact: true })).toBeVisible();
+    await expect(chooser.getByText("Claude Sonnet 5", { exact: true })).toHaveCount(0);
     await expect(chooser.getByText("Claude Opus 5", { exact: true })).toHaveCount(0);
     await expect(chooser.getByText("Claude Fable 5", { exact: true })).toHaveCount(0);
   } finally {

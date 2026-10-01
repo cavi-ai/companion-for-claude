@@ -8,6 +8,7 @@ import type { Conversation } from "../../conversations/store";
 import type { ChatControls } from "../../claude/chatControls";
 import { hasIncompleteHtmlArtifactFence } from "../streamRender";
 import { TurnRenderer, type TurnRendererHost } from "../turnRenderer";
+import { ARTIFACT_HEIGHT } from "../../artifacts/renderInline";
 import { extractArtifact, saveArtifactNote, saveChatNote, savePlanNote } from "../../artifacts/artifactStore";
 import { extractTasks } from "../../build/spec";
 import { errorHint, type ErrorHintProvider } from "../../providers/errorHints";
@@ -627,7 +628,7 @@ export class Transcript {
     if (artifact) {
       const { tags, summary } = await this.maybeIndex(`${artifact.title}\n\n${full}`);
       const file = await saveArtifactNote(this.app, this.plugin.settings.artifactFolder, artifact, {
-        height: this.plugin.settings.artifactHeight,
+        height: ARTIFACT_HEIGHT,
         baseTags: this.plugin.settings.artifactBaseTags,
         extraTags: tags,
         ...(summary !== undefined ? { summary } : {}),

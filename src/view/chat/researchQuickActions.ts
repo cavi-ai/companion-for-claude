@@ -45,16 +45,20 @@ function promptFor(action: ResearchDeskAction, projectPath: string): string {
     case "open-question":
       return `I'm working on ${project}. Help me answer this open research question${record}: search my vault and the web, then capture what you find as sources and evidence.`;
     case "challenged-claim":
-      return `I'm working on ${project}. The claim${record} has challenging evidence — help me respond to it explicitly.`;
-    case "unverifiable-source":
+      return `I'm working on ${project}. The claim${record} has challenging evidence — help me respond to it explicitly, then record the answer as a limitation with research_claim_review.`;
+    case "review-evidence":
+      return `I'm working on ${project}. ${action.label}${record}: check the evidence against its source, then mark it reviewed or rejected with research_evidence_review.`;
     case "stale-evidence":
+      return `I'm working on ${project}. ${action.label}${record}: the source of the evidence changed. Re-read the current source; if the passage still holds, mark it reviewed with research_evidence_review (that re-checks it), otherwise reject it.`;
+    case "missing-locator":
+      return `I'm working on ${project}. ${action.label}${record}: find where the evidence comes from in its source and record it with research_evidence_locate.`;
+    case "review-claim":
+    case "unsupported-claim":
+      return `I'm working on ${project}. ${action.label}${record}: review the claim, link supporting evidence with research_claim_link, then mark it reviewed or rejected with research_claim_review.`;
+    case "unverifiable-source":
     case "broken-reference":
     case "invalid-record":
     case "rejected-claim":
-    case "unsupported-claim":
-    case "missing-locator":
-    case "review-claim":
-    case "review-evidence":
       return `I'm working on ${project}. Run research_audit, then fix this finding: ${action.label}${record}. ${action.reason}`;
     default:
       return `I'm working on ${project}. Next step: ${action.label}. ${action.reason}`;

@@ -79,7 +79,7 @@ describe("scholarly discovery end-to-end contract", () => {
       openAlex, crossref, arxiv, repository: vault.repository,
       enabled: () => calls.enabled, cacheHours: () => 24, rerankerMode: () => "claude", chatBackend: () => "claude",
       anthropic: () => ({ provider: provider(complete), model: "claude-contract" }),
-      local: () => ({ provider: provider(vi.fn()), model: "unused" }), localAvailable: async () => false,
+      local: () => ({ provider: provider(vi.fn()), model: "unused" }), chat: () => ({ provider: provider(complete), model: "claude-contract" }), localAvailable: async () => false,
       now: () => new Date("2026-07-14T00:00:00Z"),
     };
     const coordinator = new DiscoveryCoordinator(deps);

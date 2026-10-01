@@ -11,6 +11,9 @@ import { validateProposal } from "../ontology/propose";
 import type { OntologyRegistry } from "../ontology/registry";
 import { replaceSection } from "./edit";
 import { readFrontmatter } from "./frontmatterRead";
+import { DELEGABLE_RESEARCH_KEYS, RESEARCH_ROUTE_HINT, planResearchRouting, runResearchRouting, type ResearchRoutePlan } from "./researchRouting";
+import { parseResearchRecord } from "../research/parse";
+import type { ResearchRecord } from "../research/types";
 import { applyPatch, type PatchTarget } from "./patch";
 import { buildCanvas, serializeCanvas, type ProposedCanvasNode, type ProposedCanvasEdge } from "../canvas/jsonCanvas";
 import { buildBaseFile, type ProposedBase } from "../bases/baseFile";
@@ -715,9 +718,21 @@ export class VaultTools {
       return `Updated section "${section}" in ${file.path}${await this.conformanceLine(file)}`;
     }
     const current = await this.app.vault.cachedRead(file);
-    assertReservedFrontmatterUnchanged(current, content);
+    const { keys: changed, newFm } = changedReservedKeys(current, content);
+    let plan: ResearchRoutePlan | undefined;
+    if (changed.length) {
+      const blocked = changed.find((key) => !DELEGABLE_RESEARCH_KEYS.has(key));
+      if (blocked) throw managedKeyError(blocked);
+      const removed = changed.find((key) => newFm[key] === undefined);
+      if (removed) throw managedKeyError(removed);
+      const values: Record<string, unknown> = {};
+      for (const key of changed) values[key] = newFm[key];
+      if (changed.some((key) => key.startsWith("locator_"))) for (const key of ["locator_kind", "locator_value"]) if (newFm[key] !== undefined) values[key] = newFm[key];
+      plan = planResearchRouting(await this.researchRecordOf(file), values);
+    }
     await this.app.vault.modify(file, content);
-    return `Updated ${file.path}${await this.conformanceLine(file)}`;
+    if (plan) await runResearchRouting(this.researchRepository(), plan);
+    return `${plan ? `${plan.summaries.join(" ")} ` : ""}Updated ${file.path}${await this.conformanceLine(file)}`;
   }
 
   private async patch(path: string, target: unknown, op: string, content: string): Promise<string> {
@@ -726,6 +741,12 @@ export class VaultTools {
     const t = (target && typeof target === "object" ? target : {}) as { kind?: unknown; heading?: unknown; id?: unknown; key?: unknown };
     if (t.kind === "frontmatter") {
       const key = str(t.key);
+      if (DELEGABLE_RESEARCH_KEYS.has(key)) {
+        if (op !== "replace") throw managedKeyError(key);
+        const plan = planResearchRouting(await this.researchRecordOf(file), { [key]: content });
+        await runResearchRouting(this.researchRepository(), plan);
+        return plan.summaries.join(" ");
+      }
       assertWritableFrontmatterKey(key);
       await this.app.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => {
         if (op === "replace") {
@@ -759,7 +780,16 @@ export class VaultTools {
         if (typeof v === "string" || typeof v === "number" || typeof v === "boolean") scalars[k] = v;
       }
     }
-    for (const k of Object.keys(scalars)) assertWritableFrontmatterKey(k);
+    const delegated: Record<string, unknown> = {};
+    for (const k of Object.keys(scalars)) {
+      if (DELEGABLE_RESEARCH_KEYS.has(k)) { delegated[k] = scalars[k]; delete scalars[k]; }
+      else assertWritableFrontmatterKey(k);
+    }
+    const plan = Object.keys(delegated).length ? planResearchRouting(await this.researchRecordOf(file), delegated) : undefined;
+    if (plan) {
+      await runResearchRouting(this.researchRepository(), plan);
+      if (!tags.length && !Object.keys(scalars).length) return plan.summaries.join(" ");
+    }
     await this.app.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => {
       if (tags.length) {
         const existing = Array.isArray(fm.tags)
@@ -771,7 +801,15 @@ export class VaultTools {
       }
       for (const [k, v] of Object.entries(scalars)) fm[k] = v;
     });
-    return `Updated frontmatter of ${file.path}${await this.conformanceLine(file)}`;
+    return `${plan ? `${plan.summaries.join(" ")} ` : ""}Updated frontmatter of ${file.path}${await this.conformanceLine(file)}`;
+  }
+
+  private async researchRecordOf(file: TFile): Promise<ResearchRecord | undefined> {
+    const content = await this.app.vault.cachedRead(file);
+    const frontmatter = readFrontmatter(content, (yaml) => parseYaml(yaml) as unknown);
+    if (!frontmatter) return undefined;
+    const body = content.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, "");
+    return parseResearchRecord({ path: file.path, frontmatter, body }).record;
   }
 
   private async frontmatterQuery(field: string, value: string | undefined): Promise<string> {
@@ -908,21 +946,26 @@ const RESERVED_FRONTMATTER_KEYS: ReadonlySet<string> = new Set([
   "claude-session",
 ]);
 
+const RESEARCH_RESERVED_KEYS: ReadonlySet<string> = new Set([
+  "project", "source", "source_kind", "canonical_id", "source_fingerprint", "content_fingerprint", "discovery_provenance",
+  "zotero_key", "arxiv_id", "doi", "locator_kind", "locator_value", "review_state", "document_kind",
+]);
+
+function managedKeyError(key: string): Error {
+  return new Error(RESEARCH_RESERVED_KEYS.has(key)
+    ? `Frontmatter key "${key}" is managed by Companion. ${RESEARCH_ROUTE_HINT}`
+    : `Frontmatter key "${key}" is managed by Companion and cannot be set through this tool.`);
+}
+
 /** Guard the generic frontmatter writers against clobbering machine-owned keys. */
 function assertWritableFrontmatterKey(key: string): void {
-  if (RESERVED_FRONTMATTER_KEYS.has(key)) {
-    throw new Error(`Frontmatter key "${key}" is managed by Companion and cannot be set through this tool.`);
-  }
+  if (RESERVED_FRONTMATTER_KEYS.has(key)) throw managedKeyError(key);
 }
-/** Guard note_update's whole-note overwrite against changing any reserved key. */
-function assertReservedFrontmatterUnchanged(oldContent: string, newContent: string): void {
+/** Reserved keys whose value differs between two note contents. */
+function changedReservedKeys(oldContent: string, newContent: string): { keys: string[]; newFm: Record<string, unknown> } {
   const oldFm = readFrontmatter(oldContent, (yaml) => parseYaml(yaml) as unknown) ?? {};
   const newFm = readFrontmatter(newContent, (yaml) => parseYaml(yaml) as unknown) ?? {};
-  for (const key of RESERVED_FRONTMATTER_KEYS) {
-    if (JSON.stringify(oldFm[key]) !== JSON.stringify(newFm[key])) {
-      throw new Error(`Frontmatter key "${key}" is managed by Companion and cannot be set through this tool.`);
-    }
-  }
+  return { keys: [...RESERVED_FRONTMATTER_KEYS].filter((key) => JSON.stringify(oldFm[key]) !== JSON.stringify(newFm[key])), newFm };
 }
 /** Narrow a conformance-fixed record to buildFrontmatter's value types; anything else is dropped. */
 function toFrontmatterData(record: Record<string, unknown>): FrontmatterData {

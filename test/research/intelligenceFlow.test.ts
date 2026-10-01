@@ -70,6 +70,7 @@ function intelligenceFlowHarness(input: {
     chatBackend: () => "auto",
     anthropic: () => ({ provider: anthropic, model: "claude-test" }),
     local: () => ({ provider: local, model: "qwen-test" }),
+    chat: () => ({ provider: anthropic, model: "claude-test" }),
     localAvailable: async () => true,
     maxTokens: () => 800,
   });
@@ -105,7 +106,7 @@ describe("Research Intelligence end-to-end safety flow", () => {
     const harness = intelligenceFlowHarness({ narrator: "disabled" });
     await harness.view.setProjectPath(PROJECT);
     await harness.openIntelligence();
-    expect(text(harness.view.contentEl)).toContain("Model analysis is disabled in settings.");
+    expect(text(harness.view.contentEl)).toContain("Research AI is off. Turn it on in Settings → Research Desk & discovery.");
     expect(harness.providerCalls).toEqual([]);
     expect(harness.vaultWrites).toEqual([]);
   });

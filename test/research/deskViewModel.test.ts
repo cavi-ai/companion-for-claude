@@ -22,9 +22,16 @@ describe("buildResearchDeskViewModel", () => {
     const current = snapshot([source, staleEvidence, proposedEvidence, challengedClaim, question, draft]);
     const vm = buildResearchDeskViewModel(current, auditProject(current), { dismissedActionIds: [] }, { path: draft.path, title: draft.title, completedSections: 2, totalSections: 4 });
     expect(vm.nextAction).toMatchObject({ id: `stale-evidence:${staleEvidence.path}`, target: "Evidence", path: staleEvidence.path });
-    expect(vm.nextAction?.reason).toMatch(/changed after this evidence was reviewed/i);
+    expect(vm.nextAction?.reason).toMatch(/source changed/i);
     expect(vm.attention.map(({ id }) => id)).toContain(`open-question:${question.path}`);
     expect(new Set(vm.attention.map(({ label }) => label)).size).toBe(vm.attention.length);
+  });
+
+  it("shows the challenged-claim action only until a limitation answers it", () => {
+    const answered = { ...challengedClaim, limitations: ["Small sample"] } as typeof challengedClaim;
+    const ids = (claim: ResearchRecord) => { const current = snapshot([source, staleEvidence, proposedEvidence, claim, draft]); return buildResearchDeskViewModel(current, auditProject(current), { dismissedActionIds: [] }).actions.map(({ id }) => id); };
+    expect(ids(challengedClaim)).toContain(`challenged-claim:${challengedClaim.path}`);
+    expect(ids(answered)).not.toContain(`challenged-claim:${challengedClaim.path}`);
   });
 
   it("respects dismissed and pinned actions without hiding the remaining queue", () => {
@@ -55,5 +62,28 @@ describe("buildResearchDeskViewModel", () => {
     const reviewedEvidence = { ...proposedEvidence, reviewState: "reviewed" as const };
     const withEvidence = snapshot([source, reviewedEvidence]);
     expect(buildResearchDeskViewModel(withEvidence, auditProject(withEvidence), { dismissedActionIds: [] }).nextAction).toMatchObject({ id: `create-claim:${project.path}`, target: "Claims" });
+  });
+
+  it("pins what each finding and continuation step runs, in plain words", () => {
+    const unlocated = { ...proposedEvidence, path: "Research/P/Evidence/NoLoc.md", title: "No loc", locatorKind: undefined, locatorValue: undefined, reviewState: "reviewed" as const } as ResearchRecord;
+    const unreviewedClaim = { ...challengedClaim, path: "Research/P/Claims/U.md", title: "U", reviewState: "proposed" as const, challenges: [], supports: [] } as ResearchRecord;
+    const current = snapshot([source, staleEvidence, proposedEvidence, unlocated, challengedClaim, unreviewedClaim, question, draft]);
+    const vm = buildResearchDeskViewModel(current, auditProject(current), { dismissedActionIds: [] });
+    const run = (id: string) => vm.actions.find((action) => action.id === id)?.run;
+    expect(run(`stale-evidence:${staleEvidence.path}`)).toBe("review-evidence");
+    expect(run(`review-evidence:${proposedEvidence.path}`)).toBe("review-evidence");
+    expect(run(`missing-locator:${unlocated.path}`)).toBe("review-evidence");
+    expect(run(`review-claim:${unreviewedClaim.path}`)).toBe("review-claim");
+    expect(run(`unsupported-claim:${unreviewedClaim.path}`)).toBe("review-claim");
+    expect(run(`challenged-claim:${challengedClaim.path}`)).toBe("review-claim");
+    expect(run(`open-question:${question.path}`)).toBe("open-record");
+    for (const action of vm.actions) expect(`${action.label} ${action.reason}`).not.toMatch(/fingerprint|stale-evidence|missing-locator|unreviewed-|unsupported-claim/);
+  });
+
+  it("maps continuation steps to runs", () => {
+    const run = (records: ResearchRecord[]) => { const current = snapshot(records); return buildResearchDeskViewModel(current, auditProject(current), { dismissedActionIds: [] }).nextAction?.run; };
+    expect(run([])).toBe("add-source");
+    expect(run([source])).toBe("extract-evidence");
+    expect(run([source, { ...proposedEvidence, reviewState: "reviewed" as const }])).toBe("create-claim");
   });
 });

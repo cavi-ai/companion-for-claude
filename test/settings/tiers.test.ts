@@ -12,6 +12,7 @@ function stubPlugin(showAdvanced = false, overrides: Record<string, unknown> = {
     settings: { ...structuredClone(DEFAULT_SETTINGS), settingsShowAdvanced: showAdvanced, ...overrides },
     saveSettings: async () => {},
     router: () => ({
+      chatProvider: () => ({ provider: { id: "anthropic", label: "Claude (Anthropic API)" }, model: "claude-test" }), providerLabel: () => "Claude API", 
       anthropic: { hasCredentials: () => true, test: async () => ({ ok: true, detail: "" }) },
       ollama: { listModels: async () => [], capabilities: async () => [], test: async () => ({ ok: true, detail: "" }) },
       openaiCompat: { listModels: async () => [], test: async () => ({ ok: true, detail: "" }) },

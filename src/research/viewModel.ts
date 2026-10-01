@@ -1,6 +1,7 @@
 import type { AuditFinding } from "./audit";
 import { compareCodeUnits, type ProjectSnapshot } from "./graph";
-import { researchContinuationStep, recordBasename as basename } from "./nextStep";
+import { findingAction, type ResearchDeskRun } from "./deskViewModel";
+import { researchContinuationStep } from "./nextStep";
 import type { ResearchProjectRecord } from "./types";
 
 export interface WorkbenchViewModel {
@@ -9,7 +10,7 @@ export interface WorkbenchViewModel {
   stage: ResearchProjectRecord["stage"];
   counts: { sources: number; evidence: number; claims: number; openQuestions: number };
   health: { unsupportedClaims: number; unreviewedEvidence: number; missingLocators: number; brokenReferences: number };
-  nextActions: Array<{ kind: "review" | "repair" | "continue"; label: string; path?: string }>;
+  nextActions: Array<{ kind: "review" | "repair" | "continue"; label: string; path?: string; run?: ResearchDeskRun }>;
 }
 
 export function buildWorkbenchViewModel(snapshot: ProjectSnapshot | undefined, findings: AuditFinding[]): WorkbenchViewModel {
@@ -25,26 +26,25 @@ export function buildWorkbenchViewModel(snapshot: ProjectSnapshot | undefined, f
   const count = (code: AuditFinding["code"]) => findings.filter((finding) => finding.code === code).length;
   const nextActions: WorkbenchViewModel["nextActions"] = findings
     .filter((finding) => finding.code !== "unused-evidence" && finding.code !== "stale-evidence")
-    .map((finding) => ({
-      kind: finding.code === "unreviewed-evidence" ? "review" as const : "repair" as const,
-      label: `${finding.code === "unreviewed-evidence" ? "Review" : "Repair"} ${basename(finding.path)}`,
-      path: finding.path,
-    }))
+    .flatMap((finding) => {
+      const action = findingAction(finding);
+      return action ? [{ kind: finding.code === "unreviewed-evidence" ? "review" as const : "repair" as const, label: action.label, path: finding.path, run: action.run }] : [];
+    })
     .sort((left, right) => (left.kind === "repair" ? 0 : 1) - (right.kind === "repair" ? 0 : 1) || compareCodeUnits(left.path, right.path));
 
   if (nextActions.length === 0) {
     // The continuation step is decided once, in nextStep.ts — the desk and the
     // workbench can never drift; only the labels are per-surface.
     const { step, path } = researchContinuationStep(snapshot);
-    const label = {
-      "add-source": "Add a source",
-      "create-evidence": "Create evidence",
-      "create-claim": "Create a claim",
-      "build-outline": "Build the outline",
-      "continue-outline": "Continue into the draft",
-      "assure-document": "Assure the draft",
-    }[step];
-    nextActions.push({ kind: "continue", label, path });
+    const next = ({
+      "add-source": { label: "Add a source", run: "add-source" },
+      "create-evidence": { label: "Extract evidence", run: "extract-evidence" },
+      "create-claim": { label: "Create a claim", run: "create-claim" },
+      "build-outline": { label: "Build the outline", run: "build-outline" },
+      "continue-outline": { label: "Continue into the draft", run: "continue-draft" },
+      "assure-document": { label: "Assure the draft", run: "audit" },
+    } as const)[step];
+    nextActions.push({ kind: "continue", ...next, path });
   }
 
   return {

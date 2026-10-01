@@ -20,7 +20,7 @@ function headerPlugin(): ClaudeCompanionPlugin {
       sourceInboxFolder: "Clippings", sourceCaptureEnabled: false, clipperStatus: "not-set-up",
       semanticEnabled: true, embeddingEngine: "builtin", embeddingModel: "EmbeddingGemma",
       embeddingHealth: "Ready", indexHealth: "Ready", memoryEnabled: true, memoryFolder: "Memory",
-      memoryAutoConsolidate: true, discoveryEnabled: true, discoveryReranker: "current",
+      memoryAutoConsolidate: true, discoveryEnabled: true, researchModel: "chat",
     }),
     save: vi.fn(),
     run: vi.fn(),

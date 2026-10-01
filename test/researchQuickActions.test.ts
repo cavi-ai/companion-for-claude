@@ -27,9 +27,19 @@ describe("researchQuickActions", () => {
 
   it("audit findings reference the audit tool, the label, and the record path", () => {
     const [qa] = researchQuickActions([action("stale-evidence:Research/Alpha/Evidence/E.md", "Re-check E", "Research/Alpha/Evidence/E.md")], PROJECT);
-    expect(qa?.prompt).toContain("research_audit");
+    expect(qa?.prompt).toContain("research_evidence_review");
     expect(qa?.prompt).toContain("Re-check E");
     expect(qa?.prompt).toContain("Research/Alpha/Evidence/E.md");
+  });
+
+  it("review findings name the tool that completes them", () => {
+    const prompt = (id: string) => researchQuickActions([action(id, "L", "P/X.md")], PROJECT)[0]!.prompt;
+    expect(prompt("review-evidence:P/X.md")).toContain("research_evidence_review");
+    expect(prompt("missing-locator:P/X.md")).toContain("research_evidence_locate");
+    expect(prompt("review-claim:P/X.md")).toContain("research_claim_review");
+    expect(prompt("unsupported-claim:P/X.md")).toContain("research_claim_review");
+    expect(prompt("challenged-claim:P/X.md")).toContain("research_claim_review");
+    expect(prompt("unverifiable-source:P/X.md")).toContain("research_audit");
   });
 
   it("every prompt names the project path", () => {

@@ -32,6 +32,7 @@ export interface IntelligenceCoordinatorDeps {
   chatBackend: () => ChatBackend;
   anthropic: () => { provider: Provider; model: string };
   local: () => { provider: Provider; model: string };
+  chat: () => { provider: Provider; model: string };
   localAvailable: () => Promise<boolean>;
   maxTokens: () => number;
 }
@@ -57,10 +58,12 @@ interface CachedNarrative {
 }
 
 class ProviderSetupError extends Error {
-  constructor(readonly providerId: ProviderId) {
+  constructor(readonly providerId: ProviderId, label?: string) {
     super(providerId === "anthropic"
       ? "Add your Anthropic credential in Claude Companion settings first."
-      : "Start Ollama (`ollama serve`) or set the host in settings.");
+      : providerId === "ollama"
+        ? "Start Ollama (`ollama serve`) or set the host in settings."
+        : `${label ?? providerId} is not signed in. Run its login in a terminal.`);
   }
 }
 
@@ -228,14 +231,13 @@ export class IntelligenceCoordinator {
     const chatBackend = this.deps.chatBackend();
     const chosen = mode === "claude" ? this.deps.anthropic()
       : mode === "local" ? this.deps.local()
-      : chatBackend === "local" ? this.deps.local()
-      : this.deps.anthropic();
+      : this.deps.chat();
     const cacheKey = this.cacheKey(projectPath, snapshotFingerprint, mode, chosen);
     return { mode, chatBackend, ...chosen, cacheKey, contextKey: this.contextKey(cacheKey, chatBackend) };
   }
 
   private complete(chosen: { provider: Provider; model: string }, system: string, messages: Parameters<Provider["complete"]>[0]["messages"], signal: AbortSignal): Promise<string> {
-    if (!chosen.provider.hasCredentials()) throw new ProviderSetupError(chosen.provider.id);
+    if (!chosen.provider.hasCredentials()) throw new ProviderSetupError(chosen.provider.id, chosen.provider.label);
     return chosen.provider.complete({ system, messages, model: chosen.model, maxTokens: this.deps.maxTokens(), temperature: 0, signal });
   }
 

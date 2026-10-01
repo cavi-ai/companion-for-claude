@@ -35,6 +35,12 @@ describe("capabilitiesFor", () => {
     });
     expect(capabilitiesFor("claude-sonnet-4-6").temperature).toBe(true);
   });
+  it("Sonnet 5.5 — adaptive thinking, turned off via between_tools at high effort or below", () => {
+    expect(capabilitiesFor("claude-sonnet-5-5")).toEqual({
+      temperature: false, thinking: "adaptive", effort: true, effortMax: true,
+      maxEffortWithoutThinking: "high", thinkingOff: "between_tools",
+    });
+  });
   it("Opus 5.5, Fable 5/5.1, Mythos 5/5.1 — thinking always on, full effort, no temperature", () => {
     for (const id of ["claude-opus-5-5", "claude-fable-5-1", "claude-fable-5", "claude-mythos-5-1", "claude-mythos-5"]) {
       expect(capabilitiesFor(id)).toMatchObject({ temperature: false, thinking: "always", effort: true, effortMax: true });

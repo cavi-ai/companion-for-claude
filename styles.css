@@ -287,7 +287,7 @@ body:not(.is-mobile) .cc-user {
   margin-right: 6px;
 }
 /* The single indicator: a clay smiley on the left that "breathes" — expanding
-   from a small dot to a full smiley and back at 80 bpm (0.75s). Fixed position,
+   from a small dot to a full smiley and back at 40 bpm (1.5s). Fixed position,
    so the changing word beside it never shifts it. */
 .cc-thinking-dot {
   flex: 0 0 auto;
@@ -296,13 +296,13 @@ body:not(.is-mobile) .cc-user {
   justify-content: center;
   color: var(--cc-clay);
   transform-origin: center;
-  animation: cc-smiley-breathe 0.75s ease-in-out infinite;
+  animation: cc-smiley-breathe 1.5s ease-in-out infinite;
 }
 .cc-thinking-dot svg {
   width: 17px;
   height: 17px;
 }
-/* The cycling word — fades at 20 bpm (3.0s): 1/4 the smiley tempo, phase-aligned. */
+/* The cycling word — fades at 20 bpm (3.0s): 1/2 the smiley tempo, phase-aligned. */
 .cc-thinking-word {
   font-family: var(--cc-mono);
   font-size: var(--cc-text-sm);
@@ -2654,12 +2654,17 @@ pre.cc-has-copy:hover .cc-code-copy { opacity: 1; }
 
 .cc-research-workbench { container: research-workbench / inline-size; padding: clamp(12px, 2.3vw, 20px); color: var(--text-normal); }
 .cc-research-header-top { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; }
-.cc-workspace-navigation { display: grid; grid-template-columns: repeat(2, auto); justify-content: end; gap: 4px; margin: 0; }
+.cc-workspace-navigation { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; min-width: 0; margin: 0; }
 .cc-workspace-navigation button,
 .cc-workspace-companion-action { min-height: 34px; white-space: nowrap; box-shadow: none; }
 .cc-workspace-companion-action {
   border-color: color-mix(in srgb, var(--cc-accent) 40%, var(--background-modifier-border));
 }
+.cc-research-model-chip { min-height: 34px; height: auto; max-width: 100%; box-shadow: none; color: var(--text-muted); font-size: var(--font-ui-smaller); text-align: start; overflow-wrap: anywhere; }
+.cc-workspace-navigation .cc-research-model-chip,
+.cc-desk-header-actions > .cc-research-model-chip { white-space: normal; }
+.cc-desk-header-actions > .cc-research-model-chip { flex: 0 1 auto; min-height: 40px; }
+.cc-research-model-chip.is-unavailable { color: var(--text-warning); }
 .cc-research-header { padding-bottom: 11px; border-bottom: 1px solid var(--background-modifier-border); }
 .cc-research-header h2 { margin: 5px 0 3px; font-size: clamp(19px, 2.5vw, 25px); letter-spacing: -.02em; }
 .cc-research-question { max-width: 65ch; margin: 5px 0 9px; color: var(--text-muted); line-height: 1.45; }
@@ -2879,8 +2884,9 @@ pre.cc-has-copy:hover .cc-code-copy { opacity: 1; }
 
 @container research-workbench (max-width: 600px) {
   .cc-research-header-top { align-items: stretch; flex-direction: column; }
-  .cc-workspace-navigation { grid-template-columns: repeat(2, minmax(0, 1fr)); justify-content: stretch; }
-  .cc-workspace-navigation button { min-width: 0; white-space: normal; }
+  .cc-workspace-navigation { justify-content: stretch; }
+  .cc-workspace-navigation button { flex: 1 1 calc(50% - 2px); min-width: 0; white-space: normal; }
+  .cc-workspace-navigation .cc-research-model-chip { flex-basis: 100%; }
 }
 
 @media (prefers-reduced-motion: no-preference) {

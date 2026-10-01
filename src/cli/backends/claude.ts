@@ -1,6 +1,6 @@
 // Claude Code CLI backend: thin CliBackend wrapper over the existing argv/streamJson/runtime modules.
 
-import { buildClaudeArgv } from "../argv";
+import { buildClaudeArgv, buildClaudeCompletionArgv } from "../argv";
 import { parseAuthStatus } from "../runtime";
 import { parseCliLine } from "../streamJson";
 import type { CliBackend } from "./types";
@@ -19,6 +19,9 @@ export const claudeBackend: CliBackend = {
   },
   buildArgv(input) {
     return buildClaudeArgv(input);
+  },
+  buildCompletionArgv(input) {
+    return buildClaudeCompletionArgv(input);
   },
   parseLine(line) {
     return parseCliLine(line);

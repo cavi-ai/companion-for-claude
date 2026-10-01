@@ -103,6 +103,24 @@ describe("ResearchWorkbenchView", () => {
   it("redacts provider credentials from section drafting errors", () => {
     expect(safeDraftError(new Error("request failed\nBearer secret-token api_key=also-secret"))).toBe("request failed [redacted] [redacted]");
   });
+  it("shows the research model chip in the header navigation", async () => {
+    const openResearchSettings = vi.fn();
+    const mk = (available: boolean) => new ResearchWorkbenchView(new WorkspaceLeaf(), { loadProject: async () => snapshot } as never, {
+      ...intelligenceDependencies().dependencies,
+      researchStatus: () => ({ model: "chat", providerLabel: "Codex", modelId: "gpt", available }),
+      openResearchSettings,
+    });
+    const view = mk(true);
+    await view.setProjectPath(snapshot.project.path);
+    const chip = elements(view, ".cc-research-model-chip")[0];
+    expect(chip?.textContent).toBe("AI · Codex · gpt");
+    click(chip);
+    expect(openResearchSettings).toHaveBeenCalledOnce();
+    const down = mk(false);
+    await down.setProjectPath(snapshot.project.path);
+    expect(elements(down, ".cc-research-model-chip")[0]?.classList.has("is-unavailable")).toBe(true);
+  });
+
   it("registers stable accessible view metadata", () => {
     const repository = { loadProject: () => Promise.reject(new Error("unused")) } as ResearchRepository;
     const view = new ResearchWorkbenchView(new WorkspaceLeaf(), repository);
@@ -216,7 +234,7 @@ describe("ResearchWorkbenchView", () => {
     await view.setProjectPath(snapshot.project.path);
     expect(elements(view, ".cc-research-panel-intro")).toHaveLength(1);
     expect(elements(view, ".cc-research-panel-title")[0]?.textContent).toBe("Project overview");
-    expect(elements(view, ".cc-research-panel-description")[0]?.textContent).toContain("research system");
+    expect(elements(view, ".cc-research-panel-description")[0]?.textContent).toContain("Where this project stands");
 
     await view.focus("Sources");
     expect(elements(view, ".cc-research-panel-title")[0]?.textContent).toBe("Source library");
@@ -230,10 +248,10 @@ describe("ResearchWorkbenchView", () => {
     await view.setProjectPath(snapshot.project.path);
     await view.focus("Evidence");
     expect(elements(view, ".cc-research-empty-state")).toHaveLength(1);
-    expect(elements(view, ".cc-research-empty-state-title")[0]?.textContent).toBe("No evidence yet");
-    expect(elements(view, ".cc-research-empty-state-copy")[0]?.textContent).toContain("lift the exact passage");
+    expect(elements(view, ".cc-research-empty-state-title")[0]?.textContent).toBe("No passages yet");
+    expect(elements(view, ".cc-research-empty-state-copy")[0]?.textContent).toContain("exact passage");
     expect(elements(view, ".cc-research-actions-heading")[0]?.textContent).toBe("Workspace actions");
-    expect(elements(view, ".is-contextual").map(({ textContent }) => textContent)).toEqual(["Review evidence"]);
+    expect(elements(view, ".is-contextual").map(({ textContent }) => textContent)).toEqual(["Extract evidence"]);
   });
 
   it("reviews proposed evidence natively and returns to the Evidence panel", async () => {
@@ -246,7 +264,7 @@ describe("ResearchWorkbenchView", () => {
     click(elements(view, "button").find(({ textContent }) => textContent === "Review evidence"));
     const modal = getLastOpenedModal();
     expect([...modal!.contentEl.querySelectorAll("p")].map(({ textContent }: any) => textContent)).toContain("A directly inspectable passage.");
-    click([...modal!.contentEl.querySelectorAll("button")].find(({ textContent }: any) => textContent === "Mark reviewed"));
+    click([...modal!.contentEl.querySelectorAll("button")].find(({ textContent }: any) => textContent === "Keep"));
     await Promise.resolve(); await Promise.resolve();
 
     expect(reviewEvidence).toHaveBeenCalledWith(proposed.path, "reviewed");
@@ -264,7 +282,7 @@ describe("ResearchWorkbenchView", () => {
     const modal = getLastOpenedModal()!;
     const inputs = [...modal.contentEl.querySelectorAll("input")] as any[];
     const textarea = modal.contentEl.querySelector("textarea") as any;
-    inputs.find((input) => input.getAttribute("aria-label") === "Claim title")!.value = "Claim";
+    inputs.find((input) => input.getAttribute("aria-label") === "Short title")!.value = "Claim";
     textarea.value = "The evidence supports this proposition.";
     const support = inputs.find((input) => input.getAttribute("aria-label") === "Evidence E supports");
     support.checked = true;

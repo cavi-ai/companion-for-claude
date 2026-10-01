@@ -2,7 +2,7 @@
 
 import { CLI_MCP_SERVER, parseMcpConfig } from "../argv";
 import type { CliEvent } from "../streamJson";
-import type { CliArgvInput, CliBackend } from "./types";
+import type { CliArgvInput, CliBackend, CliCompletionArgvInput } from "./types";
 
 type Json = Record<string, unknown>;
 const str = (v: unknown, fallback = ""): string => (typeof v === "string" ? v : fallback);
@@ -14,6 +14,12 @@ export function buildOpencodeArgv(input: CliArgvInput): string[] {
   if (input.resumeSessionId) argv.push("--session", input.resumeSessionId);
   if (input.message !== undefined) argv.push(opencodePrompt(input));
   return argv;
+}
+
+export function buildOpencodeCompletionArgv(input: CliCompletionArgvInput): string[] {
+  const message = input.message ?? "";
+  const prompt = input.systemPromptText ? `${input.systemPromptText}\n\n${message}` : message;
+  return ["run", "--format", "json", "--dir", input.cwd, "--pure", ...(input.model ? ["-m", input.model] : []), prompt];
 }
 
 /** The message, with the system prompt prepended when this is the first turn (opencode has no system-prompt-file flag). */
@@ -80,6 +86,7 @@ export const opencodeBackend: CliBackend = {
     return { loggedIn: count > 0, method: count > 0 ? `${count} credential${count === 1 ? "" : "s"}` : "" };
   },
   buildArgv: buildOpencodeArgv,
+  buildCompletionArgv: buildOpencodeCompletionArgv,
   env: opencodeEnv,
   parseLine: parseOpencodeLine,
 };

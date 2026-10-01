@@ -26,7 +26,7 @@ export function defaultChatControls(model: string): ChatControls {
 /** The request-shaping fields derived from controls + the active model's capabilities. */
 export interface RequestShape {
   /** `thinking` object for the request body, or undefined when not applicable. */
-  thinking?: { type: "adaptive" } | { type: "enabled"; budget_tokens: number } | { type: "disabled" };
+  thinking?: { type: "adaptive" } | { type: "enabled"; budget_tokens: number } | { type: "disabled" } | { type: "between_tools" };
   /** `output_config` object (currently just effort), or undefined. */
   outputConfig?: { effort: string };
   /** Whether to display `display:"summarized"` reasoning (adaptive models only). */
@@ -69,7 +69,7 @@ export function shapeRequest(
     // caps.thinking === "always" with the toggle off: omit; `disabled` would 400.
   } else if (caps.thinking === "adaptive") {
     // Explicitly disable so adaptive models don't silently think.
-    shape.thinking = { type: "disabled" };
+    shape.thinking = caps.thinkingOff ? { type: "between_tools" } : { type: "disabled" };
   }
 
   // ---- effort ----

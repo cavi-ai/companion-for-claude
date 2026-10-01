@@ -135,3 +135,9 @@ describe("cache-aware session cost (spec 2026-07-05 §9)", () => {
     expect(addUsage(legacy, { cache_creation_input_tokens: 5 }).cacheWriteTokens).toBe(5);
   });
 });
+
+describe("limitsFor — Sonnet 5.5", () => {
+  it("knows Sonnet 5.5's window, output cap, and price", () => {
+    expect(limitsFor("claude-sonnet-5-5")).toEqual({ contextWindow: 1_000_000, maxOutput: 128_000, inputCostPerM: 2, outputCostPerM: 10 });
+  });
+});

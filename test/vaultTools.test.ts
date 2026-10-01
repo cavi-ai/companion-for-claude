@@ -41,6 +41,8 @@ describe("research tools", () => {
       "research_source_import",
       "research_evidence_capture",
       "research_evidence_review",
+      "research_evidence_locate",
+      "research_claim_review",
       "research_claim_create",
       "research_claim_link",
       "research_outline_generate",
@@ -596,5 +598,57 @@ describe("related_notes", () => {
 
   it("says the note is not indexed when there are no neighbours", async () => {
     expect(await relatedTools(async () => []).call("related_notes", { path: "Notes/A.md" })).toBe("No related notes for Notes/A.md (index empty or note not indexed).");
+  });
+});
+
+describe("research state through the generic frontmatter tools", () => {
+  async function staleEvidence() {
+    const { app, vt } = tools(true);
+    const project = JSON.parse(await vt.call("research_project_create", { title: "Alpha", question: "Why?", folder: "Research/Alpha" })).path;
+    const source = JSON.parse(await vt.call("research_source_import", { project, title: "Paper", source_kind: "vault", captured_text: "Original text." })).path;
+    const evidence = JSON.parse(await vt.call("research_evidence_capture", { project, source, title: "Stale result", excerpt: "Original text.", locator_kind: "page", locator_value: "1" })).path;
+    const claim = JSON.parse(await vt.call("research_claim_create", { project, title: "Claim", proposition: "P." })).path;
+    const sourceFile = app.vault.getAbstractFileByPath(source) as never;
+    const text = await app.vault.cachedRead(sourceFile);
+    await app.vault.modify(sourceFile, text.replace("Original text.", "Modified text."));
+    return { app, vt, project, evidence, claim };
+  }
+  const staleCount = async (vt: ReturnType<typeof tools>["vt"], project: string) => JSON.parse(await vt.call("research_audit", { project })).filter((f: { rule: string }) => f.rule === "stale-evidence").length;
+
+  it("update_frontmatter review_state reviews stale evidence and clears staleness", async () => {
+    const { vt, project, evidence } = await staleEvidence();
+    expect(await staleCount(vt, project)).toBe(1);
+    const result = await vt.call("update_frontmatter", { path: evidence, fields: { review_state: "reviewed" } });
+    expect(result).toBe('Marked "Stale result" reviewed and re-checked it against the current source.');
+    expect(await staleCount(vt, project)).toBe(0);
+  });
+
+  it("update_frontmatter reviews a claim and refuses invalid evidence values with the allowed list", async () => {
+    const { vt, evidence, claim } = await staleEvidence();
+    expect(await vt.call("update_frontmatter", { path: claim, fields: { review_state: "reviewed" } })).toContain("reviewed");
+    await expect(vt.call("update_frontmatter", { path: evidence, fields: { review_state: "proposed" } })).rejects.toThrow(/reviewed, rejected/);
+  });
+
+  it("a lone locator_value pairs with the existing locator_kind; other reserved keys still refuse", async () => {
+    const { app, vt, evidence } = await staleEvidence();
+    await vt.call("update_frontmatter", { path: evidence, fields: { locator_value: "9" } });
+    expect(await app.vault.cachedRead(app.vault.getAbstractFileByPath(evidence) as never)).toMatch(/locator_kind: "?page"?[\s\S]*locator_value: "?9"?/);
+    await expect(vt.call("update_frontmatter", { path: evidence, fields: { type: "claim" } })).rejects.toThrow(/managed by Companion/);
+    await expect(vt.call("update_frontmatter", { path: evidence, fields: { project: "x" } })).rejects.toThrow(/research_\* tools/);
+  });
+
+  it("note_patch routes review_state", async () => {
+    const { vt, project, evidence } = await staleEvidence();
+    await vt.call("note_patch", { path: evidence, target: { kind: "frontmatter", key: "review_state" }, op: "replace", content: "reviewed" });
+    expect(await staleCount(vt, project)).toBe(0);
+  });
+
+  it("note_update accepts a review_state-only change and refuses a project change", async () => {
+    const { app, vt, project, evidence } = await staleEvidence();
+    const file = app.vault.getAbstractFileByPath(evidence) as never;
+    const text = await app.vault.cachedRead(file);
+    await expect(vt.call("note_update", { path: evidence, content: text.replace(/^project: .*$/m, 'project: "[[Other/Project.md]]"') })).rejects.toThrow(/managed by Companion/);
+    await vt.call("note_update", { path: evidence, content: text.replace(/^review_state: .*$/m, "review_state: reviewed") });
+    expect(await staleCount(vt, project)).toBe(0);
   });
 });

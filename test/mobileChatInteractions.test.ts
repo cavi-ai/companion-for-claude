@@ -106,6 +106,6 @@ describe("mobile chat interactions", () => {
 
     view.refreshModelLabel();
 
-    expect((view as unknown as { modelLabelEl: FakeElement }).modelLabelEl.textContent).toBe("Claude Sonnet 5");
+    expect((view as unknown as { modelLabelEl: FakeElement }).modelLabelEl.textContent).toBe("Claude Sonnet 5.5");
   });
 });

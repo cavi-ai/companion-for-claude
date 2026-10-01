@@ -96,7 +96,7 @@ export interface CompletionRequest {
   /** JSON Schema supplied to local providers that support constrained output. */
   responseSchema?: Record<string, unknown>;
   /** Extended-thinking config for the request body (model-aware; built by chatControls). */
-  thinking?: { type: "adaptive" } | { type: "enabled"; budget_tokens: number } | { type: "disabled" };
+  thinking?: { type: "adaptive" } | { type: "enabled"; budget_tokens: number } | { type: "disabled" } | { type: "between_tools" };
   /** Whether to request summarized reasoning text (adaptive models). */
   thinkingDisplay?: "summarized" | "omitted";
   /** `output_config` (currently just `effort`) for models that support it. */

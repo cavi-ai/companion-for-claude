@@ -11,6 +11,8 @@
 // Everything wire-format-specific lives in this one module so updating it to a
 // new beta revision is a single-file change.
 
+export const CLOUD_ROUTINE_BETA_HEADER = "experimental-cc-routine-2026-04-01";
+
 export interface CloudDispatchConfig {
   /**
    * The routine's full "fire" endpoint, copied from the Claude Code web UI,

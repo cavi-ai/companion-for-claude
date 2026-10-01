@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { DEFAULT_SETTINGS, normalizeDiscoverySettings } from "../src/types";
+import { DEFAULT_SETTINGS } from "../src/types";
+import { DISCOVERY_CACHE_HOURS, DISCOVERY_EXPANSION_LIMIT, DISCOVERY_MAX_RESULTS } from "../src/discovery/limits";
+import { ARTIFACT_HEIGHT } from "../src/artifacts/renderInline";
+import { CLOUD_ROUTINE_BETA_HEADER } from "../src/cloud/routines";
 
 describe("source-capture defaults", () => {
   it("ships on with first-run consent and a default inbox", () => {
@@ -64,8 +67,8 @@ describe("embedding engine defaults", () => {
 });
 
 describe("research intelligence defaults", () => {
-  it("defaults research intelligence to the current chat backend", () => {
-    expect(DEFAULT_SETTINGS.intelligenceNarrator).toBe("current");
+  it("defaults the research model to the chat backend", () => {
+    expect(DEFAULT_SETTINGS.researchModel).toBe("chat");
   });
 });
 
@@ -74,21 +77,17 @@ describe("scholarly discovery settings", () => {
     expect(DEFAULT_SETTINGS).toEqual(expect.objectContaining({
       discoveryEnabled: true,
       openAlexContactEmail: "",
-      discoveryReranker: "current",
-      discoveryMaxResults: 20,
-      discoveryExpansionLimit: 20,
-      discoveryCacheHours: 24,
     }));
   });
 
-  it("clamps boundaries and repairs corrupt numbers", () => {
-    expect(normalizeDiscoverySettings({ discoveryMaxResults: 4, discoveryExpansionLimit: 51, discoveryCacheHours: 0 }))
-      .toEqual({ discoveryMaxResults: 5, discoveryExpansionLimit: 50, discoveryCacheHours: 1 });
-    expect(normalizeDiscoverySettings({ discoveryMaxResults: 101, discoveryExpansionLimit: 4, discoveryCacheHours: 169 }))
-      .toEqual({ discoveryMaxResults: 100, discoveryExpansionLimit: 5, discoveryCacheHours: 168 });
-    expect(normalizeDiscoverySettings({ discoveryMaxResults: Number.NaN, discoveryExpansionLimit: Infinity, discoveryCacheHours: -Infinity }))
-      .toEqual({ discoveryMaxResults: 20, discoveryExpansionLimit: 20, discoveryCacheHours: 24 });
-    expect(normalizeDiscoverySettings({ discoveryMaxResults: 12.9, discoveryExpansionLimit: 21.7, discoveryCacheHours: 8.4 }))
-      .toEqual({ discoveryMaxResults: 12, discoveryExpansionLimit: 21, discoveryCacheHours: 8 });
+  it("tuning knobs are constants at their former defaults", () => {
+    expect(DISCOVERY_MAX_RESULTS).toBe(20);
+    expect(DISCOVERY_EXPANSION_LIMIT).toBe(20);
+    expect(DISCOVERY_CACHE_HOURS).toBe(24);
+    expect(ARTIFACT_HEIGHT).toBe(640);
+    expect(CLOUD_ROUTINE_BETA_HEADER).toBe("experimental-cc-routine-2026-04-01");
+    for (const key of ["discoveryMaxResults", "discoveryExpansionLimit", "discoveryCacheHours", "artifactHeight", "cloudRoutineBetaHeader"]) {
+      expect(DEFAULT_SETTINGS).not.toHaveProperty(key);
+    }
   });
 });

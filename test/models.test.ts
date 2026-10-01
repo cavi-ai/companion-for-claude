@@ -24,7 +24,11 @@ describe("modelLabel", () => {
     expect(CLAUDE_MODELS.map((model) => model.id)).not.toContain("claude-fable-5");
   });
   it("returns the friendly label for known ids", () => {
-    expect(modelLabel("claude-sonnet-5")).toBe("Claude Sonnet 5");
+    expect(modelLabel("claude-sonnet-5-5")).toBe("Claude Sonnet 5.5");
+  });
+  it("offers Sonnet 5.5 in place of Sonnet 5", () => {
+    expect(CLAUDE_MODELS.map((model) => model.id)).toContain("claude-sonnet-5-5");
+    expect(CLAUDE_MODELS.map((model) => model.id)).not.toContain("claude-sonnet-5");
   });
   it("has a label for every curated model", () => {
     for (const m of CLAUDE_MODELS) expect(modelLabel(m.id)).toBe(m.label);

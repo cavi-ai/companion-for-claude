@@ -125,3 +125,36 @@ test("an unresponsive Claude Code turn survives restart and resumes explicitly",
   const log = await readFile(harness.argvLog, "utf8");
   expect(log.split("\n").filter((line) => line.startsWith("ARGV ")).at(-1)).toContain("--resume");
 });
+
+test("research Sharpen with Claude runs a tool-less Claude Code one-shot", async ({ rig }) => {
+  const harness = await rig.reset({ claudeCli: true });
+  const { page } = harness;
+  try {
+    await page.evaluate(async () => {
+      const app = (window as unknown as { app: { commands: { executeCommandById(id: string): Promise<void> } } }).app;
+      await app.commands.executeCommandById("claude-companion:open-research-desk");
+    });
+    const desk = page.locator(".cc-research-desk");
+    await expect(desk).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Continuity research" })).toBeVisible();
+    await desk.getByRole("button", { name: "Develop claim", exact: true }).click();
+    const modal = page.locator(".modal-container").last();
+    await modal.getByLabel("Short title").fill("Workflow continuity claim");
+    await modal.getByLabel("Claim", { exact: true }).fill("Reviewed evidence preserves continuity across the workflow.");
+    await modal.getByRole("button", { name: /Sharpen the claim with Claude/ }).click();
+    await expect(modal.locator(".cc-research-sharpen-text")).toContainText("pong from claude code", { timeout: 30_000 });
+
+    const log = await readFile(harness.argvLog, "utf8");
+    const argv = log.split("\n").filter((l) => l.startsWith("ARGV "));
+    expect(argv.length).toBeGreaterThan(0);
+    for (const line of argv) {
+      expect(line).toContain("--no-session-persistence");
+      expect(line).toContain("--strict-mcp-config");
+      expect(line).not.toContain("--mcp-config");
+      expect(line).not.toContain("--permission-prompt-tool");
+    }
+    expect(await harness.providerRequests()).toBe(0);
+  } finally {
+    await harness.close();
+  }
+});

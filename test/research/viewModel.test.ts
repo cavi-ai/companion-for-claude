@@ -32,7 +32,7 @@ describe("buildWorkbenchViewModel", () => {
   it("returns a useful empty-project state", () => {
     const vm = buildWorkbenchViewModel(snapshot(), []);
     expect(vm.counts).toEqual({ sources: 0, evidence: 0, claims: 0, openQuestions: 0 });
-    expect(vm.nextActions).toEqual([{ kind: "continue", label: "Add a source", path: project.path }]);
+    expect(vm.nextActions).toEqual([{ kind: "continue", label: "Add a source", run: "add-source", path: project.path }]);
   });
 
   it("handles a missing project record", () => {
@@ -46,7 +46,7 @@ describe("buildWorkbenchViewModel", () => {
     const records: ResearchRecord[] = ["proposed", "reviewed", "rejected"].map((reviewState, n) => ({ path: `Research/Evidence/E${n}.md`, title: `E${n}`, type: "evidence", project: project.path, source: "Research/Sources/S.md", excerpt: "Text", reviewState } as ResearchRecord));
     const vm = buildWorkbenchViewModel(snapshot(records), [finding("unreviewed-evidence", "Research/Evidence/E0.md")]);
     expect(vm.health.unreviewedEvidence).toBe(1);
-    expect(vm.nextActions).toContainEqual({ kind: "review", label: "Review E0", path: "Research/Evidence/E0.md" });
+    expect(vm.nextActions).toContainEqual({ kind: "review", label: "Check E0", run: "review-evidence", path: "Research/Evidence/E0.md" });
   });
 
   it("orders repairs before reviews and continuation, then by path", () => {
