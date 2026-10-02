@@ -4,6 +4,7 @@
 // never ran in CI because tests execute before the build. Wired into the CI
 // verify job right after the bundle budget check.
 import { readFile } from "node:fs/promises";
+import process from "node:process";
 
 const artifact = new URL("../.build/embed-worker.txt", import.meta.url);
 
@@ -17,6 +18,23 @@ try {
 }
 
 const failures = [];
+
+const mainArg = process.argv.indexOf("--main");
+const mainPath = mainArg === -1 ? new URL("../main.js", import.meta.url) : process.argv[mainArg + 1];
+let mainSrc;
+try {
+  mainSrc = await readFile(mainPath, "utf8");
+} catch (error) {
+  console.error(`verify-worker-bundle: cannot read main.js — ${error instanceof Error ? error.message : String(error)}`);
+  process.exit(1);
+}
+// main.js must carry the workers gzipped: a raw slice of either artifact means it was inlined as text again.
+for (const name of ["embed-worker", "pdf-worker"]) {
+  const worker = name === "embed-worker" ? src : await readFile(new URL(`../.build/${name}.txt`, import.meta.url), "utf8");
+  const marker = worker.slice('"use strict";'.length, '"use strict";'.length + 200);
+  if (marker.length < 200) failures.push(`${name} artifact is too short to carry a 200-char marker`);
+  else if (mainSrc.includes(marker)) failures.push(`main.js contains the raw ${name} text; it must be inlined gzipped`);
+}
 
 // transformers.js is inlined, not CDN-loaded — the bundle can't be tiny.
 if (src.length <= 400_000) {

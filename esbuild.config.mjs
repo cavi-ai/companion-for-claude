@@ -2,6 +2,7 @@ import esbuild from "esbuild";
 import fs from "node:fs/promises";
 import { builtinModules } from "node:module";
 import process from "node:process";
+import { gzipSync } from "fflate";
 
 const prod = process.argv[2] === "production";
 
@@ -43,6 +44,11 @@ await esbuild.build({
   logLevel: "info",
 });
 
+// Gzip both worker artifacts for inlining; fflate (not node:zlib) keeps the bytes identical across Node versions and platforms.
+for (const name of ["embed-worker", "pdf-worker"]) {
+  await fs.writeFile(`.build/${name}.txt.gz`, gzipSync(await fs.readFile(`.build/${name}.txt`), { level: 9, mtime: 0 }));
+}
+
 const context = await esbuild.context({
   banner: { js: banner },
   entryPoints: ["src/main.ts"],
@@ -65,7 +71,7 @@ const context = await esbuild.context({
   ],
   format: "cjs",
   target: "es2021",
-  loader: { ".txt": "text" },
+  loader: { ".gz": "binary" },
   logLevel: "info",
   sourcemap: prod ? false : "inline",
   treeShaking: true,

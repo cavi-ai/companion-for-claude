@@ -1,7 +1,7 @@
 import type { Locator, Page } from "@playwright/test";
 import { test, expect } from "../fixtures";
 import type { Rig } from "../fixtures";
-import { mkdir, readFile, stat } from "node:fs/promises";
+import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setRightSidebarWidth } from "../rig/pageOps.ts";
@@ -11,6 +11,7 @@ const ASSETS = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "
 const PLUGIN_ASSETS = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "assets");
 const THEMES = (process.env.CC_E2E_CAPTURE_THEME ?? "both") === "both" ? (["dark", "light"] as const) : [process.env.CC_E2E_CAPTURE_THEME as "dark" | "light"];
 const OUT_ROOT = process.env.CC_E2E_CAPTURE_DIR;
+const CAPTURE_SCALE = 2;
 const CHAT_REPLY = "Your research draft is grounded in three reviewed evidence notes. Resolve the stale citation next, then continue drafting.";
 const ORIGINAL_PLAN = "# Build plan\n\nNotes for implementation.\n\n- [ ] Create the parser\n- [ ] Wire the interface\n- [ ] Write tests\n- [ ] Ship it\n";
 const ENRICHED_PLAN = "# Build Plan\n\nNotes for implementation.\n\n- [ ] Create the parser\n- [ ] Wire the interface\n- [ ] Write tests\n- [ ] Ship it to users\n";
@@ -61,17 +62,20 @@ async function shootThrough(root: Locator, end: Locator, cssHeight: number, name
 
   const path = outputPath(name, theme, assetRoot);
   await mkdir(dirname(path), { recursive: true });
-  await page.screenshot({
-    path,
-    scale: "device",
-    animations: "disabled",
-    clip: {
-      x: rootBox.x,
-      y: rootBox.y,
-      width: rootBox.width,
-      height: cssHeight,
-    },
-  });
+  // Playwright screenshots a CDP-attached Electron page at 1x; capture through CDP and correct to a fixed 2x.
+  const cdp = await page.context().newCDPSession(page);
+  try {
+    const shot = async (scale: number): Promise<Buffer> => Buffer.from((await cdp.send("Page.captureScreenshot", {
+      format: "png",
+      clip: { x: rootBox.x, y: rootBox.y, width: rootBox.width, height: cssHeight, scale },
+    })).data, "base64");
+    let png = await shot(1);
+    const native = png.readUInt32BE(16) / rootBox.width;
+    if (Math.abs(native - CAPTURE_SCALE) > 0.01) png = await shot(CAPTURE_SCALE / native);
+    await writeFile(path, png);
+  } finally {
+    await cdp.detach();
+  }
   await verifyCapture(path, name);
 }
 

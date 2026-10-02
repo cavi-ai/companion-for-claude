@@ -56,7 +56,8 @@ describe("ResearchView", () => {
     expect(indices).toEqual([...indices].sort((a, b) => a - b));
     for (const selector of [".cc-desk-fix", ".cc-research-tabs", ".cc-desk-stage", ".cc-desk-next"]) expect(all(view, selector)).toHaveLength(0);
     expect(all(view, ".cc-desk-chip")[0]?.textContent).toBe("Not drafted");
-    expect(all(view, ".cc-desk-document-progress")[0]?.textContent).toBe("0 of 1 sections drafted");
+    expect(all(view, ".cc-desk-document-progress")[0]?.textContent).toBe("0 of 1 section drafted");
+    expect(all(view, ".cc-desk-counts")[0]?.textContent).toBe("1 source · 2 passages · 1 claim");
   });
 
   it("sends a chat step to Claude with the project prompt", async () => {

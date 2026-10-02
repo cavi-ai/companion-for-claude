@@ -153,7 +153,7 @@ test("08 draft section: a previewed section is accepted into clean prose", async
   await expect(desk.getByRole("heading", { name: "Gamma research" })).toBeVisible();
   await desk.locator(".cc-desk-step", { hasText: 'Draft "Gamma claim"' }).click();
   await desk.getByRole("button", { name: "Accept section", exact: true }).click();
-  await expect(desk.locator(".cc-desk-document-progress")).toContainText("1 of 1 sections drafted");
+  await expect(desk.locator(".cc-desk-document-progress")).toContainText("1 of 1 section drafted");
   const accepted = await readVaultFile("Research/Gamma/Documents/Outline.md");
   expect(accepted).toContain(`## Gamma claim\n\n${sentence}`);
   expect(accepted).not.toContain("cavi:draft-section");

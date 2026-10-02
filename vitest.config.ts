@@ -2,6 +2,13 @@ import { defineConfig } from "vitest/config";
 import { fileURLToPath } from "node:url";
 
 export default defineConfig({
+  plugins: [{
+    name: "worker-gz-stub",
+    enforce: "pre",
+    // The gzipped worker artifacts only exist after a build; tests never inflate them.
+    resolveId: (id) => (id.endsWith(".gz") ? "\0worker-gz-stub" : null),
+    load: (id) => (id === "\0worker-gz-stub" ? "export default new Uint8Array(0);" : null),
+  }],
   test: {
     environment: "node",
     include: ["test/**/*.test.ts"],

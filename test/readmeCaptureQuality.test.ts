@@ -51,8 +51,8 @@ const captures: CaptureContract[] = [
   },
   {
     path: join(plugin, "..", "assets", "research-desk.png"),
-    width: 760,
-    height: 760,
+    width: 1520,
+    height: 1520,
     maxHeightToWidth: 1.15,
   },
   {

@@ -1,6 +1,5 @@
-// Lets TypeScript accept the inlined worker-bundle import in workerSource.ts;
-// esbuild's `.txt` text loader supplies the actual string at bundle time.
-declare module "*.txt" {
-  const content: string;
+// esbuild's `.gz` binary loader supplies the gzipped worker artifacts as bytes.
+declare module "*.gz" {
+  const content: Uint8Array;
   export default content;
 }

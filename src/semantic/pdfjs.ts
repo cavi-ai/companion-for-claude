@@ -3,14 +3,15 @@
 // test-imported ever resolves the .txt artifact or the pdf.js bundle.
 
 import * as pdfjs from "pdfjs-dist/legacy/build/pdf.mjs";
-import workerSource from "../../.build/pdf-worker.txt";
+import workerGz from "../../.build/pdf-worker.txt.gz";
+import { inflateWorkerSource } from "./workerText";
 import type { PdfDocumentLike } from "./pdf";
 
 let workerReady = false;
 
 function ensureWorker(): void {
   if (workerReady) return;
-  const url = URL.createObjectURL(new Blob([workerSource], { type: "text/javascript" }));
+  const url = URL.createObjectURL(new Blob([inflateWorkerSource(workerGz)], { type: "text/javascript" }));
   pdfjs.GlobalWorkerOptions.workerSrc = url;
   workerReady = true;
 }

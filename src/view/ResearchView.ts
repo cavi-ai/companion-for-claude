@@ -20,6 +20,7 @@ import { renderResearchModelChip } from "./researchModelChip";
 export const RESEARCH_DESK_VIEW_TYPE = "claude-research-desk";
 export const RESEARCH_WORKBENCH_VIEW_TYPE = "claude-research-workbench";
 const NEW_PROJECT = "__new__";
+const count = (value: number, noun: string): string => `${value} ${noun}${value === 1 ? "" : "s"}`;
 
 export interface ResearchViewDependencies {
   chrome?: CompanionChromeDependencies;
@@ -211,7 +212,7 @@ export class ResearchView extends ItemView {
     const section = root.createEl("section", { cls: "cc-desk-argument", attr: { "aria-label": "Argument" } });
     const head = section.createDiv({ cls: "cc-desk-section-heading" });
     head.createEl("h3", { text: "Argument" });
-    head.createSpan({ cls: "cc-desk-counts", text: `${snapshot.sources.length} sources · ${snapshot.evidence.length} passages · ${snapshot.claims.length} claims` });
+    head.createSpan({ cls: "cc-desk-counts", text: `${count(snapshot.sources.length, "source")} · ${count(snapshot.evidence.length, "passage")} · ${count(snapshot.claims.length, "claim")}` });
     const add = head.createEl("button", { text: "New claim" });
     add.addEventListener("click", () => this.deps.actions.createClaim(snapshot));
     if (!argument.cards.length) section.createEl("p", { cls: "cc-desk-empty-copy", text: "No claims yet. Ask Claude to develop one from your passages, or add one yourself." });
@@ -268,7 +269,7 @@ export class ResearchView extends ItemView {
     const total = document.sections.length;
     const drafted = document.sections.filter(({ state }) => state === "drafted").length;
     const changed = document.sections.filter(({ state }) => state === "changed").length;
-    section.createEl("p", { cls: "cc-desk-document-progress", text: total ? `${drafted} of ${total} sections drafted${changed ? ` · ${changed} changed` : ""}` : "No tracked sections" });
+    section.createEl("p", { cls: "cc-desk-document-progress", text: total ? `${drafted} of ${count(total, "section")} drafted${changed ? ` · ${changed} changed` : ""}` : "No tracked sections" });
     for (const issue of document.parsed.issues) section.createEl("p", { cls: "cc-research-error", text: issue });
     const actions = section.createDiv({ cls: "cc-desk-document-actions" });
     const open = actions.createEl("button", { text: "Open" });
