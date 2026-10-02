@@ -31,6 +31,7 @@ function createHarness(): InboxHarness {
     app,
     settings: { sourceCaptureEnabled: true, sourceInboxFolder: "Clippings", clipOrganizedFolder: "Library" },
     clipperSetupNeeded: () => true,
+    listQueuedEdits: () => [],
   });
   return { app, plugin, view: new InboxView(new WorkspaceLeaf(app), plugin), alpha, beta };
 }

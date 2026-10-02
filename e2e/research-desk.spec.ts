@@ -31,101 +31,76 @@ test.beforeAll(async ({ rig }) => {
 });
 test.afterAll(async () => { await harness?.close(); });
 
-test("01 launch: plugin loads without EPIPE or console failure", async () => {
-  await harness.page.evaluate(async () => { await (window as unknown as { app: { commands: { executeCommandById(id: string): Promise<void> } } }).app.commands.executeCommandById("claude-companion:open-research-desk"); });
-  await expect(harness.page.locator(".cc-research-desk")).toBeVisible();
+const run = (command: string) => harness.page.evaluate(async (id) => { await (window as unknown as { app: { commands: { executeCommandById(id: string): Promise<void> } } }).app.commands.executeCommandById(id); }, command);
+const openDesk = async () => { await run("claude-companion:open-research-desk"); await expect(harness.page.locator(".cc-research-desk")).toBeVisible(); };
+const deskLocator = () => harness.page.locator(".cc-research-desk");
+const readVaultFile = (path: string) => harness.page.evaluate((target) => (window as unknown as { app: { vault: { adapter: { read(path: string): Promise<string> } } } }).app.vault.adapter.read(target), path);
+
+test("01 launch: one Research view, no tabs, no console failure", async () => {
+  await openDesk();
   await expect(harness.page.getByRole("heading", { name: "Continuity research" })).toBeVisible();
+  await expect(harness.page.locator(".cc-research-tabs")).toHaveCount(0);
   expect(consoleFailures.filter((failure) => /EPIPE|claude-companion|unhandled/i.test(failure))).toEqual([]);
-  await harness.page.screenshot({ path: "/private/tmp/claude-companion-research-e2e-results/01-desk.png" });
 });
 
-test("02 guidance: recommendation explains, pins, dismisses, and preserves the queue", async () => {
-  const desk = harness.page.locator(".cc-research-desk");
-  await expect(desk.locator(".cc-desk-next-reason")).toContainText("source changed");
-  await desk.getByRole("button", { name: "Pin", exact: true }).click();
-  await expect(desk.locator(".cc-desk-next")).toHaveAttribute("data-pinned", "true");
-  await desk.getByRole("button", { name: "Unpin", exact: true }).click();
-  const firstTitle = await desk.locator(".cc-desk-next h3").textContent();
-  await desk.getByRole("button", { name: "Dismiss", exact: true }).click();
-  await expect(desk.locator(".cc-desk-next h3")).not.toHaveText(firstTitle ?? "");
-});
-
-test("03 continuity: project switching and active-document state remain understandable", async () => {
-  const desk = harness.page.locator(".cc-research-desk");
-  await desk.getByLabel("Active research project").selectOption("Research/Beta/Project.md");
-  await expect(desk.getByRole("heading", { name: "Empty project" })).toBeVisible();
-  await expect(desk.locator(".cc-desk-next h3")).toContainText("first source");
-  await desk.getByLabel("Active research project").selectOption("Research/Alpha/Project.md");
-  await expect(desk.locator(".cc-desk-document")).toContainText("White paper");
-});
-
-test("03b Re-check clears: the top action opens the changed passage and Keep resolves it", async () => {
-  await harness.page.evaluate(() => { (window as unknown as { app: { plugins: { plugins: Record<string, { researchDeskPreferences: unknown }> } } }).app.plugins.plugins["claude-companion"]!.researchDeskPreferences = {}; });
-  const desk = harness.page.locator(".cc-research-desk");
-  await desk.getByLabel("Active research project").selectOption("Research/Beta/Project.md");
-  await desk.getByLabel("Active research project").selectOption("Research/Alpha/Project.md");
-  await expect(desk.locator(".cc-desk-next h3")).toHaveText("Re-check Stale result");
-  await desk.getByRole("button", { name: "Start this task", exact: true }).click();
+test("02 steps: the top step re-checks the changed passage and Keep resolves it", async () => {
+  const desk = deskLocator();
+  const steps = desk.locator(".cc-desk-step");
+  expect(await steps.count()).toBeGreaterThanOrEqual(1);
+  expect(await steps.count()).toBeLessThanOrEqual(3);
+  await expect(steps.first()).toHaveText(/^Re-check "Stale result"/);
+  await steps.first().click();
   const modal = harness.page.locator(".modal-container").last();
   await expect(modal.getByRole("heading", { name: "Check Stale result" })).toBeVisible();
-  await expect(modal).toContainText("The source changed since this was checked");
   await modal.getByRole("button", { name: "Keep", exact: true }).click();
   await expect(modal).toBeHidden();
-  await expect(desk.locator(".cc-desk-next h3")).not.toHaveText("Re-check Stale result");
+  await expect(desk.locator(".cc-desk-steps")).not.toContainText('Re-check "Stale result"');
 });
 
-test("04 handoff: each quick action does its step", async () => {
-  const openDesk = async () => {
-    await harness.page.evaluate(async () => { await (window as unknown as { app: { commands: { executeCommandById(id: string): Promise<void> } } }).app.commands.executeCommandById("claude-companion:open-research-desk"); });
-    await expect(harness.page.locator(".cc-research-desk")).toBeVisible();
-  };
-  const quick = (name: string) => harness.page.locator(".cc-research-desk").getByRole("button", { name, exact: true });
-  for (const [button, heading] of [["Add source", "Add research source"], ["Extract evidence", "Pull passages from a source"], ["Develop claim", "New claim"]] as const) {
-    await quick(button).click();
-    await expect(harness.page.locator(".modal-container").last().getByRole("heading", { name: heading })).toBeVisible();
-    await harness.page.keyboard.press("Escape");
-  }
-  for (const [button, tab] of [["Continue draft", "Draft"], ["Run audit", "Audit"]] as const) {
-    await quick(button).click();
-    const workbench = harness.page.locator(".cc-research-workbench");
-    await expect(workbench).toBeVisible();
-    await expect(workbench.locator(".cc-research-tab-select")).toHaveValue(tab);
-    await openDesk();
-  }
-});
-
-test("05 advanced workbench: grouped navigation exposes every research panel without implicit network work", async () => {
-  await harness.page.evaluate(async () => { await (window as unknown as { app: { commands: { executeCommandById(id: string): Promise<void> } } }).app.commands.executeCommandById("claude-companion:open-research-workbench"); });
-  const workbench = harness.page.locator(".cc-research-workbench");
-  await expect(workbench.locator(".cc-research-tab-group")).toHaveCount(4);
-  await expect(workbench.locator(".cc-research-header-top .cc-workspace-navigation")).toBeVisible();
+test("03 ask: a typed instruction reaches the chat with the project attached", async () => {
   const before = await harness.providerRequests();
-  for (const tab of ["Overview", "Sources", "Evidence", "Claims", "Outline", "Draft", "Audit", "Intelligence", "Discover"]) {
-    await workbench.locator(".cc-research-tab-select").selectOption(tab);
-    await expect(workbench.getByRole("tabpanel")).toBeVisible();
-    await expect(workbench.locator(".cc-research-panel-intro")).toBeVisible();
-  }
-  await expect(workbench.getByRole("heading", { name: "Scholarly discovery is off" })).toBeVisible();
-  await expect(workbench.getByLabel("Discovery query")).toHaveCount(0);
-  await expect(workbench.getByRole("button", { name: "Search", exact: true })).toHaveCount(0);
-  await expect.poll(async () => await workbench.evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1);
-  expect(await harness.providerRequests()).toBe(before);
-  await harness.page.screenshot({ path: "/private/tmp/claude-companion-research-e2e-results/05-workbench.png" });
+  const desk = deskLocator();
+  await desk.getByLabel("Instruction for Claude").fill("Summarize the argument");
+  await desk.getByRole("button", { name: "Send", exact: true }).click();
+  const chat = harness.page.locator(".cc-chat-root");
+  await expect(chat).toBeVisible();
+  await expect(chat.locator(".cc-msg.cc-user").last()).toContainText("Summarize the argument");
+  await chat.locator(".cc-context-trigger").click();
+  const contextManager = chat.getByRole("dialog", { name: "Message context" });
+  await expect(contextManager.getByText("Research/Alpha/Project.md", { exact: true })).toBeVisible();
+  await chat.getByRole("button", { name: "Close message context" }).click();
+  await expect.poll(async () => await harness.providerRequests()).toBeGreaterThanOrEqual(before + 1);
+});
 
-  for (const [tab, title, artifact] of [["Overview", "Project overview", "05a-overview"], ["Sources", "Source library", "05b-sources"], ["Evidence", "Evidence review", "05c-evidence"], ["Intelligence", "Insights", "05d-intelligence"]] as const) {
-    await workbench.locator(".cc-research-tab-select").selectOption(tab);
-    await expect(workbench.locator(".cc-research-panel-title")).toHaveText(title);
-    await expect(workbench.getByRole("heading", { name: "Continuity research" })).toBeVisible();
-    await workbench.evaluate((element) => { element.scrollTop = 0; });
-    await workbench.screenshot({ path: `/private/tmp/claude-companion-research-e2e-results/${artifact}.png` });
-  }
+test("04 cards: a claim card shows its status and expands to its passages", async () => {
+  await openDesk();
+  const card = deskLocator().locator(".cc-desk-card", { hasText: "Continuity claim" });
+  await expect(card.locator(".cc-desk-chip")).toBeVisible();
+  await card.locator(".cc-desk-card-head").click();
+  await expect(deskLocator().locator(".cc-desk-card", { hasText: "Continuity claim" })).toContainText("Supports: Stale result");
+  await expect(deskLocator().locator(".cc-desk-card", { hasText: "Continuity claim" })).toContainText("Challenges: Challenge");
+});
+
+test("05 no implicit work: switching projects sends no request and the desk fits 390 px", async () => {
+  await openDesk();
+  await expect.poll(async () => await harness.providerRequests()).toBeGreaterThanOrEqual(1);
+  const before = await harness.providerRequests();
+  const desk = deskLocator();
+  await desk.getByLabel("Active research project").selectOption("Research/Beta/Project.md");
+  await expect(desk.getByRole("heading", { name: "Empty project" })).toBeVisible();
+  await expect(desk.locator(".cc-desk-step")).toContainText("Add a first source");
+  await harness.page.locator(".workspace-split.mod-right-split").evaluate((element) => { (element as HTMLElement).style.width = "390px"; });
+  await expect.poll(async () => await desk.evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1);
+  await desk.getByLabel("Active research project").selectOption("Research/Alpha/Project.md");
+  await expect(desk.getByRole("heading", { name: "Continuity research" })).toBeVisible();
+  await expect.poll(async () => await desk.evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1);
+  expect(await harness.providerRequests()).toBe(before);
 });
 
 test("06 PDF source import: a 10 MiB document stays in the live renderer", async () => {
-  const workbench = harness.page.locator(".cc-research-workbench");
-  await workbench.locator(".cc-research-tab-select").selectOption("Sources");
+  const desk = deskLocator();
   await harness.page.bringToFront();
-  await workbench.getByRole("button", { name: "Add source", exact: true }).click();
+  await desk.locator(".cc-desk-sources").getByRole("button", { name: "Link or file", exact: true }).click();
   const capture = harness.page.locator(".modal-container").last();
   await expect(capture.getByRole("heading", { name: "Add research source" })).toBeVisible();
   await capture.locator("input.cc-source-file-input").setInputFiles({
@@ -134,76 +109,57 @@ test("06 PDF source import: a 10 MiB document stays in the live renderer", async
     buffer: paddedPdf(10 * 1024 * 1024),
   });
   await expect(capture.getByRole("status")).toContainText("Imported “Renderer stress”", { timeout: 30_000 });
-  await expect(workbench).toBeVisible();
-  await expect(workbench.getByText("Renderer stress", { exact: true })).toBeVisible();
-  expect(consoleFailures.filter((failure) => /out of memory|renderer|unhandled/i.test(failure))).toEqual([]);
   await harness.page.keyboard.press("Escape");
   await expect(capture).toBeHidden();
+  await expect(async () => {
+    const group = deskLocator().locator(".cc-desk-group", { hasText: "Unread sources" });
+    if (!(await group.evaluate((element) => (element as HTMLDetailsElement).open))) await group.locator("summary").click();
+    await expect(group.getByText("Renderer stress", { exact: true })).toBeVisible({ timeout: 1000 });
+  }).toPass({ timeout: 15_000 });
+  expect(consoleFailures.filter((failure) => /out of memory|renderer|unhandled/i.test(failure))).toEqual([]);
 });
 
-test("07 native continuity: evidence becomes a claim and an outline without leaving the workbench", async () => {
-  const mobileWidths = [320, 360, 390, 428, 768];
-  const verifyModalWidths = async (modal: ReturnType<typeof harness.page.locator>, actionName: string, artifact: string) => {
-    for (const width of mobileWidths) {
-      await harness.page.setViewportSize({ width, height: 900 });
-      await expect(modal).toBeVisible();
-      await expect(modal.getByRole("button", { name: actionName, exact: true })).toBeVisible();
-      await expect.poll(async () => await modal.locator(".modal-content").evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1);
-      await modal.screenshot({ path: `/private/tmp/claude-companion-research-e2e-results/${artifact}-${width}.png` });
-    }
-    await harness.page.setViewportSize({ width: 1440, height: 900 });
-  };
-  const workbench = harness.page.locator(".cc-research-workbench");
-  await workbench.locator(".cc-research-tab-select").selectOption("Evidence");
-  await workbench.getByRole("button", { name: "Review evidence", exact: true }).click();
-  const review = harness.page.locator(".modal-container").last();
-  await expect(review.getByRole("heading", { name: "Check Challenge" })).toBeVisible();
-  await expect(review.locator(".cc-research-evidence-excerpt")).toContainText("Continuity varies by workflow");
-  await verifyModalWidths(review, "Keep", "06a-review-evidence-mobile");
-  await review.screenshot({ path: "/private/tmp/claude-companion-research-e2e-results/06a-review-evidence.png" });
-  await review.getByRole("button", { name: "Keep", exact: true }).click();
-  await expect(review).toBeHidden();
-
-  await workbench.locator(".cc-research-tab-select").selectOption("Claims");
-  await workbench.getByRole("button", { name: "Create claim", exact: true }).click();
-  const claim = harness.page.locator(".modal-container").last();
-  await claim.getByLabel("Short title").fill("Workflow continuity claim");
-  await claim.getByLabel("Claim", { exact: true }).fill("Reviewed evidence preserves continuity across the workflow.");
-  await claim.getByLabel("Challenge supports").check();
-  await verifyModalWidths(claim, "Create claim", "06b-create-claim-mobile");
-  await claim.screenshot({ path: "/private/tmp/claude-companion-research-e2e-results/06b-create-claim.png" });
-  await claim.getByRole("button", { name: "Create claim", exact: true }).click();
-  await expect(claim).toBeHidden();
-  await expect(workbench.getByText("Workflow continuity claim", { exact: true })).toBeVisible();
-
-  await workbench.locator(".cc-research-tab-select").selectOption("Outline");
-  await workbench.getByRole("button", { name: "Build outline", exact: true }).click();
-  const outline = harness.page.locator(".modal-container").last();
-  await expect(outline.getByRole("heading", { name: "Build the outline" })).toBeVisible();
-  await expect(outline.getByLabel("Include Continuity claim")).toBeChecked();
-  await verifyModalWidths(outline, "Build outline", "06c-build-outline-mobile");
-  await outline.screenshot({ path: "/private/tmp/claude-companion-research-e2e-results/06c-build-outline.png" });
-  await outline.getByRole("button", { name: "Build outline", exact: true }).click();
-  await expect(outline).toBeHidden();
-  await expect(harness.page.locator(".workspace-leaf-content[data-type='markdown']").last()).toContainText("Outline");
-  expect(consoleFailures.filter((failure) => /EPIPE|unhandled/i.test(failure))).toEqual([]);
+test("07 clean up format: a v1 outline converts and renders References", async () => {
+  const desk = deskLocator();
+  await desk.getByLabel("Active research project").selectOption("Research/Gamma/Project.md");
+  await expect(desk.getByRole("heading", { name: "Gamma research" })).toBeVisible();
+  await desk.getByRole("button", { name: "Clean up format", exact: true }).click();
+  await expect(desk.getByRole("button", { name: "Clean up format", exact: true })).toHaveCount(0);
+  const converted = await readVaultFile("Research/Gamma/Documents/Outline.md");
+  expect(converted).not.toContain("cavi:draft-section");
+  expect(converted).toContain("claude-provenance");
+  await harness.page.evaluate(async () => {
+    const app = (window as unknown as { app: { vault: { getAbstractFileByPath(path: string): unknown }; workspace: { getLeaf(value: boolean): { openFile(file: unknown, state?: unknown): Promise<void> } } } }).app;
+    const file = app.vault.getAbstractFileByPath("Research/Gamma/Documents/Outline.md");
+    if (!file) throw new Error("Gamma outline is missing");
+    await app.workspace.getLeaf("tab" as unknown as boolean).openFile(file, { state: { mode: "preview" } });
+  });
+  const references = harness.page.locator(".markdown-reading-view .cc-provenance");
+  await expect(references).toBeVisible();
+  await expect(references).toContainText("References");
 });
 
-test("08 accessibility and responsive states: controls remain named and reachable", async () => {
-  await harness.page.evaluate(async () => { await (window as unknown as { app: { commands: { executeCommandById(id: string): Promise<void> } } }).app.commands.executeCommandById("claude-companion:open-research-desk"); });
-  const desk = harness.page.locator(".cc-research-desk");
-  await expect(desk.getByRole("button", { name: "Start this task" })).toBeVisible();
-  await expect(desk.getByRole("progressbar", { name: "Grounded section progress" })).toHaveAttribute("aria-valuenow");
-  await harness.page.setViewportSize({ width: 1440, height: 900 });
-  for (const width of [320, 360, 390, 428, 768]) {
-    await harness.page.locator(".workspace-split.mod-right-split").evaluate((element, paneWidth) => { (element as HTMLElement).style.width = `${paneWidth}px`; }, width);
-    await expect(desk).toBeVisible();
-    await expect.poll(async () => Math.round((await desk.boundingBox())?.width ?? 0)).toBeGreaterThanOrEqual(width - 12);
-    await expect.poll(async () => await desk.evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1);
-    await desk.evaluate((element) => { element.scrollTop = 0; });
-    await desk.screenshot({ path: `/private/tmp/claude-companion-research-e2e-results/06-desk-${width}.png` });
-  }
-  expect(consoleFailures.filter((failure) => /EPIPE|unhandled/i.test(failure))).toEqual([]);
+test("08 draft section: a previewed section is accepted into clean prose", async () => {
+  const sentence = "Gamma preserves continuity [@source-gamma-study].";
+  const reply = JSON.stringify({
+    markdown: sentence,
+    support: [{ passage: sentence, claimPath: "Research/Gamma/Claims/Gamma claim.md", evidencePaths: ["Research/Gamma/Evidence/Gamma result.md"], citationKeys: ["source-gamma-study"] }],
+    gaps: [],
+  });
+  harness = await harness.reset({ providerReply: [{ match: "Draft one research-document section", replies: [reply] }] });
+  await openDesk();
+  const desk = deskLocator();
+  await desk.getByLabel("Active research project").selectOption("Research/Gamma/Project.md");
+  await expect(desk.getByRole("heading", { name: "Gamma research" })).toBeVisible();
+  await desk.locator(".cc-desk-step", { hasText: 'Draft "Gamma claim"' }).click();
+  await desk.getByRole("button", { name: "Accept section", exact: true }).click();
+  await expect(desk.locator(".cc-desk-document-progress")).toContainText("1 of 1 sections drafted");
+  const accepted = await readVaultFile("Research/Gamma/Documents/Outline.md");
+  expect(accepted).toContain(`## Gamma claim\n\n${sentence}`);
+  expect(accepted).not.toContain("cavi:draft-section");
+  const provider = /"provider":\s*"([^"]+)"/.exec(accepted)?.[1];
+  expect(provider).toBeTruthy();
+  expect(provider).not.toBe("companion");
 });
 
 test("09 Companion continuity: active research becomes context, not a new home", async () => {
@@ -237,10 +193,10 @@ test("09 Companion continuity: active research becomes context, not a new home",
 test("10 pull passages: Claude's exact passage is added with its section filled in", async () => {
   const reply = JSON.stringify({ passages: [{ title: "Captured", excerpt: "Captured study.", interpretation: "The study was captured." }] });
   harness = await harness.reset({ providerReply: [{ match: "exact passages", flags: "i", replies: [reply] }] });
-  await harness.page.evaluate(async () => { await (window as unknown as { app: { commands: { executeCommandById(id: string): Promise<void> } } }).app.commands.executeCommandById("claude-companion:open-research-desk"); });
-  const desk = harness.page.locator(".cc-research-desk");
+  await openDesk();
+  const desk = deskLocator();
   await desk.getByLabel("Active research project").selectOption("Research/Alpha/Project.md");
-  await desk.getByRole("button", { name: "Extract evidence", exact: true }).click();
+  await desk.locator(".cc-desk-sources").getByRole("button", { name: "Pull passages", exact: true }).click();
   const modal = harness.page.locator(".modal-container").last();
   await expect(modal.getByRole("heading", { name: "Pull passages from a source" })).toBeVisible();
   await expect(modal.locator("blockquote")).toHaveText("Captured study.");

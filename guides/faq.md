@@ -15,7 +15,7 @@ rates that keep vault work cheap.
 
 ## Does it work on mobile?
 
-Mostly, yes. Chat, agent mode, artifacts, the research workbench, and semantic
+Mostly, yes. Chat, agent mode, artifacts, the research desk, and semantic
 search — including building the index — all work on mobile.
 
 Four things need special handling because they rely on a desktop-local runtime:

@@ -24,12 +24,11 @@ const step = (key: string, label: string, ok: boolean, detail?: string): SetupSt
 // and is re-exported here so the setup checklist's import site is unchanged.
 export { fireUrlError };
 
-export function dispatchSetupSteps(cfg: CloudDispatchConfig): SetupStep[] {
+export function dispatchSetupSteps(cfg: Pick<CloudDispatchConfig, "fireUrl" | "token">): SetupStep[] {
   const urlErr = fireUrlError(cfg.fireUrl);
   return [
     step("fire-url", "Routine “fire” URL pasted and well-formed", !urlErr, urlErr ?? undefined),
     step("token", "Per-routine token set", !!cfg.token.trim(), cfg.token.trim() ? undefined : "Generate the token in the Claude Code web UI and paste it below."),
-    step("beta", "anthropic-beta header set", !!cfg.betaHeader.trim(), cfg.betaHeader.trim() ? undefined : "The Routines API is gated behind a dated beta header."),
   ];
 }
 

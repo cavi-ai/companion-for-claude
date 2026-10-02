@@ -29,15 +29,4 @@ describe("research view activation fallback", () => {
     expect(fallbackLeaf.setViewState).toHaveBeenCalledWith({ type: "claude-research-desk", active: true });
     expect(workspace.revealLeaf).toHaveBeenCalledWith(fallbackLeaf);
   });
-
-  it("creates and reveals a new leaf for Research Workbench when no right leaf exists", async () => {
-    const { plugin, workspace, fallbackLeaf } = pluginWithNoRightLeaf();
-
-    await plugin.activateResearchWorkbench();
-
-    expect(workspace.getRightLeaf).toHaveBeenCalledWith(false);
-    expect(workspace.getLeaf).toHaveBeenCalledWith(true);
-    expect(fallbackLeaf.setViewState).toHaveBeenCalledWith({ type: "claude-research-workbench", active: true });
-    expect(workspace.revealLeaf).toHaveBeenCalledWith(fallbackLeaf);
-  });
 });

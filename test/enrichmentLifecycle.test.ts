@@ -59,6 +59,7 @@ function inboxPlugin(
     settings: { ...DEFAULT_SETTINGS, sourceCaptureEnabled: true, sourceInboxFolder: "Clippings" },
     enrichInboxItem,
     sourceEnrichmentBackendLabel: () => "Ollama · utility-model",
+    listQueuedEdits: () => [],
     suspendReindex: () => () => {},
   });
   return plugin;
@@ -384,6 +385,7 @@ describe("enrichment lifecycle", () => {
         openaiCompatModel: "remote-model",
       },
       suspendReindex: () => () => {},
+      listQueuedEdits: () => [],
     });
     vi.spyOn(plugin.router().openaiCompat, "complete").mockImplementation(async () => {
       await new Promise<void>((resolve) => window.setTimeout(resolve, 150));

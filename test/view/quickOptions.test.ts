@@ -32,7 +32,6 @@ const state = (overrides: Partial<QuickOptionsState> = {}): QuickOptionsState =>
   memoryAutoConsolidate: true,
   activeProject: "Field study",
   discoveryEnabled: true,
-  activeResearchTab: "Overview",
   researchModel: "chat",
   ...overrides,
 });
@@ -56,7 +55,7 @@ describe("quickOptionsFor", () => {
   });
 
   it("defines a focused menu for every Companion page", () => {
-    const pages: CompanionPage[] = ["chat", "inbox", "related", "memory", "research-desk", "research-workbench", "system"];
+    const pages: CompanionPage[] = ["chat", "inbox", "related", "memory", "research-desk", "system"];
     for (const page of pages) {
       const options = quickOptionsFor(page, state());
       expect(options.length).toBeGreaterThan(1);
@@ -67,7 +66,7 @@ describe("quickOptionsFor", () => {
   });
 
   it("offers one research model control and no utility backend or reranker on research pages", () => {
-    for (const page of ["research-desk", "research-workbench"] as const) {
+    for (const page of ["research-desk"] as const) {
       const ids = quickOptionsFor(page, state({ researchModelLabel: "AI · Claude Code · sonnet" })).map((o) => o.id);
       expect(ids).toContain("research-model");
       expect(ids).not.toContain("utility-backend");
@@ -79,11 +78,6 @@ describe("quickOptionsFor", () => {
 
   it("offers a refresh action on the system page", () => {
     expect(quickOptionsFor("system", state()).map((item) => item.id)).toEqual(["refresh-system", "desktop-integrations", "all-settings"]);
-  });
-
-  it("uses the active Workbench context rather than a stale generic value", () => {
-    expect(quickOptionsFor("research-workbench", state({ activeResearchTab: "Discover" })))
-      .toContainEqual(expect.objectContaining({ id: "research-section", value: "Discover" }));
   });
 });
 

@@ -100,9 +100,9 @@ describe("research desk surfaces", () => {
     expect(desk).not.toContain("--text-accent");
   });
 
-  it("puts the desk and workbench primary button on the Companion accent", () => {
+  it("puts the desk primary button on the Companion accent", () => {
     const css = readStyles();
-    expect(css).toMatch(/\.cc-research-desk \.mod-cta,\s*\.cc-research-workbench \.mod-cta\s*\{[^}]*background:\s*var\(--cc-accent\)/);
+    expect(css).toMatch(/\.cc-research-desk \.mod-cta\s*\{[^}]*background:\s*var\(--cc-accent\)/);
   });
 });
 
@@ -206,16 +206,6 @@ describe("light-theme accent text", () => {
     const css = readStyles();
     const eyebrow = rulesFor(css, ".cc-eyebrow");
     expect(eyebrow).toMatch(/color:\s*var\(--cc-accent-text\)/);
-    const deskEyebrow = rulesFor(css, ".cc-desk-eyebrow");
-    expect(deskEyebrow).toMatch(/color:\s*var\(--cc-accent-text\)/);
-  });
-});
-
-describe("stage-dot ring", () => {
-  it("rings the current stage dot on the accent wash", () => {
-    const css = readStyles();
-    const rule = rulesFor(css, ".cc-desk-stage-step.is-current .cc-desk-stage-dot");
-    expect(rule).toContain("--cc-accent-wash-strong");
   });
 });
 

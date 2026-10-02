@@ -29,6 +29,18 @@ export interface EditPlan {
   hunks: Hunk[];
 }
 
+/** Defensive shape-check of a propose_note_edit `edits` argument. */
+export function parseProposedEdits(v: unknown): ProposedEdit[] {
+  if (!Array.isArray(v) || v.length === 0) throw new Error("propose_note_edit requires a non-empty 'edits' array.");
+  return v.map((e, i) => {
+    const o = e as { old_str?: unknown; new_str?: unknown };
+    if (typeof o?.old_str !== "string" || typeof o?.new_str !== "string") {
+      throw new Error(`edits[${i}] must have string 'old_str' and 'new_str'.`);
+    }
+    return { old_str: o.old_str, new_str: o.new_str };
+  });
+}
+
 const MAX_EDITS = 20;
 const CONTEXT_LINES = 2;
 /** Changed regions closer than this many unchanged lines merge into one hunk. */

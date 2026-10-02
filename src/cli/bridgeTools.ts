@@ -74,27 +74,41 @@ export function gatedWriteTools(base: ToolRegistry, deps: () => InteractiveToolD
  * `gatedWriteTools` per call instead of a separate permission callback. `tools` false (agent mode off) hides every
  * tool; `readOnly` (Plan Mode) hides write tools from the list as well as gating their calls.
  */
-export function perTurnTools(base: ToolRegistry, deps: () => InteractiveToolDeps | null, readOnly: () => boolean, tools: () => boolean): ToolRegistry {
+export function perTurnTools(base: ToolRegistry, deps: () => InteractiveToolDeps | null, readOnly: () => boolean, tools: () => boolean, proposeOnly: () => boolean = () => false): ToolRegistry {
   const gated = gatedWriteTools(base, deps);
   return {
     definitions: () => {
       if (!tools()) return [];
       const defs = gated.definitions();
+      if (proposeOnly()) return [...defs.filter((d) => !isWriteTool(d.name)), PROPOSE_EDIT_MCP_DEF];
       return readOnly() ? defs.filter((d) => !isWriteTool(d.name)) : defs;
     },
     call: async (name, args) => {
       if (!tools()) throw new Error(`Tool unavailable: agent mode is off (${name}).`);
+      if (proposeOnly()) return proposeOnlyCall(base, deps, name, args);
       return gated.call(name, args);
     },
   };
 }
 
+/** Propose-only (standing orders): write tools are unavailable and propose_note_edit routes to the review queue. */
+async function proposeOnlyCall(base: ToolRegistry, deps: () => InteractiveToolDeps | null, name: string, args: Record<string, unknown>): Promise<string> {
+  if (name === CLI_PROPOSE_EDIT_TOOL) {
+    const bound = deps();
+    if (!bound) throw new Error("propose_note_edit is unavailable: no run is bound to this bridge.");
+    return bound.proposeEdit({ type: "tool_use", id: "cli", name, input: args });
+  }
+  if (isWriteTool(name)) throw new Error(`Tool unavailable: this run is propose-only (${name}).`);
+  return base.call(name, args);
+}
+
 /** `tools` false (agent mode off) lists only the permission tool, which Claude Code validates at startup. */
-export function interactiveTools(base: ToolRegistry, deps: () => InteractiveToolDeps | null, readOnly: () => boolean, tools: () => boolean): ToolRegistry {
+export function interactiveTools(base: ToolRegistry, deps: () => InteractiveToolDeps | null, readOnly: () => boolean, tools: () => boolean, proposeOnly: () => boolean = () => false): ToolRegistry {
   return {
     definitions: () => {
       if (!tools()) return [PERMISSION_PROMPT_MCP_DEF];
       const defs = base.definitions();
+      if (proposeOnly()) return [...defs.filter((d) => !isWriteTool(d.name)), PROPOSE_EDIT_MCP_DEF, PERMISSION_PROMPT_MCP_DEF];
       if (readOnly()) return [...defs.filter((d) => !isWriteTool(d.name)), PERMISSION_PROMPT_MCP_DEF];
       return [...defs, PROPOSE_EDIT_MCP_DEF, PERMISSION_PROMPT_MCP_DEF];
     },
@@ -111,6 +125,7 @@ export function interactiveTools(base: ToolRegistry, deps: () => InteractiveTool
         return bound.proposeEdit({ type: "tool_use", id: "cli", name, input: args });
       }
       if (!tools()) throw new Error(`Tool unavailable: agent mode is off (${name}).`);
+      if (proposeOnly() && isWriteTool(name)) throw new Error(`Tool unavailable: this run is propose-only (${name}).`);
       return base.call(name, args);
     },
   };

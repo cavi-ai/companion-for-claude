@@ -6,6 +6,8 @@ import { wireUpItems, type WireUpEntry } from "../links/wireUp";
 import type { BatchLinkApplyResult } from "../links/batch";
 import { createInboxRefreshController, type InboxRefreshController } from "./inboxRefresh";
 import { renderCompanionChrome } from "./companionChrome";
+import { relativeTime } from "../conversations/store";
+import type { QueuedEdit } from "../orders/editQueue";
 
 export const INBOX_VIEW_TYPE = "claude-inbox-view";
 const INBOX_REFRESH_DEBOUNCE_MS = 100;
@@ -142,6 +144,7 @@ export class InboxView extends ItemView {
     root.addClass("cc-inbox-view");
     this.disposeChrome = renderCompanionChrome(root, "inbox", "Source Inbox", this.plugin.companionChrome());
     root.createDiv({ cls: "cc-eyebrow", text: "SOURCE INBOX" });
+    this.renderProposedEdits(root);
 
     if (!this.plugin.settings.sourceCaptureEnabled) {
       root.createEl("p", {
@@ -199,6 +202,38 @@ export class InboxView extends ItemView {
     // Wire-up section: enriched notes that mention other notes without linking
     // them. Async (mention scan reads bodies) — guarded against stale renders.
     void this.renderWireUp(root, generation);
+  }
+
+  /** Edits a standing order proposed; nothing is written until the user reviews them. */
+  private renderProposedEdits(root: HTMLElement): void {
+    const queue = this.plugin.listQueuedEdits();
+    if (queue.length === 0) return;
+    const section = root.createDiv({ cls: "cc-inbox-orders" });
+    section.createDiv({ cls: "cc-eyebrow", text: "PROPOSED EDITS" });
+    const list = section.createDiv({ cls: "cc-inbox-list" });
+    for (const item of queue) this.renderProposedEdit(list, item);
+  }
+
+  private renderProposedEdit(list: HTMLElement, item: QueuedEdit): void {
+    const target = this.app.vault.getAbstractFileByPath(item.path);
+    const file = target instanceof TFile ? target : null;
+    const row = list.createDiv({ cls: "cc-inbox-row cc-inbox-order-edit" });
+    const open = row.createEl("button", { cls: "cc-inbox-open" });
+    open.createSpan({ cls: "cc-inbox-name", text: file?.basename ?? item.path });
+    open.addEventListener("click", () => {
+      if (file) void this.app.workspace.getLeaf(false).openFile(file);
+    });
+    const detail = row.createDiv({ cls: "cc-inbox-order-detail" });
+    detail.createDiv({ cls: "cc-inbox-order-meta", text: `${item.orderName} · ${relativeTime(item.createdAt)}` });
+    if (item.description) detail.createDiv({ cls: "cc-inbox-order-description", text: item.description });
+    if (file) {
+      const review = row.createEl("button", { cls: "cc-inbox-order-review mod-cta", text: "Review" });
+      review.addEventListener("click", () => void this.plugin.reviewQueuedEdit(item.id));
+    } else {
+      row.createSpan({ cls: "cc-inbox-order-missing", text: "Note missing" });
+    }
+    const discard = row.createEl("button", { cls: "cc-inbox-order-discard", text: "Discard" });
+    discard.addEventListener("click", () => void this.plugin.discardQueuedEdit(item.id));
   }
 
   /** Enriched clips still in the inbox, newest first; organizing files them into folders. */

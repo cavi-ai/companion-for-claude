@@ -1,6 +1,8 @@
 import type { McpToolDef } from "../mcp/protocol";
 import { auditProject } from "./audit";
 import type { ResearchRepository } from "./repository";
+import { documentSections } from "./sectionStatus";
+import { deriveResearchStage } from "./stage";
 import { isReviewState, type EvidenceRelation, type SourceLocatorKind } from "./types";
 import type { WebCapture } from "./webCapture";
 import type { AdapterWork } from "../discovery/types";
@@ -21,7 +23,7 @@ export const HIDDEN_RESEARCH_TOOL_ALIASES: ReadonlySet<string> = new Set([
   "research_outline_create",
 ]);
 
-type Repository = Pick<ResearchRepository, "loadProject" | "createProject" | "importSource" | "createEvidence" | "reviewEvidence" | "updateEvidenceLocator" | "reviewClaim" | "createClaim" | "linkClaimEvidence" | "createOutline">;
+type Repository = Pick<ResearchRepository, "loadProject" | "createProject" | "importSource" | "createEvidence" | "reviewEvidence" | "updateEvidenceLocator" | "reviewClaim" | "createClaim" | "linkClaimEvidence" | "createOutline" | "loadDraftSections">;
 
 const object = (properties: Record<string, unknown>, required: string[], extra: Record<string, unknown> = {}): McpToolDef["inputSchema"] => ({ type: "object", properties, required, ...extra });
 const text = (description: string) => ({ type: "string", description });
@@ -144,8 +146,10 @@ export class ResearchTools {
       case "research_project_read": {
         const project = requiredString(args.project);
         const snapshot = await this.repository.loadProject(project);
+        const document = await documentSections(snapshot, (path) => this.repository.loadDraftSections(path));
+        const stage = deriveResearchStage(snapshot, document?.sections.map(({ state }) => state));
         return JSON.stringify({
-          project: { path: compactString(snapshot.project.path), title: compactString(snapshot.project.title), question: compactString(snapshot.project.question, 500), stage: snapshot.project.stage, status: snapshot.project.status },
+          project: { path: compactString(snapshot.project.path), title: compactString(snapshot.project.title), question: compactString(snapshot.project.question, 500), stage, status: snapshot.project.status },
           health: snapshot.health,
           counts: { sources: snapshot.sources.length, evidence: snapshot.evidence.length, claims: snapshot.claims.length, questions: snapshot.questions.length, documents: snapshot.documents.length, issues: snapshot.issues.length },
           paths: {

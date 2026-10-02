@@ -5,7 +5,7 @@ import { parseResearchCandidate, parseResearchRecord, type ResearchNoteInput } f
 import { renderResearchRecord } from "./render";
 import { upsertInterpretation } from "./interpretation";
 import { renderEvidenceOutline } from "./outline";
-import { applyDraftSection, draftMarkdownFingerprint, parseDraftSections, validateDocumentCitationKeys, type DraftSectionEnvelope, type DraftSectionParseResult, type ParsedDraftSection } from "./draftSections";
+import { applyDraftSection, convertV1Document, draftMarkdownFingerprint, parseDraftSections, type DraftSectionEnvelope, type DraftSectionParseResult, type ParsedDraftSection } from "./draftSections";
 import type { DraftGroundingPacket } from "./draftGrounding";
 import { validateRevisionResponse, type RevisionRequest } from "./revisionPolicy";
 import type {
@@ -22,6 +22,8 @@ import type {
 } from "./types";
 import { isReviewState } from "./types";
 import { upsertLimitations } from "./limitations";
+
+const FRONTMATTER = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/;
 
 export interface ResearchRepositoryIO {
   listMarkdown(): Promise<ResearchNoteInput[]>;
@@ -359,15 +361,12 @@ export class ResearchRepository {
     if (JSON.stringify(input.currentEvidence) !== JSON.stringify(input.envelope.evidence)) throw new Error("Draft evidence changed after the preview was generated");
     if (!input.envelope.claimFingerprint || input.currentClaimFingerprint !== input.envelope.claimFingerprint) throw new Error("Draft claim changed after the preview was generated");
     await this.io.updateText(input.documentPath, (current) => {
-      const frontmatter = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/.exec(current);
+      const frontmatter = FRONTMATTER.exec(current);
       if (!frontmatter || !/^type:\s*["']?research-document["']?\s*$/m.test(frontmatter[1] ?? "")) throw new Error(`Research record is not a document: ${input.documentPath}`);
-      const parsedSections = parseDraftSections(current);
-      if (parsedSections.issues.length) throw new Error(`Research document has malformed managed sections: ${parsedSections.issues.join("; ")}`);
-      validateDocumentCitationKeys([...parsedSections.sections.filter(({ envelope }) => envelope.id !== input.envelope.id).map(({ envelope }) => envelope), input.envelope]);
-      let updated = applyDraftSection(current, input.preview, input.envelope, input.markdown);
-      if (/^document_kind:\s*["']?outline["']?\s*$/m.test(frontmatter[1] ?? "")) updated = updated.replace(/^document_kind:\s*["']?outline["']?\s*$/m, "document_kind: draft");
+      let head = frontmatter[0];
+      if (/^document_kind:\s*["']?outline["']?\s*$/m.test(frontmatter[1] ?? "")) head = head.replace(/^document_kind:\s*["']?outline["']?\s*$/m, "document_kind: draft");
       else if (!/^document_kind:\s*["']?draft["']?\s*$/m.test(frontmatter[1] ?? "")) throw new Error(`Research document kind is invalid: ${input.documentPath}`);
-      return updated;
+      return `${head}${applyDraftSection(current.slice(frontmatter[0].length), input.preview, input.envelope, input.markdown)}`;
     });
   }
 
@@ -377,6 +376,21 @@ export class ResearchRepository {
     if (!input.envelope.revisionIntent || !input.envelope.revisedFromFingerprint) throw new Error("Revision provenance is incomplete");
     if (input.envelope.revisedFromFingerprint !== draftMarkdownFingerprint(input.preview.markdown)) throw new Error("Revision source changed after the preview was generated");
     await this.acceptDraftSection(input);
+  }
+
+  async convertDocumentFormat(documentPath: string): Promise<number> {
+    safePath(documentPath);
+    if (!/\/Documents\/[^/]+\.md$/.test(documentPath)) throw new Error(`Research document is outside canonical layout: ${documentPath}`);
+    if (!this.io.updateText) throw new Error("Atomic research document updates are unavailable");
+    let converted = 0;
+    await this.io.updateText(documentPath, (current) => {
+      const frontmatter = FRONTMATTER.exec(current);
+      if (!frontmatter || !/^type:\s*["']?research-document["']?\s*$/m.test(frontmatter[1] ?? "")) throw new Error(`Research record is not a document: ${documentPath}`);
+      const result = convertV1Document(current.slice(frontmatter[0].length));
+      converted = result.converted;
+      return converted ? `${frontmatter[0]}${result.document}` : current;
+    });
+    return converted;
   }
 
   async loadDraftSections(documentPath: string): Promise<DraftSectionParseResult> {

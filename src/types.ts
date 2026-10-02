@@ -179,6 +179,8 @@ export interface PluginSettings {
   agentMaxIterations: number;
   /** When a turn hits the iteration cap, continue it automatically (bounded chain). */
   agentAutoContinue: boolean;
+  /** Run prompt-template notes that carry a schedule or on_note trigger while Obsidian is open. */
+  standingOrdersEnabled: boolean;
   /** Show a Notice + status-bar item when a turn finishes while its chat view is closed. */
   notifyOnTurnComplete: boolean;
   /** Offer the web_search agent tool (explicit calls only). */
@@ -344,6 +346,7 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   selectionActionEnabled: true,
   agentMaxIterations: 10,
   agentAutoContinue: false,
+  standingOrdersEnabled: true,
   notifyOnTurnComplete: true,
   webSearchEnabled: false,
   webSearchEngine: "duckduckgo",

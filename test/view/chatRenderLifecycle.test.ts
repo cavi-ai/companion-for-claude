@@ -370,6 +370,23 @@ describe("Chat render lifecycle", () => {
     expect([...seam.messagesEl.querySelectorAll("button")].some((button) => button.getAttribute("aria-label") === "Regenerate")).toBe(true);
   });
 
+  it("discards a saved edit proposal from its recovery row", async () => {
+    const clearChatEditProposal = vi.fn(async () => undefined);
+    const plugin = { settings: structuredClone(DEFAULT_SETTINGS), clearChatEditProposal } as unknown as ClaudeCompanionPlugin;
+    const view = new ChatView(new WorkspaceLeaf(new App()), plugin);
+    const seam = view as unknown as { messagesEl: HTMLElement; transcript: { renderRecoverableEdit(conversation: Conversation): void } };
+    seam.messagesEl = fakeElement();
+    seam.transcript.renderRecoverableEdit({
+      id: "c1", title: "Revise", createdAt: 1, updatedAt: 2, messages: [],
+      lastEditProposal: { path: "A.md", edits: [{ old_str: "old", new_str: "new" }], proposedAt: 2 },
+    });
+    const buttons = [...seam.messagesEl.querySelector(".cc-edit-recovery")!.querySelectorAll("button")];
+    expect(buttons.map((button) => button.textContent)).toEqual(["Review proposed edit", "Discard"]);
+    (buttons[1] as unknown as FakeElement).dispatchEvent({ type: "click" });
+    await vi.waitFor(() => expect(clearChatEditProposal).toHaveBeenCalledWith("c1"));
+    expect(seam.messagesEl.querySelector(".cc-edit-recovery")).toBeNull();
+  });
+
   it("revalidates and applies a recovered edit only after renewed review", async () => {
     const app = new App();
     const file = app.vault.seed("A.md", "alpha beta\n");

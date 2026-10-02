@@ -43,6 +43,12 @@ describe("agent mode defaults", () => {
   });
 });
 
+describe("standing orders defaults", () => {
+  it("ships on", () => {
+    expect(DEFAULT_SETTINGS.standingOrdersEnabled).toBe(true);
+  });
+});
+
 describe("memory consolidation defaults", () => {
   it("auto-consolidate ships off (utility-model cost is opt-in)", () => {
     expect(DEFAULT_SETTINGS.memoryAutoConsolidate).toBe(false);

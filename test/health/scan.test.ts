@@ -7,7 +7,7 @@ const base = (over: Partial<HealthInput> = {}): HealthInput => ({
   research: [],
   index: { enabled: true, built: true, failed: [] },
   inboxPending: 0,
-  companion: { connection: { backend: "claude", needsCredential: false }, activity: [], bridge: { applicable: true, enabled: false, running: false, port: 27124 }, clipper: { applicable: true, status: "current" } },
+  companion: { connection: { backend: "claude", needsCredential: false }, activity: [], bridge: { applicable: true, enabled: false, running: false, port: 27124 }, clipper: { applicable: true, status: "current" }, orders: { invalid: [] } },
   now: "2026-10-01T00:00:00.000Z",
   ...over,
 });
@@ -103,6 +103,17 @@ describe("scanVaultHealth", () => {
   it("clipper status maps to severity and action label", () => {
     expect(section(companion({ clipper: { applicable: true, status: "update-available" } }), "clipper")).toMatchObject({ severity: "warning", actions: [{ id: "clipper-schemas", label: "Update schemas" }] });
     expect(section(companion({ clipper: { applicable: true, status: "not-set-up" } }), "clipper")).toMatchObject({ severity: "info", actions: [{ id: "clipper-schemas", label: "Set up Web Clipper" }] });
+  });
+
+  it("orders is ok with no invalid orders and a warning listing each invalid one with an open action", () => {
+    expect(section(companion({}), "orders")).toMatchObject({ group: "companion", count: 0, severity: "ok", items: [] });
+    const invalid = [{ path: "Claude/Templates/Daily.md", reason: 'Unrecognised schedule "hourly" — use "daily 08:00" or "weekly mon 08:00".' }];
+    expect(section(companion({ orders: { invalid } }), "orders")).toMatchObject({
+      count: 1,
+      severity: "warning",
+      items: [{ path: "Claude/Templates/Daily.md", message: 'Claude/Templates/Daily.md — Unrecognised schedule "hourly" — use "daily 08:00" or "weekly mon 08:00".' }],
+      actions: [{ id: "open-note", label: "Open Daily", path: "Claude/Templates/Daily.md" }],
+    });
   });
 
   it("index belongs to the companion group; companion sections come first", () => {

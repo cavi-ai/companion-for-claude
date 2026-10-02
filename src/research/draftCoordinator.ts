@@ -44,15 +44,14 @@ const DRAFT_RESPONSE_SCHEMA = {
   },
 } as const;
 
-function groundedFallback(packet: DraftGroundingPacket, section: ParsedDraftSection): ValidatedDraftResponse {
-  const heading = section.markdown.split("\n").find((line) => /^#{1,6}\s+/.test(line.trim()))?.trim();
+function groundedFallback(packet: DraftGroundingPacket): ValidatedDraftResponse {
   const supporting = packet.evidence.filter(({ relation }) => relation === "supports");
   const challenging = packet.evidence.filter(({ relation }) => relation === "challenges");
   const passage = `${packet.claim.proposition} ${supporting.map(({ citationKey }) => `[@${citationKey}]`).join(" ")}`.trim();
   const challengePassage = challenging.length
     ? `Reviewed evidence also challenges this claim ${challenging.map(({ citationKey }) => `[@${citationKey}]`).join(" ")}.`
     : "";
-  const markdown = [heading, passage, challengePassage].filter(Boolean).join("\n\n");
+  const markdown = [passage, challengePassage].filter(Boolean).join("\n\n");
   const support = [
     { passage, claimPath: packet.claim.path, evidencePaths: supporting.map(({ path }) => path), citationKeys: supporting.map(({ citationKey }) => citationKey) },
     ...(challengePassage ? [{ passage: challengePassage, claimPath: packet.claim.path, evidencePaths: challenging.map(({ path }) => path), citationKeys: challenging.map(({ citationKey }) => citationKey) }] : []),
@@ -79,7 +78,7 @@ export class DraftCoordinator {
     try {
       response = (await completeJsonWithRepair(provider, completion, (raw) => parseDraftResponse(packet, raw))).response;
     } catch {
-      response = groundedFallback(packet, section);
+      response = groundedFallback(packet);
     }
     const citations = [...new Map(packet.evidence.map(({ citationKey: key, sourcePath }) => [sourcePath, { key, sourcePath }])).values()];
     return {

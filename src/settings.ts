@@ -7,7 +7,6 @@ import { readAnthropicEnv, hasAnthropicEnvCredential } from "./providers/env";
 import { mergeDetectedModels } from "./providers/localModels";
 import { generateToken, bridgeUrl, claudeCodeCommand, claudeDesktopConfig, maskToken, resolveMcpToken, mcpTokenEnvRef, MCP_TOKEN_ENV } from "./mcp/clientConfig";
 import { dispatchSetupSteps, repliesSetupSteps } from "./cloud/setup";
-import { CLOUD_ROUTINE_BETA_HEADER } from "./cloud/routines";
 import { BUILTIN_EMBEDDING_MODELS, builtinModelById } from "./semantic/transformers/model";
 import { ChoiceModal } from "./view/ChoiceModal";
 import { type McpServerConfig, type PluginSettings } from "./types";
@@ -144,6 +143,7 @@ const SETTING_TIERS: Record<keyof PluginSettings, SettingsTier> = {
   selectionActionEnabled: "advanced",
   agentMaxIterations: "advanced",
   agentAutoContinue: "advanced",
+  standingOrdersEnabled: "basic",
   webSearchEnabled: "advanced",
   webSearchEngine: "advanced",
   braveSearchApiKey: "advanced",
@@ -799,6 +799,7 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
     return [
       { name: "Let Claude use vault tools", desc: "Claude can search and read your notes on its own while answering (read-only). Turn off for plain chat with pre-attached context.", control: { type: "toggle", key: "agentModeEnabled" } },
       { name: "Allow write tools", desc: "Also let Claude create, edit, and move notes from chat. Every write asks for your confirmation first.", control: { type: "toggle", key: "agentAllowWrites" } },
+      { name: "Standing orders", desc: "Run prompt templates that have a schedule or on_note trigger while Obsidian is open.", control: { type: "toggle", key: "standingOrdersEnabled" } },
       { name: "Notify when a turn finishes in the background", desc: "Show a system notice and a status-bar item if a turn completes while its chat pane is closed.", control: { type: "toggle", key: "notifyOnTurnComplete" } },
       { name: "Review edits in the editor", desc: "When the note is open, show proposed changes inline with word-level highlights and per-change Accept/Reject instead of a dialog.", control: { type: "toggle", key: "inlineDiffEnabled" } },
       { name: "Rewrite button on selection", desc: "Show a small “Rewrite with Claude” action above selected text. Desktop only.", control: { type: "toggle", key: "selectionActionEnabled" } },
@@ -1438,7 +1439,7 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
         aliases: ["checklist", "routine"],
         render: (setting) => {
           const el = setting.settingEl.createDiv({ cls: "cc-setup-checklist" });
-          const steps = dispatchSetupSteps({ fireUrl: s.cloudRoutineFireUrl, token: s.cloudRoutineToken, betaHeader: CLOUD_ROUTINE_BETA_HEADER });
+          const steps = dispatchSetupSteps({ fireUrl: s.cloudRoutineFireUrl, token: s.cloudRoutineToken });
           for (const item of steps) {
             const row = el.createDiv({ cls: `cc-setup-step ${item.ok ? "is-ok" : "is-err"}` });
             row.createSpan({ cls: "cc-setup-mark", text: item.ok ? "✓" : "✗" });

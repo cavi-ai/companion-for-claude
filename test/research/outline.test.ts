@@ -36,6 +36,24 @@ describe("research outline renderers", () => {
     });
   });
 
+  it("keeps a proposition that starts with a hash", () => {
+    const hashed = { ...snapshot, claims: snapshot.claims.map((claim) => ({ ...claim, proposition: "# of parameters predicts quality." })) } as typeof snapshot;
+    const markdown = renderEvidenceOutline(hashed, ["Research/P/Claims/C.md"]);
+    expect(markdown).toContain("## Claim C\n\n# of parameters predicts quality.\n");
+    expect(parseDraftSections(markdown.replace(/^---\n[\s\S]*?\n---\n/, "")).sections[0]?.markdown.startsWith("# of parameters predicts quality.")).toBe(true);
+  });
+
+  it("emits clean v2 sections with a heading that keeps markdown characters", () => {
+    const special = { ...snapshot, claims: snapshot.claims.map((claim) => ({ ...claim, title: "C# vs. F#" })) } as typeof snapshot;
+    const markdown = renderEvidenceOutline(special, ["Research/P/Claims/C.md"]);
+    expect(markdown).not.toContain("cavi:draft-section");
+    expect(markdown).toContain("## C# vs. F#\n\n");
+    const parsed = parseDraftSections(markdown);
+    expect(parsed.format).toBe("v2");
+    expect(parsed.sections[0]).toMatchObject({ heading: "C# vs. F#", modifiedSinceReview: false });
+    expect(parsed.sections[0]?.envelope.provider).toBe("companion");
+  });
+
   it("rejects claims and evidence references outside the snapshot", () => {
     expect(() => renderEvidenceOutline(snapshot, ["Other/Claim.md"])).toThrow("Claim is not part of project");
     const broken = buildProjectSnapshot("Research/P/Project.md", records.map((record) => record.type === "claim" ? { ...record, supports: ["Other/E.md"] } : record), []);

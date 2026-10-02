@@ -34,7 +34,7 @@ source of truth.
 - **Agent mode** that can search, read, and follow links while showing every tool
   call; writes remain behind confirmation.
 - **Reviewable edits** with per-hunk acceptance before a note changes.
-- **Research Desk and Workbench** for sources, evidence, claims, outlines,
+- **Research Desk** for sources, evidence, claims, outlines,
   drafts, and deterministic assurance checks.
 - **Interactive `claude-html` artifacts**, native Canvas files, and Obsidian
   Bases generated from your vault.
@@ -54,7 +54,7 @@ The product overview stays in the [repository README](../README.md). Detailed
 behavior and setup live in the guides:
 
 - [Agent mode, edits, and guardrails](../guides/agent-mode.md)
-- [Research Desk and Workbench](../guides/research-workbench.md)
+- [Research Desk](../guides/research-workbench.md)
 - [Interactive artifacts](../guides/artifacts.md)
 - [Local models and semantic search](../guides/local-models.md)
 - [Claude Code and the MCP bridge](../guides/claude-code-bridge.md)

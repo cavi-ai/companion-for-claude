@@ -43,23 +43,19 @@ describe("resolveCompanionWorkspace", () => {
     expect(resolveCompanionWorkspace({})).toBeNull();
   });
 
-  it("turns ranked desk actions into chat quick actions", () => {
+  it("turns chat next steps into chat quick actions", () => {
     const card = resolveCompanionWorkspace({
       activeNote: { path: "Research/Alpha/Project.md", title: "Project" },
       research: {
         projectPath: "Research/Alpha/Project.md",
         title: "Alpha",
         stage: "gather",
-        actions: [
-          { id: "add-source:Research/Alpha/Sources", label: "Capture the first source", reason: "No sources yet.", target: "Sources", priority: 4, tone: "continue" },
-          { id: "open-question:Research/Alpha/Questions/Q.md", label: "What changed?", reason: "Open question.", target: "Overview", priority: 5, path: "Research/Alpha/Questions/Q.md", tone: "attention" },
+        steps: [
+          { id: "add-source", label: "Add a first source", kind: "add-source" },
+          { id: "find-sources", label: "Find sources for this question", kind: "chat", prompt: "P1" },
         ],
       },
     });
-    expect(card?.quickActions).toHaveLength(2);
-    expect(card?.quickActions?.[0]?.label).toBe("Capture the first source");
-    expect(card?.quickActions?.[0]?.prompt).toContain("research_source_import");
-    expect(card?.quickActions?.[0]?.prompt).toContain("Research/Alpha/Project.md");
-    expect(card?.quickActions?.[1]?.prompt).toContain("Research/Alpha/Questions/Q.md");
+    expect(card?.quickActions).toEqual([{ label: "Find sources for this question", prompt: "P1" }]);
   });
 });

@@ -81,6 +81,15 @@ describe("SystemView", () => {
     expect(deps.openClipperSetup).toHaveBeenCalledTimes(1);
   });
 
+  it("open-note action opens the note at its path", async () => {
+    const { view, deps } = harness([
+      companion({ id: "orders", title: "Standing orders", count: 1, severity: "warning", items: [{ path: "Claude/Templates/Daily.md", message: "bad" }], actions: [{ id: "open-note", label: "Open Daily", path: "Claude/Templates/Daily.md" }] }),
+    ]);
+    await view.onOpen();
+    click(button(view, "Open Daily"));
+    expect(deps.openNote).toHaveBeenCalledWith("Claude/Templates/Daily.md");
+  });
+
   it("activity action passes activityId", async () => {
     const { view, deps } = harness([
       companion({ id: "activity", title: "Background work", count: 1, severity: "warning", items: [{ path: "", message: "x — 1 failed" }], actions: [{ id: "retry-index", label: "Retry", activityId: "a1" }] }),

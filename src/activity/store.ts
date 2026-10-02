@@ -6,7 +6,8 @@ export type ActivityKind =
   | "semantic-index"
   | "embedding-download"
   | "link-review"
-  | "clipper-verification";
+  | "clipper-verification"
+  | "standing-order";
 
 export interface ActivityRecoveryAction {
   id: string;

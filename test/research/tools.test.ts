@@ -1,9 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
+import { buildProjectSnapshot } from "../../src/research/graph";
 import { ResearchTools } from "../../src/research/tools";
 
 function repository() {
   return {
     loadProject: vi.fn().mockResolvedValue({ project: { path: "P/Project.md", title: "P", question: "Why?", stage: "frame", status: "active" }, sources: [], evidence: [], claims: [], questions: [], documents: [], issues: [], health: { claimCount: 0, trustedSupportCount: 0, supportedClaimCount: 0 } }),
+    loadDraftSections: vi.fn().mockResolvedValue({ format: "none", sections: [], issues: [] }),
     createEvidence: vi.fn().mockResolvedValue({ path: "P/Evidence/E.md" }),
     reviewEvidence: vi.fn(),
     updateEvidenceLocator: vi.fn().mockResolvedValue({ path: "P/Evidence/E.md", locatorKind: "page", locatorValue: "4" }),
@@ -42,6 +44,16 @@ describe("ResearchTools", () => {
     const repo = repository();
     await new ResearchTools(repo as never).call(name, { project: "P/Project.md", claims: ["P/Claims/C.md"] });
     expect(repo.createOutline).toHaveBeenCalledWith("P/Project.md", ["P/Claims/C.md"]);
+  });
+
+  it("research_project_read reports the derived stage", async () => {
+    const repo = repository();
+    repo.loadProject.mockResolvedValue(buildProjectSnapshot("P/Project.md", [
+      { path: "P/Project.md", title: "P", type: "research-project", project: "P/Project.md", question: "Why?", stage: "frame", status: "active" },
+      { path: "P/Sources/S.md", title: "S", type: "research-source", project: "P/Project.md", sourceKind: "web" },
+    ], []));
+    const result = JSON.parse(await new ResearchTools(repo as never).call("research_project_read", { project: "P/Project.md" })) as { project: { stage: string } };
+    expect(result.project.stage).toBe("read");
   });
 
   it("reviews evidence through the dedicated operation", async () => {

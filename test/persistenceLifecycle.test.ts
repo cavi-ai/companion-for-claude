@@ -14,7 +14,6 @@ describe("plugin persistence lifecycle", () => {
     Object.assign(plugin as unknown as Record<string, unknown>, {
       settings: { ...structuredClone(DEFAULT_SETTINGS), model: "older-model" },
       convState: { conversations: [{ id: "old" }], activeId: "old" },
-      researchDeskPreferences: {},
       saveData: async (data: unknown) => {
         const snapshot = structuredClone(data);
         const number = saveNumber++;
@@ -55,7 +54,6 @@ describe("credentials never reach data.json", () => {
       app: new App(),
       settings,
       convState: { conversations: [], activeId: null },
-      researchDeskPreferences: {},
       mcpSyncChain: Promise.resolve(),
       saveData: async (data: unknown) => { raw = JSON.stringify(data); },
     });
@@ -103,5 +101,22 @@ describe("credentials never reach data.json", () => {
     const { plugin, saved } = seedPlugin();
     await (plugin as unknown as { persist(): Promise<void> }).persist();
     expect(saved()).toContain("SENTINEL-apiKey");
+  });
+});
+
+describe("retired desk preferences", () => {
+  it("drops researchDeskPreferences from persisted data on the next write", async () => {
+    setApiVersion("1.11.5");
+    let stored: unknown = { settings: { apiKey: "SENTINEL-KEY" }, conversations: [], activeConversationId: null, researchDeskPreferences: { "Research/A/Project.md": { dismissedActionIds: ["x"] } } };
+    const plugin = Object.create(ClaudeCompanionPlugin.prototype) as ClaudeCompanionPlugin;
+    Object.assign(plugin as unknown as Record<string, unknown>, {
+      app: new App(),
+      mcpSyncChain: Promise.resolve(),
+      loadData: async () => structuredClone(stored),
+      saveData: async (data: unknown) => { stored = structuredClone(data); },
+    });
+    await plugin.loadSettings();
+    expect(stored).not.toHaveProperty("researchDeskPreferences");
+    expect(stored).toHaveProperty("settings");
   });
 });

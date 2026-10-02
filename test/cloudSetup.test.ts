@@ -33,14 +33,15 @@ describe("dispatchSetupSteps", () => {
   it("ticks every step for a complete config", () => {
     const steps = dispatchSetupSteps(goodDispatch);
     expect(steps.every((s) => s.ok)).toBe(true);
+    expect(steps).toHaveLength(2);
   });
 
   it("flags each missing piece with actionable detail", () => {
-    const steps = dispatchSetupSteps({ fireUrl: "", token: "", betaHeader: "" });
-    expect(steps.map((s) => s.ok)).toEqual([false, false, false]);
+    const steps = dispatchSetupSteps({ fireUrl: "", token: "" });
+    expect(steps.map((s) => s.ok)).toEqual([false, false]);
+    expect(steps.map((s) => s.key)).toEqual(["fire-url", "token"]);
     expect(steps[0]?.detail).toMatch(/fire/i);
     expect(steps[1]?.detail).toMatch(/token/i);
-    expect(steps[2]?.detail).toMatch(/beta/i);
   });
 });
 

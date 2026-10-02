@@ -272,7 +272,7 @@ export async function resetVaultState(
     const app = (window as unknown as {
       app: { plugins: { disablePlugin(id: string): Promise<void> }; workspace: { getLeavesOfType(type: string): Array<{ detach(): void }> } };
     }).app;
-    for (const type of ["claude-companion-chat", "claude-research-desk", "claude-research-workbench", "claude-build-runner", "claude-source-inbox", "markdown"]) {
+    for (const type of ["claude-companion-chat", "claude-research-desk", "claude-build-runner", "claude-source-inbox", "markdown"]) {
       for (const leaf of app.workspace.getLeavesOfType(type)) leaf.detach();
     }
     return app.plugins.disablePlugin("claude-companion");

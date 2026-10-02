@@ -162,7 +162,8 @@ export function reviewInline(view: EditorView, session: InlineDiffSession): Prom
   cancelInline(view);
   return new Promise((resolve) => {
     resolvers.set(view, resolve);
-    view.dispatch({ effects: openInlineDiff.of(session) });
+    const first = session.hunks.find((h) => h.status === "pending");
+    view.dispatch({ effects: [openInlineDiff.of(session), ...(first ? [EditorView.scrollIntoView(first.from, { y: "center" })] : [])] });
   });
 }
 

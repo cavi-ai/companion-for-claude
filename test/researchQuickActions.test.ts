@@ -1,50 +1,17 @@
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 import { researchQuickActions } from "../src/view/chat/researchQuickActions";
-import type { ResearchDeskAction } from "../src/research/deskViewModel";
-
-const action = (id: string, label: string, path?: string): ResearchDeskAction => ({
-  id, label, reason: "Because.", target: "Sources", priority: 4, tone: "continue", ...(path ? { path } : {}),
-});
-
-const PROJECT = "Research/Alpha/Project.md";
+import type { NextStep } from "../src/research/nextSteps";
 
 describe("researchQuickActions", () => {
-  it("caps the list at three actions", () => {
-    const actions = ["a", "b", "c", "d", "e"].map((x) => action(`${x}:p`, x));
-    expect(researchQuickActions(actions, PROJECT)).toHaveLength(3);
-  });
-
-  it("pipeline steps map to their research tools", () => {
-    const prompts = new Map(researchQuickActions([
-      action("add-source:p", "s"),
-      action("create-evidence:p", "e"),
-      action("create-claim:p", "c"),
-    ], PROJECT).map((qa) => [qa.label, qa.prompt]));
-    expect(prompts.get("s")).toContain("research_source_import");
-    expect(prompts.get("e")).toContain("research_evidence_capture");
-    expect(prompts.get("c")).toContain("research_claim_create");
-  });
-
-  it("audit findings reference the audit tool, the label, and the record path", () => {
-    const [qa] = researchQuickActions([action("stale-evidence:Research/Alpha/Evidence/E.md", "Re-check E", "Research/Alpha/Evidence/E.md")], PROJECT);
-    expect(qa?.prompt).toContain("research_evidence_review");
-    expect(qa?.prompt).toContain("Re-check E");
-    expect(qa?.prompt).toContain("Research/Alpha/Evidence/E.md");
-  });
-
-  it("review findings name the tool that completes them", () => {
-    const prompt = (id: string) => researchQuickActions([action(id, "L", "P/X.md")], PROJECT)[0]!.prompt;
-    expect(prompt("review-evidence:P/X.md")).toContain("research_evidence_review");
-    expect(prompt("missing-locator:P/X.md")).toContain("research_evidence_locate");
-    expect(prompt("review-claim:P/X.md")).toContain("research_claim_review");
-    expect(prompt("unsupported-claim:P/X.md")).toContain("research_claim_review");
-    expect(prompt("challenged-claim:P/X.md")).toContain("research_claim_review");
-    expect(prompt("unverifiable-source:P/X.md")).toContain("research_audit");
-  });
-
-  it("every prompt names the project path", () => {
-    for (const qa of researchQuickActions([action("unknown-kind:p", "Mystery")], PROJECT)) {
-      expect(qa.prompt).toContain(PROJECT);
-    }
+  it("offers only chat steps, with their prompts, at most three", () => {
+    const steps: NextStep[] = [
+      { id: "draft:a", label: 'Draft "A"', kind: "draft-section", sectionId: "a" },
+      { id: "counter:a", label: 'Look for evidence against "A"', kind: "chat", prompt: "P1" },
+      { id: "briefing", label: "Brief me on where the argument stands", kind: "chat", prompt: "P2" },
+    ];
+    expect(researchQuickActions(steps)).toEqual([
+      { label: 'Look for evidence against "A"', prompt: "P1" },
+      { label: "Brief me on where the argument stands", prompt: "P2" },
+    ]);
   });
 });

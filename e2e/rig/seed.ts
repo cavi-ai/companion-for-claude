@@ -7,6 +7,12 @@ import type { ScenarioOptions, StubPorts } from "./types.ts";
 
 function note(frontmatter: string, body: string): string { return `---\n${frontmatter}\n---\n\n${body}\n`; }
 
+function fnv1aHex(text: string): string {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < text.length; index += 1) { hash ^= text.charCodeAt(index); hash = Math.imul(hash, 0x01000193); }
+  return (hash >>> 0).toString(16).padStart(8, "0");
+}
+
 /** A cheap, seeded-hash embedding vector — deterministic, not a real model's output. */
 export function deterministicVector(text: string): number[] {
   let hash = 0;
@@ -53,8 +59,8 @@ export async function seedVault(vault: string, ports: StubPorts, options: Scenar
   // connect path the other specs skip past is actually exercised.
   const firstRunSettings = { authMode: "apiKey", baseUrl: `http://127.0.0.1:${ports.providerPort}`, model: "e2e-model", customModel: "", chatBackend: "claude", discoveryEnabled: false };
   await writeFile(join(plugin, "data.json"), JSON.stringify(firstRun
-    ? { settings: firstRunSettings, researchDeskPreferences: {} }
-    : { settings, researchDeskPreferences: {} }));
+    ? { settings: firstRunSettings }
+    : { settings }));
 
   const alpha = join(vault, "Research", "Alpha");
   for (const folder of ["Sources", "Evidence", "Claims", "Questions", "Documents"]) await mkdir(join(alpha, folder), { recursive: true });
@@ -68,6 +74,17 @@ export async function seedVault(vault: string, ports: StubPorts, options: Scenar
 
   const beta = join(vault, "Research", "Beta"); await mkdir(beta, { recursive: true });
   await writeFile(join(beta, "Project.md"), note('title: "Empty project"\ntype: "research-project"\nproject: "[[Research/Beta/Project.md]]"\nquestion: "What should we investigate?"\nstage: frame\nstatus: active', "# Empty project"));
+
+  const gamma = join(vault, "Research", "Gamma");
+  for (const folder of ["Sources", "Evidence", "Claims", "Documents"]) await mkdir(join(gamma, folder), { recursive: true });
+  await writeFile(join(gamma, "Project.md"), note('title: "Gamma research"\ntype: "research-project"\nproject: "[[Research/Gamma/Project.md]]"\nquestion: "Does Gamma hold?"\nstage: write\nstatus: active', "# Gamma research"));
+  await writeFile(join(gamma, "Sources", "Gamma study.md"), note('title: "Gamma study"\ntype: "research-source"\nproject: "[[Research/Gamma/Project.md]]"\nsource_kind: web\nurl: "https://example.test/gamma"\ncontent_fingerprint: "sha256:g1"', "# Source\n\nGamma study."));
+  await writeFile(join(gamma, "Evidence", "Gamma result.md"), note('title: "Gamma result"\ntype: "evidence"\nproject: "[[Research/Gamma/Project.md]]"\nsource: "[[Research/Gamma/Sources/Gamma study.md]]"\nsource_fingerprint: "sha256:g1"\nlocator_kind: page\nlocator_value: "2"\nreview_state: reviewed', "> Gamma improves continuity."));
+  await writeFile(join(gamma, "Claims", "Gamma claim.md"), note('title: "Gamma claim"\ntype: "claim"\nproject: "[[Research/Gamma/Project.md]]"\nproposition: "Gamma preserves continuity."\nconfidence: moderate\nreview_state: reviewed\nsupports:\n  - "[[Research/Gamma/Evidence/Gamma result.md]]"\nchallenges: []\ncontextualizes: []\nlimitations: []', "# Claim"));
+  const v1Envelope = { id: "gamma-claim", claimPaths: ["Research/Gamma/Claims/Gamma claim.md"], evidence: [{ path: "Research/Gamma/Evidence/Gamma result.md", fingerprint: "sha256:g1" }], citations: [{ key: "source-gamma-study", sourcePath: "Research/Gamma/Sources/Gamma study.md" }], provider: "companion", model: "evidence-outline-v1", generatedAt: "outline" };
+  const v1Content = "Gamma preserves continuity.";
+  const v1Section = `<!-- cavi:draft-section version=1 meta=${encodeURIComponent(JSON.stringify(v1Envelope))} fingerprint=fnv1a-${fnv1aHex(v1Content)} -->\n${v1Content}\n<!-- cavi:draft-section:end id=${v1Envelope.id} -->`;
+  await writeFile(join(gamma, "Documents", "Outline.md"), note('title: "Gamma outline"\ntype: "research-document"\nproject: "[[Research/Gamma/Project.md]]"\ndocument_kind: outline\nclaims:\n  - "[[Research/Gamma/Claims/Gamma claim.md]]"', `# Gamma outline\n\n${v1Section}`));
 
   const longReference = join(vault, "Reference material with a deliberately long folder name");
   await mkdir(longReference, { recursive: true });

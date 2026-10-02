@@ -47,6 +47,7 @@ export interface TranscriptDeps {
   renderStreamingArtifactInto(el: HTMLElement, buffer: string): void;
   resumeInterruptedTurn(conversation: Conversation): Promise<void>;
   reviewLastProposedEdit(conversation: Conversation): Promise<void>;
+  discardLastProposedEdit(conversation: Conversation): Promise<void>;
   restoreMediaAfterFailure(): void;
   setSending(sending: boolean): void;
   setupRequired(): boolean;
@@ -346,7 +347,7 @@ export class Transcript {
   }
 
   renderRecoverableEdit(conversation: Conversation): void {
-    renderRecoverableEditRow(this.messagesEl, conversation, (c) => void this.deps.reviewLastProposedEdit(c));
+    renderRecoverableEditRow(this.messagesEl, conversation, (c) => void this.deps.reviewLastProposedEdit(c), (c) => void this.deps.discardLastProposedEdit(c));
   }
 
   /** The round spark mark before an assistant bubble's content (screen-reader label "Claude" is carried by .cc-role, not this icon). */

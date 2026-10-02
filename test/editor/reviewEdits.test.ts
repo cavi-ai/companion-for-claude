@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { getLastOpenedModal, MarkdownView, TFile, WorkspaceLeaf, type App } from "obsidian";
 import { planEdits } from "../../src/edit/diff";
-import { reviewEdits, findOpenMarkdownView, editorViewOf } from "../../src/editor/reviewEdits";
+import { reviewEdits, findOpenMarkdownView, editorViewOf, frontmatterEnd } from "../../src/editor/reviewEdits";
 
 const DOC = "# Note\n\nalpha beta\n";
 
@@ -44,7 +44,40 @@ describe("findOpenMarkdownView", () => {
   });
 });
 
+describe("frontmatterEnd", () => {
+  it("returns the offset after the closing fence line, or -1 without frontmatter", () => {
+    expect(frontmatterEnd("---\ntitle: A\n---\nbody\n")).toBe(17);
+    expect(frontmatterEnd("---\r\ntitle: A\r\n---\r\nbody")).toBe(20);
+    expect(frontmatterEnd("---\ntitle: A\n---")).toBe(16);
+    expect(frontmatterEnd("# Note\n---\nx\n---\n")).toBe(-1);
+    expect(frontmatterEnd("---\nunclosed\nbody\n")).toBe(-1);
+    expect(frontmatterEnd("")).toBe(-1);
+  });
+});
+
 describe("reviewEdits", () => {
+  it("uses the modal for an open note when the edit touches its frontmatter", async () => {
+    const doc = "---\ntitle: Old\n---\n\nbody\n";
+    const { view } = openView("A.md", doc);
+    const { app } = appWith([view]);
+    const reviewInline = vi.fn(async () => [true]);
+    const openModal = vi.fn(async () => [true]);
+    const fm = { file: new TFile("A.md", "", 0), plan: planEdits(doc, [{ old_str: "title: Old", new_str: "title: New" }]) };
+    expect(await reviewEdits(app, fm, { inlineEnabled: true }, { reviewInline, openModal })).toEqual({ mode: "modal", accepted: [true] });
+    expect(reviewInline).not.toHaveBeenCalled();
+  });
+
+  it("keeps inline review for an edit below the frontmatter", async () => {
+    const doc = "---\ntitle: Old\n---\n\nalpha beta\n";
+    const { view } = openView("A.md", doc);
+    const { app } = appWith([view]);
+    const reviewInline = vi.fn(async () => [true]);
+    const openModal = vi.fn(async () => [true]);
+    const body = { file: new TFile("A.md", "", 0), plan: planEdits(doc, [{ old_str: "beta", new_str: "gamma" }]) };
+    expect(await reviewEdits(app, body, { inlineEnabled: true }, { reviewInline, openModal })).toMatchObject({ mode: "inline" });
+    expect(openModal).not.toHaveBeenCalled();
+  });
+
   it("dismisses an open modal when the turn is stopped", async () => {
     const { app } = appWith([]);
     const controller = new AbortController();

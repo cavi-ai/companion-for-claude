@@ -26,6 +26,12 @@ describe("grounded section draft validation", () => {
     expect(validateDraftResponse(packet, valid)).toEqual(valid);
   });
 
+  it("drops an echoed section heading and rejects a heading-only response", () => {
+    const echoed = { ...valid, markdown: `## Heading\n\n${valid.markdown}` };
+    expect(validateDraftResponse(packet, echoed).markdown).toBe(valid.markdown);
+    expect(() => validateDraftResponse(packet, { ...valid, markdown: "## Heading" })).toThrow(/must not be empty/);
+  });
+
   it("rejects invented citations", () => {
     const response = { ...valid, markdown: `${valid.markdown} Another result [@invented].` };
     expect(() => validateDraftResponse(packet, response)).toThrow(/unknown citation.*invented/i);

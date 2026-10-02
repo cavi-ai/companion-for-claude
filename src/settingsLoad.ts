@@ -13,6 +13,8 @@ export interface NamespacedData {
   researchDeskPreferences?: unknown;
   buildRuns?: unknown;
   activeBuildRunId?: unknown;
+  standingOrders?: unknown;
+  orderEditQueue?: unknown;
 }
 
 /** True when data.json uses the namespaced { settings, conversations } shape

@@ -80,11 +80,55 @@ test("a saved edit can be reviewed and applied after plugin reload", async ({ ri
     await app.commands.executeCommandById("claude-companion:open-chat");
   });
   const reopened = page.locator(".cc-chat-root").first();
-  await reopened.locator(".cc-edit-recovery button").click();
+  await reopened.locator(".cc-edit-recovery").getByRole("button", { name: "Review proposed edit" }).click();
   await page.getByRole("button", { name: "Apply selected" }).click();
   await expect.poll(() => page.evaluate(async () => {
     const app = (window as unknown as { app: { vault: { getAbstractFileByPath(path: string): unknown; cachedRead(file: unknown): Promise<string> } } }).app;
     return app.vault.cachedRead(app.vault.getAbstractFileByPath("Research/Alpha/Documents/Draft.md"));
   })).toContain("Revised fixture.");
   await expect(reopened.locator(".cc-edit-recovery")).toHaveCount(0);
+});
+
+test("a saved edit can be discarded without touching the note", async ({ rig }) => {
+  const { page } = await rig.reset({ claudeCli: true });
+  await page.evaluate(async () => {
+    const app = (window as unknown as { app: { commands: { executeCommandById(id: string): Promise<void> } } }).app;
+    await app.commands.executeCommandById("claude-companion:open-chat");
+  });
+  const chat = page.locator(".cc-chat-root").first();
+  await expect(chat).toContainText("● Claude Code", { timeout: 15_000 });
+  await chat.locator(".cc-input").fill("ping");
+  await chat.locator(".cc-input").press("Enter");
+  await expect(chat.locator(".cc-msg.cc-assistant").last()).toContainText("pong from claude code", { timeout: 30_000 });
+
+  await page.evaluate(async () => {
+    const app = (window as unknown as { app: { plugins: { plugins: Record<string, {
+      getActiveConversation(): { id: string } | null;
+      saveChatEditProposal(id: string, proposal: { path: string; edits: { old_str: string; new_str: string }[] }): Promise<void>;
+    }> } } }).app;
+    const plugin = app.plugins.plugins["claude-companion"]!;
+    await plugin.saveChatEditProposal(plugin.getActiveConversation()!.id, {
+      path: "Research/Alpha/Documents/Draft.md",
+      edits: [{ old_str: "Draft fixture.", new_str: "Revised fixture." }],
+    });
+  });
+  await rig.reloadPlugin();
+  await page.evaluate(async () => {
+    const app = (window as unknown as { app: { commands: { executeCommandById(id: string): Promise<void> } } }).app;
+    await app.commands.executeCommandById("claude-companion:open-chat");
+  });
+  const reopened = page.locator(".cc-chat-root").first();
+  await reopened.locator(".cc-edit-recovery").getByRole("button", { name: "Discard" }).click();
+  await expect(reopened.locator(".cc-edit-recovery")).toHaveCount(0);
+  await rig.reloadPlugin();
+  await page.evaluate(async () => {
+    const app = (window as unknown as { app: { commands: { executeCommandById(id: string): Promise<void> } } }).app;
+    await app.commands.executeCommandById("claude-companion:open-chat");
+  });
+  await expect(page.locator(".cc-chat-root").first().locator(".cc-msg.cc-assistant").last()).toContainText("pong from claude code", { timeout: 15_000 });
+  await expect(page.locator(".cc-chat-root").first().locator(".cc-edit-recovery")).toHaveCount(0);
+  expect(await page.evaluate(async () => {
+    const app = (window as unknown as { app: { vault: { getAbstractFileByPath(path: string): unknown; cachedRead(file: unknown): Promise<string> } } }).app;
+    return app.vault.cachedRead(app.vault.getAbstractFileByPath("Research/Alpha/Documents/Draft.md"));
+  })).toContain("Draft fixture.");
 });

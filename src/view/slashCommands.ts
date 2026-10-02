@@ -90,7 +90,6 @@ export const WORKFLOW_ACTION_PREFIX = "workflow:";
 
 export interface NativeSlashActionHandlers {
   openResearchDesk(): Promise<void>;
-  openResearchWorkbench(): Promise<void>;
 }
 
 export async function dispatchNativeSlashAction(
@@ -98,7 +97,6 @@ export async function dispatchNativeSlashAction(
   handlers: NativeSlashActionHandlers,
 ): Promise<boolean> {
   if (action === "open-research-desk") await handlers.openResearchDesk();
-  else if (action === "open-research-workbench") await handlers.openResearchWorkbench();
   else return false;
   return true;
 }
@@ -108,19 +106,15 @@ export interface NativeSlashCommandContext {
   backend: "claude" | "auto" | "local" | "custom" | "claude-cli" | "codex-cli" | "opencode-cli";
   clearComposer: () => void;
   activateResearchDesk: () => Promise<void>;
-  activateResearchWorkbench: () => Promise<void>;
   requestCompletion: (prompt: string, display?: string) => Promise<void>;
 }
 
 /** Orchestrate native slash actions that bypass every chat completion backend. */
 export async function runNativeSlashCommand(context: NativeSlashCommandContext): Promise<boolean> {
-  const { command, clearComposer, activateResearchDesk, activateResearchWorkbench } = context;
-  const open = command.action === "open-research-desk" ? activateResearchDesk
-    : command.action === "open-research-workbench" ? activateResearchWorkbench
-      : null;
-  if (!open) return false;
+  const { command, clearComposer, activateResearchDesk } = context;
+  if (command.action !== "open-research-desk") return false;
   clearComposer();
-  await open();
+  await activateResearchDesk();
   return true;
 }
 
@@ -252,12 +246,6 @@ export const SLASH_COMMANDS: SlashCommand[] = [
     description: "Open Research Desk and continue the active evidence-backed project",
     kind: "action",
     action: "open-research-desk",
-  },
-  {
-    name: "workbench",
-    description: "Open the advanced research workbench",
-    kind: "action",
-    action: "open-research-workbench",
   },
   {
     name: "diagram",

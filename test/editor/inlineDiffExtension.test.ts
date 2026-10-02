@@ -1,9 +1,9 @@
 import { EditorState } from "@codemirror/state";
 import { EditorView, type DecorationSet } from "@codemirror/view";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { planEdits } from "../../src/edit/diff";
 import { createSession, decisions } from "../../src/editor/inlineDiffState";
-import { buildResolve, buildResolveAll, closeInlineDiff, inlineDiffField, openInlineDiff } from "../../src/editor/inlineDiffExtension";
+import { buildResolve, buildResolveAll, closeInlineDiff, inlineDiffField, openInlineDiff, reviewInline } from "../../src/editor/inlineDiffExtension";
 
 const DOC = "# Build plan\n\n- [ ] Create the parser\n- [ ] Wire the interface\n- [ ] Ship it\n";
 
@@ -104,5 +104,17 @@ describe("inlineDiffField", () => {
   it("closes on the close effect", () => {
     const state = open();
     expect(state.update({ effects: closeInlineDiff.of(null) }).state.field(inlineDiffField)).toBeNull();
+  });
+});
+
+describe("reviewInline", () => {
+  it("scrolls the first pending hunk into view when the session opens", () => {
+    const state = EditorState.create({ doc: DOC, extensions: [inlineDiffField] });
+    const dispatch = vi.fn();
+    void reviewInline({ state, dispatch } as unknown as EditorView, session());
+    const effects = dispatch.mock.calls[0]![0].effects as Array<{ is(type: unknown): boolean; value: unknown }>;
+    expect(effects).toHaveLength(2);
+    expect(effects[0]!.is(openInlineDiff)).toBe(true);
+    expect((effects[1]!.value as { range: { from: number } }).range.from).toBe(session().hunks[0]!.from);
   });
 });

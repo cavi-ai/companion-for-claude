@@ -20,7 +20,6 @@ const surfaces: Surface[] = [
   { name: "related", command: "claude-companion:open-related-notes", selector: ".cc-related-view" },
   { name: "memory", command: "claude-companion:open-memory-view", selector: ".cc-memory-view" },
   { name: "research-desk", command: "claude-companion:open-research-desk", selector: ".cc-research-desk" },
-  { name: "research-workbench", command: "claude-companion:open-research-workbench", selector: ".cc-research-workbench" },
 ];
 
 async function dismissSetupPrompts(page: Page): Promise<void> {
@@ -110,7 +109,7 @@ async function visualIssues(root: Locator): Promise<string[]> {
     }
 
     const groups = [...element.querySelectorAll(
-      ".cc-empty-examples, .cc-context-workspace-actions, .cc-desk-grid, .cc-desk-metrics, .cc-research-metrics, .cc-research-health, .cc-research-actions, .cc-workspace-navigation",
+      ".cc-empty-examples, .cc-context-workspace-actions, .cc-desk-steps, .cc-desk-card, .cc-desk-sources-row, .cc-workspace-navigation",
     )].filter(visible);
     for (const group of groups) {
       const children = [...group.children].filter(visible).map((child) => ({

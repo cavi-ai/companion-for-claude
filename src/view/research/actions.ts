@@ -2,13 +2,12 @@ import { Notice, TFile, type App } from "obsidian";
 import { buildClaimSuggestionRequest, claimSuggestionEvidence, parseClaimSuggestion } from "../../research/claimSuggestion";
 import { buildExtractionRequest, fitSourceText, parseExtraction, type SourceText } from "../../research/evidenceExtraction";
 import type { ResearchSourceRecord } from "../../research/types";
-import type { ResearchDeskRun } from "../../research/deskViewModel";
+import type { NextStep } from "../../research/nextSteps";
 import { isStaleEvidence, type ProjectSnapshot } from "../../research/graph";
 import { passageContext, pickClaimForReview, pickEvidenceForReview } from "../../research/reviewTargets";
 import type { ResearchRepository } from "../../research/repository";
 import type { WebCapture } from "../../research/webCapture";
 import { parseClipUrl } from "../../sources/detect";
-import type { ResearchWorkbenchTab } from "../ResearchWorkbenchView";
 import { ClaimCreateModal, ClaimReviewModal } from "./claimModals";
 import { EvidenceExtractModal, type PassageLoad } from "./evidenceExtractModal";
 import { EvidenceReviewModal } from "./evidenceReviewModal";
@@ -33,7 +32,6 @@ export interface ResearchActionsDeps {
   suggestTags?: (content: string) => Promise<string[]>;
   openPath(path: string): Promise<void>;
   changed(): Promise<void>;
-  openWorkbench(projectPath: string, tab: ResearchWorkbenchTab, path?: string): Promise<void>;
   selectProject(path: string): Promise<void>;
 }
 
@@ -229,18 +227,17 @@ export class ResearchActions {
     }).open();
   }
 
-  async run(action: { run: ResearchDeskRun; path?: string }, snapshot: ProjectSnapshot): Promise<void> {
-    const project = snapshot.project.path;
-    switch (action.run) {
-      case "add-source": this.addSource(project); return;
-      case "extract-evidence": this.extractEvidence(snapshot, action.path !== project ? action.path : undefined); return;
-      case "review-evidence": this.reviewEvidence(snapshot, action.path); return;
-      case "review-claim": this.reviewClaim(snapshot, action.path); return;
-      case "create-claim": this.createClaim(snapshot); return;
+  async runStep(step: NextStep, snapshot: ProjectSnapshot): Promise<void> {
+    switch (step.kind) {
+      case "check":
+        if (step.path && snapshot.claims.some(({ path }) => path === step.path)) this.reviewClaim(snapshot, step.path);
+        else this.reviewEvidence(snapshot, step.path);
+        return;
+      case "extract": this.extractEvidence(snapshot, step.path); return;
       case "build-outline": this.buildOutline(snapshot); return;
-      case "continue-draft": await this.deps.openWorkbench(project, "Draft", action.path); return;
-      case "audit": await this.deps.openWorkbench(project, "Audit"); return;
-      case "open-record": if (action.path) await this.deps.openPath(action.path); return;
+      case "add-source": this.addSource(snapshot.project.path); return;
+      case "chat":
+      case "draft-section": return;
     }
   }
 }

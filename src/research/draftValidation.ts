@@ -1,3 +1,4 @@
+import { cleanModelMarkdown } from "./draftSections";
 import type { DraftGroundingPacket } from "./draftGrounding";
 
 export interface DraftSupportEntry {
@@ -29,7 +30,8 @@ function parseResponse(value: unknown): ValidatedDraftResponse {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Draft response must be an object");
   const raw = value as Record<string, unknown>;
   if (typeof raw.markdown !== "string" || !raw.markdown.trim()) throw new Error("Draft response Markdown must not be empty");
-  if (raw.markdown.includes("<!-- cavi:draft-section")) throw new Error("Draft response contains a reserved Companion marker");
+  const markdown = cleanModelMarkdown(raw.markdown);
+  if (!markdown) throw new Error("Draft response Markdown must not be empty");
   if (!Array.isArray(raw.support) || !raw.support.length) throw new Error("Draft response must include passage-level support");
   if (!strings(raw.gaps ?? [])) throw new Error("Draft response gaps must be a list of non-empty strings");
   const support = raw.support.map((entry): DraftSupportEntry => {
@@ -40,7 +42,7 @@ function parseResponse(value: unknown): ValidatedDraftResponse {
     if (!strings(item.evidencePaths) || !strings(item.citationKeys)) throw new Error("Draft support evidencePaths and citationKeys must be non-empty string lists");
     return { passage: item.passage, claimPath: item.claimPath, evidencePaths: item.evidencePaths, citationKeys: item.citationKeys };
   });
-  return { markdown: raw.markdown.trim(), support, gaps: (raw.gaps ?? []) as string[] };
+  return { markdown, support, gaps: (raw.gaps ?? []) as string[] };
 }
 
 export function validateDraftResponse(packet: DraftGroundingPacket, value: unknown): ValidatedDraftResponse {

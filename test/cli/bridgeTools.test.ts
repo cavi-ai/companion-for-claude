@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { CLI_HIDDEN_TOOLS, cliAllowedTools, gatedWriteTools, interactiveTools, parsePermissionPromptArgs, perTurnTools, permissionPromptResult, PROPOSE_EDIT_MCP_DEF, WRITE_DECLINED_RESULT } from "../../src/cli/bridgeTools";
 import type { McpToolDef } from "../../src/mcp/protocol";
+import { isWriteTool } from "../../src/agent/tools";
 
 const defs: McpToolDef[] = [
   { name: "vault_search", description: "search", inputSchema: { type: "object" } },
@@ -110,5 +111,39 @@ describe("perTurnTools (codex, opencode)", () => {
     const t = perTurnTools(base, () => null, () => false, () => false);
     expect(t.definitions()).toEqual([]);
     await expect(t.call("vault_search", { query: "q" })).rejects.toThrow(/agent mode is off/);
+  });
+});
+
+describe("propose-only mode (standing orders)", () => {
+  const deps = { confirmWrite: async () => true, proposeEdit: async (b: { input: Record<string, unknown> }) => `edited:${String(b.input.path)}` };
+  const writeNames = (names: string[]) => names.filter((name) => isWriteTool(name));
+
+  it("never lists a write tool but keeps propose_note_edit (Claude Code bridge)", async () => {
+    const t = interactiveTools(base, () => deps, () => false, () => true, () => true);
+    const names = t.definitions().map((d) => d.name);
+    expect(names).toEqual(["vault_search", "note_read", "propose_note_edit", "permission_prompt"]);
+    expect(writeNames(names)).toEqual([]);
+    expect(await t.call("propose_note_edit", { path: "A.md", edits: [] })).toBe("edited:A.md");
+    await expect(t.call("note_create", { title: "S" })).rejects.toThrow(/propose-only/);
+  });
+
+  it("never lists a write tool but keeps propose_note_edit (codex, opencode bridge)", async () => {
+    const t = perTurnTools(base, () => deps, () => false, () => true, () => true);
+    const names = t.definitions().map((d) => d.name);
+    expect(names).toEqual(["vault_search", "note_read", "propose_note_edit"]);
+    expect(writeNames(names)).toEqual([]);
+    expect(await t.call("propose_note_edit", { path: "A.md", edits: [] })).toBe("edited:A.md");
+    await expect(t.call("note_create", { title: "S" })).rejects.toThrow(/propose-only/);
+  });
+
+  it("allows only reads and propose_note_edit without auto-approving a write", () => {
+    const allowed = cliAllowedTools(defs, false);
+    expect(allowed.filter((name) => isWriteTool(name.replace("mcp__obsidian-vault__", "")))).toEqual([]);
+    expect(allowed).toContain("mcp__obsidian-vault__propose_note_edit");
+  });
+
+  it("leaves chat Act mode unchanged when the flag is off", () => {
+    expect(interactiveTools(base, () => deps, () => false, () => true).definitions().map((d) => d.name)).toContain("note_create");
+    expect(perTurnTools(base, () => deps, () => false, () => true).definitions().map((d) => d.name)).toContain("note_create");
   });
 });

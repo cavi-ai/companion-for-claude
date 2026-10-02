@@ -1,4 +1,4 @@
-import type { ResearchDeskAction } from "../research/deskViewModel";
+import type { NextStep } from "../research/nextSteps";
 import { researchQuickActions, type ResearchQuickAction } from "./chat/researchQuickActions";
 
 export interface ActiveCompanionNote {
@@ -12,8 +12,8 @@ export interface ActiveResearchWorkspace {
   stage: string;
   nextAction?: string;
   nextReason?: string;
-  /** Ranked desk actions; the top few become chat quick actions. */
-  actions?: ResearchDeskAction[];
+  /** Next steps; the chat-kind ones become quick actions. */
+  steps?: NextStep[];
 }
 
 export interface CompanionWorkspaceInput {
@@ -43,7 +43,7 @@ export function resolveCompanionWorkspace(input: CompanionWorkspaceInput): Compa
   if (!input.activeNote) return null;
   if (input.research) {
     const next = input.research.nextAction;
-    const quickActions = input.research.actions ? researchQuickActions(input.research.actions, input.research.projectPath) : [];
+    const quickActions = input.research.steps ? researchQuickActions(input.research.steps) : [];
     return {
       kind: "research",
       eyebrow: "CURRENT WORKSPACE · RESEARCH",

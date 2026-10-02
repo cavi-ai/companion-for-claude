@@ -111,7 +111,7 @@ async function resetScene(theme: "dark" | "light", settings: Record<string, unkn
     await plugin.startNewConversation();
     const plan = app.vault.getAbstractFileByPath("Build plan.md");
     if (plan) await app.vault.modify(plan, originalPlan);
-    for (const type of ["claude-companion-chat", "claude-research-desk", "claude-research-workbench", "markdown"]) {
+    for (const type of ["claude-companion-chat", "claude-research-desk", "markdown"]) {
       for (const leaf of app.workspace.getLeavesOfType(type)) leaf.detach();
     }
   }, { nextTheme: theme, nextSettings: settings, defaults: baselineSettings, originalPlan: ORIGINAL_PLAN });
@@ -227,37 +227,7 @@ test.describe("README captures", () => {
         const desk = harness.page.locator('.workspace-leaf-content[data-type="claude-research-desk"]');
         await setRightSidebarWidth(harness.page, 760);
         await expect.poll(async () => (await desk.boundingBox())?.width ?? 0).toBeCloseTo(760, 0);
-        await shoot(desk, "research-desk.png", theme);
-      });
-
-      test("research-workbench-intelligence.png", async () => {
-        await resetScene(theme);
-        // Open the seeded project note first so the workbench infers it as the
-        // active project (unlike the desk, it has no first-project fallback).
-        await harness.page.evaluate(async () => {
-          const app = (window as unknown as {
-            app: {
-              vault: { getAbstractFileByPath(path: string): unknown };
-              workspace: { getLeaf(newLeaf: boolean): { openFile(file: unknown): Promise<void> } };
-            };
-          }).app;
-          const project = app.vault.getAbstractFileByPath("Research/Alpha/Project.md");
-          if (!project) throw new Error("Research fixture project is missing");
-          await app.workspace.getLeaf(false).openFile(project);
-        });
-        await run(harness.page, "claude-companion:open-research-workbench");
-        const leaf = harness.page.locator('.workspace-leaf-content[data-type="claude-research-workbench"]');
-        const workbench = leaf.locator(".cc-research-workbench");
-        await expect(workbench).toBeVisible();
-        await expect(workbench.getByRole("heading", { name: "Continuity research" })).toBeVisible();
-        // Widen past the 720px tabs/select container-query threshold so the
-        // real tab buttons (not the compact <select>) are visible and clickable.
-        await setRightSidebarWidth(harness.page, 760);
-        await expect.poll(async () => (await leaf.boundingBox())?.width ?? 0).toBeCloseTo(760, 0);
-        const intelligence = workbench.getByRole("tab", { name: "Intelligence" });
-        await intelligence.click();
-        await expect(workbench.getByRole("heading", { name: "Research intelligence" })).toBeVisible();
-        await shoot(leaf, "research-workbench-intelligence.png", theme);
+        await shootThrough(desk, desk.locator(".cc-desk-sources"), 760, "research-desk.png", theme);
       });
 
       test("mcp-bridge-settings.png", async () => {

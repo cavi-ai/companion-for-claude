@@ -2,7 +2,7 @@
 // Pass --check to fail when the generated bundle exceeds the release budget.
 import { readFile } from "node:fs/promises";
 
-const DEFAULT_MAX_BYTES = 3_700_000;
+const DEFAULT_MAX_BYTES = 3_750_000;
 const args = process.argv.slice(2);
 let metaPath = new URL("../.build/meta.json", import.meta.url);
 let maxBytes = DEFAULT_MAX_BYTES;

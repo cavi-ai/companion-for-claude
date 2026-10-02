@@ -321,6 +321,9 @@ export class FakeElement {
   addEventListener(type: string, listener: (event: any) => void): void { this.listeners.set(type, [...(this.listeners.get(type) ?? []), listener]); }
   dispatchEvent(event: any): boolean { for (const listener of this.listeners.get(event.type) ?? []) listener(event); return true; }
   focus(): void { this.attributes.set("data-focused", "true"); }
+  selectionStart = 0;
+  selectionEnd = 0;
+  setSelectionRange(start: number, end: number): void { this.selectionStart = start; this.selectionEnd = end; }
   setAttr(name: string, value: string): void { this.attributes.set(name, String(value)); }
   setAttribute(name: string, value: string): void { this.attributes.set(name, String(value)); }
   removeAttribute(name: string): void { this.attributes.delete(name); }

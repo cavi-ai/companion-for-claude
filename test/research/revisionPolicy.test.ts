@@ -70,7 +70,7 @@ describe("claim-preserving revision policy", () => {
   });
 
   it("blocks unsupported factual heading vocabulary", () => {
-    const result = validateRevisionResponse(packet, request, { ...valid, markdown: "## Results Prove a Martian Origin\n\n" + valid.markdown, changes: [] }, valid.markdown);
+    const result = validateRevisionResponse(packet, request, { ...valid, markdown: valid.markdown + "\n\n## Results Prove a Martian Origin", changes: [] }, valid.markdown);
     expect(result.canAccept).toBe(false);
     expect(result.violations.join(" ")).toMatch(/heading|protected factual vocabulary/i);
   });

@@ -1,9 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 import { buildProjectSnapshot } from "../../src/research/graph";
 import { DraftCoordinator } from "../../src/research/draftCoordinator";
-import { renderDraftSection, parseDraftSections } from "../../src/research/draftSections";
+import { parseDraftSections, renderManagedDocument, type DraftSectionEnvelope, type ParsedDraftSection } from "../../src/research/draftSections";
 import type { Provider } from "../../src/providers/types";
 import type { ResearchRecord } from "../../src/research/types";
+
+function makeSection(envelope: DraftSectionEnvelope, heading: string, markdown: string): ParsedDraftSection {
+  return parseDraftSections(renderManagedDocument("", [{ envelope, heading, markdown }])).sections[0]!;
+}
 
 const records: ResearchRecord[] = [
   { path: "R/Project.md", title: "R", type: "research-project", project: "R/Project.md", question: "Why?", stage: "shape", status: "active" },
@@ -21,7 +25,7 @@ describe("DraftCoordinator", () => {
     }));
     const provider = { id: "anthropic", label: "Claude", hasCredentials: () => true, complete } as unknown as Provider;
     const coordinator = new DraftCoordinator({ selection: () => ({ provider, model: "claude-test" }), maxTokens: () => 2000, now: () => "2026-07-14T20:00:00.000Z" });
-    const section = parseDraftSections(renderDraftSection({ id: "c-1", claimPaths: ["R/Claims/C.md"], evidence: [], citations: [], provider: "companion", model: "evidence-outline-v1", generatedAt: "outline" }, "## C\n\nResults vary.")).sections[0];
+    const section = makeSection({ id: "c-1", claimPaths: ["R/Claims/C.md"], evidence: [], citations: [], provider: "companion", model: "evidence-outline-v1", generatedAt: "outline" }, "C", "Results vary.");
     if (!section) throw new Error("missing section");
 
     const preview = await coordinator.preview(buildProjectSnapshot("R/Project.md", records, []), section);
@@ -42,7 +46,7 @@ describe("DraftCoordinator", () => {
       }));
     const provider = { id: "ollama", label: "Local", hasCredentials: () => true, complete } as unknown as Provider;
     const coordinator = new DraftCoordinator({ selection: () => ({ provider, model: "local-test" }), maxTokens: () => 2000 });
-    const section = parseDraftSections(renderDraftSection({ id: "c-1", claimPaths: ["R/Claims/C.md"], evidence: [], citations: [], provider: "companion", model: "evidence-outline-v1", generatedAt: "outline" }, "## C")).sections[0];
+    const section = makeSection({ id: "c-1", claimPaths: ["R/Claims/C.md"], evidence: [], citations: [], provider: "companion", model: "evidence-outline-v1", generatedAt: "outline" }, "C", "Placeholder.");
     if (!section) throw new Error("missing section");
 
     const preview = await coordinator.preview(buildProjectSnapshot("R/Project.md", records, []), section);
@@ -56,12 +60,12 @@ describe("DraftCoordinator", () => {
     const complete = vi.fn(async () => JSON.stringify({ markdown: "Ungrounded prose", support: [], gaps: [] }));
     const provider = { id: "ollama", label: "Local", hasCredentials: () => true, complete } as unknown as Provider;
     const coordinator = new DraftCoordinator({ selection: () => ({ provider, model: "local-test" }), maxTokens: () => 2000 });
-    const section = parseDraftSections(renderDraftSection({ id: "c-1", claimPaths: ["R/Claims/C.md"], evidence: [], citations: [], provider: "companion", model: "evidence-outline-v1", generatedAt: "outline" }, "## Findings\n\nPlaceholder.")).sections[0];
+    const section = makeSection({ id: "c-1", claimPaths: ["R/Claims/C.md"], evidence: [], citations: [], provider: "companion", model: "evidence-outline-v1", generatedAt: "outline" }, "Findings", "Placeholder.");
     if (!section) throw new Error("missing section");
 
     const preview = await coordinator.preview(buildProjectSnapshot("R/Project.md", records, []), section);
 
-    expect(preview.response.markdown).toBe("## Findings\n\nResults vary. [@smith2025]");
+    expect(preview.response.markdown).toBe("Results vary. [@smith2025]");
     expect(preview.response.support[0]).toEqual(expect.objectContaining({ passage: "Results vary. [@smith2025]", evidencePaths: ["R/Evidence/E.md"] }));
     expect(preview.response.gaps[0]).toMatch(/minimal reviewed-claim fallback/i);
     expect(complete).toHaveBeenCalledTimes(2);
@@ -71,7 +75,7 @@ describe("DraftCoordinator", () => {
     const complete = vi.fn();
     const provider = { id: "anthropic", label: "Claude", hasCredentials: () => false, complete } as unknown as Provider;
     const coordinator = new DraftCoordinator({ selection: () => ({ provider, model: "claude-test" }), maxTokens: () => 2000 });
-    const section = parseDraftSections(renderDraftSection({ id: "c-1", claimPaths: ["R/Claims/C.md"], evidence: [], citations: [], provider: "companion", model: "evidence-outline-v1", generatedAt: "outline" }, "## C")).sections[0];
+    const section = makeSection({ id: "c-1", claimPaths: ["R/Claims/C.md"], evidence: [], citations: [], provider: "companion", model: "evidence-outline-v1", generatedAt: "outline" }, "C", "Placeholder.");
     if (!section) throw new Error("missing section");
     await expect(coordinator.preview(buildProjectSnapshot("R/Project.md", records, []), section)).rejects.toThrow(/credential/i);
     expect(complete).not.toHaveBeenCalled();

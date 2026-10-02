@@ -6,7 +6,6 @@ export type CompanionPage =
   | "related"
   | "memory"
   | "research-desk"
-  | "research-workbench"
   | "system";
 
 export type ClipperStatus = "not-set-up" | "current" | "update-available";
@@ -49,7 +48,6 @@ export interface QuickOptionsState {
   memoryAutoConsolidate: boolean;
   activeProject?: string;
   discoveryEnabled: boolean;
-  activeResearchTab?: string;
   researchModel: ResearchModel;
   researchModelLabel?: string;
 }
@@ -172,15 +170,6 @@ export function quickOptionsFor(page: CompanionPage, state: QuickOptionsState): 
         researchModel(state),
         { id: "discovery-enabled", label: "Scholarly discovery", kind: "toggle", value: state.discoveryEnabled },
         { id: "clippings-inbox", label: "Open clippings inbox", kind: "action" },
-        desktopIntegrations(),
-        allSettings(),
-      ];
-    case "research-workbench":
-      return [
-        activeProject(state),
-        { id: "research-section", label: "Research section", kind: "status", value: state.activeResearchTab ?? "Overview" },
-        researchModel(state),
-        { id: "discovery-enabled", label: "Scholarly discovery", kind: "toggle", value: state.discoveryEnabled },
         desktopIntegrations(),
         allSettings(),
       ];

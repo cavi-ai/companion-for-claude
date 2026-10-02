@@ -3,7 +3,7 @@ import { isStaleEvidence, isTrustedEvidence, type ProjectClaim, type ProjectSnap
 import type { EvidenceRecord, EvidenceRelation } from "./types";
 import { buildFrontmatter } from "../indexing/frontmatter";
 import { citationKeyForSource } from "./draftGrounding";
-import { renderDraftSection, type DraftSectionEnvelope } from "./draftSections";
+import { renderManagedDocument, type DraftSectionEnvelope, type ManagedSectionInput } from "./draftSections";
 
 function evidence(snapshot: ProjectSnapshot, path: string): EvidenceRecord {
   const item = snapshot.evidence.find((candidate) => candidate.path === path);
@@ -103,25 +103,23 @@ export function renderEvidenceOutline(snapshot: ProjectSnapshot, claimPaths: str
   const claims = claimPaths.map((path) => claim(snapshot, path));
   const unsafe = claims.find(({ reviewState }) => reviewState !== "reviewed");
   if (unsafe) throw new Error(`Cannot create a trusted outline from ${unsafe.reviewState} claim: ${unsafe.path}. Review the claim first or remove it from the selection.`);
-  const sections = claims.map((item) => {
+  const sections: ManagedSectionInput[] = claims.map((item) => {
     const supporting = renderRelation(snapshot, "supports", item.supporting);
     const challenging = renderRelation(snapshot, "challenges", item.challenging);
     const contextual = renderRelation(snapshot, "contextualizes", item.contextual);
     const excluded = [...supporting.excluded, ...challenging.excluded, ...contextual.excluded];
-    const section = [
-    `## ${item.title}`,
-    "",
-    item.proposition,
-    "",
-    `Confidence: ${item.confidence}; review state: ${item.reviewState}.`,
-    ...(item.limitations.length ? ["", `Limitations: ${item.limitations.join("; ")}`] : []),
-    "", "### Supporting evidence", "", ...supporting.included,
-    "", "### Challenging evidence", "", ...challenging.included,
-    "", "### Contextual evidence", "", ...contextual.included,
-    ...(excluded.length ? ["", "### Excluded evidence", "", ...excluded] : []), "",
+    const markdown = [
+      item.proposition,
+      "",
+      `Confidence: ${item.confidence}; review state: ${item.reviewState}.`,
+      ...(item.limitations.length ? ["", `Limitations: ${item.limitations.join("; ")}`] : []),
+      "", "### Supporting evidence", "", ...supporting.included,
+      "", "### Challenging evidence", "", ...challenging.included,
+      "", "### Contextual evidence", "", ...contextual.included,
+      ...(excluded.length ? ["", "### Excluded evidence", "", ...excluded] : []),
     ].join("\n");
-    return renderDraftSection(outlineEnvelope(snapshot, item), section);
+    return { envelope: outlineEnvelope(snapshot, item), heading: item.title, markdown };
   });
   const frontmatter = buildFrontmatter({ title: `${snapshot.project.title} — Evidence-backed outline`, type: "research-document", project: `[[${snapshot.project.path}]]`, document_kind: "outline", claims: claims.map(({ path }) => `[[${path}]]`) });
-  return [frontmatter, "", `# ${snapshot.project.title} — Evidence-backed outline`, "", ...sections].join("\n");
+  return [frontmatter, "", renderManagedDocument(`# ${snapshot.project.title} — Evidence-backed outline`, sections)].join("\n");
 }

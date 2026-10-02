@@ -22,7 +22,6 @@ const pageLabel = (page: CompanionPage): string => ({
   related: "Related Notes",
   memory: "Session Memory",
   "research-desk": "Research Desk",
-  "research-workbench": "Research Workbench",
   system: "System",
 })[page];
 

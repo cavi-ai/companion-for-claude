@@ -37,7 +37,7 @@ describe("section draft provider request", () => {
     });
 
     expect(parseDraftResponse(packet, raw)).toEqual({
-      markdown: "## Findings\n\nResults vary [@smith2025].",
+      markdown: "Results vary [@smith2025].",
       support: [{ passage: "Results vary [@smith2025].", claimPath: "R/Claims/C.md", evidencePaths: ["R/Evidence/E.md"], citationKeys: ["smith2025"] }],
       gaps: [],
     });

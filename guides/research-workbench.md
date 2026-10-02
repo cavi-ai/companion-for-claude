@@ -1,146 +1,81 @@
-# Research Desk & Workbench
+# Research Desk
 
-Writing you can defend. Sources are captured with fingerprints, evidence keeps
-the exact excerpt and locator, claims track what supports *and* challenges them,
-and drafts are validated so citations can't silently disappear.
+## What it is
 
-Everything is stored as plain Markdown notes in your vault. The vault is the
-source of truth — the views are just views.
+- One view per research project: the argument, how well it is backed, and what to do next.
+- Every record is a Markdown note in your vault; the view reads and writes those notes.
+- Open it with `/research` or the `Open research desk` command.
+- External MCP clients can read and write the same records through the optional [MCP bridge](claude-code-bridge.md).
 
-## Desk vs Workbench
+![Research Desk showing a project's suggested next steps, claim cards with their status, and document progress](../assets/research-desk.png)
 
-Open the **Research Desk** with `/research`. It's the daily surface: one active
-project, its current stage, a deterministic next action with an explanation,
-document progress, and a queue of work needing attention. None of that requires a
-model request. Pin or dismiss guidance, switch projects, or open the Workbench
-when you need record-level control.
+## The page
 
-![Research Desk showing the project stage, next action, active document, and attention queue](../assets/research-desk.png)
+- **Fix first** appears when records have broken references, unreadable notes, or unverifiable sources; each row opens the note.
+- **Ask Claude** lists up to three suggested steps and a box for typed instructions.
+- **Argument** shows one card per claim with its status, supporting and challenging counts, and passages.
+- **Document** shows the outline or draft with sections drafted, sections changed, and buttons to open it or work on its sections.
+- **Add sources** has Link or file, Search papers, and Pull passages.
+- Unused passages, unread sources, and rejected claims sit in collapsed groups under the cards.
 
-The **Research Workbench** is the advanced surface, grouped into four phases:
+## Ask Claude
 
-| Group | Tabs |
+- Suggested steps come from the project's notes and need no model request to appear.
+- Typed instructions and chat steps run in agent mode with the project attached.
+- New evidence and claims arrive as proposed; you check them before they count.
+- Draft steps preview a section and wait for Accept before writing to the document.
+
+## Claim statuses
+
+The first matching row applies.
+
+| Status | Shows when |
 |---|---|
-| **Build** | Overview · Sources · Evidence · Claims |
-| **Write** | Outline · Draft |
-| **Assure** | Audit · Intelligence |
-| **Expand** | Discover |
+| Rejected | The claim is rejected |
+| Needs check | The claim is still proposed |
+| Unsupported | No trusted evidence supports it |
+| Thin | One trusted passage supports it |
+| Challenged | Challenging evidence or a contradiction exists and no limitation is recorded |
+| Changed since drafted | The claim or its evidence changed after its section was drafted |
+| Drafted | Its section is drafted by a model and unedited since accept |
+| Not drafted | It is in the outline and has no draft |
+| Not in outline | An outline exists and the claim is not in it |
+| Ready | No outline exists yet |
 
-A project moves through seven stages: `frame` → `gather` → `read` → `reason` →
-`shape` → `write` → `assure`.
-
-External MCP clients can drive the same canonical records through Companion's
-optional [MCP bridge](claude-code-bridge.md). This specialized record API is a
-Companion feature; it is not part of the portable `obsidian-agent` CLI package.
-
-## The core path
-
-**Create project → Import source → Capture evidence → Review → Build claims →
-Generate outline → Draft → Revise → Assure.**
-
-Getting started is guided rather than blank:
-
-- **Triage clippings** groups a junk-drawer clippings inbox into tagged research themes with a `Triage.md` board — a potential project per theme.
-- **New project from active note** seeds a project from the note you have open: question drafted, note imported as the first source, Discover pre-loaded for a preliminary scholarly search.
-
-Along the way, **Sharpen with Claude** rewrites claim propositions grounded in
-the evidence you actually checked, and **Draft with Claude** writes evidence
-interpretations from the excerpt.
-
-## What gets recorded
-
-- **Sources** receive a content fingerprint at capture. Kinds: web (auto-fetched to clean markdown), PDF, DOI, arXiv, **Zotero** (a `zotero_key` resolves title, authors, publication, DOI, and abstract from your library — set your Zotero user id and, for private libraries, API key under *Scholarly discovery*), and vault notes.
-- **Evidence** preserves the exact excerpt, the locator (page, section, paragraph, timestamp, or quote), and the fingerprint captured with it.
-- **Claims** keep supporting, challenging, and contextual relations distinct — a claim knows what argues against it.
+Audit and analysis findings appear as Fix first rows and as notes on the claim cards.
 
 ## Trusted evidence
 
-Only **reviewed**, locatable, non-stale evidence linked to a valid source counts
-as trusted claim support. Proposed evidence stays visible but does not satisfy the
-audit. Review mutates evidence records only and accepts the terminal states
-`reviewed` or `rejected`.
+- Only reviewed evidence with a locator and a current source fingerprint counts as trusted support.
+- Proposed evidence stays visible and does not satisfy the audit.
+- Review changes evidence records only and ends in `reviewed` or `rejected`.
+- Evidence is stale when the source's current fingerprint differs from the one captured with it; the excerpt needs re-verifying.
 
-"Stale" is mechanical, not a judgment call: if the source's current fingerprint
-differs from the one captured with the evidence, the source changed under you and
-the excerpt needs re-verifying.
+## Documents
+
+- Each section is a `##` heading named after its claim.
+- A `claude-provenance` block at the end of the note records each section's claim, passages, and citations.
+- The block renders as References in Reading view and Live Preview.
+- Renaming a managed heading detaches that section until the heading is restored or the outline is rebuilt.
+- Clean up format converts older notes to this layout.
 
 ## Claim-preserving revision
 
-Draft revisions carry the grounded section packet and an explicit intent, the
-model's response is validated *before* preview, and you review the proposed
-result before it can replace the section.
+- Revisions carry the grounded section packet and an explicit intent.
+- The model's response is validated before preview.
+- You review the proposed result before it replaces the section.
+- Unsupported citations, silent claim loss, stale grounding, and malformed responses are rejected instead of written.
 
-Unsupported citations, silent claim loss, stale grounding, and malformed revision
-responses are **rejected instead of being written into the document**. This is
-deterministic validation, not a prompt asking the model to behave.
+## Search papers
 
-## The Audit tab
-
-Deterministic checks over the project's records. Nine finding codes, each with a
-path and a concrete repair:
-
-| Code | Meaning |
-|---|---|
-| `broken-reference` | A record points at a missing source, evidence, claim, or question |
-| `unsupported-claim` | A claim has no trusted supporting evidence |
-| `missing-locator` | Evidence lacks a locator kind or value |
-| `unreviewed-evidence` | Evidence is still `proposed` |
-| `stale-evidence` | Source fingerprint no longer matches the captured one |
-| `unreviewed-claim` | A claim is still `proposed` and can't be used in a trusted outline |
-| `rejected-claim` | A rejected claim is referenced by an outline |
-| `unused-evidence` | Evidence isn't connected to any claim |
-| `invalid-record` | A record failed to parse |
-
-## The Intelligence tab
-
-Deterministic analysis reads the project's canonical records **locally**,
-refreshes automatically when those records change, and groups traceable findings
-into four categories:
-
-- **Contradictions** identify a claim linked to both trusted supporting and challenging evidence; they do not decide which evidence is stronger.
-- **Method differences** identify captured differences such as the source kinds behind supporting and challenging evidence; they do not infer uncaptured methodology.
-- **Research gaps** identify open questions, unsupported claims, or places where counterevidence or independent sources should be investigated.
-- **Evidence quality** surfaces deterministic audit problems such as stale or unreviewed evidence, missing locators, and broken references.
-
-![Research Workbench Intelligence tab showing deterministic research gaps and evidence-quality findings](../assets/research-workbench-intelligence.png)
-
-### Model narrative (optional)
-
-The separate **Model narrative** runs only when you click **Analyze**. The result
-names the provider and model that produced it, and its citations are validated
-against paths in the current project before display.
-
-Choose its provider under *Settings → Companion for Claude → Research
-intelligence narrator*:
-
-- **Current chat backend** follows the chat setting. Local starts with Ollama; Claude starts with Anthropic; Auto starts with Anthropic and retries with Ollama only when Claude is unavailable, rejects credentials, is rate-limited or out of usage, or returns a server error, and a local model is available.
-- **Claude only** uses Anthropic without a local fallback.
-- **Local only** uses Ollama.
-- **Disabled** removes the Analyze action while deterministic findings remain available.
-
-Narratives are derived summaries, not vault records: they perform no vault writes
-and may be marked **Out of date** after the project changes.
-
-Neither the deterministic findings nor the model narrative is a judgment of
-scientific validity. Follow each finding's cited paths and verification guidance
-before drawing a conclusion.
-
-## The Discover tab
-
-Scholarly search over OpenAlex, enriched with Crossref and arXiv metadata, ranked
-locally with an optional model rerank, and importable straight into the project as
-sources.
-
-Network requests fire **only on explicit user actions**, and results cache
-locally. Enable it under *Settings → Companion for Claude → Scholarly discovery*;
-OpenAlex asks for a contact email as a courtesy to their API.
-
-Set a **Zotero user id** (and an API key for a private library) in the same
-section and an import with `source_kind: zotero` plus a `zotero_key` resolves the
-item's title, authors, date, publication, DOI, url, and abstract from your
-library. A failed lookup still imports the key.
+- Searches OpenAlex, enriched with Crossref and arXiv metadata, ranked locally with an optional model rerank.
+- Results import into the project as sources.
+- Network requests fire only on explicit actions, and results cache locally.
+- Enable it under Settings > Companion for Claude > Scholarly discovery; OpenAlex asks for a contact email.
+- A Zotero user id, plus an API key for private libraries, resolves `zotero_key` imports to title, authors, date, publication, DOI, url, and abstract.
+- A failed Zotero lookup still imports the key.
 
 ## See also
 
-- [agent-mode.md](agent-mode.md) — the two research tools available to Claude in chat, and the seven write-gated ones.
-- [claude-code-bridge.md](claude-code-bridge.md) — driving research records from Claude Code.
+- [agent-mode.md](agent-mode.md): the research tools available to Claude in chat.
+- [claude-code-bridge.md](claude-code-bridge.md): driving research records from Claude Code.

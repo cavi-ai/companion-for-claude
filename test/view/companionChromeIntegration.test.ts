@@ -6,8 +6,7 @@ import type ClaudeCompanionPlugin from "../../src/main";
 import { InboxView } from "../../src/view/InboxView";
 import { MemoryView } from "../../src/view/MemoryView";
 import { RelatedView } from "../../src/view/RelatedView";
-import { ResearchDeskView } from "../../src/view/ResearchDeskView";
-import { ResearchWorkbenchView } from "../../src/view/ResearchWorkbenchView";
+import { ResearchView } from "../../src/view/ResearchView";
 import type { CompanionChromeDependencies } from "../../src/view/companionChrome";
 import type { QuickOptionsState } from "../../src/view/quickOptions";
 
@@ -63,6 +62,7 @@ describe("Companion chrome view integration", () => {
     const plugin = {
       settings: structuredClone(DEFAULT_SETTINGS),
       companionChrome: () => deps,
+      listQueuedEdits: () => [],
     } as unknown as ClaudeCompanionPlugin;
     plugin.settings.sourceCaptureEnabled = false;
 
@@ -104,32 +104,15 @@ describe("Companion chrome view integration", () => {
     expect(openSessionPicker).toHaveBeenCalledTimes(1);
   });
 
-  it("puts contextual options on both research pages and refreshes their context", async () => {
+  it("puts contextual options on the research page and refreshes its context", async () => {
     const app = new App();
     const deps = chrome(app);
-    const desk = new ResearchDeskView(
+    const desk = new ResearchView(
       new WorkspaceLeaf(app),
       { listProjects: async () => [] } as never,
-      { preferencesFor: () => ({ dismissedActionIds: [] }), updatePreferences: vi.fn(), openWorkbench: vi.fn(), chrome: deps },
-    );
-    const workbench = new ResearchWorkbenchView(
-      new WorkspaceLeaf(app),
-      { loadProject: async () => { throw new Error("unused"); } } as never,
-      {
-        chrome: deps,
-        narratorMode: () => "disabled",
-        coordinator: {
-          subscribe: () => () => undefined,
-          stateFor: () => ({ status: "not-analyzed" }),
-          analyze: async () => ({ status: "not-analyzed" }),
-          cancel: vi.fn(),
-        } as never,
-      },
+      { chrome: deps, actions: {} as never, askResearch: vi.fn(), openPath: vi.fn(), webSearchEnabled: () => false },
     );
     await desk.render();
-    await workbench.render();
-
     expect(optionLabel(desk.contentEl)).toBe("Quick options for Research Desk");
-    expect(optionLabel(workbench.contentEl)).toBe("Quick options for Research Workbench");
   });
 });

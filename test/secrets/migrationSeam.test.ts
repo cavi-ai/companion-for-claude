@@ -17,7 +17,6 @@ function harness(initialSettings: Record<string, unknown>): Harness {
   const plugin = Object.create(ClaudeCompanionPlugin.prototype) as ClaudeCompanionPlugin;
   Object.assign(plugin as unknown as Record<string, unknown>, {
     app: new App(),
-    researchDeskPreferences: {},
     mcpSyncChain: Promise.resolve(),
     loadData: async () => structuredClone(stored),
     saveData: async (data: unknown) => { stored = structuredClone(data); },

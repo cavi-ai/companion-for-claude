@@ -22,11 +22,16 @@ export function renderInterruptedTurnRow(host: HTMLElement, conversation: Conver
   resume.addEventListener("click", () => onResume(conversation));
 }
 
-export function renderRecoverableEditRow(host: HTMLElement, conversation: Conversation, onReview: (conversation: Conversation) => void): void {
+export function renderRecoverableEditRow(host: HTMLElement, conversation: Conversation, onReview: (conversation: Conversation) => void, onDiscard: (conversation: Conversation) => void): void {
   const proposal = conversation.lastEditProposal;
   if (!proposal || host.querySelector(".cc-edit-recovery")) return;
   const row = host.createDiv({ cls: "cc-agent-notice cc-edit-recovery" });
   row.createSpan({ text: `Proposed edit for ${proposal.path} is saved.` });
   const review = row.createEl("button", { text: "Review proposed edit", cls: "mod-cta" });
   review.addEventListener("click", () => onReview(conversation));
+  const discard = row.createEl("button", { text: "Discard" });
+  discard.addEventListener("click", () => {
+    row.remove();
+    onDiscard(conversation);
+  });
 }

@@ -81,6 +81,8 @@ describe("settings definitions", () => {
 
     await tab.setControlValue("agentAllowWrites", true);
     expect(tab.getControlValue("agentAllowWrites")).toBe(true);
+    await tab.setControlValue("standingOrdersEnabled", false);
+    expect(tab.getControlValue("standingOrdersEnabled")).toBe(false);
 
     // Folder fields fall back to their default when emptied.
     await tab.setControlValue("chatFolder", "   ");

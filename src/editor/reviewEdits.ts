@@ -61,12 +61,24 @@ export function findOpenMarkdownView(app: App, path: string): MarkdownView | nul
   return null;
 }
 
+/** Offset just past the closing fence line of a leading YAML frontmatter block; -1 when there is none. */
+export function frontmatterEnd(content: string): number {
+  const open = /^---\r?\n/.exec(content);
+  if (!open) return -1;
+  const close = /^---[ \t]*(?:\r?\n|$)/m;
+  const rest = content.slice(open[0].length);
+  const match = close.exec(rest);
+  return match ? open[0].length + match.index + match[0].length : -1;
+}
+
 export async function reviewEdits(app: App, input: ReviewEditsInput, opts: { inlineEnabled: boolean; signal?: AbortSignal }, deps: ReviewEditsDeps = defaultDeps): Promise<ReviewOutcome> {
   const meta = { path: input.file.path, ...(input.description !== undefined ? { description: input.description } : {}) };
   if (opts.inlineEnabled) {
     const view = findOpenMarkdownView(app, input.file.path);
     const cm = view ? editorViewOf(view.editor) : null;
-    if (view && cm) {
+    // Live Preview renders frontmatter as the Properties widget, which hides inline marks and the review bar.
+    const fmEnd = view ? frontmatterEnd(view.editor.getValue()) : -1;
+    if (view && cm && !input.plan.hunks.some((hunk) => hunk.start < fmEnd)) {
       let session: InlineDiffSession | null;
       try {
         session = createSession(view.editor.getValue(), input.plan, meta);

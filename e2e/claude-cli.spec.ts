@@ -137,7 +137,7 @@ test("research Sharpen with Claude runs a tool-less Claude Code one-shot", async
     const desk = page.locator(".cc-research-desk");
     await expect(desk).toBeVisible();
     await expect(page.getByRole("heading", { name: "Continuity research" })).toBeVisible();
-    await desk.getByRole("button", { name: "Develop claim", exact: true }).click();
+    await desk.getByRole("button", { name: "New claim", exact: true }).click();
     const modal = page.locator(".modal-container").last();
     await modal.getByLabel("Short title").fill("Workflow continuity claim");
     await modal.getByLabel("Claim", { exact: true }).fill("Reviewed evidence preserves continuity across the workflow.");

@@ -155,6 +155,7 @@ export class SystemView extends ItemView {
       case "open-setup-wizard": return this.deps.openSetupWizard();
       case "open-settings": return this.deps.openSettings();
       case "clipper-schemas": return this.deps.openClipperSetup();
+      case "open-note": return action.path ? this.deps.openNote(action.path) : undefined;
     }
   }
 }

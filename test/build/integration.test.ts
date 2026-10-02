@@ -15,7 +15,6 @@ function pluginHarness() {
     app,
     settings: { ...structuredClone(DEFAULT_SETTINGS), mcpWriteFolder: "Claude/Builds" },
     convState: { conversations: [], activeId: null },
-    researchDeskPreferences: {},
     persist: vi.fn(async () => undefined),
     activateBuildView,
   });

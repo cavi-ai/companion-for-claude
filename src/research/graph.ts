@@ -125,3 +125,7 @@ export function buildProjectSnapshot(projectPath: string, records: ResearchRecor
   });
   return Object.freeze({ project, sources: Object.freeze(sources), evidence: Object.freeze(evidence), claims: Object.freeze(claims), questions: Object.freeze(questions), documents: Object.freeze(documents), issues: Object.freeze(issues), health }) as ProjectSnapshot;
 }
+
+export function recordBasename(path: string): string {
+  return (path.split("/").pop() ?? path).replace(/\.md$/i, "");
+}
