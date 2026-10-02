@@ -372,7 +372,9 @@ export abstract class BasesView extends Component {
 }
 
 export class Plugin {}
-export class MarkdownView {}
+export class MarkdownView {
+  getState(): Record<string, unknown> { return {}; }
+}
 export class WorkspaceLeaf {
   constructor(public app: App = new App()) {}
 }

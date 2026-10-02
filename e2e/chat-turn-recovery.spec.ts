@@ -89,6 +89,49 @@ test("a saved edit can be reviewed and applied after plugin reload", async ({ ri
   await expect(reopened.locator(".cc-edit-recovery")).toHaveCount(0);
 });
 
+test("a saved edit inside a table is reviewed in the modal, not inline, in Live Preview", async ({ rig }) => {
+  const { page } = await rig.reset({ claudeCli: true, extraFiles: { "Notes/Table.md": "# Table\n\n| a | b |\n|---|---|\n| 1 | 2 |\n" } });
+  const openTable = () => page.evaluate(async () => {
+    const app = (window as unknown as { app: { workspace: { openLinkText(link: string, source: string, newLeaf: boolean): Promise<void> } } }).app;
+    await app.workspace.openLinkText("Notes/Table", "", false);
+  });
+  const openChat = () => page.evaluate(async () => {
+    const app = (window as unknown as { app: { commands: { executeCommandById(id: string): Promise<void> } } }).app;
+    await app.commands.executeCommandById("claude-companion:open-chat");
+  });
+  await openTable();
+  await openChat();
+  const chat = page.locator(".cc-chat-root").first();
+  await expect(chat).toContainText("● Claude Code", { timeout: 15_000 });
+  await chat.locator(".cc-input").fill("ping");
+  await chat.locator(".cc-input").press("Enter");
+  await expect(chat.locator(".cc-msg.cc-assistant").last()).toContainText("pong from claude code", { timeout: 30_000 });
+
+  await page.evaluate(async () => {
+    const app = (window as unknown as { app: { plugins: { plugins: Record<string, {
+      getActiveConversation(): { id: string } | null;
+      saveChatEditProposal(id: string, proposal: { path: string; edits: { old_str: string; new_str: string }[] }): Promise<void>;
+    }> } } }).app;
+    const plugin = app.plugins.plugins["claude-companion"]!;
+    await plugin.saveChatEditProposal(plugin.getActiveConversation()!.id, {
+      path: "Notes/Table.md",
+      edits: [{ old_str: "| a | b |", new_str: "| a | c |" }],
+    });
+  });
+  await rig.reloadPlugin();
+  await openTable();
+  await openChat();
+  const reopened = page.locator(".cc-chat-root").first();
+  await reopened.locator(".cc-edit-recovery").getByRole("button", { name: "Review proposed edit" }).click();
+  await expect(page.getByRole("button", { name: "Apply selected" })).toBeVisible();
+  await expect(page.locator(".cc-inline-bar")).toHaveCount(0);
+  await page.getByRole("button", { name: "Apply selected" }).click();
+  await expect.poll(() => page.evaluate(async () => {
+    const app = (window as unknown as { app: { vault: { getAbstractFileByPath(path: string): unknown; cachedRead(file: unknown): Promise<string> } } }).app;
+    return app.vault.cachedRead(app.vault.getAbstractFileByPath("Notes/Table.md"));
+  })).toContain("| a | c |");
+});
+
 test("a saved edit can be discarded without touching the note", async ({ rig }) => {
   const { page } = await rig.reset({ claudeCli: true });
   await page.evaluate(async () => {

@@ -78,9 +78,13 @@ body.theme-light {
   position: relative;
   container-type: inline-size;
 }
-/* Borrowed host: the controls are row members, not a right-aligned group. */
+/* Borrowed host: the controls sit in the actions row at its spacing, never as a full-width or right-aligned group. */
 .cc-header-actions .cc-companion-chrome-controls {
-  display: contents;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 4px;
+  flex: 0 1 auto;
 }
 .cc-title {
   display: flex;

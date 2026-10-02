@@ -76,11 +76,16 @@ describe("settings tiers", () => {
   });
 
   it("hides a page with zero basic items until the toggle is on, and shows it once on", () => {
-    const off = definitionsOf(false).flatMap((g) => g.items ?? []).find((p) => p.name === "Agent bridge — MCP server (desktop)");
-    const on = definitionsOf(true).flatMap((g) => g.items ?? []).find((p) => p.name === "Agent bridge — MCP server (desktop)");
+    const off = definitionsOf(false).flatMap((g) => g.items ?? []).find((p) => p.name === "External tools — MCP client");
+    const on = definitionsOf(true).flatMap((g) => g.items ?? []).find((p) => p.name === "External tools — MCP client");
     expect(off).toBeTruthy();
     expect(evalVisible(off!)).toBe(false);
     expect(evalVisible(on!)).toBe(true);
+  });
+
+  it("keeps the Agent bridge page visible for its basic memory-record toggle", () => {
+    const off = definitionsOf(false).flatMap((g) => g.items ?? []).find((p) => p.name === "Agent bridge — MCP server (desktop)");
+    expect(evalVisible(off!)).toBe(true);
   });
 
   it("keeps a basic page visible regardless of the toggle", () => {

@@ -22,6 +22,7 @@ import { ResearchRepository } from "../research/repository";
 import { createResearchRepository } from "../research/repositoryFactory";
 import { RESEARCH_WRITE_TOOLS, ResearchTools, type ZoteroResolve } from "../research/tools";
 import { VAULT_WRITE_TOOLS } from "./writeTools";
+import { appendRecord, type RecordResult } from "../memory/record";
 import { captureWebSource, type WebCapture } from "../research/webCapture";
 import { ZoteroAdapter, type ZoteroLibrary } from "../discovery/adapters/zotero";
 import { createObsidianDiscoveryHttp } from "../discovery/adapters/obsidianHttp";
@@ -62,8 +63,17 @@ export interface VaultToolsOptions {
   related?: ((path: string, k: number) => Promise<{ path: string; score: number }[]>) | undefined;
   /** Enrichment pipeline for newly imported research sources; absent imports stay unenriched. */
   enrichSource?: ((path: string) => Promise<void>) | undefined;
+  /** Memory write-back; absent disables memory_record. `source`, when set, overrides the caller's. */
+  memoryRecord?: {
+    enabled: () => boolean;
+    path: () => string;
+    today: () => string;
+    newNote: (body: string) => string;
+    source?: string;
+  } | undefined;
 }
 
+export const MEMORY_RECORD_OFF_MESSAGE = "Memory recording is off in Companion settings.";
 export const SEMANTIC_OFF_MESSAGE = "Semantic search is off. Enable it in Companion settings → Semantic search.";
 
 /**
@@ -203,6 +213,22 @@ export class VaultTools {
           type: "object",
           properties: { url: { type: "string", description: "The http(s) URL to read." } },
           required: ["url"],
+        },
+      });
+    }
+
+    if (this.opts.memoryRecord?.enabled()) {
+      defs.push({
+        name: "memory_record",
+        description: "Record one durable, still-true fact about the user's work (a decision, preference, or project state) in the vault's 'What Claude Knows' memory note. Not for transient chatter. Pass `source` as your agent name (e.g. 'claude-code', 'codex').",
+        inputSchema: {
+          type: "object",
+          properties: {
+            fact: { type: "string", description: "The fact, one sentence, at most 500 characters." },
+            topic: { type: "string", description: "Optional short topic label (e.g. 'preferences', a project name)." },
+            source: { type: "string", description: "Your agent name." },
+          },
+          required: ["fact"],
         },
       });
     }
@@ -431,6 +457,8 @@ export class VaultTools {
         if (!this.opts.webFetch) throw new Error("Web fetch is disabled. Enable it in Companion settings → Agent.");
         return this.opts.webFetch(str(args.url));
       }
+      case "memory_record":
+        return this.memoryRecord(args);
       case "note_read":
         return this.read(str(args.path));
       case "list_recent":
@@ -468,6 +496,37 @@ export class VaultTools {
       default:
         throw new Error(`Unknown tool: ${name}`);
     }
+  }
+
+  private async memoryRecord(args: Record<string, unknown>): Promise<string> {
+    const m = this.opts.memoryRecord;
+    if (!m?.enabled()) throw new Error(MEMORY_RECORD_OFF_MESSAGE);
+    const path = assertVaultPath(m.path());
+    const input = { fact: str(args.fact), topic: optStr(args.topic), source: m.source ?? optStr(args.source), date: m.today() };
+    const vault = this.app.vault;
+    let result: RecordResult | undefined;
+    for (let attempt = 0; attempt < 3 && !result; attempt++) {
+      const file = vault.getAbstractFileByPath(path);
+      if (file instanceof TFile) {
+        await vault.process(file, (content) => {
+          result = appendRecord(content, input, m.newNote);
+          return result.kind === "added" ? result.content : content;
+        });
+        continue;
+      }
+      const created = appendRecord(null, input, m.newNote);
+      if (created.kind !== "added") { result = created; break; }
+      try {
+        await ensureVaultFolder(this.app, path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "");
+        await vault.create(path, created.content);
+        result = created;
+      } catch {
+        // created concurrently: retry through the atomic process path
+      }
+    }
+    if (!result) throw new Error("Could not record the fact; try again.");
+    if (result.kind === "error") throw new Error(result.message);
+    return result.kind === "duplicate" ? "Already recorded." : "Recorded.";
   }
 
   private assertWrites(): void {

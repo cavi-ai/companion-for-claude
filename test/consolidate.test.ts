@@ -85,3 +85,19 @@ describe("renderMemoryNote", () => {
     expect(note).toContain("## Projects\n- a fact");
   });
 });
+
+describe("buildConsolidationPrompt — recorded facts", () => {
+  it("adds the recorded block only when facts are present", () => {
+    const without = buildConsolidationPrompt("old", ["d1"]);
+    expect(without).not.toContain("FACTS RECORDED BY AGENTS");
+    const withFacts = buildConsolidationPrompt("old", ["d1"], ["- 2026-10-02 · codex · Uses pnpm"]);
+    expect(withFacts).toContain("FACTS RECORDED BY AGENTS (fold each into the right section; drop exact duplicates)");
+    expect(withFacts).toContain("- 2026-10-02 · codex · Uses pnpm");
+  });
+
+  it("handles recorded facts with no digests", () => {
+    const p = buildConsolidationPrompt(null, [], ["- 2026-10-02 · codex · Uses pnpm"]);
+    expect(p).toContain("Uses pnpm");
+    expect(p).not.toContain("NEW SESSION DIGESTS");
+  });
+});

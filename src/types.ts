@@ -201,6 +201,8 @@ export interface PluginSettings {
   mcpToken: string;
   /** Allow MCP clients to create/append notes (read is always allowed). */
   mcpAllowWrites: boolean;
+  /** Let agents (bridge and chat) append facts to the "What Claude Knows" note. */
+  memoryRecordEnabled: boolean;
   /** Default folder for notes created via MCP. */
   mcpWriteFolder: string;
   /** External MCP servers the agent can use (each call asks for confirmation). */
@@ -357,6 +359,7 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   mcpPort: 22360,
   mcpToken: "",
   mcpAllowWrites: false,
+  memoryRecordEnabled: true,
   mcpWriteFolder: "Claude/Inbox",
   mcpClientServers: [],
 

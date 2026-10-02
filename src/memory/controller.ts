@@ -2,6 +2,7 @@ import type { PluginSettings, ChatMessage } from "../types";
 import type { SessionMeta, SessionReader } from "./sessions";
 import { listSessionsForVault, excludeSessions } from "./sessions";
 import { ingestSession, ingestConversation, type PersistDeps } from "./ingest";
+import { splitRecorded, renderRecordedSection } from "./record";
 import { selectDigests, buildConsolidationPrompt, parseConsolidation, renderMemoryNote, MEMORY_NOTE_BASENAME, type DigestSource } from "./consolidate";
 
 export interface MemoryControllerDeps {
@@ -95,23 +96,31 @@ export class MemoryController {
       if (content !== null) sources.push({ path: f.path, mtime: f.mtime, content });
     }
     const digests = selectDigests(sources);
-    if (digests.length === 0) {
+
+    const memoryPath = this.deps.normalizePath(`${folder}/${MEMORY_NOTE_BASENAME}.md`);
+    const existing = await this.deps.vault.readContent(memoryPath);
+    const { body: existingBody, recorded } = existing === null ? { body: null, recorded: [] as string[] } : splitRecorded(existing);
+    if (digests.length === 0 && recorded.length === 0) {
       if (!opts?.quiet) this.deps.notice("No session digests to consolidate yet — capture a session first.");
       return;
     }
 
-    const memoryPath = this.deps.normalizePath(`${folder}/${MEMORY_NOTE_BASENAME}.md`);
-    const existing = await this.deps.vault.readContent(memoryPath);
-
-    if (!opts?.quiet) this.deps.notice(`Consolidating ${digests.length} session digest${digests.length === 1 ? "" : "s"}…`);
+    if (!opts?.quiet) {
+      this.deps.notice(digests.length === 0
+        ? `Consolidating ${recorded.length} recorded fact${recorded.length === 1 ? "" : "s"}…`
+        : `Consolidating ${digests.length} session digest${digests.length === 1 ? "" : "s"}…`);
+    }
     try {
       const { text: raw, provider } = await this.deps.router().complete("utility", {
         system: "You maintain concise, factual memory notes. Output markdown only.",
-        user: buildConsolidationPrompt(existing, digests.map((d) => d.content)),
+        user: buildConsolidationPrompt(existingBody, digests.map((d) => d.content), recorded),
         maxTokens: 4000,
         temperature: 0.2,
       });
-      const body = parseConsolidation(raw);
+      const merged = splitRecorded(parseConsolidation(raw)).body.trimEnd();
+      const current = await this.deps.vault.readContent(memoryPath);
+      const late = current === null ? [] : splitRecorded(current).recorded.filter((l) => !recorded.includes(l));
+      const body = late.length > 0 ? `${merged}\n\n${renderRecordedSection(late)}` : merged;
       const note = renderMemoryNote(body, {
         updated: new Date().toISOString().slice(0, 10),
         digestCount: digests.length,

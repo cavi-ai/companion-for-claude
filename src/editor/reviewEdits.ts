@@ -61,14 +61,78 @@ export function findOpenMarkdownView(app: App, path: string): MarkdownView | nul
   return null;
 }
 
-/** Offset just past the closing fence line of a leading YAML frontmatter block; -1 when there is none. */
-export function frontmatterEnd(content: string): number {
-  const open = /^---\r?\n/.exec(content);
-  if (!open) return -1;
-  const close = /^---[ \t]*(?:\r?\n|$)/m;
-  const rest = content.slice(open[0].length);
-  const match = close.exec(rest);
-  return match ? open[0].length + match.index + match[0].length : -1;
+export interface HiddenRange { from: number; to: number }
+
+interface Line { from: number; to: number; text: string }
+
+function splitLines(content: string): Line[] {
+  const lines: Line[] = [];
+  let from = 0;
+  while (from < content.length) {
+    const nl = content.indexOf("\n", from);
+    const to = nl === -1 ? content.length : nl + 1;
+    lines.push({ from, to, text: content.slice(from, nl === -1 ? to : nl).replace(/\r$/, "") });
+    from = to;
+  }
+  return lines;
+}
+
+/** Char ranges Live Preview replaces with widgets (whole lines), where inline diff marks and the review bar do not render. */
+export function hiddenRanges(content: string): HiddenRange[] {
+  const lines = splitLines(content);
+  const ranges: HiddenRange[] = [];
+  const push = (first: number, last: number) => ranges.push({ from: lines[first]!.from, to: lines[last]!.to });
+  let i = 0;
+  if (lines[0]?.text === "---") {
+    const close = lines.findIndex((line, index) => index > 0 && /^---[ \t]*$/.test(line.text));
+    if (close !== -1) { push(0, close); i = close + 1; }
+  }
+  while (i < lines.length) {
+    const text = lines[i]!.text;
+    const trimmed = text.trim();
+    const fence = /^\s*(`{3,}|~{3,})/.exec(text);
+    if (fence) {
+      const marker = fence[1]!;
+      let end = lines.length - 1;
+      for (let j = i + 1; j < lines.length; j++) {
+        const closer = /^\s*(`{3,}|~{3,})\s*$/.exec(lines[j]!.text);
+        if (closer && closer[1]![0] === marker[0] && closer[1]!.length >= marker.length) { end = j; break; }
+      }
+      push(i, end);
+      i = end + 1;
+    } else if (trimmed.startsWith("$$")) {
+      let end = i;
+      if (!(trimmed.length >= 4 && trimmed.endsWith("$$"))) {
+        end = lines.length - 1;
+        for (let j = i + 1; j < lines.length; j++) if (lines[j]!.text.trim().endsWith("$$")) { end = j; break; }
+      }
+      push(i, end);
+      i = end + 1;
+    } else if (trimmed.startsWith("|")) {
+      let end = i;
+      while (end + 1 < lines.length && lines[end + 1]!.text.trim().startsWith("|")) end++;
+      push(i, end);
+      i = end + 1;
+    } else if (/^>\s*\[!/.test(text)) {
+      let end = i;
+      while (end + 1 < lines.length && /^\s*>/.test(lines[end + 1]!.text)) end++;
+      push(i, end);
+      i = end + 1;
+    } else if (/^<[A-Za-z]/.test(text)) {
+      let end = i;
+      while (end + 1 < lines.length && lines[end + 1]!.text.trim() !== "") end++;
+      push(i, end);
+      i = end + 1;
+    } else {
+      if (/^!\[\[[^\]]*\]\]$/.test(trimmed)) push(i, i);
+      i++;
+    }
+  }
+  return ranges;
+}
+
+function touchesHidden(plan: EditPlan, ranges: HiddenRange[]): boolean {
+  return plan.hunks.some((hunk) => ranges.some((range) => hunk.start < range.to && hunk.start + Math.max(hunk.oldText.length, 1) > range.from));
 }
 
 export async function reviewEdits(app: App, input: ReviewEditsInput, opts: { inlineEnabled: boolean; signal?: AbortSignal }, deps: ReviewEditsDeps = defaultDeps): Promise<ReviewOutcome> {
@@ -76,9 +140,9 @@ export async function reviewEdits(app: App, input: ReviewEditsInput, opts: { inl
   if (opts.inlineEnabled) {
     const view = findOpenMarkdownView(app, input.file.path);
     const cm = view ? editorViewOf(view.editor) : null;
-    // Live Preview renders frontmatter as the Properties widget, which hides inline marks and the review bar.
-    const fmEnd = view ? frontmatterEnd(view.editor.getValue()) : -1;
-    if (view && cm && !input.plan.hunks.some((hunk) => hunk.start < fmEnd)) {
+    // Live Preview widgets (properties, tables, callouts, rendered blocks) hide inline marks and the review bar; source mode shows them.
+    const inlineVisible = view !== null && (view.getState().source === true || !touchesHidden(input.plan, hiddenRanges(view.editor.getValue())));
+    if (view && cm && inlineVisible) {
       let session: InlineDiffSession | null;
       try {
         session = createSession(view.editor.getValue(), input.plan, meta);

@@ -55,6 +55,12 @@ describe("memory consolidation defaults", () => {
   });
 });
 
+describe("memory record defaults", () => {
+  it("agents may record memory by default", () => {
+    expect(DEFAULT_SETTINGS.memoryRecordEnabled).toBe(true);
+  });
+});
+
 describe("ontology defaults", () => {
   it("ships on with the Ontology folder and an unshown seed prompt", () => {
     expect(DEFAULT_SETTINGS.ontologyEnabled).toBe(true);

@@ -43,25 +43,25 @@ export function selectDigests(files: DigestSource[], opts?: { max?: number; maxC
  * The consolidation instruction: merge new digests into the durable memory
  * note. Format rules keep the output stable and reviewable.
  */
-export function buildConsolidationPrompt(existing: string | null, digests: string[]): string {
+export function buildConsolidationPrompt(existing: string | null, digests: string[], recorded: string[] = []): string {
   const existingBlock = existing
     ? `CURRENT MEMORY NOTE (revise this — keep facts that still hold, drop stale ones):\n\n${existing}`
     : "There is no existing memory note yet — write the first one.";
   const digestBlocks = digests.map((d, i) => `--- Session digest ${i + 1} ---\n${d}`).join("\n\n");
-  return `You maintain a single durable memory note about this user's work, distilled from their recent Claude session digests.
+  const digestSection = digests.length > 0 ? `NEW SESSION DIGESTS:\n\n${digestBlocks}\n\n` : "";
+  const recordedSection = recorded.length > 0
+    ? `FACTS RECORDED BY AGENTS (fold each into the right section; drop exact duplicates):\n\n${recorded.join("\n")}\n\n`
+    : "";
+  return `You maintain a single durable memory note about this user's work, distilled from their recent Claude session digests and facts agents recorded.
 
 ${existingBlock}
 
-NEW SESSION DIGESTS:
-
-${digestBlocks}
-
-Rewrite the complete memory note now. Rules:
+${digestSection}${recordedSection}Rewrite the complete memory note now. Rules:
 - Markdown body only — no frontmatter, no title heading, no preamble or commentary.
 - Group facts under short ## topic sections (projects, decisions, preferences, tools, open threads).
 - Keep only durable, still-true facts; merge duplicates; drop anything stale or one-off.
 - Use absolute dates (e.g. "2026-07-05"), never "yesterday" or "last week".
-- Be specific and grounded in the digests — never invent facts.
+- Be specific and grounded in the digests and recorded facts — never invent facts.
 - Keep the whole note under 120 lines.`;
 }
 

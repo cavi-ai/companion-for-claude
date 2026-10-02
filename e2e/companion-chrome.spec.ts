@@ -194,6 +194,20 @@ test("chat spends no extra header row on quick options", async ({ rig }) => {
     expect(geometry.text.trim()).toBe("");
     expect(geometry.buttonWidth).toBeLessThan(geometry.rowWidth / 2);
 
+    // The borrowed controls stay a compact group in the actions row, including under the narrow-viewport rule.
+    const original = page.viewportSize();
+    for (const width of [480, 1000]) {
+      await page.setViewportSize({ width, height: 700 });
+      const controls = await header.locator(".cc-header-actions .cc-companion-chrome-controls").evaluate((element) => {
+        const box = element.getBoundingClientRect();
+        const row = element.closest(".cc-header-actions")!.getBoundingClientRect();
+        return { width: box.width, rowWidth: row.width, display: getComputedStyle(element).display };
+      });
+      expect(controls.display).toBe("flex");
+      expect(controls.width).toBeLessThan(controls.rowWidth / 2);
+    }
+    if (original) await page.setViewportSize(original);
+
     // Everything the removed gear reached is still one click away.
     await options.click();
     const modal = page.locator(".modal.cc-quick-options-shell");

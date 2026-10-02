@@ -652,3 +652,76 @@ describe("research state through the generic frontmatter tools", () => {
     expect(await staleCount(vt, project)).toBe(0);
   });
 });
+
+describe("memory_record", () => {
+  const MEMORY = "Claude/Sessions/What Claude Knows.md";
+  function memTools(enabled = true, source?: string) {
+    const app = new App();
+    const vt = new VaultTools(app as never, {
+      allowWrites: false,
+      defaultFolder: "Claude",
+      memoryRecord: {
+        enabled: () => enabled,
+        path: () => MEMORY,
+        today: () => "2026-10-02",
+        newNote: (body) => `---\ntype: claude-memory\n---\n\n# What Claude Knows\n\n${body}\n`,
+        ...(source ? { source } : {}),
+      },
+    });
+    return { app, vt };
+  }
+  const read = (app: App) => (app.vault.getAbstractFileByPath(MEMORY) as unknown as { _content: string })._content;
+
+  it("is listed and appends a line while writes are off", async () => {
+    const { app, vt } = memTools();
+    expect(vt.definitions().map(({ name }) => name)).toContain("memory_record");
+    expect(await vt.call("memory_record", { fact: "Prefers terse answers", source: "e2e" })).toBe("Recorded.");
+    expect(read(app)).toContain("- 2026-10-02 · e2e · Prefers terse answers");
+    expect(await vt.call("memory_record", { fact: "prefers TERSE answers" })).toBe("Already recorded.");
+  });
+
+  it("is not a write tool", async () => {
+    const { isWriteTool } = await import("../src/agent/tools");
+    expect(isWriteTool("memory_record")).toBe(false);
+  });
+
+  it("is absent and fails closed when the toggle is off", async () => {
+    const { app, vt } = memTools(false);
+    expect(vt.definitions().map(({ name }) => name)).not.toContain("memory_record");
+    await expect(vt.call("memory_record", { fact: "x1" })).rejects.toThrow("Memory recording is off in Companion settings.");
+    expect(app.vault.getAbstractFileByPath(MEMORY)).toBeNull();
+  });
+
+  it("is absent when the host gives no memory deps", async () => {
+    const { vt } = tools(false);
+    expect(vt.definitions().map(({ name }) => name)).not.toContain("memory_record");
+    await expect(vt.call("memory_record", { fact: "x1" })).rejects.toThrow("Memory recording is off");
+  });
+
+  it("surfaces guard errors", async () => {
+    const { vt } = memTools();
+    await expect(vt.call("memory_record", { fact: "a".repeat(501) })).rejects.toThrow("fact is over 500 characters");
+  });
+
+  it("a host-fixed source overrides the caller's", async () => {
+    const { app, vt } = memTools(true, "companion");
+    await vt.call("memory_record", { fact: "Uses pnpm", source: "someone-else" });
+    expect(read(app)).toContain("· companion · Uses pnpm");
+    expect(read(app)).not.toContain("someone-else");
+  });
+
+  it("two concurrent calls both land", async () => {
+    const { app, vt } = memTools();
+    await Promise.all([vt.call("memory_record", { fact: "First fact" }), vt.call("memory_record", { fact: "Second fact" })]);
+    expect(read(app)).toContain("First fact");
+    expect(read(app)).toContain("Second fact");
+  });
+
+  it("concurrent calls onto an existing note both land", async () => {
+    const { app, vt } = memTools();
+    app.vault.seed(MEMORY, "# What Claude Knows\n\n## A\n\n- x\n");
+    await Promise.all([vt.call("memory_record", { fact: "First fact" }), vt.call("memory_record", { fact: "Second fact" })]);
+    expect(read(app)).toContain("First fact");
+    expect(read(app)).toContain("Second fact");
+  });
+});

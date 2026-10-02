@@ -66,7 +66,7 @@ import { ARTIFACT_HEIGHT, renderArtifactInline, ArtifactModal, openArtifactExter
 import type { McpHttpServer } from "./mcp/server";
 import { VaultTools, SEMANTIC_OFF_MESSAGE, type VaultToolsOptions } from "./mcp/vaultTools";
 import { catalogPromptProvider, composeResourceProviders, substrateResourceProvider, vaultResourceProvider } from "./mcp/providers";
-import { MEMORY_NOTE_BASENAME } from "./memory/consolidate";
+import { MEMORY_NOTE_BASENAME, renderMemoryNote } from "./memory/consolidate";
 import { ExternalMcpManager } from "./mcp/externalManager";
 import { externalAnthropicTools } from "./mcp/external";
 import type { AnthropicToolDef, CompletionRequest, Provider, ProviderId } from "./providers/types";
@@ -359,6 +359,15 @@ export default class ClaudeCompanionPlugin extends Plugin {
   private memoryNotePath(): string {
     return normalizePath(`${this.settings.memoryFolder}/${MEMORY_NOTE_BASENAME}.md`);
   }
+  private memoryRecordDeps(source?: string): NonNullable<VaultToolsOptions["memoryRecord"]> {
+    return {
+      enabled: () => this.settings.memoryRecordEnabled,
+      path: () => this.memoryNotePath(),
+      today: () => new Date().toISOString().slice(0, 10),
+      newNote: (body) => renderMemoryNote(body, { updated: new Date().toISOString().slice(0, 10), digestCount: 0, baseTags: [...this.settings.memoryBaseTags, "memory"] }),
+      ...(source ? { source } : {}),
+    };
+  }
   private mcpBridge(): McpBridgeController {
     return (this._mcpBridge ??= new McpBridgeController({
       settings: () => this.settings,
@@ -378,6 +387,7 @@ export default class ClaudeCompanionPlugin extends Plugin {
         ontologyFolder: () => this.settings.ontologyFolder,
         zotero: () => this.zoteroLibrary(),
         enrichSource: (path: string) => this.enrichImportedResearchSource(path),
+        memoryRecord: this.memoryRecordDeps(),
         ...this.webToolImpls(),
       }),
       createTools: (opts) => new VaultTools(this.app, opts),
@@ -3042,6 +3052,7 @@ export default class ClaudeCompanionPlugin extends Plugin {
       ontologyFolder: () => this.settings.ontologyFolder,
       zotero: () => this.zoteroLibrary(),
       enrichSource: (path: string) => this.enrichImportedResearchSource(path),
+      memoryRecord: this.memoryRecordDeps("companion"),
       ...this.webToolImpls(),
     };
     if (!this.agentVaultTools) this.agentVaultTools = new VaultTools(this.app, opts);
