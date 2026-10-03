@@ -128,6 +128,7 @@ describe("resolveSettings with legacy configs", () => {
       indexer: () => undefined,
       ontology: () => undefined,
       clipperTemplatesStale: () => false,
+      publishedItems: () => [],
       refreshViews: () => {},
       invalidateIndexer: () => {},
       loadOntologyOnStart: async () => {},

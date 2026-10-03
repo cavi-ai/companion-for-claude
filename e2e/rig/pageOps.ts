@@ -226,6 +226,7 @@ const SECRET_FIELD_IDS: Record<string, string> = {
   mcpToken: "claude-companion-mcp-token",
   cloudRoutineToken: "claude-companion-cloud-routine-token",
   cloudReplyToken: "claude-companion-cloud-reply-token",
+  publishGithubToken: "claude-companion-publish-github-token",
 };
 
 /** Make the secret store exactly match this scenario's freshly seeded settings — never more, never less. */

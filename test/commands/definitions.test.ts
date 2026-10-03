@@ -10,6 +10,7 @@ const ACTION_NAMES = [
   "dispatchCloudSession", "pullCloudReplies", "reviewLinkSuggestions", "openWorkflowPicker",
   "createPromptTemplate", "createStandingOrder", "runStandingOrder", "openSessionPicker", "openMemoryView", "consolidateMemory", "enrichNoteAsSource",
   "openSourceInbox", "openSystem", "exportClipperTemplates", "seedOntology",
+  "publishNote", "copyPublishedLink", "unpublishNote",
 ] as const;
 
 interface Harness { actions: CommandActions; calls: Record<string, ReturnType<typeof vi.fn>> }
@@ -23,6 +24,7 @@ function harness(overrides: Partial<CommandActions> = {}): Harness {
     hasActiveConversation: () => false,
     sourceCaptureEnabled: () => false,
     ontologyEnabled: () => false,
+    isPublished: () => false,
     desktop: true,
     ...calls,
     ...overrides,
@@ -129,6 +131,7 @@ describe("commands scoped to the active note", () => {
     ["enrich-note", "enrichNote"],
     ["build-from-plan", "handoffToBuild"],
     ["mark-note-as-plan", "markNoteAsPlan"],
+    ["publish-note", "publishNote"],
   ])("%s is unavailable without one", (id) => {
     expect(check(harness().actions, id, true)).toBe(false);
   });
@@ -138,6 +141,7 @@ describe("commands scoped to the active note", () => {
     ["enrich-note", "enrichNote"],
     ["build-from-plan", "handoffToBuild"],
     ["mark-note-as-plan", "markNoteAsPlan"],
+    ["publish-note", "publishNote"],
   ])("%s runs %s once a note is active", (id, action) => {
     const file = new TFile("note.md", "", 0);
     const h = harness({ activeMarkdownFile: () => file });
@@ -153,6 +157,22 @@ describe("commands scoped to the active note", () => {
     check(h.actions, "mark-note-as-plan", false);
     expect(h.calls.enrichNote).toHaveBeenCalledWith(file);
     expect(h.calls.markNoteAsPlan).toHaveBeenCalledWith(file);
+  });
+});
+
+describe("published-note commands", () => {
+  const file = new TFile("note.md", "", 0);
+
+  it.each([
+    ["copy-published-link", "copyPublishedLink"],
+    ["unpublish-note", "unpublishNote"],
+  ])("%s needs a published active note", (id, action) => {
+    expect(check(harness().actions, id, true)).toBe(false);
+    expect(check(harness({ activeMarkdownFile: () => file }).actions, id, true)).toBe(false);
+    const h = harness({ activeMarkdownFile: () => file, isPublished: () => true });
+    expect(check(h.actions, id, true)).toBe(true);
+    check(h.actions, id, false);
+    expect(h.calls[action]).toHaveBeenCalledWith(file);
   });
 });
 

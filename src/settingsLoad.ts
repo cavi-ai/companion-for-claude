@@ -15,6 +15,7 @@ export interface NamespacedData {
   activeBuildRunId?: unknown;
   standingOrders?: unknown;
   orderEditQueue?: unknown;
+  published?: unknown;
 }
 
 /** True when data.json uses the namespaced { settings, conversations } shape

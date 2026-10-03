@@ -226,6 +226,12 @@ export interface PluginSettings {
   /** GitHub token with Contents:read, to fetch replies over HTTPS. */
   cloudReplyToken: string;
 
+  // ----- publishing (secret GitHub Gists) -----
+  /** GitHub token with account permission Gists: read and write. */
+  publishGithubToken: string;
+  /** Test-only override of the GitHub API base; empty uses api.github.com. */
+  publishApiBase: string;
+
   // ----- episodic memory (capture Claude Code sessions into the vault) -----
   /** Master switch for the session-memory feature (commands + view). */
   memoryEnabled: boolean;
@@ -371,6 +377,9 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   cloudReplyBranch: "main",
   cloudReplyFolder: "Claude/Replies",
   cloudReplyToken: "",
+
+  publishGithubToken: "",
+  publishApiBase: "",
 
   memoryEnabled: true,
   memoryFolder: "Claude/Sessions",

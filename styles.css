@@ -562,6 +562,30 @@ body:not(.is-mobile) .cc-user {
   background: #3a1610;
 }
 
+.cc-publish-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 4px 0 8px;
+}
+.cc-publish-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.cc-publish-row a {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cc-publish-kind,
+.cc-publish-empty {
+  font-size: var(--cc-text-sm);
+  color: var(--text-muted);
+}
+
 /* Semantic actions acknowledge the press immediately and stay distinct while work runs. */
 .cc-semantic-action {
   transition: transform 100ms ease, box-shadow 100ms ease, background-color 100ms ease;

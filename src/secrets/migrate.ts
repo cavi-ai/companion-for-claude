@@ -45,6 +45,7 @@ const LABELS: Record<SecretField, string> = {
   mcpToken: "MCP bridge token",
   cloudRoutineToken: "cloud routine token",
   cloudReplyToken: "cloud reply GitHub token",
+  publishGithubToken: "publishing GitHub token",
 };
 
 /**

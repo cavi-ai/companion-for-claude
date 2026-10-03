@@ -121,6 +121,27 @@ describe("artifact CSP injection", () => {
   });
 });
 
+describe("artifact publish button", () => {
+  const publishButton = (root: FakeElement) => root.querySelector(".cc-artifact-publish");
+
+  it("renders only when a publish action is supplied", () => {
+    const without = new FakeElement();
+    renderArtifactInline(without as unknown as HTMLElement, PAGE, 300, "Chart");
+    expect(publishButton(without)).toBeNull();
+    const withAction = new FakeElement();
+    renderArtifactInline(withAction as unknown as HTMLElement, PAGE, 300, "Chart", { publish: () => {} });
+    expect(publishButton(withAction)).not.toBeNull();
+  });
+
+  it("hands the artifact html and title to the action on click", () => {
+    const publish = vi.fn();
+    const root = new FakeElement();
+    renderArtifactInline(root as unknown as HTMLElement, PAGE, 300, "Chart", { publish });
+    publishButton(root)!.dispatchEvent({ type: "click" });
+    expect(publish).toHaveBeenCalledWith(PAGE, "Chart");
+  });
+});
+
 describe("artifact sandbox parity", () => {
   it("gives the fullscreen modal the same contract as the inline frame", () => {
     const a = inline(PAGE);

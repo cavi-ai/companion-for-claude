@@ -14,7 +14,7 @@ import { discoverCoreAsar } from "./coreAsarDiscovery.ts";
 import { installFakeCli } from "./fakeCli.ts";
 import { assertSupportedObsidian, connectRig, findObsidianPid, MANIFEST_PATH, settleObsidianPage, waitForCdp } from "./pageOps.ts";
 import { seedVault } from "./seed.ts";
-import { closeServer, freshStubState, startEmbedStub, startEndpointStub, startProviderStub } from "./stubs.ts";
+import { closeServer, freshGithubState, freshStubState, startEmbedStub, startEndpointStub, startGithubStub, startProviderStub } from "./stubs.ts";
 import type { FailRule, ReplyRule, RigState, ScenarioOptions } from "./types.ts";
 import { RIG_ROOT, STATE_PATH, liveState } from "./client.ts";
 
@@ -70,12 +70,14 @@ async function main(): Promise<void> {
 
   const provider = freshStubState();
   const endpoint = freshStubState();
-  const [providerStub, endpointStub, embedStub] = await Promise.all([
+  const github = freshGithubState();
+  const [providerStub, endpointStub, embedStub, githubStub] = await Promise.all([
     startProviderStub(provider),
     startEndpointStub(endpoint),
     startEmbedStub(),
+    startGithubStub(github),
   ]);
-  const ports = { providerPort: providerStub.port, endpointPort: endpointStub.port, embedPort: embedStub.port };
+  const ports = { providerPort: providerStub.port, endpointPort: endpointStub.port, embedPort: embedStub.port, githubPort: githubStub.port };
 
   await seedVault(vault, ports, {}, PLUGIN_ROOT);
   await writeFile(join(profile, "obsidian.json"), JSON.stringify({ vaults: { e2e: { path: vault, ts: Date.now(), open: true } } }));
@@ -136,9 +138,12 @@ async function main(): Promise<void> {
         if (request.method === "GET" && url.pathname === "/health") { sendJson(response, 200, { ok: true }); return; }
         if (request.method === "GET" && url.pathname === "/ports") { sendJson(response, 200, ports); return; }
         if (request.method === "GET" && url.pathname === "/providerRequests") { sendJson(response, 200, { count: provider.requests }); return; }
+        if (request.method === "GET" && url.pathname === "/githubRequests") { sendJson(response, 200, { requests: github.requests }); return; }
         if (request.method === "POST" && url.pathname === "/stubs") {
           const body = await readJson(request) as ScenarioOptions;
           provider.requests = 0;
+          github.requests = [];
+          github.created = 0;
           provider.replyRules = (body.providerReply ?? []) as ReplyRule[];
           provider.failRules = (body.providerFail ?? []) as FailRule[];
           provider.delayMs = body.providerDelayMs ?? 0;
@@ -186,6 +191,7 @@ async function main(): Promise<void> {
     await closeServer(providerStub.server).catch(() => undefined);
     await closeServer(endpointStub.server).catch(() => undefined);
     await closeServer(embedStub.server).catch(() => undefined);
+    await closeServer(githubStub.server).catch(() => undefined);
     if (await isPidAlive(obsidianPid)) {
       process.kill(obsidianPid, "SIGTERM");
       await new Promise((resolve) => setTimeout(resolve, 2_000));

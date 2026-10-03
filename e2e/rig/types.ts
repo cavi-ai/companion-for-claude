@@ -53,4 +53,12 @@ export interface StubPorts {
   providerPort: number;
   endpointPort: number;
   embedPort: number;
+  githubPort: number;
+}
+
+/** One request the GitHub Gist stub received. */
+export interface GithubRequest {
+  method: string;
+  path: string;
+  body: string;
 }

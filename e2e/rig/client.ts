@@ -5,7 +5,7 @@ import { execFileSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { RigState, ScenarioOptions } from "./types.ts";
+import type { GithubRequest, RigState, ScenarioOptions, StubPorts } from "./types.ts";
 
 export const PLUGIN_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
@@ -74,8 +74,9 @@ export class ControlClient {
   }
 
   health(): Promise<{ ok: boolean }> { return this.call("GET", "/health") as Promise<{ ok: boolean }>; }
-  ports(): Promise<{ providerPort: number; endpointPort: number; embedPort: number }> { return this.call("GET", "/ports") as Promise<{ providerPort: number; endpointPort: number; embedPort: number }>; }
+  ports(): Promise<StubPorts> { return this.call("GET", "/ports") as Promise<StubPorts>; }
   providerRequests(): Promise<number> { return this.call("GET", "/providerRequests").then((r) => (r as { count: number }).count); }
+  githubRequests(): Promise<GithubRequest[]> { return this.call("GET", "/githubRequests").then((r) => (r as { requests: GithubRequest[] }).requests); }
   setStubs(scenario: ScenarioOptions): Promise<void> { return this.call("POST", "/stubs", scenario).then(() => undefined); }
   shutdown(): Promise<void> { return this.call("POST", "/shutdown").then(() => undefined); }
 }

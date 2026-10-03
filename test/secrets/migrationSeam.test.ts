@@ -118,13 +118,25 @@ describe("loadSettings migration seam", () => {
     expect(written.activeBuildRunId).toBe("run-1");
   });
 
+  it("restores published items from data.json and keeps them when it rewrites the file", async () => {
+    const item = { key: "n/A.md", kind: "note", title: "A", gistId: "g1", url: "https://gist.github.com/me/g1", owner: "me", publishedAt: 1, updatedAt: 2 };
+    const { plugin, onDisk } = harness({ apiKey: "SENTINEL-KEY" });
+    Object.assign(plugin as unknown as Record<string, unknown>, {
+      loadData: async () => structuredClone({ settings: { apiKey: "SENTINEL-KEY" }, conversations: [], published: [item, { key: "bad" }] }),
+    });
+    await plugin.loadSettings();
+    expect(plugin.publishedItems()).toEqual([item]);
+    expect((JSON.parse(onDisk()) as { published?: unknown }).published).toEqual([item]);
+  });
+
   it("migrates every populated credential, not just the API key", async () => {
-    const { plugin, onDisk } = harness({ apiKey: "K1", mcpToken: "K2", cloudReplyToken: "K3" });
+    const { plugin, onDisk } = harness({ apiKey: "K1", mcpToken: "K2", cloudReplyToken: "K3", publishGithubToken: "K4" });
     await plugin.loadSettings();
 
     expect(plugin.secrets().get(secretIdFor("apiKey"))).toBe("K1");
     expect(plugin.secrets().get(secretIdFor("mcpToken"))).toBe("K2");
     expect(plugin.secrets().get(secretIdFor("cloudReplyToken"))).toBe("K3");
-    for (const sentinel of ["K1", "K2", "K3"]) expect(onDisk()).not.toContain(`"${sentinel}"`);
+    expect(plugin.secrets().get(secretIdFor("publishGithubToken"))).toBe("K4");
+    for (const sentinel of ["K1", "K2", "K3", "K4"]) expect(onDisk()).not.toContain(`"${sentinel}"`);
   });
 });

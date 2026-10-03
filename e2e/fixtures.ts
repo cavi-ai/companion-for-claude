@@ -2,7 +2,7 @@ import { expect, test as base } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { ControlClient, PLUGIN_ROOT, liveState } from "./rig/client.ts";
 import { connectRig, cyclePlugin, openSettingsSurface, resetVaultState, setProcessEnv } from "./rig/pageOps.ts";
-import type { ScenarioOptions, StubPorts } from "./rig/types.ts";
+import type { GithubRequest, ScenarioOptions, StubPorts } from "./rig/types.ts";
 
 export interface Rig {
   page: Page;
@@ -15,6 +15,8 @@ export interface Rig {
   windows(): Page[];
   openSettings(tabId?: string): Promise<Page>;
   providerRequests(): Promise<number>;
+  /** Requests the GitHub Gist stub received since the last reset. */
+  githubRequests(): Promise<GithubRequest[]>;
   /** Full scenario reset: stub rules, vault contents, plugin re-enable. Returns this rig for chaining. */
   reset(options?: ScenarioOptions): Promise<Rig>;
   /** Disable → enable the plugin in place, simulating "survives a restart" for anything persisted to data.json. */
@@ -46,6 +48,7 @@ async function buildRig(): Promise<Rig> {
     windows: () => context.pages().filter((candidate) => !candidate.isClosed()),
     openSettings: (tabId = "claude-companion") => openSettingsSurface(context, page, tabId),
     providerRequests: () => control.providerRequests(),
+    githubRequests: () => control.githubRequests(),
     async reset(options: ScenarioOptions = {}) {
       lastTheme = options.theme ?? "light";
       await control.setStubs(options);

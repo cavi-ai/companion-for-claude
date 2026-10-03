@@ -31,6 +31,9 @@ function stubPlugin(showAdvanced = false, overrides: Record<string, unknown> = {
     invalidateIndexer: () => {},
     loadOntologyOnStart: async () => {},
     openDesktopIntegrations: () => {},
+    publishedItems: () => [],
+    unpublishItem: async () => {},
+    testPublishToken: async () => ({ ok: true, message: "" }),
   };
   return plugin as unknown as ClaudeCompanionPlugin & { settings: Record<string, unknown> };
 }

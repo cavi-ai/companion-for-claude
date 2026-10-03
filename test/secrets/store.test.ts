@@ -62,6 +62,7 @@ describe("secret ids", () => {
       "mcpToken",
       "cloudRoutineToken",
       "cloudReplyToken",
+      "publishGithubToken",
     ]);
   });
 

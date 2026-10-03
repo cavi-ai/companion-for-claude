@@ -62,7 +62,7 @@ function tagList(key: "artifactBaseTags" | "chatBaseTags" | "sourceBaseTags"): v
 for (const key of [
   "apiKey", "oauthToken", "baseUrl", "customModel", "ollamaUtilityModel", "openaiCompatHost", "openaiCompatKey",
   "openAlexContactEmail", "zoteroUserId", "zoteroApiKey", "braveSearchApiKey", "cloudRoutineFireUrl",
-  "cloudRoutineToken", "cloudReplyRepo", "cloudReplyToken", "mcpToken",
+  "cloudRoutineToken", "cloudReplyRepo", "cloudReplyToken", "mcpToken", "publishGithubToken", "publishApiBase",
 ] as const) trimmed(key);
 
 for (const [key, fallback] of [
@@ -164,6 +164,8 @@ const SETTING_TIERS: Record<keyof PluginSettings, SettingsTier> = {
   cloudReplyBranch: "advanced",
   cloudReplyFolder: "advanced",
   cloudReplyToken: "advanced",
+  publishGithubToken: "basic",
+  publishApiBase: "advanced",
   memoryEnabled: "advanced",
   memoryFolder: "advanced",
   memoryIngestOnSave: "advanced",
@@ -195,6 +197,9 @@ const BASIC_ACTION_NAMES: ReadonlySet<string> = new Set([
   "Anthropic API key", // "credential" — the apiKey field itself is a custom render
   "Save & test connection", // what actually persists + verifies the credential
   "Step 1 — connect to Claude", // the one mandatory step, called out while it's missing
+  "GitHub Gist token", // publishing needs it before anything else works
+  "Test Gist token",
+  "Published items",
 ]);
 
 /** A page with zero basic items still shows with the toggle off when it configures the live setup. */
@@ -227,6 +232,9 @@ const PAGE_DESC = {
   openaiCompat: "Point at LM Studio, mlx-lm, vLLM, Jan, or Ollama's /v1 mode — including Apple-silicon-optimized servers like `mlx_lm.server`. Select it as the chat backend or utility backend above, and as an embedding engine under Semantic search.",
   sourceCapture: "Point the Obsidian Web Clipper (and dropped CSVs) at an inbox folder; Companion types each new file into a schema-validated source note. Extraction uses your utility model (local if enabled).",
   discovery: "Discover searches OpenAlex for works and citation links, fills DOI metadata from Crossref and preprint metadata from arXiv, and imports Zotero items by key. Requests run only when you press Search, Expand, or Import.",
+  publishing:
+    "Publish a note or an artifact as a secret GitHub Gist: anyone with the link can read it and nobody else can find it. "
+    + "Needs a fine-grained token with account permission Gists: read and write. Requests run only when you publish, unpublish, or test the token.",
   memory: "Capture Claude Code CLI sessions for this vault into sanitized digest notes. Desktop-only; sessions are matched by the directory you ran Claude Code in.",
 };
 
@@ -398,6 +406,7 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
           { type: "page", name: "Agent bridge — MCP server (desktop)", visible: () => !Platform.isMobile, desc: PAGE_DESC.mcpBridge, items: this.mcpItems() },
           { type: "page", name: "External tools — MCP client", desc: PAGE_DESC.mcpClient, items: this.mcpClientItems() },
           { type: "page", name: "Cloud (experimental)", desc: this.cloudDesc(), items: [...this.cloudItems(), ...this.repliesItems()] },
+          { type: "page", name: "Publishing", desc: PAGE_DESC.publishing, items: this.publishItems() },
         ],
       },
       {
@@ -1534,6 +1543,67 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
               button.setDisabled(false);
             }),
           );
+        },
+      },
+    ];
+  }
+
+  private publishItems(): SettingGroupItem[] {
+    const s = this.plugin.settings;
+    return [
+      {
+        name: "GitHub Gist token",
+        render: (setting) => {
+          setting.setDesc(`Fine-grained token with account permission Gists: read and write. ${this.storageBlurb()}`);
+          setting.addText((text) => {
+            text.inputEl.type = "password";
+            text.inputEl.setCssStyles({ width: "min(320px, 100%)" });
+            text
+              .setPlaceholder("github_pat_… / ghp_…")
+              .setValue(s.publishGithubToken)
+              .onChange(async (v) => {
+                s.publishGithubToken = v.trim();
+                await this.plugin.saveSettings();
+              });
+          });
+        },
+      },
+      {
+        name: "Test Gist token",
+        desc: "Ask GitHub whether the token can list gists.",
+        render: (setting) => {
+          const status = setting.settingEl.createDiv({ cls: "cc-conn-status" });
+          setting.addButton((button) =>
+            button.setButtonText("Test").onClick(async () => {
+              button.setDisabled(true);
+              status.toggleClass("is-ok", false);
+              status.toggleClass("is-err", false);
+              status.setText("Testing…");
+              const result = await this.plugin.testPublishToken();
+              status.toggleClass("is-ok", result.ok);
+              status.toggleClass("is-err", !result.ok);
+              status.setText(`${result.ok ? "✓" : "✗"} ${result.message}`);
+              button.setDisabled(false);
+            }),
+          );
+        },
+      },
+      {
+        name: "Published items",
+        render: (setting) => {
+          const list = setting.settingEl.createDiv({ cls: "cc-publish-list" });
+          const items = this.plugin.publishedItems();
+          if (items.length === 0) list.createDiv({ cls: "cc-publish-empty", text: "Nothing published yet." });
+          for (const item of items) {
+            const row = list.createDiv({ cls: "cc-publish-row" });
+            row.createEl("a", { text: item.title, attr: { href: item.url } });
+            row.createSpan({ cls: "cc-publish-kind", text: item.kind });
+            const remove = row.createEl("button", { text: "Unpublish" });
+            remove.addEventListener("click", () => {
+              remove.disabled = true;
+              void this.plugin.unpublishItem(item.key).then(() => this.update());
+            });
+          }
         },
       },
     ];

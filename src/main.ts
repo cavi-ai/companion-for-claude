@@ -112,6 +112,8 @@ import type { CliBackend } from "./cli/backends/types";
 import { type BuildRun } from "./build/run";
 import { BuildController } from "./build/controller";
 import { CloudController } from "./cloud/controller";
+import { PublishController, publishConfirmMessage } from "./publish/controller";
+import { normalizePublished, type PublishedItem } from "./publish/registry";
 import { CloudDispatchModal } from "./view/CloudDispatchModal";
 import { normalizeTags } from "./indexing/frontmatter";
 import { existingVaultTags } from "./indexing/autoTagger";
@@ -200,6 +202,7 @@ interface PersistedData {
   activeBuildRunId?: string | null;
   standingOrders?: unknown;
   orderEditQueue?: unknown;
+  published?: unknown;
 }
 
 type UtilityFallbackConsentKey = Pick<UtilityFallbackConsentContext, "identity" | "destinationFingerprint">;
@@ -526,6 +529,8 @@ export default class ClaudeCompanionPlugin extends Plugin {
   private inboxBadgeTimer: number | null = null;
   private ordersState: OrdersState = {};
   private orderEditQueue: QueuedEdit[] = [];
+  private published: PublishedItem[] = [];
+  private _publish?: PublishController;
   private _standingOrders?: OrdersController;
   private ordersRefreshTimer: number | null = null;
   /** Lazily-built ontology registry; null while the feature is disabled. */
@@ -675,6 +680,7 @@ export default class ClaudeCompanionPlugin extends Plugin {
       renderArtifactInline(el, source, height, title, {
         open: (h, ti) => this.openArtifact(h, ti),
         openWith: (h, ti, target) => this.openArtifactWith(h, ti, target),
+        publish: (h, ti) => void this.publish().publishArtifact(h, ti),
       });
     });
     this.registerMarkdownCodeBlockProcessor(PROVENANCE_LANGUAGE, (source, el, ctx) => {
@@ -714,6 +720,7 @@ export default class ClaudeCompanionPlugin extends Plugin {
       this.registerEvent(this.app.vault.on("create", (f) => { if (f.path.endsWith(".md")) this.scheduleResearchRefresh(f.path); }));
       this.registerEvent(this.app.vault.on("delete", (f) => { if (f.path.endsWith(".md")) this.scheduleResearchRefresh(f.path); }));
       this.registerEvent(this.app.vault.on("rename", (f, oldPath) => { if (f.path.endsWith(".md") || oldPath.endsWith(".md")) this.scheduleResearchRefresh(f.path, oldPath); }));
+      this.registerEvent(this.app.vault.on("rename", (f, oldPath) => { if (f instanceof TFile && f.extension === "md") void this.publish().renameNote(oldPath, f.path); }));
 
       // Inbox ribbon badge: pending count, refreshed on vault + frontmatter
       // changes (debounced — enrichment stamps source_enriched via frontmatter).
@@ -781,6 +788,27 @@ export default class ClaudeCompanionPlugin extends Plugin {
               .setIcon("sparkles")
               .onClick(() => void this.enrichNoteFlow(file)),
           );
+          const published = this.published.some((entry) => entry.key === file.path);
+          menu.addItem((item) =>
+            item
+              .setTitle(published ? "Republish to GitHub Gist" : "Publish note to GitHub Gist")
+              .setIcon("share-2")
+              .onClick(() => void this.publish().publishNote(file.path)),
+          );
+          if (published) {
+            menu.addItem((item) =>
+              item
+                .setTitle("Copy published link")
+                .setIcon("link")
+                .onClick(() => void this.publish().copyLink(file.path)),
+            );
+            menu.addItem((item) =>
+              item
+                .setTitle("Unpublish from GitHub Gist")
+                .setIcon("trash")
+                .onClick(() => void this.publish().unpublish(file.path)),
+            );
+          }
         } else if (file instanceof TFolder) {
           menu.addItem((item) =>
             item
@@ -844,6 +872,10 @@ export default class ClaudeCompanionPlugin extends Plugin {
       exportClipperTemplates: () => void this.exportClipperTemplates(),
       seedOntology: () => void this.seedOntology(),
       openSetupWizard: () => this.openSetupWizard(),
+      publishNote: (file) => void this.publish().publishNote(file.path),
+      copyPublishedLink: (file) => void this.publish().copyLink(file.path),
+      unpublishNote: (file) => void this.publish().unpublish(file.path),
+      isPublished: (file) => this.published.some((item) => item.key === file.path),
     };
   }
 
@@ -2136,6 +2168,7 @@ export default class ClaudeCompanionPlugin extends Plugin {
     );
     this.ordersState = normalizeOrdersState(isNamespacedData(raw) ? raw.standingOrders : undefined);
     this.orderEditQueue = normalizeEditQueue(isNamespacedData(raw) ? raw.orderEditQueue : undefined);
+    this.published = normalizePublished(isNamespacedData(raw) ? raw.published : undefined);
 
     // Any plaintext credential still in data.json moves to the secret store now,
     // then the file is rewritten without it. Must run after buildRuns is restored:
@@ -2162,6 +2195,7 @@ export default class ClaudeCompanionPlugin extends Plugin {
       activeConversationId: this.convState.activeId,
       standingOrders: this.ordersState,
       orderEditQueue: this.orderEditQueue,
+      published: this.published,
       ...this.build().serializeState(),
     })) as PersistedData;
     const result = (this.persistChain ?? Promise.resolve()).catch(() => {}).then(() => this.saveData(data));
@@ -3955,6 +3989,60 @@ export default class ClaudeCompanionPlugin extends Plugin {
       return leaf.view instanceof BuildView ? leaf.view : null;
     }
     return null;
+  }
+
+  // ---------- publish to GitHub Gist ----------
+
+  private publish(): PublishController {
+    return (this._publish ??= new PublishController({
+      token: () => this.settings.publishGithubToken,
+      apiBase: () => this.settings.publishApiBase,
+      request: async (req) => {
+        const res = await requestUrl({ url: req.url, method: req.method, headers: req.headers, ...(req.body ? { body: req.body } : {}), throw: false });
+        let json: unknown = null;
+        try {
+          json = res.json;
+        } catch {
+          // an empty or non-JSON body parses as null
+        }
+        return { status: res.status, json };
+      },
+      readNote: async (path) => {
+        const file = this.app.vault.getAbstractFileByPath(path);
+        if (!(file instanceof TFile)) throw new Error(`${path} is not in the vault`);
+        const view = this.app.workspace.getActiveViewOfType(MarkdownView);
+        return view?.file?.path === path ? view.editor.getValue() : this.app.vault.read(file);
+      },
+      confirm: (kind, title) => new Promise<boolean>((resolve) => {
+        new ChoiceModal<"publish" | "cancel">(this.app, {
+          title: `Publish ${title} to GitHub Gist?`,
+          message: publishConfirmMessage(kind),
+          buttons: [{ label: "Publish", value: "publish", cta: true }, { label: "Cancel", value: "cancel" }],
+          fallback: "cancel",
+          onChoice: (choice) => resolve(choice === "publish"),
+        }).open();
+      }),
+      copy: (text) => navigator.clipboard.writeText(text),
+      notice: (text) => { new Notice(text, 8000); },
+      getItems: () => this.published,
+      setItems: async (items) => {
+        this.published = items;
+        await this.persist();
+      },
+      now: () => Date.now(),
+    }));
+  }
+
+  publishedItems(): readonly PublishedItem[] {
+    return this.published;
+  }
+
+  unpublishItem(key: string): Promise<void> {
+    return this.publish().unpublish(key);
+  }
+
+  testPublishToken(): Promise<{ ok: boolean; message: string }> {
+    return this.publish().testToken();
   }
 
   // ---------- cloud session dispatch ----------

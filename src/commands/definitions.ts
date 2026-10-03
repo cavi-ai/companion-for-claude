@@ -51,6 +51,10 @@ export interface CommandActions {
   exportClipperTemplates(): void;
   seedOntology(): void;
   openSetupWizard(): void;
+  publishNote(file: TFile): void;
+  copyPublishedLink(file: TFile): void;
+  unpublishNote(file: TFile): void;
+  isPublished(file: TFile): boolean;
 }
 
 /** A command that only applies to the note in front of the user. */
@@ -62,6 +66,21 @@ function onActiveFile(id: string, name: string, actions: CommandActions, run: (f
       const file = actions.activeMarkdownFile();
       if (checking) return !!file;
       if (file) run(file);
+      return true;
+    },
+  };
+}
+
+/** A command that only applies to an active note that is already published. */
+function publishedFile(id: string, name: string, actions: CommandActions, run: (file: TFile) => void): Command {
+  return {
+    id,
+    name,
+    checkCallback: (checking) => {
+      const file = actions.activeMarkdownFile();
+      const published = !!file && actions.isPublished(file);
+      if (checking) return published;
+      if (file && published) run(file);
       return true;
     },
   };
@@ -128,6 +147,9 @@ export function companionCommands(actions: CommandActions): Command[] {
     { id: "create-prompt-template", name: "Create prompt template", callback: () => actions.createPromptTemplate() },
     { id: "new-standing-order", name: "New standing order", callback: () => actions.createStandingOrder() },
     { id: "run-standing-order", name: "Run standing order now…", callback: () => actions.runStandingOrder() },
+    onActiveFile("publish-note", "Publish note to GitHub Gist", actions, (file) => actions.publishNote(file)),
+    publishedFile("copy-published-link", "Copy published link", actions, (file) => actions.copyPublishedLink(file)),
+    publishedFile("unpublish-note", "Unpublish note from GitHub Gist", actions, (file) => actions.unpublishNote(file)),
   ];
 
   if (actions.desktop) {

@@ -16,7 +16,8 @@ export type SecretField =
   | "braveSearchApiKey"
   | "mcpToken"
   | "cloudRoutineToken"
-  | "cloudReplyToken";
+  | "cloudReplyToken"
+  | "publishGithubToken";
 
 /** Secret ids are lowercase alphanumeric with dashes; setSecret throws otherwise. */
 const SECRET_IDS: Record<SecretField, string> = {
@@ -28,6 +29,7 @@ const SECRET_IDS: Record<SecretField, string> = {
   mcpToken: "claude-companion-mcp-token",
   cloudRoutineToken: "claude-companion-cloud-routine-token",
   cloudReplyToken: "claude-companion-cloud-reply-token",
+  publishGithubToken: "claude-companion-publish-github-token",
 };
 
 export const SECRET_FIELDS = Object.keys(SECRET_IDS) as SecretField[];

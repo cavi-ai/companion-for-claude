@@ -3,7 +3,7 @@
 // status) because they are set over the control API, from a separate process.
 
 import { createServer, type Server } from "node:http";
-import type { FailRule, ReplyRule } from "./types.ts";
+import type { FailRule, GithubRequest, ReplyRule } from "./types.ts";
 import { deterministicVector } from "./seed.ts";
 
 function toRegExp(match: string, flags?: string): RegExp {
@@ -191,6 +191,55 @@ export function startEmbedStub(): Promise<{ server: Server; port: number }> {
     server.listen(0, "127.0.0.1", () => {
       const address = server.address();
       if (!address || typeof address === "string") { reject(new Error("Embed stub did not bind")); return; }
+      resolve({ server, port: address.port });
+    });
+  });
+}
+
+export interface GithubStubState {
+  requests: GithubRequest[];
+  created: number;
+}
+
+export function freshGithubState(): GithubStubState {
+  return { requests: [], created: 0 };
+}
+
+/** GitHub Gist API stub: create, update, delete, and the token-test listing; every request is recorded. */
+export function startGithubStub(state: GithubStubState): Promise<{ server: Server; port: number }> {
+  const gist = (id: string) => JSON.stringify({ id, html_url: `https://gist.github.com/e2e/${id}`, owner: { login: "e2e" } });
+  const server = createServer((request, response) => {
+    let body = "";
+    request.on("data", (chunk: Buffer) => { body += chunk.toString("utf8"); });
+    request.on("end", () => {
+      const method = request.method ?? "GET";
+      const path = request.url ?? "/";
+      state.requests.push({ method, path, body });
+      const id = /^\/gists\/([^/?]+)/.exec(path)?.[1];
+      if (method === "POST" && path === "/gists") {
+        state.created += 1;
+        response.writeHead(201, { "content-type": "application/json" });
+        response.end(gist(`g${state.created}`));
+      } else if (method === "PATCH" && id) {
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(gist(id));
+      } else if (method === "DELETE" && id) {
+        response.writeHead(204);
+        response.end();
+      } else if (method === "GET" && path.startsWith("/gists")) {
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end("[]");
+      } else {
+        response.writeHead(404, { "content-type": "application/json" });
+        response.end("{}");
+      }
+    });
+  });
+  return new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      if (!address || typeof address === "string") { reject(new Error("GitHub stub did not bind")); return; }
       resolve({ server, port: address.port });
     });
   });
