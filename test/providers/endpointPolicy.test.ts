@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { classifyEndpoint, resolveUtilityForRuntime, sanitizeEndpointForDisplay } from "../../src/providers/endpointPolicy";
+import { classifyEndpoint, isLiteralLocalEndpoint, resolveUtilityForRuntime, sanitizeEndpointForDisplay } from "../../src/providers/endpointPolicy";
 
 describe("classifyEndpoint", () => {
   it.each([
@@ -201,4 +201,22 @@ describe("resolveUtilityForRuntime", () => {
     });
     expect(JSON.stringify(result)).not.toMatch(/alice|supersecret|ssh/i);
   });
+});
+
+describe("isLiteralLocalEndpoint", () => {
+  it.each([
+    "http://localhost:11434",
+    "http://127.0.0.1:11434",
+    "http://[::1]:11434",
+    "http://192.168.1.24:11434",
+    "http://0.0.0.0:11434",
+  ])("true for %s", (url) => expect(isLiteralLocalEndpoint(url)).toBe(true));
+
+  it.each([
+    "https://127.example.com/v1",
+    "https://10.example.com",
+    "http://nas.local:11434",
+    "https://models.example.com",
+    "not a url",
+  ])("false for %s", (url) => expect(isLiteralLocalEndpoint(url)).toBe(false));
 });

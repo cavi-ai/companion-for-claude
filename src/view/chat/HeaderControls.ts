@@ -3,7 +3,7 @@ import type ClaudeCompanionPlugin from "../../main";
 import { renderCompanionChrome } from "../companionChrome";
 import type { ChatMessage } from "../../types";
 import type { Conversation } from "../../conversations/store";
-import { ConversationPicker } from "../ConversationPicker";
+import { SessionDropdown } from "./SessionDropdown";
 import { modelLabel } from "../../claude/models";
 import { isMobileModelChoiceActive, mobileModelChoices } from "../mobileModelChoices";
 import type { ChatControls } from "../../claude/chatControls";
@@ -35,7 +35,7 @@ export interface HeaderControlsDeps {
   renderContextManager(): void;
   renderKnobs(): void;
   renderKnobsInto(parent: HTMLElement): void;
-  saveChat(): Promise<void>;
+  distillChat(): Promise<void>;
   updateModeControl(): void;
   agentCapable(): boolean;
   setAgentCapable(v: boolean): void;
@@ -62,15 +62,21 @@ export class HeaderControls {
   usageEl!: HTMLElement;
   gaugeFillEl!: HTMLElement;
   private disposeChrome: ((remove?: boolean) => void) | null = null;
+  private headerEl: HTMLElement | null = null;
+  private historyBtnEl: HTMLElement | null = null;
+  private sessionDropdown: SessionDropdown | null = null;
 
   /** Detach any chrome mounted by a previous mount() call. */
   teardown(remove?: boolean): void {
+    this.sessionDropdown?.close();
+    this.sessionDropdown = null;
     this.disposeChrome?.(remove);
     this.disposeChrome = null;
   }
 
   mount(root: HTMLElement, cb: HeaderControlsCallbacks): void {
     const header = root.createDiv({ cls: "cc-header" });
+    this.headerEl = header;
     const title = header.createDiv({ cls: "cc-title" });
     title.createSpan({ cls: "cc-eyebrow", text: "COMPANION FOR CLAUDE" });
     this.projectLabelEl = title.createSpan({ cls: "cc-project-label" });
@@ -116,7 +122,7 @@ export class HeaderControls {
 
       const primary = actions.createDiv({ cls: "cc-header-actions-primary" });
       this.iconButton(primary, "plus", "New chat", () => cb.onNewChat());
-      this.iconButton(primary, "history", "Resume a past conversation", () => cb.onHistory());
+      this.historyBtnEl = this.iconButton(primary, "history", "Resume a past conversation", () => cb.onHistory());
       this.iconButton(primary, "more-horizontal", "More actions", () => cb.onOverflow());
       // Quick options joins this row rather than owning a header of its own, and
       // replaces the gear: its own sheet already offers "Open all settings".
@@ -135,10 +141,11 @@ export class HeaderControls {
     this.usageEl = usageRow.createDiv({ cls: "cc-usage-text" });
   }
 
-  private iconButton(parent: HTMLElement, icon: string, tip: string, onClick: () => void): void {
+  private iconButton(parent: HTMLElement, icon: string, tip: string, onClick: () => void): HTMLElement {
     const btn = parent.createEl("button", { cls: "cc-icon-btn clickable-icon", attr: { "aria-label": tip } });
     setIcon(btn, icon);
     btn.addEventListener("click", onClick);
+    return btn;
   }
 
   constructor(private app: App, private plugin: ClaudeCompanionPlugin, private deps: HeaderControlsDeps) {}
@@ -313,7 +320,7 @@ export class HeaderControls {
       { title: "New chat", icon: "plus", run: () => this.deps.clearChat() },
       { title: "New chat tab", icon: "plus", run: () => void this.plugin.openNewChatTab() },
       { title: "History", icon: "history", run: () => this.openHistory() },
-      { title: "Save chat to vault", icon: "save", run: () => void this.deps.saveChat() },
+      { title: "Distill this chat", icon: "sparkles", run: () => void this.deps.distillChat() },
     ];
     if (!Platform.isMobile) {
       if (this.plugin.settings.memoryEnabled) {
@@ -428,30 +435,43 @@ export class HeaderControls {
   }
 
   openHistory(): void {
-    const conversations = this.plugin.listConversations();
-    if (conversations.length === 0) {
+    if (this.sessionDropdown?.isOpen) {
+      this.sessionDropdown.close();
+      return;
+    }
+    if (this.plugin.listConversations().length === 0) {
       new Notice("No saved conversations yet.");
       return;
     }
-    new ConversationPicker(
-      this.app,
-      conversations,
-      (chosen) => {
-        void this.plugin.setActiveConversation(chosen.id).then((c) => {
-          if (c) this.deps.loadConversation(c);
-        });
-      },
-      (doomed) => {
-        void (async () => {
+    const anchor = this.historyBtnEl ?? this.headerEl;
+    if (!anchor) return;
+    this.sessionDropdown = new SessionDropdown({
+      app: this.app,
+      anchor,
+      conversations: () => this.plugin.listConversations(),
+      activeId: () => this.plugin.getActiveConversation()?.id ?? null,
+      actions: {
+        resume: async (chosen) => {
+          const conversation = await this.plugin.setActiveConversation(chosen.id);
+          if (conversation) this.deps.loadConversation(conversation);
+        },
+        rename: (conversation, title) => this.plugin.renameConversation(conversation.id, title),
+        fork: (conversation) => this.plugin.forkConversation(conversation.id),
+        forkFromSummary: (conversation) => this.plugin.forkFromSummary(conversation.id),
+        distill: async (conversation) => { await this.plugin.distillConversation(conversation.id); },
+        archive: (conversation) => this.plugin.archiveConversation(conversation.id),
+        unarchive: (conversation) => this.plugin.unarchiveConversation(conversation.id),
+        remove: async (doomed) => {
           if (this.plugin.getActiveConversation()?.id === doomed.id) {
             await this.plugin.deleteActiveConversation(); // resets the view + notices
           } else {
             await this.plugin.deleteConversation(doomed.id);
             quickNotice(`Deleted “${doomed.title}”.`);
           }
-          this.openHistory(); // reopen with the refreshed list
-        })();
+        },
       },
-    ).open();
+      onClose: () => { this.sessionDropdown = null; },
+    });
+    this.sessionDropdown.open();
   }
 }

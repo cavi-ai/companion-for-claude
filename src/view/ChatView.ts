@@ -219,7 +219,7 @@ export class ChatView extends ItemView {
       renderContextManager: (...args) => this.renderContextManager(...args),
       renderKnobs: () => this.composer.renderKnobs(),
       renderKnobsInto: (parent) => this.composer.renderKnobsInto(parent),
-      saveChat: (...args) => this.transcript.saveChat(...args),
+      distillChat: () => this.distillThisChat(),
       updateModeControl: (...args) => this.updateModeControl(...args),
       agentCapable: () => this.agentCapable,
       setAgentCapable: (v) => { this.agentCapable = v; },
@@ -447,6 +447,18 @@ export class ChatView extends ItemView {
   }
 
   openHistory(): void { return this.header.openHistory(); }
+
+  /** Distill this chat into a summary note, then file it into session memory when that is on. */
+  async distillThisChat(): Promise<void> {
+    if (this.conversationId === null || this.messages.length === 0) {
+      new Notice("Nothing to distill yet.");
+      return;
+    }
+    const path = await this.plugin.distillConversation(this.conversationId);
+    if (path !== null && this.plugin.settings.memoryEnabled && this.plugin.settings.memoryIngestOnSave) {
+      await this.plugin.captureConversation(this.messages);
+    }
+  }
 
   private updateUsageBar(): void { return this.header.updateUsageBar(); }
 
@@ -786,7 +798,7 @@ export class ChatView extends ItemView {
         this.openHistory();
         break;
       case "save":
-        await this.transcript.saveChat();
+        await this.distillThisChat();
         break;
       case "delete-active":
         await this.plugin.deleteActiveConversation();

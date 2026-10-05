@@ -16,6 +16,7 @@ export interface NamespacedData {
   standingOrders?: unknown;
   orderEditQueue?: unknown;
   published?: unknown;
+  optimize?: unknown;
 }
 
 /** True when data.json uses the namespaced { settings, conversations } shape

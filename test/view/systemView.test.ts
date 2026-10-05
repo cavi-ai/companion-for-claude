@@ -26,6 +26,8 @@ function harness(sections: HealthSection[]): { view: SystemView; deps: SystemVie
     catchUpIndex: vi.fn(async () => undefined),
     openInbox: vi.fn(async () => undefined),
     reviewSafeFixes: vi.fn(),
+    reviewTagMerges: vi.fn(),
+    connectOrphans: vi.fn(),
     openSetupWizard: vi.fn(),
     openSettings: vi.fn(),
     openClipperSetup: vi.fn(),
@@ -43,8 +45,23 @@ const click = (el: FakeElement | null | undefined): void => {
 const button = (view: SystemView, text: string): FakeElement =>
   root(view).querySelectorAll("button").find((b) => b.textContent === text)!;
 
+describe("SystemView more footer", () => {
+  it("is absent for the orphans and tags summary sections and kept for an itemized section", async () => {
+    const { view } = harness([
+      section({ id: "orphans", count: 4, severity: "info", summary: true, items: [{ path: "", message: "4 notes with no links" }] }),
+      section({ id: "tags", count: 4, severity: "info", summary: true, items: [{ path: "", message: "4 merge candidates" }] }),
+      section({ id: "links", count: 4, severity: "warning", items: [{ path: "a.md", message: "1 broken link: X" }] }),
+    ]);
+    await view.onOpen();
+    const card = (id: string): FakeElement => root(view).querySelector(`.cc-system-${id}`)!;
+    expect(card("orphans").querySelector(".cc-system-more")).toBeNull();
+    expect(card("tags").querySelector(".cc-system-more")).toBeNull();
+    expect(card("links").querySelector(".cc-system-more")?.textContent).toBe("+3 more");
+  });
+});
+
 describe("SystemView", () => {
-  const companion = (over: Partial<HealthSection> & Pick<HealthSection, "id">): HealthSection => section({ group: "companion", ...over });
+  const companion =(over: Partial<HealthSection> & Pick<HealthSection, "id">): HealthSection => section({ group: "companion", ...over });
 
   it("renders COMPANION and VAULT groups", async () => {
     const { view } = harness([
@@ -176,5 +193,34 @@ describe("SystemView", () => {
     release({ sections: [section({ id: "links", title: "Broken links", count: 9, severity: "warning", items: [] })], scannedAt: "2026-10-01T00:00:00.000Z" });
     await first;
     expect(root(view).querySelector(".cc-system-links")).toBeNull();
+  });
+
+  it("orphans section offers Connect orphan notes only when there are orphans, and refreshes after", async () => {
+    const some = harness([section({ id: "orphans", title: "Orphan notes", count: 4, severity: "info", items: [{ path: "", message: "4 notes with no links" }] })]);
+    await some.view.onOpen();
+    click(button(some.view, "Connect orphan notes"));
+    expect(some.deps.connectOrphans).toHaveBeenCalledTimes(1);
+    (some.deps.connectOrphans as ReturnType<typeof vi.fn>).mock.calls[0]![0]();
+    await settle();
+    expect(some.scan).toHaveBeenCalledTimes(2);
+
+    const none = harness([section({ id: "orphans", title: "Orphan notes", count: 0 })]);
+    await none.view.onOpen();
+    expect(root(none.view).querySelectorAll("button").find((b) => b.textContent === "Connect orphan notes")).toBeUndefined();
+  });
+
+  it("tags section offers Review tag merges only when there are candidates, and refreshes after", async () => {
+    const withCandidates = harness([section({ id: "tags", title: "Tags", count: 2, severity: "info", items: [{ path: "", message: "2 merge candidates by name · 1 of 5 tags used once" }] })]);
+    await withCandidates.view.onOpen();
+    click(button(withCandidates.view, "Review tag merges"));
+    expect(withCandidates.deps.reviewTagMerges).toHaveBeenCalledTimes(1);
+    const done = (withCandidates.deps.reviewTagMerges as ReturnType<typeof vi.fn>).mock.calls[0]![0] as () => void;
+    done();
+    await settle();
+    expect(withCandidates.scan).toHaveBeenCalledTimes(2);
+
+    const none = harness([section({ id: "tags", title: "Tags", count: 0 })]);
+    await none.view.onOpen();
+    expect(root(none.view).querySelectorAll("button").find((b) => b.textContent === "Review tag merges")).toBeUndefined();
   });
 });

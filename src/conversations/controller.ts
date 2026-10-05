@@ -11,6 +11,12 @@ import {
   saveConversation,
   startConversationTurn,
   deleteConversation as removeConversation,
+  renameConversation,
+  archiveConversation,
+  unarchiveConversation,
+  setDistilledNote,
+  forkConversation,
+  seededConversation,
   setActive,
   touch,
   settleConversationTurn,
@@ -273,6 +279,45 @@ export class ConversationsController {
     const { state, persist } = this.deps;
     state.set(setActive(state.get(), null));
     await persist();
+  }
+
+  async rename(id: string, title: string): Promise<void> {
+    const trimmed = title.trim();
+    if (trimmed.length === 0 || !this.deps.state.get().conversations.some((c) => c.id === id)) return;
+    this.deps.state.set(renameConversation(this.deps.state.get(), id, trimmed));
+    await this.deps.persist();
+  }
+
+  async archive(id: string): Promise<void> {
+    this.deps.state.set(archiveConversation(this.deps.state.get(), id, Date.now()));
+    await this.deps.persist();
+  }
+
+  async unarchive(id: string): Promise<void> {
+    this.deps.state.set(unarchiveConversation(this.deps.state.get(), id));
+    await this.deps.persist();
+  }
+
+  async setDistilledNote(id: string, path: string): Promise<void> {
+    this.deps.state.set(setDistilledNote(this.deps.state.get(), id, path));
+    await this.deps.persist();
+  }
+
+  /** Copy a conversation into a new one; the source and the active slot are untouched. */
+  async fork(id: string): Promise<Conversation> {
+    const { state, persist } = this.deps;
+    const { state: next, fork } = forkConversation(state.get(), id, this.nextId(), Date.now());
+    state.set(saveConversation(next, fork, this.maxConversations()));
+    await persist();
+    return fork;
+  }
+
+  async createSeeded(title: string, seed: ChatMessage, projectId?: string): Promise<Conversation> {
+    const { state, persist } = this.deps;
+    const convo = seededConversation(this.nextId(), Date.now(), title, seed, projectId);
+    state.set(saveConversation(state.get(), convo, this.maxConversations()));
+    await persist();
+    return convo;
   }
 
   async delete(id: string): Promise<void> {

@@ -53,6 +53,16 @@ describe("note_patch", () => {
     expect(fm.tags).toEqual(["z", "a", "b"]);
   });
 
+  it("resolves frontmatter tags through the vault vocabulary", async () => {
+    app.vault.seed("T/A.md", "a", { tags: ["llm"] });
+    app.vault.seed("T/B.md", "b", { tags: ["llm"] });
+    const out = await tools.call("note_patch", { path: "Plan.md", target: { kind: "frontmatter", key: "tags" }, op: "append", content: "LLMs" });
+    expect(out.split("\n").pop()).toBe("Tags mapped to existing: llms → llm");
+    expect((await frontmatter()).tags).toEqual(["a", "llm"]);
+    await tools.call("note_patch", { path: "Plan.md", target: { kind: "frontmatter", key: "tags" }, op: "replace", content: "x, LLMs" });
+    expect((await frontmatter()).tags).toEqual(["x", "llm"]);
+  });
+
   it("rejects append on a scalar frontmatter key, unknown kinds, unknown ops, and missing targets", async () => {
     await expect(tools.call("note_patch", { path: "Plan.md", target: { kind: "frontmatter", key: "title" }, op: "append", content: "x" })).rejects.toThrow(/not a list/);
     await expect(tools.call("note_patch", { path: "Plan.md", target: { kind: "weird" }, op: "append", content: "x" })).rejects.toThrow(/Unknown target kind/);

@@ -60,7 +60,7 @@ function tagList(key: "artifactBaseTags" | "chatBaseTags" | "sourceBaseTags"): v
 }
 
 for (const key of [
-  "apiKey", "oauthToken", "baseUrl", "customModel", "ollamaUtilityModel", "openaiCompatHost", "openaiCompatKey",
+  "apiKey", "oauthToken", "baseUrl", "customModel", "ollamaUtilityModel", "classifierModel", "openaiCompatHost", "openaiCompatKey",
   "openAlexContactEmail", "zoteroUserId", "zoteroApiKey", "braveSearchApiKey", "cloudRoutineFireUrl",
   "cloudRoutineToken", "cloudReplyRepo", "cloudReplyToken", "mcpToken", "publishGithubToken", "publishApiBase",
 ] as const) trimmed(key);
@@ -115,6 +115,8 @@ const SETTING_TIERS: Record<keyof PluginSettings, SettingsTier> = {
   ollamaModel: "advanced",
   ollamaUtilityModel: "advanced",
   utilityBackend: "advanced",
+  classifierBackend: "advanced",
+  classifierModel: "advanced",
   chatBackend: "basic",
   codexModel: "advanced",
   opencodeModel: "advanced",
@@ -206,7 +208,7 @@ const BASIC_ACTION_NAMES: ReadonlySet<string> = new Set([
 const PAGE_RELEVANCE: Record<string, (s: PluginSettings) => boolean> = {
   "Local models (Ollama & endpoints)": (s) =>
     s.chatBackend === "local" || s.chatBackend === "auto" || s.chatBackend === "custom" ||
-    s.utilityBackend === "ollama" || s.utilityBackend === "custom",
+    s.utilityBackend === "ollama" || s.utilityBackend === "custom" || s.classifierBackend !== "utility",
   "Agent bridge — MCP server (desktop)": (s) => s.mcpEnabled,
   "External tools — MCP client": (s) => s.mcpClientServers.length > 0,
   "Cloud (experimental)": (s) => s.cloudDispatchEnabled,
@@ -1003,6 +1005,12 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
         },
       },
       { name: "Utility model (optional)", desc: "A smaller model for utility tasks (tagging, summaries, ingestion). Empty = use the chat model above. A 1–3B model is plenty and much faster.", control: { type: "text", key: "ollamaUtilityModel" } },
+      {
+        name: "Tag classifier backend",
+        desc: "Which model judges uncertain tag merges in Optimize brain. Tag names and note titles go to it. Ollama and endpoint choices never fall back to Claude.",
+        control: { type: "dropdown", key: "classifierBackend", options: { utility: "Same as utility tasks", ollama: "Ollama (local)", custom: "OpenAI-compatible endpoint" } },
+      },
+      { name: "Tag classifier model (optional)", desc: "Model id for the classifier. Empty = the backend's configured model. Ignored when the backend is the same as utility tasks.", control: { type: "text", key: "classifierModel" } },
       { name: "Endpoint host", desc: "Base URL, with or without /v1 (e.g. http://localhost:1234).", control: { type: "text", key: "openaiCompatHost", placeholder: "http://localhost:1234" } },
       {
         name: "Endpoint model",

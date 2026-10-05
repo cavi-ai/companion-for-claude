@@ -575,8 +575,9 @@ export class Transcript {
   private async maybeIndex(content: string): Promise<{ tags: string[]; summary?: string; title?: string }> {
     if (!this.plugin.settings.autoTagOnSave) return { tags: [] };
     try {
-      const { summarizeAndTag, existingVaultTags } = await import("../../indexing/autoTagger");
-      const res = await summarizeAndTag(this.plugin.router(), content, existingVaultTags(this.app));
+      const { summarizeAndTag } = await import("../../indexing/autoTagger");
+      const { vaultVocabulary } = await import("../../tags/vaultTags");
+      const res = await summarizeAndTag(this.plugin.router(), content, vaultVocabulary(this.app));
       return {
         tags: res.tags,
         ...(res.summary ? { summary: res.summary } : {}),
@@ -654,24 +655,5 @@ export class Transcript {
     }
     view.editor.replaceSelection(text);
     quickNotice("Inserted into note");
-  }
-
-  async saveChat(): Promise<void> {
-    if (this.messages.length === 0) {
-      new Notice("Nothing to save yet.");
-      return;
-    }
-    const md = this.messages.map((m) => `**${m.role === "user" ? "You" : "Claude"}:**\n\n${m.content}`).join("\n\n---\n\n");
-    new Notice("Indexing & saving…");
-    const { tags, summary, title } = await this.maybeIndex(md);
-    const finalTitle = title ?? this.fallbackTitle();
-    await saveChatNote(this.app, this.plugin.settings.chatFolder, finalTitle, md, {
-      baseTags: this.plugin.settings.chatBaseTags,
-      extraTags: tags,
-      ...(summary !== undefined ? { summary } : {}),
-    });
-    if (this.plugin.settings.memoryEnabled && this.plugin.settings.memoryIngestOnSave) {
-      await this.plugin.captureConversation(this.messages); // also file this chat into memory
-    }
   }
 }

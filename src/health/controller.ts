@@ -11,12 +11,16 @@ export interface HealthDeps {
   listProjects(): Promise<Array<{ path: string }>>;
   auditProject(path: string): Promise<AuditFinding[]>;
   index(): Promise<{ enabled: boolean; built: boolean; failed: Array<{ path: string; message: string }> }>;
+  tags(): Promise<HealthInput["tags"]>;
+  orphanCount(): number;
   inboxPending(): number;
   companion(): CompanionStatus;
   now(): string;
 }
 
 export interface SafeFix { path: string; changes: Array<{ key: string; from: unknown; to: unknown }>; fixed: Record<string, unknown> }
+
+export const GENERATED_NOTE_TYPES: ReadonlySet<string> = new Set(["triage", "order-run", "optimize-run"]);
 
 export class HealthController {
   constructor(private readonly deps: HealthDeps) {}
@@ -35,6 +39,8 @@ export class HealthController {
       unresolved: this.deps.unresolvedLinks(),
       research,
       index: await this.deps.index(),
+      tags: await this.deps.tags(),
+      orphans: this.deps.orphanCount(),
       inboxPending: this.deps.inboxPending(),
       companion: this.deps.companion(),
       now: this.deps.now(),
@@ -58,8 +64,7 @@ export class HealthController {
     const registry = this.deps.ontology();
     if (!registry || registry.resolved().size === 0) return [];
     return this.deps.markdownFiles()
-      // The triage board is plugin-generated, not an ontology note.
-      .filter((f): f is { path: string; frontmatter: Record<string, unknown> } => typeof f.frontmatter?.type === "string" && f.frontmatter.type !== "triage")
+      .filter((f): f is { path: string; frontmatter: Record<string, unknown> } => typeof f.frontmatter?.type === "string" && !GENERATED_NOTE_TYPES.has(f.frontmatter.type))
       .map(({ path, frontmatter }) => {
         const r = conform(frontmatter, registry.resolve(frontmatter.type as string), (t) => this.deps.lookupTargetType(t));
         return { path, frontmatter, issues: r.issues, fixed: r.fixed };

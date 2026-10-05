@@ -19,6 +19,8 @@ function deps(over: Partial<HealthDeps> = {}): HealthDeps {
     listProjects: async () => [],
     auditProject: async () => [],
     index: async () => ({ enabled: false, built: false, failed: [] }),
+    tags: async () => null,
+    orphanCount: () => 0,
     inboxPending: () => 0,
     companion: () => ({ connection: { backend: "claude", needsCredential: true }, activity: [], bridge: { applicable: false, enabled: false, running: false, port: 0 }, clipper: { applicable: false, status: "current" }, orders: { invalid: [] } }),
     now: () => "2026-10-01T00:00:00.000Z",
@@ -39,6 +41,18 @@ describe("HealthController", () => {
       markdownFiles: () => [{ path: "Clippings/Triage.md", frontmatter: { type: "triage", source_enriched: true } }],
     })).scan();
     expect(report.sections.find((s) => s.id === "ontology")).toMatchObject({ count: 0, items: [] });
+  });
+
+  it("does not flag plugin-generated run notes but still flags an undeclared type", async () => {
+    const report = await new HealthController(deps({
+      markdownFiles: () => [
+        { path: "Claude/Orders/run.md", frontmatter: { type: "order-run" } },
+        { path: "Claude/Optimize/run.md", frontmatter: { type: "optimize-run" } },
+        { path: "mystery.md", frontmatter: { type: "mystery" } },
+      ],
+    })).scan();
+    const ontology = report.sections.find((s) => s.id === "ontology")!;
+    expect(ontology.items.map((i) => i.path)).toEqual(["mystery.md"]);
   });
 
   it("treats an empty registry as not seeded", async () => {
@@ -81,5 +95,15 @@ describe("HealthController", () => {
       ontology: () => ({ resolve: () => listType, resolved: () => new Map([["tagged", listType]]) }),
     }));
     expect(c.safeFixes()).toEqual([{ path: "a.md", changes: [{ key: "aliases", from: "solo", to: ["solo"] }], fixed: { type: "tagged", aliases: ["solo"], title: "A" } }]);
+  });
+
+  it("passes the tag stats from deps.tags into the scan", async () => {
+    const report = await new HealthController(deps({ tags: async () => ({ total: 9, singleUse: 4, candidates: 2 }) })).scan();
+    expect(report.sections.find((s) => s.id === "tags")).toMatchObject({ count: 2 });
+  });
+
+  it("passes the orphan count from deps.orphanCount into the scan", async () => {
+    const report = await new HealthController(deps({ orphanCount: () => 5 })).scan();
+    expect(report.sections.find((s) => s.id === "orphans")).toMatchObject({ count: 5 });
   });
 });

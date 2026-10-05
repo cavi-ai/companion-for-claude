@@ -760,7 +760,7 @@ body:not(.is-mobile) .cc-user {
   min-height: 60vh;
 }
 
-/* ---- conversation history picker ---- */
+/* ---- shared picker row text ---- */
 .cc-conv-suggestion {
   display: flex;
   flex-direction: column;
@@ -2841,22 +2841,79 @@ pre.cc-has-copy:hover .cc-code-copy { opacity: 1; }
   padding: 8px 0;
 }
 
-/* ---- history picker rows + delete ---- */
+/* ---- picker rows (session and workflow pickers) ---- */
 .cc-conv-suggestion { display: flex; align-items: center; gap: 8px; }
-.cc-conv-main { flex: 1; min-width: 0; }
-.cc-conv-delete {
-  flex: 0 0 auto;
-  background: none;
-  border: none;
-  box-shadow: none;
-  padding: 4px;
-  cursor: pointer;
-  color: var(--text-faint);
-  border-radius: 4px;
+
+/* ---- session dropdown ---- */
+.cc-session-dropdown {
+  position: fixed;
+  z-index: var(--layer-popover, 30);
+  box-sizing: border-box;
+  width: min(360px, calc(100vw - 16px));
+  max-height: min(60vh, 480px);
+  display: flex;
+  flex-direction: column;
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+  box-shadow: var(--shadow-s);
+  overflow: hidden;
 }
-.cc-conv-delete:hover { color: var(--text-error); background: var(--background-modifier-hover); }
-.cc-conv-delete.is-armed { color: var(--text-error); background: var(--background-modifier-error-hover); }
-.cc-conv-delete svg { width: 15px; height: 15px; }
+.cc-session-search {
+  flex: 0 0 auto;
+  margin: 8px;
+  width: auto;
+}
+.cc-session-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 4px 4px;
+}
+.cc-session-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 4px 4px 8px;
+  border-radius: var(--radius-s);
+  cursor: pointer;
+}
+.cc-session-row:hover,
+.cc-session-row.is-selected { background: var(--background-modifier-hover); }
+.cc-session-row.is-active .cc-session-title { color: var(--text-accent); font-weight: var(--font-semibold); }
+.cc-session-row.is-archived { color: var(--text-muted); }
+.cc-session-row.is-armed { background: var(--background-modifier-error-hover); }
+.cc-session-archived-icon { display: inline-flex; flex: 0 0 auto; color: var(--text-faint); }
+.cc-session-archived-icon svg { width: 14px; height: 14px; }
+.cc-session-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cc-session-meta {
+  flex: 0 0 auto;
+  color: var(--text-faint);
+  font-size: var(--font-ui-smaller);
+  white-space: nowrap;
+}
+.cc-session-more { flex: 0 0 auto; }
+.cc-session-empty {
+  padding: 12px 8px;
+  color: var(--text-muted);
+  text-align: center;
+}
+.cc-session-footer { flex: 0 0 auto; border-top: 1px solid var(--background-modifier-border); }
+.cc-session-footer:empty { display: none; }
+.cc-session-archive-toggle {
+  width: 100%;
+  background: none;
+  box-shadow: none;
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+}
+.cc-session-rename-input { width: 100%; }
 
 /* ---- agent session write-grant pill (visible + revocable) ---- */
 .cc-write-grant-pill {
@@ -2988,7 +3045,7 @@ pre.cc-has-copy:hover .cc-code-copy { opacity: 1; }
 }
 .cc-activity-drawer {
   position: absolute;
-  z-index: var(--layer-popover);
+  z-index: var(--layer-popover, 30);
   inset-block-start: calc(100% + 6px);
   inset-inline-end: 0;
   width: min(420px, calc(100cqw - 16px));

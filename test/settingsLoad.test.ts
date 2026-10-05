@@ -81,6 +81,12 @@ describe("resolveSettings with legacy configs", () => {
     expect(s.mcpClientServers).toEqual([]);
   });
 
+  it("an install without the classifier keys loads the defaults", () => {
+    const s = resolveSettings({ settings: { apiKey: "x" } as never });
+    expect(s.classifierBackend).toBe("utility");
+    expect(s.classifierModel).toBe("");
+  });
+
   it("still reads enrichmentDiagnostics from stored data", () => {
     expect(resolveSettings({ settings: { enrichmentDiagnostics: true } }).enrichmentDiagnostics).toBe(true);
   });

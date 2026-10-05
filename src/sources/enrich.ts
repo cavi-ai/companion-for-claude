@@ -15,6 +15,7 @@ export interface EnrichDeps {
   complete: (system: string, user: string, opts?: ExtractCompletionOpts) => Promise<string>;
   overrides?: SchemaOverrides | undefined;
   baseTags: string[];
+  resolveTags?: ((tags: string[]) => string[]) | undefined;
   enrichedBy: "claude" | "local";
   now: () => string;
   /** Last-moment lifecycle gate: a completed model result may outlive the plugin. */
@@ -148,7 +149,7 @@ export async function enrichCapture(deps: EnrichDeps, capture: RawCapture): Prom
     await applySourceFrontmatter(
       deps.app,
       file,
-      sourceFrontmatter(record, deps.baseTags),
+      sourceFrontmatter(record, deps.baseTags, deps.resolveTags),
       (frontmatter) => {
         deps.assertActive?.();
         const context = { captureBasename: capture.basename };
@@ -174,7 +175,7 @@ export async function enrichCapture(deps: EnrichDeps, capture: RawCapture): Prom
   const dir = capture.path.includes("/") ? capture.path.slice(0, capture.path.lastIndexOf("/")) : "";
   const base = sanitizeFileName(String(record.fields.title ?? capture.basename));
   const assetFileName = `${capture.basename}.${capture.ext}`;
-  const noteContent = buildSidecarNote(record, assetFileName, deps.baseTags);
+  const noteContent = buildSidecarNote(record, assetFileName, deps.baseTags, deps.resolveTags);
   const path = normalizePath(dir ? `${dir}/${base}.md` : `${base}.md`);
   const existing = deps.app.vault.getAbstractFileByPath(path);
   let file: TFile;

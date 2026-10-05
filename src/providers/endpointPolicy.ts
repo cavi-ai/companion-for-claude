@@ -151,6 +151,21 @@ export function classifyEndpoint(url: string): EndpointClassification {
   return "remote";
 }
 
+/** Strict: loopback, wildcard or private-range only when the host is `localhost` or an IP literal, never a name. */
+export function isLiteralLocalEndpoint(url: string): boolean {
+  const kind = classifyEndpoint(url);
+  if (kind !== "loopback" && kind !== "wildcard-local" && kind !== "lan") return false;
+  const parsed = validEndpoint(url);
+  if (!parsed) return false;
+  const hostname = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, "").replace(/\.$/, "");
+  return (
+    hostname === "localhost" ||
+    hostname.endsWith(".localhost") ||
+    hostname.includes(":") ||
+    /^\d{1,3}(?:\.\d{1,3}){3}$/.test(hostname)
+  );
+}
+
 export function resolveUtilityForRuntime(policy: UtilityRuntimePolicy): UtilityRuntimeResolution {
   const rawEndpoint = policy.endpoint ?? (policy.backend === "claude" ? "https://api.anthropic.com" : "");
   const endpoint = sanitizeEndpointForDisplay(rawEndpoint);

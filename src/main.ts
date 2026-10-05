@@ -116,7 +116,18 @@ import { PublishController, publishConfirmMessage } from "./publish/controller";
 import { normalizePublished, type PublishedItem } from "./publish/registry";
 import { CloudDispatchModal } from "./view/CloudDispatchModal";
 import { normalizeTags } from "./indexing/frontmatter";
-import { existingVaultTags } from "./indexing/autoTagger";
+import { resolveTags } from "./tags/resolve";
+import { vaultTagEntries, vaultVocabulary } from "./tags/vaultTags";
+import { formatApplyNotice, OptimizeController } from "./optimize/controller";
+import { OptimizeBrainModal } from "./view/OptimizeBrainModal";
+import { openTagMergeReview } from "./optimize/review";
+import { createClassifier } from "./optimize/classifierGlue";
+import { normalizeOptimizeState, type OptimizeState } from "./optimize/state";
+import { addRelatedLinks, applyNoteMerge, linkScanNotes, noteTagInput, processNoteBody, writeOptimizeRunNote } from "./optimize/vaultGlue";
+import { formatLinkApplyNotice, formatLinkScanEmptyNotice, LinkWeaveController } from "./optimize/linkController";
+import { findOrphans, MAX_PROPOSALS_PER_KIND, scanOrphans, type LinkScanReport } from "./optimize/linkScan";
+import { LinkWeaveModal } from "./view/LinkWeaveModal";
+import { selectPromptTags } from "./tags/vocabulary";
 import { frontmatterSuggestSystem, parseFrontmatterSuggestion } from "./indexing/frontmatterSuggest";
 import { FrontmatterModal } from "./view/FrontmatterModal";
 import { SemanticIndexer } from "./semantic/indexer";
@@ -140,6 +151,9 @@ import {
   type ChatTurnMode,
 } from "./conversations/store";
 import { ConversationsController } from "./conversations/controller";
+import { DistillController } from "./conversations/distillController";
+import { SessionActions } from "./conversations/sessionActions";
+import { saveSummaryNote } from "./artifacts/artifactStore";
 import type { ChatMessage } from "./types";
 import { getAllTags, normalizePath, TFile, TFolder, type Editor } from "obsidian";
 import { inboxItems, typedInboxItems, type InboxFileEntry } from "./sources/inbox";
@@ -203,6 +217,7 @@ interface PersistedData {
   standingOrders?: unknown;
   orderEditQueue?: unknown;
   published?: unknown;
+  optimize?: unknown;
 }
 
 type UtilityFallbackConsentKey = Pick<UtilityFallbackConsentContext, "identity" | "destinationFingerprint">;
@@ -243,6 +258,46 @@ export default class ClaudeCompanionPlugin extends Plugin {
       persist: () => this.persist(),
       activity: () => this.activity,
       settings: () => this.settings,
+    }));
+  }
+  private _distiller?: DistillController;
+  private distiller(): DistillController {
+    return (this._distiller ??= new DistillController({
+      get: (id) => this.listConversations().find((c) => c.id === id),
+      complete: async (req) => (await this.router().complete("utility", req)).text,
+      exists: (path) => this.app.vault.getAbstractFileByPath(path) instanceof TFile,
+      resolveLink: (link) => this.app.metadataCache.getFirstLinkpathDest(link.replace(/\.md$/, ""), "")?.path ?? (this.app.vault.getAbstractFileByPath(link) instanceof TFile ? link : null),
+      write: async (existing, folder, title, content, created) => {
+        const file = existing === null ? null : this.app.vault.getAbstractFileByPath(existing);
+        if (file instanceof TFile) {
+          await this.app.vault.modify(file, content);
+          return file.path;
+        }
+        return (await saveSummaryNote(this.app, folder, title, content, created)).path;
+      },
+      setDistilledNote: (id, path) => this.conversations().setDistilledNote(id, path),
+      notice: (text) => new Notice(text),
+      settings: () => this.settings,
+    }));
+  }
+  private _sessionActions?: SessionActions;
+  private sessionActions(): SessionActions {
+    return (this._sessionActions ??= new SessionActions({
+      find: (id) => this.listConversations().find((c) => c.id === id),
+      archive: (id) => this.conversations().archive(id),
+      fork: (id) => this.conversations().fork(id),
+      createSeeded: (title, seed, projectId) => this.conversations().createSeeded(title, seed, projectId),
+      distill: (id) => this.distiller().distill(id),
+      readNote: async (path) => {
+        const file = this.app.vault.getAbstractFileByPath(path);
+        return file instanceof TFile ? this.app.vault.cachedRead(file) : null;
+      },
+      openInNewTab: async (conversationId) => {
+        const { workspace } = this.app;
+        const leaf = workspace.getLeaf("tab");
+        await leaf.setViewState({ type: CHAT_VIEW_TYPE, active: true, state: { conversationId } });
+        await workspace.revealLeaf(leaf);
+      },
     }));
   }
   private _turnService?: ChatTurnService;
@@ -468,11 +523,13 @@ export default class ClaudeCompanionPlugin extends Plugin {
       activity: () => this.activity,
       enrichDiagnostics: () => this.enrichDiagnostics,
       router: () => this.router(),
+      resolveTags: (tags) => resolveTags(tags, vaultVocabulary(this.app)).map((r) => r.tag),
       suspendReindex: () => this.suspendReindex(),
       isUtilityLifecycleActive: (g) => this.isUtilityLifecycleActive(g),
       assertUtilityLifecycleActive: (g) => this.assertUtilityLifecycleActive(g),
       utilityLifecycleEnded: () => this.utilityLifecycleEnded,
       utilityLifecycleGeneration: () => this.utilityLifecycleGeneration ?? 0,
+      onEnrichQueueIdle: () => void this.checkTagMergesInBackground(),
       notice: (msg, timeout) => new Notice(msg, timeout),
       openChoiceModal: (opts) => { const m = new ChoiceModal(this.app, opts); m.open(); return m; },
     }));
@@ -530,6 +587,9 @@ export default class ClaudeCompanionPlugin extends Plugin {
   private ordersState: OrdersState = {};
   private orderEditQueue: QueuedEdit[] = [];
   private published: PublishedItem[] = [];
+  private optimizeState: OptimizeState = { dismissed: [], verdicts: {} };
+  private _optimize?: OptimizeController;
+  private _linkWeave?: LinkWeaveController;
   private _publish?: PublishController;
   private _standingOrders?: OrdersController;
   private ordersRefreshTimer: number | null = null;
@@ -871,6 +931,8 @@ export default class ClaudeCompanionPlugin extends Plugin {
       openSystem: () => void this.activateSystem(),
       exportClipperTemplates: () => void this.exportClipperTemplates(),
       seedOntology: () => void this.seedOntology(),
+      optimizeBrain: () => void this.reviewTagMerges(() => undefined),
+      optimizeLinks: () => void this.reviewOrphanLinks(() => undefined),
       openSetupWizard: () => this.openSetupWizard(),
       publishNote: (file) => void this.publish().publishNote(file.path),
       copyPublishedLink: (file) => void this.publish().copyLink(file.path),
@@ -1553,7 +1615,7 @@ export default class ClaudeCompanionPlugin extends Plugin {
       },
       suggestTags: async (content) => {
         try {
-          const { tags } = await summarizeAndTag(this.router(), content, existingVaultTags(this.app));
+          const { tags } = await summarizeAndTag(this.router(), content, vaultVocabulary(this.app));
           return tags;
         } catch (e) {
           console.warn("[companion] source tagging failed", e);
@@ -2169,6 +2231,7 @@ export default class ClaudeCompanionPlugin extends Plugin {
     this.ordersState = normalizeOrdersState(isNamespacedData(raw) ? raw.standingOrders : undefined);
     this.orderEditQueue = normalizeEditQueue(isNamespacedData(raw) ? raw.orderEditQueue : undefined);
     this.published = normalizePublished(isNamespacedData(raw) ? raw.published : undefined);
+    this.optimizeState = normalizeOptimizeState(isNamespacedData(raw) ? raw.optimize : undefined);
 
     // Any plaintext credential still in data.json moves to the secret store now,
     // then the file is rewritten without it. Must run after buildRuns is restored:
@@ -2196,6 +2259,7 @@ export default class ClaudeCompanionPlugin extends Plugin {
       standingOrders: this.ordersState,
       orderEditQueue: this.orderEditQueue,
       published: this.published,
+      optimize: this.optimizeState,
       ...this.build().serializeState(),
     })) as PersistedData;
     const result = (this.persistChain ?? Promise.resolve()).catch(() => {}).then(() => this.saveData(data));
@@ -2300,6 +2364,31 @@ export default class ClaudeCompanionPlugin extends Plugin {
 
   async deleteConversation(id: string): Promise<void> {
     return this.conversations().delete(id);
+  }
+
+  async renameConversation(id: string, title: string): Promise<void> {
+    return this.conversations().rename(id, title);
+  }
+
+  async unarchiveConversation(id: string): Promise<void> {
+    return this.conversations().unarchive(id);
+  }
+
+  /** Distill a conversation into a summary note; resolves the note path or null. */
+  async distillConversation(id: string): Promise<string | null> {
+    return this.distiller().distill(id);
+  }
+
+  async archiveConversation(id: string): Promise<void> {
+    return this.sessionActions().archive(id);
+  }
+
+  async forkConversation(id: string): Promise<void> {
+    return this.sessionActions().fork(id);
+  }
+
+  async forkFromSummary(id: string): Promise<void> {
+    return this.sessionActions().forkFromSummary(id);
   }
 
   private async browseConversations(): Promise<void> {
@@ -2891,10 +2980,10 @@ export default class ClaudeCompanionPlugin extends Plugin {
     const content = await this.app.vault.cachedRead(file);
     const proposal: EnrichProposal = { path: file.path };
 
-    let tagResult: { title: string; tags: string[]; summary: string } | null = null;
+    let tagResult: { title: string; tags: string[]; newTags: string[]; summary: string } | null = null;
     if (options.rename || options.frontmatter) {
       try {
-        tagResult = await summarizeAndTag(this.router(), content, existingVaultTags(this.app));
+        tagResult = await summarizeAndTag(this.router(), content, vaultVocabulary(this.app));
       } catch (e) {
         if (e instanceof UtilityUnavailableError) throw e;
         // Tagging is best-effort — links/lint still run.
@@ -2941,8 +3030,9 @@ export default class ClaudeCompanionPlugin extends Plugin {
       const existing: string[] = Array.isArray(fm?.tags) ? fm.tags.map(String) : typeof fm?.tags === "string" ? [fm.tags] : [];
       const merged = normalizeTags([...existing, ...tagResult.tags]);
       const addedTags = merged.filter((t) => !existing.includes(t));
+      const newTags = addedTags.filter((t) => tagResult.newTags.includes(t));
       const summary = typeof fm?.summary === "string" && fm.summary.trim() ? "" : tagResult.summary;
-      if (addedTags.length > 0 || summary) proposal.frontmatter = { tags: merged, summary, addedTags };
+      if (addedTags.length > 0 || summary) proposal.frontmatter = { tags: merged, summary, addedTags, newTags };
     }
 
     return proposal;
@@ -3724,6 +3814,124 @@ export default class ClaudeCompanionPlugin extends Plugin {
     if (leaf) await workspace.revealLeaf(leaf);
   }
 
+  private optimizeController(): OptimizeController {
+    return (this._optimize ??= new OptimizeController({
+      tagEntries: () => vaultTagEntries(this.app),
+      noteVectors: async () => (await this.indexer()?.noteVectors()) ?? null,
+      noteTags: (path) => noteTagInput(this.app, path),
+      rewriteNote: (plan, map) => applyNoteMerge(this.app, plan, map),
+      orderTagTriggers: () => this.standingOrders().tagTriggers(),
+      writeRunNote: (content, now) => writeOptimizeRunNote(this.app, content, now),
+      getState: () => this.optimizeState,
+      setState: async (next) => {
+        this.optimizeState = next;
+        await this.persist();
+      },
+      now: () => new Date().toISOString(),
+      classifier: createClassifier({
+        router: () => this.router(),
+        backend: () => this.settings.classifierBackend,
+        isMobile: Platform.isMobile,
+        passiveUtilitySelection: () => {
+          const selection = this.runtimeUtilitySelection();
+          if (selection.state === "configured-provider" || selection.state === "approved-Claude-fallback") return selection;
+          throw new UtilityUnavailableError(this.utilityUnavailableMessage(selection), selection);
+        },
+        assertActive: () => {
+          if (this.utilityLifecycleEnded) throw new Error("Companion unloaded while the tag check was running; no further content was sent.");
+        },
+      }),
+    }));
+  }
+
+  private async checkTagMergesInBackground(): Promise<void> {
+    try {
+      const result = await this.optimizeController().classify({ background: true });
+      if (result.merge > 0) {
+        new Notice(`Tag check: ${result.merge} ${result.merge === 1 ? "merge" : "merges"} proposed. Run "Optimize brain: review tag merges".`);
+      }
+    } catch (error) {
+      console.debug("Claude Companion: background tag check failed", error);
+    }
+  }
+
+  private reviewTagMerges(done: () => void): Promise<void> {
+    const controller = this.optimizeController();
+    return openTagMergeReview({
+      scan: () => controller.scan(),
+      open: (candidates) =>
+        new OptimizeBrainModal(this.app, candidates, {
+          apply: (merges) => controller.apply(merges),
+          dismiss: (id) => controller.dismiss(id),
+          classify: (signal) => controller.classify({ signal }),
+          rescan: async () => (await controller.scan()).candidates,
+          classifierInfo: () => controller.classifierInfo(),
+        }, (result) => {
+          if (result) new Notice(formatApplyNotice(result));
+          done();
+        }).open(),
+      notice: (text) => void new Notice(text),
+      done,
+    });
+  }
+
+  private linkWeaveController(): LinkWeaveController {
+    return (this._linkWeave ??= new LinkWeaveController({
+      scan: (dismissed, onProgress) => {
+        const indexer = this.indexer();
+        return scanOrphans({
+          ...(onProgress ? { onProgress } : {}),
+          notes: linkScanNotes(this.app, this.ontology()),
+          edges: this.app.metadataCache.resolvedLinks,
+          ontologyFolder: normalizePath(this.settings.ontologyFolder),
+          dismissed,
+          read: async (path) => {
+            const file = this.app.vault.getFileByPath(path);
+            return file ? this.app.vault.cachedRead(file) : "";
+          },
+          neighbours: async (path, accept) => (indexer ? indexer.relatedStored(path, MAX_PROPOSALS_PER_KIND, accept) : []),
+        });
+      },
+      processBody: (path, transform) => processNoteBody(this.app, path, transform),
+      addRelated: (path, entries) => addRelatedLinks(this.app, path, entries),
+      writeRunNote: (content, now) => writeOptimizeRunNote(this.app, content, now, "Link weave"),
+      getState: () => this.optimizeState,
+      setState: async (next) => {
+        this.optimizeState = next;
+        await this.persist();
+      },
+      now: () => new Date().toISOString(),
+    }));
+  }
+
+  private async reviewOrphanLinks(done: () => void): Promise<void> {
+    const controller = this.linkWeaveController();
+    const progress = new Notice("Scanning for orphan notes…", 0);
+    try {
+      let report: LinkScanReport;
+      try {
+        report = await controller.scan((read, total) => progress.setMessage(`Scanning for orphan notes… ${read}/${total}`));
+      } finally {
+        progress.hide();
+      }
+      if (report.groups.length === 0) {
+        new Notice(formatLinkScanEmptyNotice(report));
+        done();
+        return;
+      }
+      new LinkWeaveModal(this.app, report, {
+        apply: (selected) => controller.apply(selected, report.contents),
+        dismiss: (proposal) => controller.dismiss(proposal),
+      }, (result) => {
+        if (result) new Notice(formatLinkApplyNotice(result));
+        done();
+      }).open();
+    } catch (error) {
+      new Notice(`Orphan scan failed: ${error instanceof Error ? error.message : String(error)}`);
+      done();
+    }
+  }
+
   private healthController(): HealthController {
     const repo = (): ResearchRepository => this.researchRepository();
     return new HealthController({
@@ -3744,6 +3952,11 @@ export default class ClaudeCompanionPlugin extends Plugin {
           failed: failed.map((d) => ({ path: d.label, message: d.message })),
         };
       },
+      tags: async () => {
+        const report = await this.optimizeController().scan({ semantic: false });
+        return { total: report.totalTags, singleUse: report.singleUse, candidates: report.candidates.length };
+      },
+      orphanCount: () => findOrphans(linkScanNotes(this.app, this.ontology()), this.app.metadataCache.resolvedLinks, normalizePath(this.settings.ontologyFolder)).length,
       inboxPending: () => this.inboxPendingCount(),
       companion: () => ({
         connection: { backend: this.router().chatBackend, needsCredential: needsCredentialSetup(this.credentialSetupInputs()) },
@@ -3775,6 +3988,8 @@ export default class ClaudeCompanionPlugin extends Plugin {
         const chrome = this.companionChrome();
         return chrome.runActivityRecovery ? chrome.runActivityRecovery(activityId, id) : chrome.run({ id, page: "system", activityId });
       },
+      reviewTagMerges: (done) => void this.reviewTagMerges(done),
+      connectOrphans: (done) => void this.reviewOrphanLinks(done),
       reviewSafeFixes: (fixes, done) => new SafeFixModal(this.app, fixes, async (path, patch) => {
         const file = this.app.vault.getFileByPath(path);
         if (file) await this.app.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => { Object.assign(fm, patch); });
@@ -3923,7 +4138,8 @@ export default class ClaudeCompanionPlugin extends Plugin {
       return;
     }
 
-    const existingTags = existingVaultTags(this.app);
+    const vocab = vaultVocabulary(this.app);
+    const existingTags = selectPromptTags(vocab, content);
     const typeOptions = this.settings.ontologyEnabled ? [...(this.ontology()?.resolved().keys() ?? [])] : [];
     const notice = new Notice("Suggesting frontmatter…", 0);
     try {
@@ -3939,9 +4155,12 @@ export default class ClaudeCompanionPlugin extends Plugin {
       // Merge additively against what's already in the note's frontmatter.
       const fm = (this.app.metadataCache.getFileCache(file)?.frontmatter ?? {}) as Record<string, unknown>;
       const currentTags = Array.isArray(fm.tags) ? fm.tags.map(String) : typeof fm.tags === "string" ? [fm.tags] : [];
+      const resolved = resolveTags(suggestion.tags, vocab);
+      const tags = normalizeTags([...currentTags, ...resolved.map((r) => r.tag)]);
       const proposal = {
         ...(suggestion.type && !fm.type ? { type: suggestion.type } : {}),
-        tags: normalizeTags([...currentTags, ...suggestion.tags]),
+        tags,
+        newTags: resolved.filter((r) => r.match === "new" && !currentTags.includes(r.tag)).map((r) => r.tag),
         ...(suggestion.summary && !fm.summary ? { summary: suggestion.summary } : {}),
       };
       notice.hide();

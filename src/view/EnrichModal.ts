@@ -1,5 +1,6 @@
 import { App, Modal, Setting } from "obsidian";
 import type { EditPlan } from "../edit/diff";
+import { formatTagList } from "../tags/label";
 
 /** Which enrich steps to run — every step defaults on (full go). */
 export interface EnrichOptions {
@@ -13,7 +14,7 @@ export interface EnrichOptions {
 export interface EnrichProposal {
   path: string;
   rename?: { from: string; to: string } | undefined;
-  frontmatter?: { tags: string[]; summary: string; addedTags: string[] } | undefined;
+  frontmatter?: { tags: string[]; summary: string; addedTags: string[]; newTags: string[] } | undefined;
   plan?: EditPlan | undefined;
 }
 
@@ -143,7 +144,7 @@ export class EnrichReviewModal extends Modal {
       const text = row.createDiv({ cls: "cc-organize-text" });
       text.createDiv({ cls: "cc-organize-from", text: "Frontmatter" });
       const bits: string[] = [];
-      if (frontmatter.addedTags.length > 0) bits.push(`+tags: ${frontmatter.addedTags.join(", ")}`);
+      if (frontmatter.addedTags.length > 0) bits.push(`+tags: ${formatTagList(frontmatter.addedTags, frontmatter.newTags)}`);
       if (frontmatter.summary) bits.push(`summary: ${frontmatter.summary}`);
       text.createDiv({ cls: "cc-organize-to", text: bits.join(" · ") || "No changes" });
     }

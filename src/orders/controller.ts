@@ -51,6 +51,9 @@ export class OrdersController {
 
   invalidOrders(): Array<{ path: string; reason: string }> { return this.invalid; }
   validOrders(): StandingOrder[] { return this.orders; }
+  tagTriggers(): Array<{ path: string; tag: string }> {
+    return this.orders.flatMap((order) => (order.onNote?.tag ? [{ path: order.path, tag: order.onNote.tag }] : []));
+  }
 
   async refresh(): Promise<void> {
     const { orders, invalid } = await this.deps.loadOrders();

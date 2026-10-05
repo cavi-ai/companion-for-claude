@@ -64,6 +64,11 @@ export async function savePlanNote(app: App, folder: string, title: string, mark
   return file;
 }
 
+/** Write a prebuilt summary note to a unique dated path, without a Notice. */
+export async function saveSummaryNote(app: App, folder: string, title: string, content: string, created: string): Promise<TFile> {
+  return writeUnique(app, folder, datedTitleBase(created, title), "md", content);
+}
+
 /** Save a chat transcript as a markdown note. */
 export async function saveChatNote(app: App, folder: string, title: string, markdown: string, opts?: Partial<SaveOptions>): Promise<TFile> {
   const created = new Date().toISOString().slice(0, 10);

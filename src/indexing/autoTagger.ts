@@ -1,33 +1,19 @@
-import { App, getAllTags } from "obsidian";
 import type { ProviderRouter } from "../providers/router";
 import { parseTaggerOutput } from "./taggerParse";
+import { resolveTags } from "../tags/resolve";
+import { selectPromptTags, type Vocabulary } from "../tags/vocabulary";
 
 export { parseTaggerOutput } from "./taggerParse";
 
 export interface TagResult {
   tags: string[];
+  /** Resolved tags that did not exist in the vault. */
+  newTags: string[];
   summary: string;
   /** A short, descriptive title for the note's filename + heading. */
   title: string;
   /** Which provider produced these, for transparency in the UI. */
   via: string;
-}
-
-/** Collect existing vault tags so the model can prefer reusing them. */
-export function existingVaultTags(app: App, limit = 80): string[] {
-  const counts = new Map<string, number>();
-  for (const file of app.vault.getMarkdownFiles()) {
-    const cache = app.metadataCache.getFileCache(file);
-    if (!cache) continue;
-    for (const t of getAllTags(cache) ?? []) {
-      const tag = t.replace(/^#/, "");
-      counts.set(tag, (counts.get(tag) ?? 0) + 1);
-    }
-  }
-  return Array.from(counts.entries())
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, limit)
-    .map(([t]) => t);
 }
 
 const TAG_SYSTEM =
@@ -41,7 +27,8 @@ const TAG_SYSTEM =
  * Summarize + tag a document. Routes to the local (utility) provider when
  * enabled — keeping this cheap, bulk work off the Anthropic bill.
  */
-export async function summarizeAndTag(router: ProviderRouter, content: string, existing: string[]): Promise<TagResult> {
+export async function summarizeAndTag(router: ProviderRouter, content: string, vocab: Vocabulary): Promise<TagResult> {
+  const existing = selectPromptTags(vocab, content);
   const existingLine = existing.length > 0 ? `Existing tags (prefer these when relevant): ${existing.join(", ")}\n\n` : "";
   const body = content.length > 8000 ? content.slice(0, 8000) + "\n…[truncated]" : content;
 
@@ -51,5 +38,12 @@ export async function summarizeAndTag(router: ProviderRouter, content: string, e
     maxTokens: 240,
   });
 
-  return { ...parseTaggerOutput(raw), via: provider.label };
+  const parsed = parseTaggerOutput(raw);
+  const resolved = resolveTags(parsed.tags, vocab);
+  return {
+    ...parsed,
+    tags: resolved.map((r) => r.tag),
+    newTags: resolved.filter((r) => r.match === "new").map((r) => r.tag),
+    via: provider.label,
+  };
 }

@@ -112,6 +112,10 @@ export interface PluginSettings {
   ollamaUtilityModel: string;
   /** Route cheap "utility" work (summarize/tag/ingest) to this backend. */
   utilityBackend: "claude" | "ollama" | "custom";
+  /** Model that judges uncertain tag merges: the utility model, or a separate local model. */
+  classifierBackend: "utility" | "ollama" | "custom";
+  /** Classifier model id; empty = the backend's configured model. Ignored for "utility". */
+  classifierModel: string;
   /** Chat backend: always Claude, always local, auto (Claude with local
    *  fallback), custom (an OpenAI-compatible endpoint), or the user's
    *  Claude Code / Codex / OpenCode CLI sign-in (desktop only). */
@@ -317,6 +321,8 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   ollamaModel: "llama3.1",
   ollamaUtilityModel: "",
   utilityBackend: "claude",
+  classifierBackend: "utility",
+  classifierModel: "",
   chatBackend: "claude",
   codexModel: "",
   opencodeModel: "",

@@ -103,3 +103,10 @@ describe("scholarly discovery settings", () => {
     }
   });
 });
+
+describe("tag classifier defaults", () => {
+  it("defaults to the utility model with no override", () => {
+    expect(DEFAULT_SETTINGS.classifierBackend).toBe("utility");
+    expect(DEFAULT_SETTINGS.classifierModel).toBe("");
+  });
+});

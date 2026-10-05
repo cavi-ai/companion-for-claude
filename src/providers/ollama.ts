@@ -34,6 +34,10 @@ export class OllamaProvider implements Provider {
     return this.host.replace(/\/+$/, "");
   }
 
+  resolvedEndpoint(): string {
+    return this.host;
+  }
+
   hasCredentials(): boolean {
     return this.base().length > 0;
   }

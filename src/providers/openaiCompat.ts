@@ -19,6 +19,10 @@ export class OpenAICompatProvider implements Provider {
     private apiKey: string,
   ) {}
 
+  resolvedEndpoint(): string {
+    return this.host;
+  }
+
   /** The /v1 API root — accepts hosts given with or without the /v1 suffix. */
   private base(): string {
     const b = this.host.replace(/\/+$/, "");

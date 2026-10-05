@@ -65,6 +65,16 @@ const fact = (h: Harness, path: string, ctime = START + 1000): void => { h.facts
 /** A note event, then the settle window passing, then the 60s tick that promotes it. */
 const settleAndTick = async (h: Harness): Promise<void> => { h.clock.ms += ORDER_NOTE_SETTLE_MS; await h.controller.tick(); };
 
+describe("OrdersController tagTriggers", () => {
+  it("returns every valid order with an on_note tag, enabled or not", async () => {
+    const tagged: StandingOrder = { ...noteOrder, id: "t.md", path: "t.md", onNote: { tag: "meetings" } };
+    const off: StandingOrder = { ...noteOrder, id: "o.md", path: "o.md", enabled: false, onNote: { tag: "x" } };
+    const h = harness({ orders: [noteOrder, scheduled, tagged, off] });
+    await h.controller.refresh();
+    expect(h.controller.tagTriggers()).toEqual([{ path: "t.md", tag: "meetings" }, { path: "o.md", tag: "x" }]);
+  });
+});
+
 describe("OrdersController note events", () => {
   it("runs once for a new matching note, writes the run note and finishes the activity", async () => {
     const h = harness({ run: async () => ({ text: "Found one.", proposals: [{ path: "Meetings/a.md", edits: [{ old_str: "a", new_str: "b" }], description: "Mark shipped" }] }) });

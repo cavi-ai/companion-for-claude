@@ -105,4 +105,12 @@ describe("settings tiers", () => {
     const defaults = definitionsOf(false).flatMap((g) => g.items ?? []).find((p) => p.name === "Local models (Ollama & endpoints)");
     expect(evalVisible(defaults!)).toBe(false);
   });
+
+  it("shows the Local models page with the toggle off when the classifier is dedicated, and tiers both items advanced", () => {
+    const page = definitionsOf(false, { classifierBackend: "ollama" }).flatMap((g) => g.items ?? []).find((p) => p.name === "Local models (Ollama & endpoints)");
+    expect(evalVisible(page!)).toBe(true);
+    const rows = leaves(page!.items as Tiered[]).filter((r) => /^Tag classifier/.test(r.name ?? ""));
+    expect(rows.length).toBe(2);
+    for (const r of rows) expect(r.tier).toBe("advanced");
+  });
 });

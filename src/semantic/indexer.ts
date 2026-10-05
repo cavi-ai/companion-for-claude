@@ -76,6 +76,12 @@ export class SemanticIndexer {
     return this.store;
   }
 
+  /** Never embeds: reads vectors already in the index. */
+  async noteVectors(): Promise<(path: string) => number[] | null> {
+    const store = await this.ensureLoaded();
+    return (path) => store.noteVector(path);
+  }
+
   async stats(): Promise<{ notes: number; chunks: number }> {
     return (await this.ensureLoaded()).stats();
   }
@@ -246,6 +252,11 @@ export class SemanticIndexer {
       .search(v, k + 1, accept)
       .filter((h) => h.path !== path)
       .slice(0, k);
+  }
+
+  /** Never embeds: neighbours of an indexed note from stored vectors; [] when the note is not indexed. */
+  async relatedStored(path: string, k: number, accept?: (path: string) => boolean): Promise<SearchHit[]> {
+    return (await this.ensureLoaded()).related(path, k, accept);
   }
 
   /** Chunks + change hash for one file: markdown notes directly, PDFs via page extraction. */

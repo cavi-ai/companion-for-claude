@@ -9,7 +9,7 @@ const ACTION_NAMES = [
   "browseConversations", "deleteActiveConversation", "handoffToBuild", "markNoteAsPlan", "organizeClippings",
   "dispatchCloudSession", "pullCloudReplies", "reviewLinkSuggestions", "openWorkflowPicker",
   "createPromptTemplate", "createStandingOrder", "runStandingOrder", "openSessionPicker", "openMemoryView", "consolidateMemory", "enrichNoteAsSource",
-  "openSourceInbox", "openSystem", "exportClipperTemplates", "seedOntology",
+  "openSourceInbox", "openSystem", "exportClipperTemplates", "seedOntology", "optimizeBrain", "optimizeLinks",
   "publishNote", "copyPublishedLink", "unpublishNote",
 ] as const;
 
@@ -101,6 +101,8 @@ describe("plain commands", () => {
     ["open-related-notes", "openRelatedNotes"],
     ["open-research-desk", "openResearchDesk"],
     ["triage-clippings", "triageClippings"],
+    ["optimize-brain", "optimizeBrain"],
+    ["optimize-links", "optimizeLinks"],
     ["semantic-index-status", "showSemanticIndexStatus"],
     ["browse-conversations", "browseConversations"],
     ["organize-clippings", "organizeClippings"],

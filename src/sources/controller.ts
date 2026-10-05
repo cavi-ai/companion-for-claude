@@ -41,6 +41,7 @@ export function sourceActivityDetail(value: string): string {
 
 export interface SourceEnrichmentControllerDeps {
   settings: () => PluginSettings;
+  resolveTags: (tags: string[]) => string[];
   saveSettings: () => Promise<void>;
   isMobile: boolean;
   mobileSourceNoteMaxBytes: number;
@@ -69,6 +70,7 @@ export interface SourceEnrichmentControllerDeps {
   utilityLifecycleEnded: () => boolean;
   utilityLifecycleGeneration: () => number;
 
+  onEnrichQueueIdle: () => void;
   notice: (msg: string, timeout?: number) => void;
   openChoiceModal: (opts: {
     title: string;
@@ -83,6 +85,7 @@ export class SourceEnrichmentController {
   private enrichTimers = new Map<string, number>();
   private enrichPending = new Map<string, FileRef>();
   private enrichQueueRunning = false;
+  private enrichedSinceIdle = false;
   private _coordinator: KeyedSerialQueue<string, EnrichRunOutcome> | undefined;
   private enrichRecentlyWritten = new Set<string>();
   private enrichRecentlyWrittenExpiryTimers = new Map<string, number>();
@@ -140,7 +143,8 @@ export class SourceEnrichmentController {
         const [path, file] = next;
         this.enrichPending.delete(path);
         try {
-          await this.enrichFile(file);
+          const outcome = await this.enrichFile(file);
+          if (outcome.status === "enriched") this.enrichedSinceIdle = true;
         } catch (error) {
           if (!this.deps.isUtilityLifecycleActive(this.deps.utilityLifecycleGeneration())) continue;
           const detail = sourceActivityDetail(error instanceof Error ? error.message : String(error));
@@ -167,6 +171,14 @@ export class SourceEnrichmentController {
       release();
       this.enrichQueueRunning = false;
       if (!this.deps.utilityLifecycleEnded() && this.enrichPending.size > 0) void this.drainEnrichQueue();
+      else if (!this.deps.utilityLifecycleEnded() && this.enrichedSinceIdle) {
+        this.enrichedSinceIdle = false;
+        try {
+          this.deps.onEnrichQueueIdle();
+        } catch (error) {
+          console.debug("[companion] enrichment idle hook failed", error);
+        }
+      }
     }
   }
 
@@ -236,7 +248,7 @@ export class SourceEnrichmentController {
         summary: enrichment.summary,
         ...(enrichment.key_claims ? { key_claims: enrichment.key_claims } : {}),
         ...(enrichment.topics ? { topics: enrichment.topics } : {}),
-        tags: [...this.deps.settings().sourceBaseTags, ...(enrichment.topics ?? [])],
+        tags: [...this.deps.settings().sourceBaseTags, ...this.resolveTopics(enrichment.topics ?? [])],
         enriched_by: enrichDeps.enrichedBy,
       });
       this.deps.assertUtilityLifecycleActive(lifecycleGeneration);
@@ -411,6 +423,10 @@ export class SourceEnrichmentController {
     this.enrichRecentlyWrittenExpiryTimers.set(path, timer);
   }
 
+  private resolveTopics(topics: string[]): string[] {
+    return topics.length === 0 ? [] : this.deps.resolveTags(topics);
+  }
+
   buildEnrichDeps(
     selection: ProviderSelection,
     lifecycleGeneration = this.deps.utilityLifecycleGeneration(),
@@ -434,6 +450,7 @@ export class SourceEnrichmentController {
       },
       overrides: this.deps.settings().sourceSchemaOverrides,
       baseTags: this.deps.settings().sourceBaseTags,
+      resolveTags: this.deps.resolveTags,
       enrichedBy: selection.provider.id === "anthropic" ? "claude" : "local",
       now: () => new Date().toISOString(),
       assertActive: () => this.deps.assertUtilityLifecycleActive(lifecycleGeneration),

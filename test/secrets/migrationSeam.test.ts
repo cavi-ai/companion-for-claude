@@ -129,6 +129,15 @@ describe("loadSettings migration seam", () => {
     expect((JSON.parse(onDisk()) as { published?: unknown }).published).toEqual([item]);
   });
 
+  it("restores optimize dismissals from data.json and keeps them when it rewrites the file", async () => {
+    const { plugin, onDisk } = harness({ apiKey: "SENTINEL-KEY" });
+    Object.assign(plugin as unknown as Record<string, unknown>, {
+      loadData: async () => structuredClone({ settings: { apiKey: "SENTINEL-KEY" }, conversations: [], optimize: { dismissed: ["a|b", 3, "a|b"] } }),
+    });
+    await plugin.loadSettings();
+    expect((JSON.parse(onDisk()) as { optimize?: unknown }).optimize).toEqual({ dismissed: ["a|b"], verdicts: {} });
+  });
+
   it("migrates every populated credential, not just the API key", async () => {
     const { plugin, onDisk } = harness({ apiKey: "K1", mcpToken: "K2", cloudReplyToken: "K3", publishGithubToken: "K4" });
     await plugin.loadSettings();

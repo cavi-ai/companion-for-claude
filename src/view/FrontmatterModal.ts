@@ -1,8 +1,10 @@
 import { App, Modal } from "obsidian";
+import { formatTagList } from "../tags/label";
 
 export interface FrontmatterProposal {
   type?: string;
   tags: string[];
+  newTags?: string[];
   summary?: string;
 }
 
@@ -38,7 +40,7 @@ export class FrontmatterModal extends Modal {
       r.createSpan({ cls: "cc-fm-val", text: value });
     };
     if (this.proposal.type) row("type", this.proposal.type);
-    if (this.proposal.tags.length) row("tags", this.proposal.tags.join(", "));
+    if (this.proposal.tags.length) row("tags", formatTagList(this.proposal.tags, this.proposal.newTags ?? []));
     if (this.proposal.summary) row("summary", this.proposal.summary);
 
     contentEl.createDiv({

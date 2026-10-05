@@ -94,6 +94,11 @@ take or a backend you choose.
   service traffic.
 - **Your Ollama host or OpenAI-compatible endpoint:** selecting that backend
   sends the request to the server you run.
+- **Tag classifier model:** **Check with model** in Optimize brain sends tag
+  names and up to 3 note titles per tag to the configured classifier model; in
+  the background it runs only when the classifier is served from this machine
+  or a private-network address (`localhost` or a loopback or private-range IP);
+  no other host name qualifies.
 - **Hugging Face and jsDelivr:** the one-time embedding download requests only
   the model and ONNX runtime after you approve it; both are cached.
 - **Cloud-session services:** **Send to cloud Claude session** sends the prompt

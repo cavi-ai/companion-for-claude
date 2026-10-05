@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { sourceFrontmatter, buildSidecarNote } from "../../src/sources/sourceNote";
 import type { SourceRecord } from "../../src/sources/types";
 
@@ -36,5 +36,24 @@ describe("buildSidecarNote", () => {
     expect(md).toContain("# US home sales");
     expect(md).toContain("Monthly sales.");
     expect(md).toContain("![[sales.csv]]");
+  });
+
+  it("resolves topics into tags but never the base tags, and leaves topics raw", () => {
+    const withTopics: SourceRecord = { ...record, fields: { ...record.fields, topics: ["LLMs", "New Thing"] } };
+    const seen: string[][] = [];
+    const fm = sourceFrontmatter(withTopics, ["source", "llms"], (tags) => {
+      seen.push(tags);
+      return tags.map((t) => (t === "LLMs" ? "llm" : t.toLowerCase()));
+    });
+    expect(seen).toEqual([["LLMs", "New Thing"]]);
+    expect(fm.tags).toEqual(["source", "llms", "llm", "new-thing"]);
+    expect(fm.topics).toEqual(["LLMs", "New Thing"]);
+  });
+
+  it("does not call the resolver for a record without topics", () => {
+    const resolve = vi.fn((tags: string[]) => tags);
+    const fm = sourceFrontmatter(record, ["source"], resolve);
+    expect(resolve).not.toHaveBeenCalled();
+    expect(fm.tags).toEqual(["source"]);
   });
 });

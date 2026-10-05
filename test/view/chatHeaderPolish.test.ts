@@ -70,7 +70,7 @@ describe("Desktop chat header polish", () => {
     expect(headerActions).toBeTruthy();
     const labels = headerActions?.querySelectorAll("button").map((b) => b.getAttribute("aria-label"));
     expect(labels).toEqual(["New chat", "Resume a past conversation", "More actions", "Quick options for Chat"]);
-    expect(labels).not.toContain("Save chat to vault");
+    expect(labels).not.toContain("Distill this chat");
     expect(headerActions?.querySelectorAll(".cc-mcp-btn").length).toBe(0);
   });
 
@@ -79,6 +79,30 @@ describe("Desktop chat header polish", () => {
     const buttons = (view.contentEl as unknown as FakeElement).querySelector(".cc-header-actions")?.querySelectorAll("button") ?? [];
     expect(buttons.length).toBeGreaterThan(0);
     for (const b of buttons) expect(b.classList.has("clickable-icon")).toBe(true);
+  });
+
+  it("the history button opens the session dropdown under it and a second click closes it", async () => {
+    const body = new FakeElement("body");
+    const g = globalThis as Record<string, unknown>;
+    g.activeDocument = Object.assign(new FakeElement("document"), { body });
+    g.activeWindow = { innerWidth: 1000 };
+    try {
+      const view = await openHeader();
+      const plugin = (view as unknown as { plugin: { listConversations(): unknown[] } }).plugin;
+      plugin.listConversations = () => [{ id: "a", title: "Alpha", createdAt: 1, updatedAt: Date.now(), messages: [] }];
+      const history = (view.contentEl as unknown as FakeElement).querySelector(".cc-header-actions")!.querySelectorAll("button")
+        .find((b) => b.getAttribute("aria-label") === "Resume a past conversation")!;
+      history.rect = { left: 100, right: 130, top: 10, bottom: 34, width: 30, height: 24 };
+      history.dispatchEvent({ type: "click" });
+      const dropdown = body.querySelector(".cc-session-dropdown");
+      expect(dropdown?.style.top).toBe("38px");
+      expect(dropdown?.querySelectorAll(".cc-session-row")).toHaveLength(1);
+      history.dispatchEvent({ type: "click" });
+      expect(body.querySelector(".cc-session-dropdown")).toBeNull();
+    } finally {
+      g.activeDocument = {};
+      g.activeWindow = globalThis;
+    }
   });
 
   it("clicking cc-model opens the model menu", async () => {
@@ -105,7 +129,7 @@ describe("Desktop chat header polish", () => {
     expect(openModelMenu).not.toHaveBeenCalled();
   });
 
-  it("overflow menu includes Save chat to vault, MCP bridge…, and Capture a Claude Code session… when memoryEnabled", () => {
+  it("overflow menu includes Distill this chat, MCP bridge…, and Capture a Claude Code session… when memoryEnabled", () => {
     const plugin = headerPlugin();
     plugin.settings.memoryEnabled = true;
     const view = new ChatView(new WorkspaceLeaf(plugin.app as unknown as App), plugin);
@@ -114,7 +138,8 @@ describe("Desktop chat header polish", () => {
 
     const content = getLastOpenedModal()?.contentEl as unknown as FakeElement;
     const titles = content.querySelectorAll("button").map((b) => b.getAttribute("aria-label"));
-    expect(titles).toContain("Save chat to vault");
+    expect(titles).toContain("Distill this chat");
+    expect(titles).not.toContain("Save chat to vault");
     expect(titles).toContain("MCP bridge…");
     expect(titles).toContain("Capture a Claude Code session…");
   });

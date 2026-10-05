@@ -350,7 +350,7 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   },
   {
     name: "save",
-    description: "Save this chat to your vault",
+    description: "Distill this chat into a summary note",
     kind: "action",
     action: "save",
   },

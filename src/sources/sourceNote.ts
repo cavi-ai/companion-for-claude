@@ -2,7 +2,7 @@ import { buildFrontmatter, normalizeTags, type FrontmatterData } from "../indexi
 import type { SourceRecord } from "./types";
 
 /** Flatten a SourceRecord into frontmatter: type, its typed fields, the enrichment marker, provenance. */
-export function sourceFrontmatter(record: SourceRecord, baseTags: string[]): FrontmatterData {
+export function sourceFrontmatter(record: SourceRecord, baseTags: string[], resolve?: (tags: string[]) => string[]): FrontmatterData {
   const fm: FrontmatterData = { type: record.type };
   for (const [k, v] of Object.entries(record.fields)) fm[k] = v;
   if (record.provenance.url) fm.url = record.provenance.url;
@@ -12,13 +12,13 @@ export function sourceFrontmatter(record: SourceRecord, baseTags: string[]): Fro
   fm.captured_at = record.provenance.capturedAt;
   fm.enriched_by = record.provenance.enrichedBy;
   const topics = Array.isArray(record.fields.topics) ? record.fields.topics : [];
-  fm.tags = normalizeTags([...baseTags, ...topics]);
+  fm.tags = normalizeTags([...baseTags, ...(resolve && topics.length > 0 ? resolve(topics.map(String)) : topics)]);
   return fm;
 }
 
 /** Render a sidecar markdown note for a non-markdown asset (frontmatter + heading + embed). */
-export function buildSidecarNote(record: SourceRecord, assetFileName: string, baseTags: string[]): string {
-  const fm = sourceFrontmatter(record, baseTags);
+export function buildSidecarNote(record: SourceRecord, assetFileName: string, baseTags: string[], resolve?: (tags: string[]) => string[]): string {
+  const fm = sourceFrontmatter(record, baseTags, resolve);
   const title = String(record.fields.title ?? assetFileName);
   const lines: string[] = [buildFrontmatter(fm), "", `# ${title}`, ""];
   if (record.fields.summary) lines.push(String(record.fields.summary), "");

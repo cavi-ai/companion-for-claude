@@ -91,3 +91,38 @@ describe("ConversationsController.capTurn", () => {
     }));
   });
 });
+
+describe("ConversationsController archive, rename, fork", () => {
+  const seeded = () => saveConversation(emptyState(), { ...newConversation("c1", 1), title: "Plan", messages: [{ role: "user", content: "hi" }] }, 0);
+
+  it("archives, unarchives, renames, and records the distilled note, persisting each", async () => {
+    const { controller, persisted, state } = harness(seeded());
+    await controller.archive("c1");
+    expect(state().conversations[0]?.archivedAt).toBeTypeOf("number");
+    await controller.unarchive("c1");
+    expect(state().conversations[0]?.archivedAt).toBeUndefined();
+    await controller.rename("c1", "  Renamed  ");
+    expect(state().conversations[0]?.title).toBe("Renamed");
+    await controller.rename("c1", "   ");
+    expect(state().conversations[0]?.title).toBe("Renamed");
+    await controller.setDistilledNote("c1", "Claude/Chats/x.md");
+    expect(state().conversations[0]?.distilledNote).toBe("Claude/Chats/x.md");
+    expect(persisted).toHaveLength(4);
+  });
+
+  it("fork stores a new conversation and leaves the source and active id alone", async () => {
+    const { controller, state } = harness({ ...seeded(), activeId: "c1" });
+    const fork = await controller.fork("c1");
+    expect(fork.title).toBe("Fork of Plan");
+    expect(fork.forkedFrom).toBe("c1");
+    expect(state().conversations.map((c) => c.id)).toContain(fork.id);
+    expect(state().activeId).toBe("c1");
+  });
+
+  it("createSeeded stores a one-message conversation", async () => {
+    const { controller, state } = harness();
+    const seed = { role: "user" as const, content: "body", display: "Continuing from: X" };
+    const convo = await controller.createSeeded("Fork of X", seed);
+    expect(state().conversations.find((c) => c.id === convo.id)?.messages).toEqual([seed]);
+  });
+});

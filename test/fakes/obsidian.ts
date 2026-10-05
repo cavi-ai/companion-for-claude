@@ -63,7 +63,7 @@ class FakeEventSource {
 }
 
 interface FileCache {
-  tags?: Array<{ tag: string }>;
+  tags?: Array<{ tag: string; position?: { start: { offset: number }; end: { offset: number } } }>;
   frontmatter?: Record<string, unknown>;
 }
 
@@ -72,8 +72,11 @@ export function getAllTags(cache: FileCache | null): string[] | null {
   if (!cache) return null;
   const out: string[] = [];
   for (const t of cache.tags ?? []) out.push(t.tag);
-  const fm = cache.frontmatter?.tags;
-  if (Array.isArray(fm)) for (const t of fm) out.push(String(t).startsWith("#") ? String(t) : `#${t}`);
+  for (const [key, value] of Object.entries(cache.frontmatter ?? {})) {
+    if (!/^tags?$/i.test(key)) continue;
+    const list = Array.isArray(value) ? value : typeof value === "string" ? value.split(/[\s,]+/).filter(Boolean) : [];
+    for (const t of list) out.push(String(t).startsWith("#") ? String(t) : `#${t}`);
+  }
   return out;
 }
 
@@ -84,14 +87,17 @@ class FakeVault extends FakeEventSource {
   tags = new Map<string, string[]>();
   /** path -> frontmatter object */
   frontmatters = new Map<string, Record<string, unknown>>();
+  /** path -> inline tags with offsets (tag without #) */
+  inlineTags = new Map<string, Array<{ tag: string; start: number; end: number }>>();
 
   /** Test helper: seed a note. */
-  seed(path: string, content: string, opts: { mtime?: number; tags?: string[]; frontmatter?: Record<string, unknown> } = {}): TFile {
+  seed(path: string, content: string, opts: { mtime?: number; tags?: string[]; frontmatter?: Record<string, unknown>; inlineTags?: Array<{ tag: string; start: number; end: number }> } = {}): TFile {
     const p = normalizePath(path);
     const file = new TFile(p, content, opts.mtime ?? Date.now());
     this.files.set(p, file);
     if (opts.tags?.length) this.tags.set(p, opts.tags);
     if (opts.frontmatter) this.frontmatters.set(p, opts.frontmatter);
+    if (opts.inlineTags?.length) this.inlineTags.set(p, opts.inlineTags);
     const dir = p.includes("/") ? p.slice(0, p.lastIndexOf("/")) : "";
     if (dir) this.folders.add(dir);
     return file;
@@ -177,9 +183,15 @@ class FakeMetadataCache extends FakeEventSource {
   getFileCache(file: TFile): FileCache | null {
     const tags = this.vault.tags.get(file.path);
     const frontmatter = this.vault.frontmatters.get(file.path);
-    if (!tags && !frontmatter) return null;
+    const inline = this.vault.inlineTags.get(file.path);
+    if (!tags && !frontmatter && !inline) return null;
     const cache: FileCache = {};
-    if (tags) cache.tags = tags.map((t) => ({ tag: t.startsWith("#") ? t : `#${t}` }));
+    if (tags || inline) {
+      cache.tags = [
+        ...(tags ?? []).map((t) => ({ tag: t.startsWith("#") ? t : `#${t}` })),
+        ...(inline ?? []).map((t) => ({ tag: `#${t.tag}`, position: { start: { offset: t.start }, end: { offset: t.end } } })),
+      ];
+    }
     if (frontmatter) cache.frontmatter = frontmatter;
     return cache;
   }
@@ -276,6 +288,36 @@ export class Notice {
   hide(): void { this.hidden = true; }
   setMessage(message: string): void { this.message = message; }
 }
+export class FakeMenuItem {
+  title = "";
+  icon = "";
+  warning = false;
+  clickCb: (() => void) | null = null;
+  setTitle(title: string): this { this.title = title; return this; }
+  setIcon(icon: string): this { this.icon = icon; return this; }
+  setWarning(warning: boolean): this { this.warning = warning; return this; }
+  onClick(cb: () => void): this { this.clickCb = cb; return this; }
+  click(): void { this.clickCb?.(); }
+}
+const menus: Menu[] = [];
+export function getMenus(): readonly Menu[] { return menus; }
+export function getLastMenu(): Menu | undefined { return menus[menus.length - 1]; }
+export function clearMenus(): void { menus.length = 0; }
+export class Menu {
+  items: FakeMenuItem[] = [];
+  separators = 0;
+  position: { x: number; y: number } | null = null;
+  hidden = false;
+  constructor() { menus.push(this); }
+  addItem(cb: (item: FakeMenuItem) => void): this { const item = new FakeMenuItem(); cb(item); this.items.push(item); return this; }
+  addSeparator(): this { this.separators++; return this; }
+  showAtMouseEvent(_event: unknown): this { this.position = { x: 0, y: 0 }; return this; }
+  showAtPosition(position: { x: number; y: number }): this { this.position = position; return this; }
+  hide(): this { this.hidden = true; return this; }
+  onHide(_cb: () => void): void {}
+  titles(): string[] { return this.items.map((item) => item.title); }
+  item(title: string): FakeMenuItem | undefined { return this.items.find((item) => item.title === title); }
+}
 export class FileSystemAdapter {
   constructor(private readonly basePath = "") {}
   getBasePath(): string { return this.basePath; }
@@ -319,6 +361,15 @@ export class FakeElement {
   createDiv(options: any = {}): FakeElement { return this.createEl("div", options); }
   createSpan(options: any = {}): FakeElement { return this.createEl("span", options); }
   addEventListener(type: string, listener: (event: any) => void): void { this.listeners.set(type, [...(this.listeners.get(type) ?? []), listener]); }
+  removeEventListener(type: string, listener: (event: any) => void): void { this.listeners.set(type, (this.listeners.get(type) ?? []).filter((l) => l !== listener)); }
+  rect = { left: 0, right: 0, top: 0, bottom: 0, width: 0, height: 0 };
+  getBoundingClientRect(): typeof this.rect { return this.rect; }
+  contains(node: unknown): boolean { return node === this || this.walk().includes(node as FakeElement); }
+  closest(selector: string): FakeElement | null {
+    if (matches(this, selector)) return this;
+    return this.parent?.closest(selector) ?? null;
+  }
+  scrollIntoView(): void {}
   dispatchEvent(event: any): boolean { for (const listener of this.listeners.get(event.type) ?? []) listener(event); return true; }
   focus(): void { this.attributes.set("data-focused", "true"); }
   selectionStart = 0;

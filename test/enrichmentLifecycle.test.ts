@@ -27,6 +27,7 @@ function testControllerDeps(overrides: Partial<SourceEnrichmentControllerDeps> =
   return {
     settings: () => ({ ...DEFAULT_SETTINGS, sourceCaptureConsent: "allow", sourceCaptureEnabled: true, sourceEnrichOnCreate: true, sourceInboxFolder: "Clippings" }) as PluginSettings,
     saveSettings: async () => {},
+    resolveTags: (tags) => tags,
     isMobile: false,
     mobileSourceNoteMaxBytes: 5 * 1024 * 1024,
     enrichApp: undefined as never,
@@ -39,6 +40,7 @@ function testControllerDeps(overrides: Partial<SourceEnrichmentControllerDeps> =
     assertUtilityLifecycleActive: () => {},
     utilityLifecycleEnded: () => false,
     utilityLifecycleGeneration: () => 0,
+    onEnrichQueueIdle: () => {},
     notice: () => {},
     openChoiceModal: () => ({ close() {} }),
     ...overrides,
@@ -200,6 +202,80 @@ describe("enrichment lifecycle", () => {
     expect(activityRecords).toEqual(expect.arrayContaining([
       expect.objectContaining({ state: "needs-attention", details: [expect.objectContaining({ message: "malformed clipping" })] }),
     ]));
+  });
+
+  it("fires onEnrichQueueIdle only after the queue drains, tolerating a throwing hook", async () => {
+    vi.useFakeTimers();
+    const app = new App();
+    const first = app.vault.seed("Clippings/idle-1.md", "One");
+    const second = app.vault.seed("Clippings/idle-2.md", "Two");
+    const seen: string[] = [];
+    const idleAfter: number[] = [];
+    const idle = vi.fn(() => { idleAfter.push(seen.length); throw new Error("hook boom"); });
+    const controller = new SourceEnrichmentController(testControllerDeps({ onEnrichQueueIdle: idle }));
+    vi.spyOn(controller, "enrichFile").mockImplementation(async (file) => { seen.push(file.path); return { status: "enriched" }; });
+    controller.queueEnrich(first);
+    controller.queueEnrich(second);
+    await vi.advanceTimersByTimeAsync(1500);
+    await settle(24);
+    expect(seen).toEqual([first.path, second.path]);
+    expect(idleAfter.at(-1)).toBe(2);
+    expect(idleAfter.every((n, i) => i === 0 || n >= (idleAfter[i - 1] as number))).toBe(true);
+    expect((controller as unknown as ControllerPrivates).enrichQueueRunning).toBe(false);
+  });
+
+  it("does not fire onEnrichQueueIdle for a drain that enriched nothing", async () => {
+    vi.useFakeTimers();
+    const app = new App();
+    const first = app.vault.seed("Clippings/skip-1.md", "One");
+    const second = app.vault.seed("Clippings/skip-2.md", "Two");
+    const idle = vi.fn();
+    const controller = new SourceEnrichmentController(testControllerDeps({ onEnrichQueueIdle: idle }));
+    vi.spyOn(controller, "enrichFile")
+      .mockResolvedValueOnce({ status: "skipped", reason: "not eligible" })
+      .mockResolvedValueOnce({ status: "failed", error: new Error("no") });
+    controller.queueEnrich(first);
+    controller.queueEnrich(second);
+    await vi.advanceTimersByTimeAsync(1500);
+    await settle(24);
+    expect(idle).not.toHaveBeenCalled();
+  });
+
+  it("fires onEnrichQueueIdle once, after the last file settles, when one of two was enriched", async () => {
+    vi.useFakeTimers();
+    const app = new App();
+    const first = app.vault.seed("Clippings/mix-1.md", "One");
+    const second = app.vault.seed("Clippings/mix-2.md", "Two");
+    const events: string[] = [];
+    let open!: () => void;
+    const gate = new Promise<void>((resolve) => { open = resolve; });
+    const controller = new SourceEnrichmentController(testControllerDeps({ onEnrichQueueIdle: () => { events.push("idle"); } }));
+    vi.spyOn(controller, "enrichFile").mockImplementation(async (file) => {
+      events.push(`start:${file.path}`);
+      await gate;
+      events.push(`done:${file.path}`);
+      return file.path === first.path ? { status: "enriched" } : { status: "skipped", reason: "no" };
+    });
+    controller.queueEnrich(first);
+    controller.queueEnrich(second);
+    await vi.advanceTimersByTimeAsync(1500);
+    open();
+    await settle(24);
+    expect(events).toEqual([`start:${first.path}`, `done:${first.path}`, `start:${second.path}`, `done:${second.path}`, "idle"]);
+  });
+
+  it("does not fire onEnrichQueueIdle once the utility lifecycle has ended", async () => {
+    vi.useFakeTimers();
+    const app = new App();
+    const file = app.vault.seed("Clippings/idle-ended.md", "One");
+    let ended = false;
+    const idle = vi.fn();
+    const controller = new SourceEnrichmentController(testControllerDeps({ onEnrichQueueIdle: idle, utilityLifecycleEnded: () => ended }));
+    vi.spyOn(controller, "enrichFile").mockImplementation(async () => { ended = true; return { status: "enriched" }; });
+    controller.queueEnrich(file);
+    await vi.advanceTimersByTimeAsync(1500);
+    await settle(24);
+    expect(idle).not.toHaveBeenCalled();
   });
 
   it("surfaces a consent persistence failure and lets the automatic queue continue", async () => {

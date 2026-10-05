@@ -725,3 +725,91 @@ describe("memory_record", () => {
     expect(read(app)).toContain("Second fact");
   });
 });
+
+describe("vault_tags output", () => {
+  it("lists tags by descending note count, one line each, raw casing kept", async () => {
+    const { app, vt } = tools(false);
+    app.vault.seed("T/A.md", "a", { tags: ["llm", "Rust"] });
+    app.vault.seed("T/B.md", "b", { tags: ["llm"] });
+    app.vault.seed("T/C.md", "c", { frontmatter: { tags: ["llm", "solo"] } });
+    expect(await vt.call("vault_tags", {})).toBe("- #llm (3)\n- #Rust (1)\n- #solo (1)");
+  });
+
+  it("says so when the vault has no tags", async () => {
+    expect(await tools(false).vt.call("vault_tags", {})).toBe("No tags in the vault yet.");
+  });
+});
+
+describe("agent tag resolution", () => {
+  function tagged() {
+    const { app, vt } = tools(true);
+    app.vault.seed("T/A.md", "a", { tags: ["llm"] });
+    app.vault.seed("T/B.md", "b", { tags: ["llm"] });
+    return { app, vt };
+  }
+
+  it("note_create maps a variant to the existing tag and says so on the last line", async () => {
+    const { app, vt } = tagged();
+    const out = await vt.call("note_create", { title: "N", content: "c", tags: ["llms", "brand-new"] });
+    expect(out.split("\n").pop()).toBe("Tags mapped to existing: llms → llm");
+    const path = out.split("\n")[0]!.replace("Created note: ", "");
+    const written = await app.vault.read(app.vault.getAbstractFileByPath(path) as never);
+    expect(written).toContain('tags:\n  - "claude"\n  - "llm"\n  - "brand-new"\n');
+  });
+
+  it("note_create adds no mapped line when nothing was mapped", async () => {
+    const { vt } = tagged();
+    const out = await vt.call("note_create", { title: "N2", content: "c", tags: ["llm", "brand-new"] });
+    expect(out).not.toContain("Tags mapped");
+  });
+
+  it("update_frontmatter maps agent tags and reports the mapping", async () => {
+    const { app, vt } = tagged();
+    app.vault.seed("Notes/Tagged.md", "---\ntitle: Tagged\ntags:\n  - a\n---\n\nbody\n");
+    const out = await vt.call("update_frontmatter", { path: "Notes/Tagged.md", tags: ["LLMs"] });
+    expect(out.split("\n").pop()).toBe("Tags mapped to existing: llms → llm");
+    expect(await vt.call("note_read", { path: "Notes/Tagged.md" })).toContain('  - "llm"\n');
+  });
+
+  it("update_frontmatter routes a string tags field through the resolver and keeps the list", async () => {
+    const { app, vt } = tagged();
+    app.vault.seed("Notes/F.md", "---\ntitle: F\ntags:\n  - a\n  - b\n---\n\nbody\n");
+    const out = await vt.call("update_frontmatter", { path: "Notes/F.md", fields: { tags: "LLMs" } });
+    expect(out.split("\n").pop()).toBe("Tags mapped to existing: llms → llm");
+    const text = await vt.call("note_read", { path: "Notes/F.md" });
+    expect(text).toContain('  - "a"\n  - "b"\n  - "llm"\n');
+  });
+
+  it("note_create reports every mapped input, even one that collapsed onto a tag already present", async () => {
+    const { app, vt } = tagged();
+    const out = await vt.call("note_create", { title: "N3", content: "c", tags: ["llm", "llms"] });
+    expect(out.split("\n").pop()).toBe("Tags mapped to existing: llms → llm");
+    const path = out.split("\n")[0]!.replace("Created note: ", "");
+    const written = await app.vault.read(app.vault.getAbstractFileByPath(path) as never);
+    expect(written.match(/- "llm"/g)).toHaveLength(1);
+  });
+
+  it("builds no vocabulary when no tag was supplied", async () => {
+    const { app, vt } = tagged();
+    app.vault.seed("Notes/G.md", "---\ntitle: G\n---\n\nbody\n");
+    const spy = vi.spyOn(app.vault, "getMarkdownFiles");
+    await vt.call("note_create", { title: "N4", content: "c" });
+    await vt.call("update_frontmatter", { path: "Notes/G.md", fields: { status: "x" } });
+    expect(spy).not.toHaveBeenCalled();
+    await vt.call("update_frontmatter", { path: "Notes/G.md", tags: ["z"] });
+    expect(spy).toHaveBeenCalled();
+  });
+
+  it("never resolves the claude base tag", async () => {
+    const { app, vt } = tools(true);
+    app.vault.seed("T/C1.md", "a", { tags: ["claudes"] });
+    app.vault.seed("T/C2.md", "b", { tags: ["claudes"] });
+    for (const tags of [[], ["x"]]) {
+      const out = await vt.call("note_create", { title: `C${tags.length}`, content: "c", tags });
+      const path = out.split("\n")[0]!.replace("Created note: ", "");
+      const written = await app.vault.read(app.vault.getAbstractFileByPath(path) as never);
+      expect(written).toContain('- "claude"');
+      expect(written).not.toContain("claudes");
+    }
+  });
+});

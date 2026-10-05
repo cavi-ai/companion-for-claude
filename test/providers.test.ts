@@ -3,6 +3,8 @@ import { parseOllamaLine } from "../src/providers/ollamaParse";
 import { buildOllamaRequestBody } from "../src/providers/ollamaBody";
 import { errorHint } from "../src/providers/errorHints";
 import { parseTaggerOutput } from "../src/indexing/taggerParse";
+import { summarizeAndTag } from "../src/indexing/autoTagger";
+import { buildVocabulary } from "../src/tags/vocabulary";
 import { migrateSystemPrompt, DEFAULT_SETTINGS } from "../src/types";
 import type { CompletionRequest } from "../src/providers/types";
 
@@ -219,5 +221,27 @@ describe("errorHint — claude-cli", () => {
     expect(errorHint("Claude Code not found", "claude-cli")).toMatch(/Install it/);
     expect(errorHint("Claude Code is not signed in", "claude-cli")).toMatch(/claude auth login/);
     expect(errorHint("Claude Code exited (code 1). rate limit", "claude-cli")).toMatch(/Wait a moment/);
+  });
+});
+
+describe("summarizeAndTag", () => {
+  const router = (text: string, seen: { user?: string } = {}) =>
+    ({
+      complete: async (_role: string, req: { user: string }) => {
+        seen.user = req.user;
+        return { text, provider: { label: "stub" } };
+      },
+    }) as never;
+
+  it("resolves model tags against the vocabulary, flags new ones, and lists vault tags in the prompt", async () => {
+    const vocab = buildVocabulary([
+      { path: "a.md", tags: ["llm", "rust"] },
+      { path: "b.md", tags: ["llm"] },
+    ]);
+    const seen: { user?: string } = {};
+    const res = await summarizeAndTag(router("TITLE: T\nTAGS: LLMs, brand-new\nSUMMARY: s", seen), "text", vocab);
+    expect(res.tags).toEqual(["llm", "brand-new"]);
+    expect(res.newTags).toEqual(["brand-new"]);
+    expect(seen.user).toContain("Existing tags (prefer these when relevant): llm, rust");
   });
 });

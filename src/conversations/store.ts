@@ -32,6 +32,12 @@ export interface Conversation {
   lastEditProposal?: RecoverableEditProposal;
   /** The chat project (note path or research Project.md path) this conversation is scoped to. */
   projectId?: string;
+  /** Epoch ms; archived chats leave the default list and are exempt from pruning. */
+  archivedAt?: number;
+  /** Vault path of the distilled summary note for this chat. */
+  distilledNote?: string;
+  /** Id of the conversation this one was forked from. */
+  forkedFrom?: string;
 }
 
 export type ChatTurnState = "running" | "interrupted" | "failed" | "capped";
@@ -151,8 +157,9 @@ export function touch(convo: Conversation, messages: ChatMessage[], now: number)
 }
 
 /**
- * Insert or replace `convo`, keep the list ordered by recency, and prune to
- * `maxKeep` (`<= 0` means unbounded). Leaves `state.activeId` untouched
+ * Insert or replace `convo`, keep the list ordered by recency, and prune the
+ * unarchived conversations to `maxKeep` (`<= 0` means unbounded; archived
+ * conversations are never pruned). Leaves `state.activeId` untouched
  * unless it was pruned out, in which case it falls back to the first kept
  * conversation. The active conversation changes only through `setActive` —
  * saving a conversation, even a background tab's turn, must never steal the
@@ -161,7 +168,9 @@ export function touch(convo: Conversation, messages: ChatMessage[], now: number)
 export function saveConversation(state: ConversationState, convo: Conversation, maxKeep: number): ConversationState {
   const others = state.conversations.filter((c) => c.id !== convo.id);
   const merged = [convo, ...others].sort((a, b) => b.updatedAt - a.updatedAt);
-  const kept = maxKeep > 0 ? merged.slice(0, maxKeep) : merged;
+  const keptLive = merged.filter((c) => c.archivedAt === undefined);
+  const dropped = new Set(maxKeep > 0 ? keptLive.slice(maxKeep).map((c) => c.id) : []);
+  const kept = merged.filter((c) => !dropped.has(c.id));
   const activeId = state.activeId !== null && kept.some((c) => c.id === state.activeId) ? state.activeId : kept[0]?.id ?? null;
   return { conversations: kept, activeId };
 }
@@ -231,6 +240,50 @@ export function renameConversation(state: ConversationState, id: string, title: 
   };
 }
 
+function mapConversation(state: ConversationState, id: string, update: (c: Conversation) => Conversation): ConversationState {
+  return { ...state, conversations: state.conversations.map((c) => (c.id === id ? update(c) : c)) };
+}
+
+export function archiveConversation(state: ConversationState, id: string, now: number): ConversationState {
+  return mapConversation(state, id, (c) => ({ ...c, archivedAt: now }));
+}
+
+export function unarchiveConversation(state: ConversationState, id: string): ConversationState {
+  return mapConversation(state, id, (c) => {
+    const { archivedAt: _archivedAt, ...rest } = c;
+    return rest;
+  });
+}
+
+export function setDistilledNote(state: ConversationState, id: string, path: string): ConversationState {
+  return mapConversation(state, id, (c) => ({ ...c, distilledNote: path }));
+}
+
+/** Copy a chat's visible history into a new conversation; turn, CLI, archive, and distill state stay behind. */
+export function forkConversation(
+  state: ConversationState,
+  id: string,
+  newId: string,
+  now: number,
+): { state: ConversationState; fork: Conversation } {
+  const source = state.conversations.find((c) => c.id === id);
+  if (!source) throw new Error(`Conversation not found: ${id}`);
+  const fork: Conversation = {
+    id: newId,
+    title: `Fork of ${source.title}`,
+    createdAt: now,
+    updatedAt: now,
+    messages: source.messages.filter((m) => !m.contextExcluded).map((m) => ({ ...m })),
+    forkedFrom: id,
+    ...(source.projectId !== undefined ? { projectId: source.projectId } : {}),
+  };
+  return { state: saveConversation(state, fork, 0), fork };
+}
+
+export function seededConversation(id: string, now: number, title: string, seed: ChatMessage, projectId?: string): Conversation {
+  return { id, title, createdAt: now, updatedAt: now, messages: [{ ...seed }], ...(projectId !== undefined ? { projectId } : {}) };
+}
+
 export function getActive(state: ConversationState): Conversation | null {
   if (!state.activeId) return null;
   return state.conversations.find((c) => c.id === state.activeId) ?? null;
@@ -247,7 +300,7 @@ export function fromPersisted(raw: unknown): ConversationState {
   const o = raw as { conversations?: unknown; activeId?: unknown };
   const conversations = Array.isArray(o.conversations)
     ? o.conversations.filter(isConversation).map((c) => {
-        const { activeTurn: rawTurn, projectId: rawProjectId, lastEditProposal: rawProposal, ...conversation } = c;
+        const { activeTurn: rawTurn, projectId: rawProjectId, lastEditProposal: rawProposal, archivedAt: rawArchivedAt, distilledNote: rawNote, forkedFrom: rawForked, ...conversation } = c;
         const activeTurn = normalizeTurnReceipt(rawTurn);
         const lastEditProposal = normalizeEditProposal(rawProposal);
         const projectId = typeof rawProjectId === "string" && rawProjectId.length > 0 ? rawProjectId : undefined;
@@ -255,6 +308,9 @@ export function fromPersisted(raw: unknown): ConversationState {
           ...conversation,
           messages: compactMessages(c.messages),
           ...(projectId !== undefined ? { projectId } : {}),
+          ...(typeof rawArchivedAt === "number" && Number.isFinite(rawArchivedAt) ? { archivedAt: rawArchivedAt } : {}),
+          ...(typeof rawNote === "string" && rawNote.length > 0 ? { distilledNote: rawNote } : {}),
+          ...(typeof rawForked === "string" && rawForked.length > 0 ? { forkedFrom: rawForked } : {}),
           ...(lastEditProposal ? { lastEditProposal } : {}),
           ...(activeTurn ? { activeTurn: activeTurn.state === "running"
             ? { ...activeTurn, state: "interrupted" as const }

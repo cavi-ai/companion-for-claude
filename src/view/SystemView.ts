@@ -15,6 +15,8 @@ export interface SystemViewDeps {
   catchUpIndex(): Promise<void>;
   openInbox(): Promise<void>;
   reviewSafeFixes(fixes: SafeFix[], done: () => void): void;
+  reviewTagMerges(done: () => void): void;
+  connectOrphans(done: () => void): void;
   openSetupWizard(): void;
   openSettings(): void;
   openClipperSetup(): void;
@@ -103,7 +105,7 @@ export class SystemView extends ItemView {
       }
       row.createSpan({ cls: "cc-system-message", text: item.message });
     }
-    if (section.count > section.items.length) {
+    if (!section.summary && section.count > section.items.length) {
       card.createDiv({ cls: "cc-system-more", text: `+${section.count - section.items.length} more` });
     }
     this.renderActions(card, section);
@@ -143,6 +145,12 @@ export class SystemView extends ItemView {
         return;
       case "inbox":
         action("Open Inbox", () => this.deps.openInbox());
+        return;
+      case "tags":
+        if (section.count > 0) action("Review tag merges", () => this.deps.reviewTagMerges(() => void this.render()));
+        return;
+      case "orphans":
+        if (section.count > 0) action("Connect orphan notes", () => this.deps.connectOrphans(() => void this.render()));
         return;
       case "links":
         return;

@@ -1,4 +1,6 @@
 import { App, TFile, normalizePath, getAllTags, requestUrl, parseYaml } from "obsidian";
+import { vaultTagEntries, vaultVocabulary } from "../tags/vaultTags";
+import { createTagResolver, type ResolvedTag } from "../tags/resolve";
 import type { McpToolDef } from "./protocol";
 import { tokenize } from "../context/search";
 import { fuseKeywordAndSemantic, keywordVaultSearch, type SemanticSearch } from "../context/hybridSearch";
@@ -663,13 +665,8 @@ export class VaultTools {
 
   private async tags(): Promise<string> {
     const counts = new Map<string, number>();
-    for (const file of this.app.vault.getMarkdownFiles()) {
-      const cache = this.app.metadataCache.getFileCache(file);
-      if (!cache) continue;
-      for (const t of getAllTags(cache) ?? []) {
-        const tag = t.replace(/^#/, "");
-        counts.set(tag, (counts.get(tag) ?? 0) + 1);
-      }
+    for (const entry of vaultTagEntries(this.app)) {
+      for (const tag of entry.tags) counts.set(tag, (counts.get(tag) ?? 0) + 1);
     }
     if (counts.size === 0) return "No tags in the vault yet.";
     return Array.from(counts.entries())
@@ -678,16 +675,29 @@ export class VaultTools {
       .join("\n");
   }
 
+  private resolveAgentTags(raw: string[]): { tags: string[]; note: string } {
+    if (raw.length === 0) return { tags: [], note: "" };
+    const resolve = createTagResolver(vaultVocabulary(this.app));
+    const resolved = raw.map(resolve).filter((r): r is ResolvedTag => r !== null);
+    const mapped = new Map<string, ResolvedTag>();
+    for (const r of resolved) if (r.match === "variant" && !mapped.has(r.input)) mapped.set(r.input, r);
+    return {
+      tags: [...new Set(resolved.map((r) => r.tag))],
+      note: mapped.size > 0 ? `\nTags mapped to existing: ${[...mapped.values()].map((r) => `${r.input} → ${r.tag}`).join(", ")}` : "",
+    };
+  }
+
   private async create(
     title: string,
     content: string,
     folder: string | undefined,
-    tags: string[],
+    rawTags: string[],
     typeName?: string,
     properties?: Record<string, unknown>,
   ): Promise<string> {
     const dir = assertVaultPath((folder ?? this.opts.defaultFolder).trim());
     await this.ensureFolder(dir);
+    const { tags, note: mappedNote } = this.resolveAgentTags(rawTags);
     const base: FrontmatterData = {
       title,
       created: new Date().toISOString().slice(0, 10),
@@ -717,7 +727,7 @@ export class VaultTools {
     const body = `${buildFrontmatter(data)}\n\n# ${title}\n\n${content}\n`;
     const path = await this.uniquePath(dir, title);
     const file = await this.app.vault.create(path, body);
-    return `Created note: ${file.path}${conformance}`;
+    return `Created note: ${file.path}${conformance}${mappedNote}`;
   }
 
   private ontologyGet(type: string | undefined): string {
@@ -807,6 +817,16 @@ export class VaultTools {
         return plan.summaries.join(" ");
       }
       assertWritableFrontmatterKey(key);
+      if (key === "tags") {
+        const { tags, note } = this.resolveAgentTags(splitTagList(content));
+        await this.app.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => {
+          const existing: unknown[] = Array.isArray(fm.tags) ? fm.tags : typeof fm.tags === "string" ? [fm.tags] : [];
+          const present = new Set(existing.map(String));
+          const added = tags.filter((tag) => !present.has(tag));
+          fm.tags = op === "replace" ? tags : op === "append" ? [...existing, ...added] : [...added, ...existing];
+        });
+        return `Patched frontmatter "tags" of ${file.path} (${op})${await this.conformanceLine(file)}${note}`;
+      }
       await this.app.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => {
         if (op === "replace") {
           fm[key] = content;
@@ -831,14 +851,19 @@ export class VaultTools {
     return `Patched ${where} in ${file.path} (${op})${await this.conformanceLine(file)}`;
   }
 
-  private async updateFrontmatter(path: string, tags: string[], fields: unknown): Promise<string> {
+  private async updateFrontmatter(path: string, rawTags: string[], fields: unknown): Promise<string> {
     const file = this.resolveFile(path);
     const scalars: Record<string, string | number | boolean> = {};
+    const fieldTags: string[] = [];
     if (fields && typeof fields === "object") {
       for (const [k, v] of Object.entries(fields as Record<string, unknown>)) {
-        if (typeof v === "string" || typeof v === "number" || typeof v === "boolean") scalars[k] = v;
+        if (k === "tags") {
+          if (typeof v === "string") fieldTags.push(...splitTagList(v));
+          else if (isUnknownArray(v)) fieldTags.push(...v.filter((i): i is string => typeof i === "string"));
+        } else if (typeof v === "string" || typeof v === "number" || typeof v === "boolean") scalars[k] = v;
       }
     }
+    const { tags, note: mappedNote } = this.resolveAgentTags([...rawTags, ...fieldTags]);
     const delegated: Record<string, unknown> = {};
     for (const k of Object.keys(scalars)) {
       if (DELEGABLE_RESEARCH_KEYS.has(k)) { delegated[k] = scalars[k]; delete scalars[k]; }
@@ -860,7 +885,7 @@ export class VaultTools {
       }
       for (const [k, v] of Object.entries(scalars)) fm[k] = v;
     });
-    return `${plan ? `${plan.summaries.join(" ")} ` : ""}Updated frontmatter of ${file.path}${await this.conformanceLine(file)}`;
+    return `${plan ? `${plan.summaries.join(" ")} ` : ""}Updated frontmatter of ${file.path}${await this.conformanceLine(file)}${mappedNote}`;
   }
 
   private async researchRecordOf(file: TFile): Promise<ResearchRecord | undefined> {
@@ -950,6 +975,10 @@ function str(v: unknown): string {
   if (typeof v !== "string" || v.length === 0) throw new Error("Expected a non-empty string argument.");
   return v;
 }
+function splitTagList(content: string): string[] {
+  return content.split(",").map((t) => t.trim()).filter((t) => t.length > 0);
+}
+
 /** Array.isArray narrows to any[]; this keeps the narrowed elements unknown. */
 function isUnknownArray(v: unknown): v is unknown[] {
   return Array.isArray(v);
