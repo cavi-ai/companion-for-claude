@@ -37,7 +37,7 @@ export class TransformersEmbedder implements Embedder {
 
   /** Explicit download/warm-up with progress (settings button). */
   download(onProgress?: (p: ProgressEvent) => void): Promise<void> {
-    return this.ensureLoaded(onProgress);
+    return this.ensureLoaded(onProgress, true);
   }
 
   async embed(texts: string[]): Promise<number[][]> {
@@ -63,10 +63,10 @@ export class TransformersEmbedder implements Embedder {
     this.tracker.rejectAll(new Error("embedding worker terminated"));
   }
 
-  private ensureLoaded(onProgress?: (p: ProgressEvent) => void): Promise<void> {
+  private ensureLoaded(onProgress?: (p: ProgressEvent) => void, allowDownload = false): Promise<void> {
     if (!this.loaded) {
       const req = this.tracker.create<number[][]>(onProgress);
-      this.post({ id: req.id, type: "load", repo: this.model.hfRepo, pooling: this.model.pooling });
+      this.post({ id: req.id, type: "load", repo: this.model.hfRepo, pooling: this.model.pooling, revision: this.model.revision, dtype: this.model.dtype, maxTokens: this.model.maxTokens, dim: this.model.dim, allowDownload });
       const loadPromise = req.promise.then(() => undefined).catch((e: unknown) => {
         if (this.loaded === loadPromise) this.loaded = null; // allow retry after a failed load
         throw e;

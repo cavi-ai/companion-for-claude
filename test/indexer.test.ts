@@ -57,7 +57,7 @@ describe("SemanticIndexer", () => {
     expect((await ix.stats()).notes).toBe(2);
   });
 
-  it("isolates per-file embedding failures and reports them for recovery", async () => {
+  it("stops after a connection failure and reports it for recovery", async () => {
     const ctx = makeDeps({ "broken.md": "cat", "healthy.md": "fish" });
     ctx.deps.embed = async (input) => {
       if (input.some((text) => text.includes("cat"))) throw new Error("Ollama refused connection");
@@ -65,8 +65,16 @@ describe("SemanticIndexer", () => {
     };
     const result = await new SemanticIndexer(ctx.deps).build({ force: true });
 
-    expect(result).toMatchObject({ indexed: 1, skipped: 1, failureCount: 1 });
+    expect(result).toMatchObject({ indexed: 0, skipped: 1, failureCount: 1 });
     expect(result.failures).toEqual([{ path: "broken.md", message: "Ollama refused connection" }]);
+  });
+
+  it("continues after an unreadable file", async () => {
+    const ctx = makeDeps({ "broken.md": "cat", "healthy.md": "fish" });
+    ctx.deps.read = async (path) => { if (path === "broken.md") throw new Error("File unreadable"); return ctx.files[path] ?? ""; };
+    const result = await new SemanticIndexer(ctx.deps).build();
+    expect(result).toMatchObject({ indexed: 1, skipped: 1, failureCount: 1 });
+    expect(result.failures[0]?.message).toBe("File unreadable");
   });
 
   it("rejects an oversized file before reading or embedding it", async () => {

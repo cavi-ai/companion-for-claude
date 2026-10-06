@@ -2,7 +2,7 @@
 // embed fn and keys invalidation on a model string; Embedder pairs the two so
 // main.ts can route by settings.embeddingEngine. Pure.
 
-import { builtinModelById } from "./transformers/model";
+import { builtinModelById, builtinIndexKey } from "./transformers/model";
 
 export type EmbeddingEngine = "builtin" | "ollama" | "custom";
 
@@ -15,7 +15,7 @@ export interface Embedder {
 
 /** The store/index key for the active engine. */
 export function embedderId(engine: EmbeddingEngine, ollamaModel: string, builtinModel?: string, customModel?: string): string {
-  if (engine === "builtin") return builtinModelById(builtinModel).id;
+  if (engine === "builtin") return builtinIndexKey(builtinModelById(builtinModel));
   if (engine === "custom") return `custom:${(customModel ?? "").trim() || "default"}`;
   return ollamaModel;
 }

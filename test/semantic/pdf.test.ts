@@ -26,6 +26,21 @@ describe("assemblePageText", () => {
 });
 
 describe("extractPdfPages", () => {
+  it("rejects an excessive page count before reading pages and destroys the document", async () => {
+    const destroyed = { value: false };
+    let read = false;
+    const doc: PdfDocumentLike = { numPages: 201, getPage: async () => { read = true; throw new Error("should not read"); }, destroy: async () => { destroyed.value = true; } };
+    await expect(extractPdfPages(async () => doc, new ArrayBuffer(8), { maxPages: 200 })).rejects.toThrow("page limit");
+    expect(read).toBe(false);
+    expect(destroyed.value).toBe(true);
+  });
+
+  it("bounds expanded text independently of compressed input bytes", async () => {
+    const destroyed = { value: false };
+    const doc = fakeDoc([[item("abcd")], [item("efgh")]], destroyed);
+    await expect(extractPdfPages(async () => doc, new ArrayBuffer(1), { maxTextChars: 6 })).rejects.toThrow("text limit");
+    expect(destroyed.value).toBe(true);
+  });
   it("extracts per-page text, skips empty pages, and destroys the document", async () => {
     const destroyed = { value: false };
     const doc = fakeDoc([[item("Page one text", true)], [], [item("Page three", true)]], destroyed);

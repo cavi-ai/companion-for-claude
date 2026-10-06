@@ -216,13 +216,19 @@ describe("settings tab render", () => {
     Platform.isMobile = true;
     Platform.isDesktop = false;
     try {
-      const tab = new ClaudeCompanionSettingTab(new App() as never, stubPlugin());
+      const plugin = stubPlugin();
+      plugin.settings.settingsShowAdvanced = true;
+      const tab = new ClaudeCompanionSettingTab(new App() as never, plugin);
       expect(() => openSettingTab(tab)).not.toThrow();
       const names = (tab.containerEl as unknown as FakeElement)
         .querySelectorAll(".setting-item-name")
         .map((el) => el.textContent);
       expect(names).not.toContain("Enable MCP server");
-      expect(names).not.toContain("Ollama host");
+      expect(names).toContain("Ollama host");
+      const backend = flatten(definitionsOf(stubPlugin())).find((d) => (d.control as { key?: string } | undefined)?.key === "chatBackend");
+      expect(Object.keys((backend?.control as { options: Record<string, string> }).options)).not.toContain("claude-cli");
+      expect(names).not.toContain("Codex model");
+      expect(names).not.toContain("OpenCode model");
       expect(names).toContain("Let Claude use vault tools");
     } finally {
       Platform.isMobile = false;

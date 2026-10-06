@@ -116,6 +116,7 @@ If Claude is asked to write with writes off, it's instructed to say so plainly
 rather than pasting note content into chat as though it had been saved. See
 [agent-mode.md](agent-mode.md#the-guardrails).
 
+
 ## Store version or BRAT?
 
 Use the community store — that's the released, reviewed build. Use
@@ -123,6 +124,7 @@ Use the community store — that's the released, reviewed build. Use
 `cavi-ai/companion-for-claude` only if you want pre-release builds.
 
 ## Something's broken — where do I report it?
+
 
 Bugs and feature requests: a GitHub issue. Suspected vulnerabilities: **not** a
 public issue — follow [`SECURITY.md`](../SECURITY.md).

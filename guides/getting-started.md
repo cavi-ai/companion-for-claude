@@ -68,6 +68,7 @@ Companion trims attached context to a character budget (default 24,000
 characters, 6 notes) so a big vault can't blow up a request. Both are adjustable
 under *Settings → Companion for Claude → Behavior*.
 
+
 ## 4. Your first artifact
 
 Type `/` in the composer to open the slash palette — 24 built-in commands plus

@@ -39,24 +39,27 @@ function isBuiltinEngineEntry(url: string): boolean {
 
 /**
  * Whether the given model's weights are already in the local cache — i.e.
- * embedding can proceed fully offline, no new download. Requires the .onnx
+ * the selected q8 weights and tokenizer are cached. Runtime sidecars are
+ * checked by the worker before an implicit load. Requires the exact q8
  * weights entry specifically (a stray config.json from an aborted download
  * must not pass the consent gate). False when the Cache API is unavailable
  * or unreadable.
  */
 export async function hasCachedModel(cachesLike: CachesLike | undefined, hfRepo: string): Promise<boolean> {
-  if (!cachesLike) return false;
+  const model = BUILTIN_EMBEDDING_MODELS.find((m) => m.hfRepo === hfRepo);
+  if (!cachesLike || !model) return false;
   try {
     const cache = await cachesLike.open(TRANSFORMERS_CACHE_NAME);
     const keys = await cache.keys();
-    return keys.some((k) => {
+    const files = new Set(keys.flatMap((k) => {
       try {
         const parsed = new URL(k.url);
-        return parsed.pathname.includes(`/${hfRepo}/`) && parsed.pathname.endsWith(".onnx");
-      } catch {
-        return false;
-      }
-    });
+        const prefix = `/${hfRepo}/resolve/${model.revision}/`;
+        return parsed.hostname === "huggingface.co" && parsed.pathname.startsWith(prefix)
+          ? [parsed.pathname.slice(prefix.length)] : [];
+      } catch { return []; }
+    }));
+    return model.assets.every((asset) => files.has(asset.path));
   } catch {
     return false;
   }

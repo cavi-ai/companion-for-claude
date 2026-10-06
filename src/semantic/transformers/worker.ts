@@ -20,6 +20,21 @@
 import "./forceWebEnv"; // MUST precede the transformers import — see that file
 import { pipeline, env } from "@huggingface/transformers";
 import type { WorkerRequest, WorkerResponse } from "./protocol";
+import { TRANSFORMERS_CACHE_NAME } from "./cache";
+
+// Enforce consent at the network boundary, including ORT sidecars. A partial
+// cache must fail closed instead of silently downloading missing assets.
+const networkFetch = globalThis.fetch.bind(globalThis);
+let allowNetwork = false;
+const guardedFetch: typeof fetch = async (input, init) => {
+  if (allowNetwork) return networkFetch(input, init);
+  const url = input instanceof Request ? input.url : String(input);
+  const cached = typeof caches === "undefined" ? undefined : await (await caches.open(TRANSFORMERS_CACHE_NAME)).match(url);
+  if (cached) return cached;
+  throw new Error("Embedding assets missing from cache — download the model in Companion settings.");
+};
+globalThis.fetch = guardedFetch;
+env.fetch = guardedFetch;
 
 // The dedicated-worker global, narrowed to what this file uses. (A plain
 // `declare const self` would collide with lib.dom's declaration.)
@@ -39,10 +54,13 @@ const onnxEnv = env.backends.onnx as { wasm?: { numThreads?: number } };
 if (onnxEnv.wasm) onnxEnv.wasm.numThreads = 1;
 
 /** The feature-extraction pipeline: callable, plus dispose to free ORT sessions. */
+type ModelContract = Omit<Extract<WorkerRequest, { type: "load" }>, "id" | "type" | "allowDownload">;
+
 interface Extractor {
   (texts: string[], opts: { pooling: "cls" | "mean"; normalize: boolean }): Promise<{
     tolist(): number[][];
   }>;
+  tokenizer: { config: { model_max_length?: number } };
   dispose?: () => Promise<void>;
 }
 
@@ -53,7 +71,8 @@ let loading: Promise<void> | null = null;
 /** Bumped by "dispose" so an in-flight load can tell it was cancelled. */
 let generation = 0;
 /** The loaded model's config (set on load; embed uses its pooling). */
-let active: { repo: string; pooling: "cls" | "mean" } | null = null;
+let active: ModelContract | null = null;
+let loadingContract: ModelContract | null = null;
 /** Set when a WebGPU session dies after a successful warm-up (device lost);
  * the warm-up probe can't catch that, so skip WebGPU from then on. */
 let webgpuBroken = false;
@@ -70,7 +89,7 @@ async function hasWebGpuAdapter(): Promise<boolean> {
   }
 }
 
-function makeExtractor(device: "webgpu" | "wasm", id: number, repo: string): Promise<Extractor> {
+async function makeExtractor(device: "webgpu" | "wasm", id: number, model: ModelContract): Promise<Extractor> {
   // Hub progress events carry {status:"progress", file, progress: 0-100};
   // other statuses (initiate/download/done/ready) have no progress field.
   const progress = (p: unknown) => {
@@ -80,18 +99,31 @@ function makeExtractor(device: "webgpu" | "wasm", id: number, repo: string): Pro
     }
   };
   // q8 → onnx/model_quantized.onnx (verified present in the catalog repos).
-  return pipeline("feature-extraction", repo, {
+  const candidate: Extractor = await pipeline("feature-extraction", model.repo, {
     device,
-    dtype: "q8",
+    dtype: model.dtype,
+    revision: model.revision,
     progress_callback: progress,
   });
+  // FeatureExtractionPipeline ignores max_length in its call options. Its
+  // tokenizer truncates against this public config instead (Transformers 4.3).
+  candidate.tokenizer.config.model_max_length = model.maxTokens;
+  return candidate;
 }
 
-async function doLoad(id: number, repo: string, pooling: "cls" | "mean"): Promise<void> {
+async function doLoad(id: number, model: ModelContract): Promise<void> {
+  if (!allowNetwork) {
+    // ORT may import its factory URL directly after a failed preload, bypassing
+    // fetch. Require its exact current sidecars before constructing the session.
+    const paths = (env.backends.onnx as { wasm?: { wasmPaths?: { wasm?: string; mjs?: string } } }).wasm?.wasmPaths;
+    for (const url of [paths?.wasm, paths?.mjs]) {
+      if (url && !url.startsWith("blob:")) await guardedFetch(url);
+    }
+  }
   const gen = generation;
   let candidate: Extractor | null = null;
   let chosen = "wasm";
-  const poolingOpts = { pooling, normalize: true } as const;
+  const poolingOpts = { pooling: model.pooling, normalize: true } as const;
   // pipeline() throws synchronously-via-rejection when navigator.gpu is
   // missing ("Unsupported device"), but some WebGPU failures only surface at
   // session creation or first inference — probe the API up front, then verify
@@ -100,7 +132,7 @@ async function doLoad(id: number, repo: string, pooling: "cls" | "mean"): Promis
   if (!webgpuBroken && await hasWebGpuAdapter()) {
     let webgpu: Extractor | null = null;
     try {
-      webgpu = await makeExtractor("webgpu", id, repo);
+      webgpu = await makeExtractor("webgpu", id, model);
       await webgpu(["warm-up"], poolingOpts);
       candidate = webgpu;
       chosen = "webgpu";
@@ -115,7 +147,7 @@ async function doLoad(id: number, repo: string, pooling: "cls" | "mean"): Promis
     }
   }
   if (!candidate) {
-    candidate = await makeExtractor("wasm", id, repo);
+    candidate = await makeExtractor("wasm", id, model);
   }
   if (gen !== generation) {
     // "dispose" arrived while we were loading: don't resurrect the pipeline.
@@ -124,14 +156,20 @@ async function doLoad(id: number, repo: string, pooling: "cls" | "mean"): Promis
   }
   extractor = candidate;
   backend = chosen;
-  active = { repo, pooling };
+  active = model;
 }
 
-async function load(id: number, repo: string, pooling: "cls" | "mean"): Promise<void> {
+function sameContract(a: ModelContract | null, b: ModelContract): boolean {
+  return a?.repo === b.repo && a.revision === b.revision && a.dtype === b.dtype
+    && a.pooling === b.pooling && a.maxTokens === b.maxTokens && a.dim === b.dim;
+}
+
+async function load(id: number, model: ModelContract): Promise<void> {
+  if (loading && !extractor && !sameContract(loadingContract, model)) throw new Error("Another embedding model is already loading");
   // A load for a different model than the loaded one swaps the pipeline out.
-  if (extractor && active?.repo !== repo) {
+  if (extractor && !sameContract(active, model)) {
     generation++;
-    void extractor.dispose?.()?.catch(() => {});
+    await extractor.dispose?.();
     extractor = null;
     loading = null;
     active = null;
@@ -143,7 +181,8 @@ async function load(id: number, repo: string, pooling: "cls" | "mean"): Promise<
     // events — later joiners just await the shared promise and post their
     // own result by id.
     if (!loading) {
-      const p = doLoad(id, repo, pooling).catch((e: unknown) => {
+      loadingContract = model;
+      const p = doLoad(id, model).catch((e: unknown) => {
         if (loading === p) loading = null; // allow retry after a failed load
         throw e;
       });
@@ -165,7 +204,7 @@ async function embed(id: number, texts: string[]): Promise<void> {
   const opts = { pooling: active.pooling, normalize: true } as const;
   try {
     const out = await extractor(texts, opts);
-    ctx.postMessage({ id, type: "result", vectors: out.tolist() });
+    ctx.postMessage({ id, type: "result", vectors: validVectors(out.tolist(), texts.length) });
     return;
   } catch (e) {
     if (backend !== "webgpu" && !rebuilding) throw e;
@@ -175,7 +214,7 @@ async function embed(id: number, texts: string[]): Promise<void> {
   webgpuBroken = true;
   if (!rebuilding) {
     const gen = generation;
-    const repo = active.repo;
+    const model = active;
     const dead = extractor;
     extractor = null;
     loading = null; // stale: referred to the dead session; a future load must rebuild
@@ -187,7 +226,7 @@ async function embed(id: number, texts: string[]): Promise<void> {
         // resources are already gone.
       }
       if (gen !== generation) throw new Error("disposed during load");
-      const candidate = await makeExtractor("wasm", id, repo);
+      const candidate = await makeExtractor("wasm", id, model);
       try {
         if (gen !== generation) {
           // "dispose" arrived during the rebuild: don't resurrect the pipeline.
@@ -207,7 +246,14 @@ async function embed(id: number, texts: string[]): Promise<void> {
   await rebuilding;
   if (!extractor || !active) throw new Error("model not loaded");
   const out = await extractor(texts, opts);
-  ctx.postMessage({ id, type: "result", vectors: out.tolist() });
+  ctx.postMessage({ id, type: "result", vectors: validVectors(out.tolist(), texts.length) });
+}
+
+function validVectors(vectors: number[][], count: number): number[][] {
+  if (!active || vectors.length !== count || vectors.some((v) => v.length !== active?.dim || !v.every(Number.isFinite))) {
+    throw new Error("Embedding output does not match the selected model's dimensions");
+  }
+  return vectors;
 }
 
 ctx.onmessage = (e) => {
@@ -218,7 +264,10 @@ ctx.onmessage = (e) => {
       type: "error",
       message: err instanceof Error ? err.message : String(err),
     });
-  if (msg.type === "load") void load(msg.id, msg.repo, msg.pooling).catch(fail);
+  if (msg.type === "load") {
+    if (msg.allowDownload === true) allowNetwork = true;
+    void load(msg.id, { repo: msg.repo, pooling: msg.pooling, revision: msg.revision, dtype: msg.dtype, maxTokens: msg.maxTokens, dim: msg.dim }).catch(fail);
+  }
   else if (msg.type === "embed") void embed(msg.id, msg.texts).catch(fail);
   else if (msg.type === "dispose") {
     generation++; // cancels any in-flight load (see doLoad)

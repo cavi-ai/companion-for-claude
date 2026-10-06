@@ -23,12 +23,22 @@ function fakeCaches(urls: string[], opened: string[] = [], deleted: string[] = [
 }
 
 describe("hasCachedModel", () => {
+  it("rejects floating main assets even when every required file is present", async () => {
+    const files = ["config.json", "tokenizer.json", "tokenizer_config.json", "onnx/model_quantized.onnx"];
+    const caches = fakeCaches(files.map((file) => `https://huggingface.co/${repo}/resolve/main/${file}`));
+    await expect(hasCachedModel(caches, repo)).resolves.toBe(false);
+  });
+  it("does not mistake fp16 weights for the selected q8 model", async () => {
+    await expect(hasCachedModel(fakeCaches([`https://huggingface.co/${repo}/resolve/${BUILTIN_EMBEDDING_MODEL.revision}/onnx/model_fp16.onnx`]), repo)).resolves.toBe(false);
+  });
   it("true when the repo's onnx weights are cached", async () => {
     const opened: string[] = [];
     const caches = fakeCaches(
       [
-        `https://huggingface.co/${repo}/resolve/main/config.json`,
-        `https://huggingface.co/${repo}/resolve/main/onnx/model_quantized.onnx`,
+        `https://huggingface.co/${repo}/resolve/${BUILTIN_EMBEDDING_MODEL.revision}/config.json`,
+        `https://huggingface.co/${repo}/resolve/${BUILTIN_EMBEDDING_MODEL.revision}/tokenizer.json`,
+        `https://huggingface.co/${repo}/resolve/${BUILTIN_EMBEDDING_MODEL.revision}/tokenizer_config.json`,
+        `https://huggingface.co/${repo}/resolve/${BUILTIN_EMBEDDING_MODEL.revision}/onnx/model_quantized.onnx`,
       ],
       opened,
     );
@@ -42,7 +52,7 @@ describe("hasCachedModel", () => {
   });
 
   it("false when only non-weight repo files are cached (aborted download)", async () => {
-    const caches = fakeCaches([`https://huggingface.co/${repo}/resolve/main/config.json`]);
+    const caches = fakeCaches([`https://huggingface.co/${repo}/resolve/${BUILTIN_EMBEDDING_MODEL.revision}/config.json`]);
     await expect(hasCachedModel(caches, repo)).resolves.toBe(false);
   });
 
@@ -62,9 +72,9 @@ describe("clearCachedModel", () => {
     const deleted: string[] = [];
     const caches = fakeCaches(
       [
-        `https://huggingface.co/${repo}/resolve/main/config.json`,
-        `https://huggingface.co/${repo}/resolve/main/tokenizer.json`,
-        `https://huggingface.co/${repo}/resolve/main/onnx/model_quantized.onnx`,
+        `https://huggingface.co/${repo}/resolve/${BUILTIN_EMBEDDING_MODEL.revision}/config.json`,
+        `https://huggingface.co/${repo}/resolve/${BUILTIN_EMBEDDING_MODEL.revision}/tokenizer.json`,
+        `https://huggingface.co/${repo}/resolve/${BUILTIN_EMBEDDING_MODEL.revision}/onnx/model_quantized.onnx`,
         ORT_WASM,
         ORT_MJS,
         otherModel,

@@ -115,26 +115,52 @@ returning nothing.
 (384-dimension vectors) inside Obsidian via transformers.js, on WebGPU where
 available and WASM otherwise. Works on **every platform, including mobile**.
 
-It needs one explicit download: ~45 MB of weights from `huggingface.co` plus
+It needs one explicit download: ~24 MB of q8 weights and tokenizer/config files from `huggingface.co` plus
 ~23 MB of ONNX runtime from `cdn.jsdelivr.net`. Nothing downloads until you click
 **Download**; afterwards it's cached and runs fully on-device. A **Clear** button
 removes the cached model.
 
 **Ollama** — uses your local Ollama server for embeddings instead
-(`nomic-embed-text` by default). Desktop only.
+(`nomic-embed-text` by default). On mobile, use a reachable LAN or remote server; localhost points to the phone.
 
 **OpenAI-compatible endpoint** — embeds against the endpoint configured under
 *Local models*, using its embedding model.
 
+The built-in worker uses WebGPU or WASM; it does not use native MLX/Metal or Android LiteRT. Chat models run through the API or your configured endpoint. Arctic XS is the mobile recommendation because it has the smallest download and vector dimensions in this catalog. Download size is not peak runtime memory, and retrieval quality depends on the vault.
+
+| Built-in model | q8 model assets (decimal MB) | Vector dimensions |
+|---|---|---|
+| [Arctic XS](https://huggingface.co/Snowflake/snowflake-arctic-embed-xs) | ~24 | 384 |
+| [Arctic S](https://huggingface.co/Snowflake/snowflake-arctic-embed-s) | ~35 | 384 |
+| [Arctic M-long](https://huggingface.co/Snowflake/snowflake-arctic-embed-m-long) | ~140 | 768 |
+
+Each download uses an immutable publisher revision. All three use CLS pooling,
+normalized vectors, Snowflake's search instruction for queries, and unprefixed
+documents. The tokenizer caps each input at 512 tokens, including the query
+instruction, on desktop and mobile; M-long's longer native context is deliberately
+bounded here to limit inference allocations. The index records the repository,
+revision, dtype, pooling, dimensions, token ceiling, and both prefixes.
+
+Upgrading from an index without this encoding contract requires an explicit
+**Download** of the pinned assets and **Rebuild index**. Existing floating-revision
+cache entries cannot satisfy the new download check. This does not edit your notes
+or automatically download weights; keyword search remains available while the
+semantic index is unavailable.
+
 One pinned default on every platform means one index format, so a desktop-built
-index syncs to mobile and stays usable there.
+index syncs to mobile and stays usable there within the mobile memory budget.
 
 ### Building the index
+
+On mobile, each launch starts with embedding inference paused. Search remains keyword-only until you explicitly choose **Download** or **Rebuild index** in embedding settings. Cached weights do not trigger startup indexing. Disabling semantic search or unloading Companion stops the worker and cancels pending indexing. An engine failure pauses inference until an explicit retry.
+
+Mobile indexing caps the persisted index at 8 MiB and retained chunks at 400. It checks the saved file size before reading it and preserves oversized saved indexes. PDF extraction is limited to 200 pages and 256,000 characters, in addition to the input file limits. These are conservative allocation bounds, not a measured guarantee for every device. Use keyword search or desktop indexing when a limit is reached.
 
 Indexing traverses the vault, chunks each note, embeds the chunks, and stores the
 vectors locally. Use **Rebuild index** after switching engines or models — vectors
 from different models aren't comparable, which is why the built-in model's index
-key is namespaced (`builtin:…`) so it can never collide with an Ollama model name.
+key includes its encoding contract, so it cannot collide with an Ollama model name
+or silently reuse vectors encoded with different model settings.
 
 **PDFs are indexed too** (the **Index PDF text** toggle, on by default): text is
 extracted with pdf.js, chunked without ever crossing a page boundary, and every
@@ -151,9 +177,9 @@ chunk, so a brand-new note isn't invisible while the index catches up.
 |---|---|---|
 | Chat, artifacts, agent mode | Yes | Yes |
 | Built-in semantic search + index build | Yes | Yes |
-| Ollama chat | Yes | No — localhost cannot be reached from mobile |
+| Ollama chat | Yes | Reachable LAN/remote endpoint |
 | Ollama utility work | Yes | Yes — with a reachable LAN/remote HTTP(S) endpoint |
-| Ollama embeddings | Yes | No — use the built-in mobile engine |
+| Ollama embeddings | Yes | Reachable LAN/remote endpoint |
 | MCP bridge | Yes | No — use cloud sessions |
 | Session capture from Claude Code transcripts | Yes | No — browsing captured memory works |
 

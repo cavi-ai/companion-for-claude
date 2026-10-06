@@ -3,7 +3,7 @@
 // no worker APIs; the embedder feeds worker messages into RequestTracker.
 
 export type WorkerRequest =
-  | { id: number; type: "load"; repo: string; pooling: "cls" | "mean" }
+  | { id: number; type: "load"; repo: string; pooling: "cls" | "mean"; revision: string; dtype: "q8"; maxTokens: number; dim: number; allowDownload?: boolean }
   | { id: number; type: "embed"; texts: string[] }
   | { id: number; type: "dispose" };
 

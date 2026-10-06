@@ -1,3 +1,4 @@
+import { chatBackendForRuntime } from "./runtimeBackend";
 import type { PluginSettings } from "../types";
 import type { Provider, ProviderId, TaskRole, CompletionRequest } from "./types";
 import { AnthropicProvider } from "./anthropic";
@@ -106,7 +107,7 @@ export class ProviderRouter {
   constructor(
     private settings: PluginSettings,
     private utilitySelectionResolver?: UtilitySelectionResolver,
-    options: { cliRuntime?: CliRuntime | null; cliProvider?: CliProvider; codexProvider?: CliProvider; opencodeProvider?: CliProvider } = {},
+    private options: { isMobile?: boolean; cliRuntime?: CliRuntime | null; cliProvider?: CliProvider; codexProvider?: CliProvider; opencodeProvider?: CliProvider } = {},
   ) {
     this.anthropicEnv = readAnthropicEnv();
     this.anthropic = new AnthropicProvider({
@@ -171,15 +172,15 @@ export class ProviderRouter {
     // OpenAI-compatible endpoint; "claude"/"auto" start on Claude (auto
     // degrades to local on failure — handled in ChatView).
     if (role === "chat") {
-      if (this.settings.chatBackend === "claude-cli" || this.settings.chatBackend === "codex-cli" || this.settings.chatBackend === "opencode-cli") {
-        const id = this.settings.chatBackend;
+      if (this.chatBackend === "claude-cli" || this.chatBackend === "codex-cli" || this.chatBackend === "opencode-cli") {
+        const id = this.chatBackend;
         const provider = this.cliProviders[id];
         if (provider.hasCredentials()) return { provider, model: this.cliModel(id) };
       }
-      if (this.settings.chatBackend === "local" && this.ollama.hasCredentials()) {
+      if (this.chatBackend === "local" && this.ollama.hasCredentials()) {
         return { provider: this.ollama, model: this.settings.ollamaModel };
       }
-      if (this.settings.chatBackend === "custom" && this.openaiCompat.hasCredentials()) {
+      if (this.chatBackend === "custom" && this.openaiCompat.hasCredentials()) {
         return { provider: this.openaiCompat, model: this.settings.openaiCompatModel };
       }
     }
@@ -405,7 +406,7 @@ export class ProviderRouter {
 
   /** The configured chat backend mode. */
   get chatBackend(): PluginSettings["chatBackend"] {
-    return this.settings.chatBackend;
+    return chatBackendForRuntime(this.settings.chatBackend, this.options.isMobile ?? false);
   }
 
   /**

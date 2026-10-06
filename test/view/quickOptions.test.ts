@@ -37,6 +37,16 @@ const state = (overrides: Partial<QuickOptionsState> = {}): QuickOptionsState =>
 });
 
 describe("quickOptionsFor", () => {
+  it("withholds desktop actions and CLI choices on mobile without mutating the synced preference", () => {
+    const mobile = state({ isMobile: true, chatBackend: "claude-cli" });
+    for (const page of ["chat", "inbox", "related", "memory", "research-desk", "system"] as const) {
+      expect(quickOptionsFor(page, mobile).map((o) => o.id)).not.toContain("desktop-integrations");
+    }
+    const backend = quickOptionsFor("chat", mobile).find((o) => o.id === "chat-backend");
+    expect(backend?.choices?.map((c) => c.value)).not.toContain("claude-cli");
+    expect(backend?.value).toBe("claude");
+    expect(mobile.chatBackend).toBe("claude-cli");
+  });
   it("labels the chat vault toggle as the new-chat default", () => {
     expect(quickOptionsFor("chat", state()).find((o) => o.id === "vault-context")?.label).toBe("Vault search in new chats");
   });

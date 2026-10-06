@@ -13,7 +13,7 @@ source of truth.
 · [Getting started](../guides/getting-started.md)
 · [All guides](../README.md#guides)
 
-![Companion answering a vault-grounded question](assets/chat-panel.png)
+![Companion in Obsidian: a note with pending inline edits and the chat that proposed them](assets/hero.png)
 
 ## Install
 

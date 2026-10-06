@@ -26,6 +26,11 @@ export interface IndexerDeps {
   readPdfPages?(path: string): Promise<PdfPage[] | null>;
   /** Embed texts with the configured model; one vector per input, in order. */
   embed(input: string[]): Promise<number[][]>;
+  /** Query encoding can differ from document encoding. */
+  embedQuery?(input: string): Promise<number[][]>;
+  signal?: AbortSignal;
+  /** Bounds total retained vectors before any inference allocation. */
+  maxChunks?: number;
   /** Optional upper bound for one inference call on memory-constrained runtimes. */
   embedBatchSize?: number;
   /** Optional phase hook for diagnostics; never affects indexing. */
@@ -39,6 +44,8 @@ export interface IndexerDeps {
 }
 
 export interface BuildResult {
+  /** Batch-wide failure; remaining files were deliberately not attempted. */
+  aborted?: boolean;
   indexed: number;
   skipped: number;
   removed: number;
@@ -53,8 +60,16 @@ export class SemanticInputTooLargeError extends Error {
   }
 }
 
+export class SemanticEmbeddingError extends Error {
+  constructor(cause: unknown) {
+    super(cause instanceof Error ? cause.message : String(cause), { cause });
+    this.name = "SemanticEmbeddingError";
+  }
+}
+
 export class SemanticIndexer {
   private store: SemanticStore | null = null;
+  private loading: Promise<SemanticStore> | null = null;
   private mutationChain: Promise<void> = Promise.resolve();
 
   constructor(private deps: IndexerDeps) {}
@@ -62,6 +77,7 @@ export class SemanticIndexer {
   /** Drop the in-memory store (e.g. after the embedding model changes). */
   invalidate(): void {
     this.store = null;
+    this.loading = null;
   }
 
   /** Store mutations share one persisted blob and therefore must commit in order. */
@@ -72,8 +88,18 @@ export class SemanticIndexer {
   }
 
   private async ensureLoaded(): Promise<SemanticStore> {
-    if (!this.store) this.store = SemanticStore.load(await this.deps.load(), this.deps.embeddingModel);
-    return this.store;
+    this.assertActive();
+    if (this.store) return this.store;
+    if (!this.loading) {
+      const pending = this.deps.load().then((raw) => {
+        this.assertActive();
+        const store = SemanticStore.load(raw, this.deps.embeddingModel);
+        if (this.loading === pending) this.store = store;
+        return store;
+      }).finally(() => { if (this.loading === pending) this.loading = null; });
+      this.loading = pending;
+    }
+    return this.loading;
   }
 
   /** Never embeds: reads vectors already in the index. */
@@ -101,9 +127,11 @@ export class SemanticIndexer {
     let indexed = 0;
     let skipped = 0;
     let failureCount = 0;
+    let aborted = false;
     const failures: Array<{ path: string; message: string }> = [];
 
     for (let i = 0; i < files.length; i++) {
+      this.assertActive();
       const f = files[i];
       if (!f) continue;
       if (!opts.force && store.isCurrent(f.path, f.mtime)) {
@@ -123,7 +151,7 @@ export class SemanticIndexer {
           indexed++;
         }
       } catch (error) {
-        // Unreadable / embed failure for one file shouldn't abort the whole build.
+        this.assertActive();
         if (error instanceof SemanticInputTooLargeError) live.delete(f.path);
         skipped++;
         failureCount++;
@@ -133,13 +161,17 @@ export class SemanticIndexer {
             message: (error instanceof Error ? error.message : String(error)).replace(/[\r\n\t]+/g, " ").slice(0, 500),
           });
         }
+        // An engine failure is batch-wide. Retrying it per file can repeatedly
+        // reload a crashed worker and exhaust the same memory again.
+        if (error instanceof SemanticEmbeddingError) { aborted = true; break; }
       }
       opts.onProgress?.(i + 1, files.length);
     }
 
+    this.assertActive();
     const removed = store.pruneTo(live);
-    await this.deps.save(store.toJSON());
-    return { indexed, skipped, removed, failureCount, failures };
+    if (indexed > 0 || removed > 0) await this.persistStore(store);
+    return { indexed, skipped, removed, failureCount, failures, ...(aborted ? { aborted: true } : {}) };
   }
 
   /** Re-embed a single note (on modify). No-op if semantic store can't load. */
@@ -154,7 +186,7 @@ export class SemanticIndexer {
     } catch (error) {
       if (error instanceof SemanticInputTooLargeError && store.hasNote(path)) {
         store.removeNote(path);
-        await this.deps.save(store.toJSON());
+        await this.persistStore(store);
       }
       throw error;
     }
@@ -162,12 +194,12 @@ export class SemanticIndexer {
     if (!prepared) return;
     if (!store.needsReindex(path, prepared.hash)) return;
     await this.embedInto(store, path, mtime, prepared.chunks, prepared.hash);
-    await this.deps.save(store.toJSON());
+    await this.persistStore(store);
   }
 
   /**
    * Re-embed several notes under one mutation with a single save at the end.
-   * One entry's failure (oversized input, prepare/embed error) never aborts the rest;
+   * Unreadable files are isolated; an engine failure stops the remaining entries;
    * failures are returned instead of thrown.
    */
   async updateNotes(
@@ -187,15 +219,17 @@ export class SemanticIndexer {
             changed = true;
           }
         } catch (error) {
+          this.assertActive();
           if (error instanceof SemanticInputTooLargeError && store.hasNote(path)) {
             store.removeNote(path);
             changed = true;
           }
           failures.push({ path, error });
+          if (error instanceof SemanticEmbeddingError) break;
         }
         if (opts.yieldBetween && i < entries.length - 1) await opts.yieldBetween();
       }
-      if (changed) await this.deps.save(store.toJSON());
+      if (changed) await this.persistStore(store);
       return failures;
     });
   }
@@ -205,7 +239,7 @@ export class SemanticIndexer {
       const store = await this.ensureLoaded();
       if (!store.hasNote(path)) return;
       store.removeNote(path);
-      await this.deps.save(store.toJSON());
+      await this.persistStore(store);
     });
   }
 
@@ -215,7 +249,7 @@ export class SemanticIndexer {
       const store = await this.ensureLoaded();
       if (!store.hasNote(oldPath)) return false;
       store.renameNote(oldPath, newPath);
-      await this.deps.save(store.toJSON());
+      await this.persistStore(store);
       return true;
     });
   }
@@ -224,7 +258,7 @@ export class SemanticIndexer {
   async search(query: string, k: number, accept?: (path: string) => boolean): Promise<SearchHit[]> {
     const store = await this.ensureLoaded();
     if (store.stats().chunks === 0) return [];
-    const [qv] = await this.deps.embed([query]);
+    const [qv] = await (this.deps.embedQuery?.(query) ?? this.deps.embed([query]));
     if (!qv || qv.length === 0) return [];
     return store.search(qv, k, accept);
   }
@@ -279,6 +313,11 @@ export class SemanticIndexer {
   }
 
   private async embedInto(store: SemanticStore, path: string, mtime: number, chunks: Chunk[], hash: string): Promise<void> {
+    this.assertActive();
+    const limit = this.deps.maxChunks;
+    if (limit !== undefined && store.stats().chunks - store.chunkCount(path) + chunks.length > limit) {
+      throw new SemanticEmbeddingError(new Error(`Mobile semantic index limit reached (${limit} chunks). Use a smaller vault or disable semantic search; keyword search remains available.`));
+    }
     if (chunks.length === 0) {
       store.removeNote(path); // empty / frontmatter-only note carries nothing
       return;
@@ -291,7 +330,18 @@ export class SemanticIndexer {
     for (let i = 0; i < chunks.length; i += batchSize) {
       const batch = chunks.slice(i, i + batchSize);
       this.deps.onPhase?.("embed-start", { path, chunks: batch.length });
-      const embedded = await this.deps.embed(batch.map((c) => c.text));
+      this.assertActive();
+      let embedded: number[][];
+      try {
+        embedded = await this.deps.embed(batch.map((c) => c.text));
+        const dim = store.toJSON().dim || embedded[0]?.length;
+        if (!dim || embedded.length !== batch.length || embedded.some((v) => !Array.isArray(v) || v.length !== dim || !v.every(Number.isFinite))) {
+          throw new Error("Embedding engine returned invalid vectors");
+        }
+      } catch (cause) {
+        throw new SemanticEmbeddingError(cause);
+      }
+      this.assertActive();
       this.deps.onPhase?.("embed-done", { path, chunks: batch.length });
       for (let j = 0; j < batch.length; j++) vectors.push(embedded[j] ?? []);
     }
@@ -301,5 +351,14 @@ export class SemanticIndexer {
       mtime,
       chunks.map((c, j) => ({ ord: c.ord, text: c.text, vector: vectors[j] ?? [] })),
     );
+  }
+
+  private async persistStore(store: SemanticStore): Promise<void> {
+    this.assertActive();
+    await this.deps.save(store.toJSON());
+  }
+
+  private assertActive(): void {
+    this.deps.signal?.throwIfAborted();
   }
 }

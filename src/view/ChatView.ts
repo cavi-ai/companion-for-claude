@@ -721,7 +721,7 @@ export class ChatView extends ItemView {
   private async runSlashCommand(cmd: SlashCommand): Promise<void> {
     if (await runNativeSlashCommand({
       command: cmd,
-      backend: this.plugin.settings.chatBackend,
+      backend: this.plugin.router().chatBackend,
       clearComposer: () => {
         this.inputEl.value = "";
         this.composer.autosizeInput();

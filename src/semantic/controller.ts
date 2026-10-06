@@ -1,5 +1,5 @@
-import { SemanticIndexer, type IndexFile } from "./indexer";
-import { extractPdfPages } from "./pdf";
+import { SemanticIndexer, SemanticEmbeddingError, type IndexFile } from "./indexer";
+import { extractPdfPages, PdfExtractionLimitError } from "./pdf";
 import type { IndexData } from "./store";
 import { OllamaEmbedder, embedderId, type Embedder } from "./embedder";
 import { builtinModelById } from "./transformers/model";
@@ -22,6 +22,7 @@ export interface SemanticControllerDeps {
   router: () => ProviderRouter;
   isMobile: boolean;
   vault: {
+    adapterSize?: (path: string) => Promise<number | undefined>;
     adapterExists: (path: string) => Promise<boolean>;
     adapterRead: (path: string) => Promise<string>;
     adapterWrite: (path: string, data: string) => Promise<void>;
@@ -43,6 +44,18 @@ export interface SemanticControllerDeps {
   mobilePdfMaxBytes: number;
 }
 
+function utf8Size(text: string): number {
+  let size = 0;
+  for (let i = 0; i < text.length; i++) {
+    const code = text.charCodeAt(i);
+    if (code < 0x80) size++;
+    else if (code < 0x800) size += 2;
+    else if (code >= 0xd800 && code <= 0xdbff && text.charCodeAt(i + 1) >= 0xdc00 && text.charCodeAt(i + 1) <= 0xdfff) { size += 4; i++; }
+    else size += 3;
+  }
+  return size;
+}
+
 export class SemanticController {
   private _indexer: SemanticIndexer | null = null;
   private indexerModel: string | null = null;
@@ -52,10 +65,16 @@ export class SemanticController {
   private reindexTimer: number | null = null;
   private reindexQueue = new Set<string>();
   private reindexSuspended = 0;
+  private indexAbort = new AbortController();
+  private destroyed = false;
+  private mobileInferenceEnabled = false;
+  private inferencePaused = false;
 
   constructor(private deps: SemanticControllerDeps) {}
 
   destroy(): void {
+    this.destroyed = true;
+    this.indexAbort.abort();
     this._builtinEmbedder?.terminate();
     this._builtinEmbedder = null;
     if (this.reindexTimer !== null) window.clearTimeout(this.reindexTimer);
@@ -67,7 +86,7 @@ export class SemanticController {
 
   indexer(): SemanticIndexer | null {
     const s = this.deps.settings();
-    if (!s.semanticEnabled) return null;
+    if (!s.semanticEnabled || this.destroyed) return null;
     const model = embedderId(s.embeddingEngine, s.embeddingModel, s.builtinEmbeddingModel, s.openaiCompatEmbeddingModel);
     if (this._indexer && this.indexerModel === model) return this._indexer;
 
@@ -80,6 +99,8 @@ export class SemanticController {
           : new OllamaEmbedder(s.embeddingModel, (m, input) => this.deps.router().ollama.embed(m, input));
     this._indexer = new SemanticIndexer({
       embeddingModel: model,
+      signal: this.indexAbort.signal,
+      ...(this.deps.isMobile ? { maxChunks: 400 } : {}),
       listMarkdown: () => this.deps.vault.getMarkdownFiles(),
       read: async (p: string) => {
         const f = this.deps.vault.getAbstractFileByPath(p);
@@ -93,8 +114,9 @@ export class SemanticController {
               if (!f) return null;
               try {
                 const { loadPdf } = await import("./pdfjs");
-                return await extractPdfPages(loadPdf, await this.deps.vault.readBinary(p));
+                return await extractPdfPages(loadPdf, await this.deps.vault.readBinary(p), this.deps.isMobile ? { maxPages: 200, maxTextChars: 256_000 } : {});
               } catch (e) {
+                if (e instanceof PdfExtractionLimitError) throw e;
                 console.debug("Claude Companion: skipping unreadable PDF", p, e);
                 return null;
               }
@@ -105,7 +127,13 @@ export class SemanticController {
         if (!(await this.canEmbedWithoutDownload())) {
           throw new Error("Built-in embedding model not downloaded — download it in Companion settings.");
         }
-        return embedder.embed(input);
+        const prefix = s.embeddingEngine === "builtin" ? builtinModelById(s.builtinEmbeddingModel).documentPrefix : "";
+        return this.runEmbedding(embedder, input.map((text) => prefix + text));
+      },
+      embedQuery: async (query: string) => {
+        if (!(await this.canEmbedWithoutDownload())) throw new Error("Start semantic search from embedding settings on this device.");
+        const prefix = s.embeddingEngine === "builtin" ? builtinModelById(s.builtinEmbeddingModel).queryPrefix : "";
+        return this.runEmbedding(embedder, [prefix + query]);
       },
       // The in-process ONNX worker can exhaust memory when a long desktop note
       // sends every chunk in one inference, just as it can on mobile.
@@ -115,8 +143,16 @@ export class SemanticController {
         ? { maxInputBytes: (p: string) => p.toLowerCase().endsWith(".pdf") ? this.deps.mobilePdfMaxBytes : this.deps.mobileSourceNoteMaxBytes }
         : {}),
       load: async () => {
+        if (this.deps.isMobile && await this.deps.vault.adapterExists(path)) {
+          const size = await this.deps.vault.adapterSize?.(path);
+          if (size === undefined || size > 8 * 1024 * 1024) {
+            throw new Error("Semantic index exceeds the mobile memory budget or its size is unavailable. Search stays keyword-only. Rebuild a smaller index on desktop or disable semantic search.");
+          }
+        }
         try {
-          if (await this.deps.vault.adapterExists(path)) return JSON.parse(await this.deps.vault.adapterRead(path)) as IndexData;
+          if (await this.deps.vault.adapterExists(path)) {
+            return JSON.parse(await this.deps.vault.adapterRead(path)) as IndexData;
+          }
         } catch (e) {
           console.debug("Claude Companion: corrupt/missing semantic index, rebuilding", e);
         }
@@ -125,6 +161,10 @@ export class SemanticController {
       save: async (data: IndexData) => {
         this.deps.enrichDiagnostics().log("serialize-start", { notes: Object.keys(data.notes).length });
         const json = JSON.stringify(data);
+        if (this.deps.isMobile && utf8Size(json) > 8 * 1024 * 1024) {
+          // Avoid allocating another whole encoded blob just to measure it.
+          throw new Error("Semantic index exceeds the mobile persistence budget. Existing saved index was retained.");
+        }
         this.deps.enrichDiagnostics().log("save-start", { bytes: json.length });
         await this.deps.vault.adapterWrite(path, json);
         this.deps.enrichDiagnostics().log("save-done", { bytes: json.length });
@@ -164,6 +204,9 @@ export class SemanticController {
   }
 
   async downloadBuiltinModelAndIndex(): Promise<void> {
+    if (this.destroyed) return;
+    this.mobileInferenceEnabled = true;
+    this.inferencePaused = false;
     const model = builtinModelById(this.deps.settings().builtinEmbeddingModel);
     const activity = this.deps.activity();
     const activityId = activity.start({
@@ -181,6 +224,7 @@ export class SemanticController {
       activity.finish(activityId, { completed: 100, succeeded: 1 });
       await this.rebuildSemanticIndex();
     } catch (error) {
+      this.pauseInference();
       const recovery = this.embeddingRecovery(error);
       activity.fail(activityId, {
         failed: 1,
@@ -203,6 +247,8 @@ export class SemanticController {
   }
 
   invalidateIndexer(): void {
+    this.indexAbort.abort();
+    this.indexAbort = new AbortController();
     this._indexer = null;
     this.indexerModel = null;
   }
@@ -234,6 +280,9 @@ export class SemanticController {
   }
 
   async rebuildSemanticIndex(): Promise<void> {
+    if (this.destroyed) return;
+    this.mobileInferenceEnabled = true;
+    this.inferencePaused = false;
     const s = this.deps.settings();
     const modelId = embedderId(s.embeddingEngine, s.embeddingModel, s.builtinEmbeddingModel, s.openaiCompatEmbeddingModel);
     const activity = this.deps.activity();
@@ -285,6 +334,7 @@ export class SemanticController {
         },
       });
       const summary = `${res.indexed} embedded, ${res.skipped} skipped, ${res.removed} pruned`;
+      if (res.aborted) this.pauseInference();
       if (res.failureCount > 0) {
         const recovery = this.embeddingRecovery(new Error(res.failures[0]?.message ?? "Embedding failed"));
         activity.fail(activityId, {
@@ -364,6 +414,9 @@ export class SemanticController {
 
   /** Startup pass for notes created, changed, or deleted while Obsidian was closed. Never downloads a model. */
   async catchUpIndex(): Promise<void> {
+    // Every mobile launch starts without inference. Even cached weights plus a
+    // synced index can exceed WebKit's memory budget before the UI is usable.
+    if (this.deps.isMobile || this.destroyed) return;
     const s = this.deps.settings();
     if (!s.semanticEnabled) return;
     if (s.embeddingEngine === "ollama" ? !this.deps.router().ollama.hasCredentials() : !(await this.canEmbedWithoutDownload())) return;
@@ -371,6 +424,7 @@ export class SemanticController {
     if (!ix) return;
     try {
       const res = await ix.build({});
+      if (res.aborted) this.pauseInference();
       if (res.failureCount === 0) return;
       const recovery = this.embeddingRecovery(new Error(res.failures[0]?.message ?? "Embedding failed"));
       const activity = this.deps.activity();
@@ -388,6 +442,7 @@ export class SemanticController {
   }
 
   queueReindex(path: string): void {
+    if (this.destroyed || (this.deps.isMobile && !this.mobileInferenceEnabled)) return;
     if (!this.deps.settings().semanticEnabled) return;
     this.reindexQueue.add(path);
     if (this.reindexTimer !== null) window.clearTimeout(this.reindexTimer);
@@ -440,6 +495,7 @@ export class SemanticController {
     }
     const activity = this.deps.activity();
     for (const { path: p, error } of failures) {
+      if (error instanceof SemanticEmbeddingError) this.pauseInference();
       console.error(`[Claude Companion] semantic reindex failed for ${p}`, error);
       const recovery = this.embeddingRecovery(error);
       const activityId = activity.start({
@@ -482,7 +538,21 @@ export class SemanticController {
     return deleted;
   }
 
+  private async runEmbedding(embedder: Embedder, input: string[]): Promise<number[][]> {
+    try { return await embedder.embed(input); }
+    catch (error) {
+      this.pauseInference();
+      throw error;
+    }
+  }
+
+  private pauseInference(): void {
+    this.inferencePaused = true;
+    this._builtinEmbedder?.terminate();
+  }
+
   async canEmbedWithoutDownload(): Promise<boolean> {
+    if (this.destroyed || this.inferencePaused || (this.deps.isMobile && !this.mobileInferenceEnabled)) return false;
     if (this.deps.settings().embeddingEngine !== "builtin") return true;
     return this.builtinEmbedder().backend() !== null || (await this.builtinModelCached());
   }
@@ -504,8 +574,8 @@ export class SemanticController {
   indexerHealth(): { embeddingHealth: string; indexHealth: string } {
     const s = this.deps.settings();
     return {
-      embeddingHealth: s.semanticEnabled ? (this._indexer ? "Ready" : "Index not built yet") : "Disabled",
-      indexHealth: this._indexer ? "Ready" : "Not built yet",
+      embeddingHealth: this.inferencePaused ? "Paused after failure — rebuild index" : !s.semanticEnabled ? "Disabled" : this.deps.isMobile && !this.mobileInferenceEnabled ? "Paused — start in embedding settings" : s.embeddingEngine === "builtin" ? this._builtinEmbedder?.backend() ?? "Model not loaded" : "Endpoint configured",
+      indexHealth: this._indexer ? "Check index status for counts" : "Not loaded yet",
     };
   }
 
@@ -515,9 +585,18 @@ export class SemanticController {
     if (this.indexerModel !== activeEmbedder || (!s.semanticEnabled && this._indexer)) {
       this.invalidateIndexer();
     }
-    if (s.embeddingEngine !== "builtin" && this._builtinEmbedder) {
+    if ((!s.semanticEnabled || s.embeddingEngine !== "builtin") && this._builtinEmbedder) {
       this._builtinEmbedder.terminate();
       this._builtinEmbedder = null;
+    }
+    if (!s.semanticEnabled) {
+      this.inferencePaused = false;
+      this.indexAbort.abort();
+      this.indexAbort = new AbortController();
+      this.mobileInferenceEnabled = false;
+      this.reindexQueue.clear();
+      if (this.reindexTimer !== null) window.clearTimeout(this.reindexTimer);
+      this.reindexTimer = null;
     }
   }
 }

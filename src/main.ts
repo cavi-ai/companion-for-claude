@@ -1,3 +1,4 @@
+import { chatBackendOptions } from "./providers/runtimeBackend";
 import { App, FileSystemAdapter, MarkdownView, Notice, parseYaml, Platform, Plugin, requestUrl, WorkspaceLeaf } from "obsidian";
 import { ChatView, CHAT_VIEW_TYPE } from "./view/ChatView";
 import { MemoryView, MEMORY_VIEW_TYPE } from "./view/MemoryView";
@@ -481,6 +482,7 @@ export default class ClaudeCompanionPlugin extends Plugin {
       router: () => this.router(),
       isMobile: Platform.isMobile,
       vault: {
+        adapterSize: async (p) => (await this.app.vault.adapter.stat(p))?.size,
         adapterExists: (p) => this.app.vault.adapter.exists(p),
         adapterRead: (p) => this.app.vault.adapter.read(p),
         adapterWrite: (p, d) => this.app.vault.adapter.write(p, d),
@@ -1929,7 +1931,8 @@ export default class ClaudeCompanionPlugin extends Plugin {
         ? sanitizeEndpointForDisplay(this.settings.openaiCompatHost)
         : undefined;
     return {
-      chatBackend: this.settings.chatBackend,
+      isMobile: Platform.isMobile,
+      chatBackend: this.router().chatBackend,
       chatModel: resolveModelId(this.settings.model, this.settings.customModel),
       agentModeEnabled: this.settings.agentModeEnabled,
       vaultContextEnabled: this.settings.context.searchVault,
@@ -1957,7 +1960,7 @@ export default class ClaudeCompanionPlugin extends Plugin {
     const value = change.value;
     switch (change.id) {
       case "chat-backend":
-        if (value === "claude" || value === "local" || value === "auto" || value === "custom") this.settings.chatBackend = value;
+        if (typeof value === "string" && Object.hasOwn(chatBackendOptions(Platform.isMobile), value)) this.settings.chatBackend = value as PluginSettings["chatBackend"];
         else throw new Error("Choose a valid chat backend.");
         break;
       case "agent-mode": this.settings.agentModeEnabled = value === true; break;
@@ -2247,22 +2250,24 @@ export default class ClaudeCompanionPlugin extends Plugin {
 
   /** Write settings + conversation history back to data.json, minus credentials. */
   private async persist(): Promise<void> {
-    const store = this.secrets();
-    // Credentials the store proved it holds are dropped here; any the backend
-    // silently refused stay in the file so they are not lost from both places.
-    const stripped = stripVerifiedSecrets(this.settings, store);
-    this.unverifiedSecrets = stripped.unverified;
-    const data = JSON.parse(JSON.stringify({
-      settings: stripped.settings,
-      conversations: this.convState.conversations,
-      activeConversationId: this.convState.activeId,
-      standingOrders: this.ordersState,
-      orderEditQueue: this.orderEditQueue,
-      published: this.published,
-      optimize: this.optimizeState,
-      ...this.build().serializeState(),
-    })) as PersistedData;
-    const result = (this.persistChain ?? Promise.resolve()).catch(() => {}).then(() => this.saveData(data));
+    const result = (this.persistChain ?? Promise.resolve()).catch(() => {}).then(async () => {
+      const store = this.secrets();
+      // Credentials the store proved it holds are dropped here; any the backend
+      // silently refused stay in the file so they are not lost from both places.
+      const stripped = stripVerifiedSecrets(this.settings, store);
+      this.unverifiedSecrets = stripped.unverified;
+      const data = JSON.parse(JSON.stringify({
+        settings: stripped.settings,
+        conversations: this.convState.conversations,
+        activeConversationId: this.convState.activeId,
+        standingOrders: this.ordersState,
+        orderEditQueue: this.orderEditQueue,
+        published: this.published,
+        optimize: this.optimizeState,
+        ...this.build().serializeState(),
+      })) as PersistedData;
+      await this.saveData(data);
+    });
     this.persistChain = result.catch(() => {});
     await result;
   }
@@ -2465,6 +2470,7 @@ export default class ClaudeCompanionPlugin extends Plugin {
     if (!this._router) {
       this._router = new ProviderRouter(this.settings, () => this.resolveUtilitySelectionForSession(), {
         cliRuntime: runtime,
+        isMobile: Platform.isMobile,
         cliProvider: this._cliProvider,
         codexProvider: this._codexProvider,
         opencodeProvider: this._opencodeProvider,

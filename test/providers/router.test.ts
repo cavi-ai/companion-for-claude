@@ -29,6 +29,14 @@ function routerWithAnthropicEnv(overrides: Partial<PluginSettings>, env: Record<
 }
 
 describe("ProviderRouter.resolve", () => {
+  it.each(["claude-cli", "codex-cli", "opencode-cli"] as const)("uses the API on mobile while preserving synced %s", (backend) => {
+    const s = settings({ chatBackend: backend });
+    const mobile = new ProviderRouter(s, undefined, { isMobile: true });
+    expect(mobile.chatBackend).toBe("claude");
+    expect(mobile.chatProvider().provider.id).toBe("anthropic");
+    expect(s.chatBackend).toBe(backend);
+    expect(new ProviderRouter(s).chatBackend).toBe(backend);
+  });
   it("routes utility to claude by default", () => {
     const r = new ProviderRouter(settings({}));
     expect(r.resolve("utility").provider.id).toBe("anthropic");

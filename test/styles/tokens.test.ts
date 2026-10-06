@@ -36,18 +36,33 @@ const SEMANTIC = [
   "--cc-touch-min:",
 ];
 
+const PALETTE = [
+  "--cc-ivory:", "--cc-slate:", "--cc-oat:", "--cc-gray-150:", "--cc-gray-300:", "--cc-gray-500:", "--cc-gray-700:",
+  "--cc-serif:", "--cc-sans:", "--cc-mono:",
+];
+
 describe("design tokens", () => {
   it("declares every semantic token on body, so leaf views and modals outside .cc-root see them", () => {
     const block = bodyBlock(readStyles());
     for (const name of SEMANTIC) expect(block, name).toContain(name);
   });
 
-  it("keeps the brand accents on body (with the semantic tokens that derive from them) and the font stacks on .cc-root", () => {
+  it("keeps the brand accents, palette, and font stacks on body, so artifacts in notes and views outside .cc-root resolve them", () => {
+    const body = bodyBlock(readStyles());
+    for (const name of [...PALETTE, "--cc-clay:", "--cc-olive:"]) expect(body, name).toContain(name);
+  });
+
+  it("declares no palette or font token on .cc-root alone", () => {
+    const root = rootBlock(readStyles());
+    for (const name of PALETTE) expect(root, name).not.toContain(name);
+  });
+
+  it("resolves every token the inline artifact chrome uses from body", () => {
     const css = readStyles();
     const body = bodyBlock(css);
-    for (const name of ["--cc-clay:", "--cc-olive:"]) expect(body, name).toContain(name);
-    const root = rootBlock(css);
-    for (const name of ["--cc-serif:", "--cc-sans:", "--cc-mono:"]) expect(root, name).toContain(name);
+    const used = new Set([...rulesFor(css, ".cc-artifact").matchAll(/var\((--cc-[a-z0-9-]+)\)/g)].map((m) => m[1]!));
+    expect(used.size).toBeGreaterThan(0);
+    for (const name of used) expect(body, name).toContain(`${name}:`);
   });
 
   it("derives surfaces and text from Obsidian's variables", () => {

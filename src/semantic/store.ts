@@ -44,8 +44,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /** True when every note entry has the fields the store reads (hash, chunks[]). */
-function notesAreWellFormed(notes: Record<string, unknown>): boolean {
-  return Object.values(notes).every((entry) => isRecord(entry) && Array.isArray(entry.chunks));
+function notesAreWellFormed(notes: Record<string, unknown>, dim: number): boolean {
+  return Object.values(notes).every((entry) => isRecord(entry) && typeof entry.hash === "string" && Number.isFinite(entry.mtime) && Array.isArray(entry.chunks)
+    && entry.chunks.every((chunk: unknown) => isRecord(chunk) && Number.isInteger(chunk.ord) && (chunk.ord as number) >= 0 && typeof chunk.text === "string"
+      && Array.isArray(chunk.vector) && dim > 0 && chunk.vector.length === dim && chunk.vector.every(Number.isFinite)));
 }
 
 /**
@@ -65,8 +67,8 @@ export class SemanticStore {
       d.version !== INDEX_VERSION ||
       d.model !== model ||
       !isRecord(d.notes) ||
-      !notesAreWellFormed(d.notes) ||
-      (d.dim !== undefined && typeof d.dim !== "number")
+      !Number.isInteger(d.dim) || (d.dim as number) < 0 ||
+      !notesAreWellFormed(d.notes, d.dim as number)
     ) {
       return new SemanticStore(emptyIndex(model));
     }
@@ -100,6 +102,8 @@ export class SemanticStore {
   hasNote(path: string): boolean {
     return path in this.data.notes;
   }
+
+  chunkCount(path: string): number { return this.data.notes[path]?.chunks.length ?? 0; }
 
   upsertNote(path: string, hash: string, mtime: number, chunks: ChunkRecord[]): void {
     this.data.notes[path] = { hash, mtime, chunks };

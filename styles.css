@@ -41,13 +41,7 @@ body {
   --cc-text-lg: 19px;
   --cc-text-xl: 22px;
   --cc-touch-min: 44px;
-}
 
-body.theme-light {
-  --cc-accent-text: color-mix(in srgb, var(--cc-clay) 72%, black);
-}
-
-.cc-root {
   --cc-ivory: #faf9f5;
   --cc-slate: #141413;
   --cc-oat: #e3dacc;
@@ -58,7 +52,13 @@ body.theme-light {
   --cc-serif: ui-serif, Georgia, "Times New Roman", serif;
   --cc-sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --cc-mono: "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+}
 
+body.theme-light {
+  --cc-accent-text: color-mix(in srgb, var(--cc-clay) 72%, black);
+}
+
+.cc-root {
   display: flex;
   flex-direction: column;
   height: 100%;

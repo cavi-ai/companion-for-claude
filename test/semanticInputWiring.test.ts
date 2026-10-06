@@ -25,6 +25,18 @@ function mobilePlugin(app: App): ClaudeCompanionPlugin {
 }
 
 describe("mobile semantic input limits", () => {
+  it("rejects a large persisted index before reading or overwriting it", async () => {
+    Platform.isMobile = true;
+    Platform.isDesktop = false;
+    const app = new App();
+    const plugin = mobilePlugin(app);
+    const read = vi.fn();
+    const write = vi.fn();
+    Object.assign(app.vault.adapter, { exists: async () => true, stat: async () => ({ size: 9 * 1024 * 1024 }), read, write });
+    await expect(plugin.indexer()!.stats()).rejects.toThrow("mobile memory budget");
+    expect(read).not.toHaveBeenCalled();
+    expect(write).not.toHaveBeenCalled();
+  });
   afterEach(() => {
     Platform.isMobile = false;
     Platform.isDesktop = true;

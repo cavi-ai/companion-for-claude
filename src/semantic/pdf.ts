@@ -30,11 +30,14 @@ interface TextItem {
 }
 
 /** Join one page's text-content items: spaces between runs, newline at line ends. */
-export function assemblePageText(items: unknown[]): string {
+export class PdfExtractionLimitError extends Error {}
+
+export function assemblePageText(items: unknown[], maxChars = Infinity): string {
   let out = "";
   for (const raw of items) {
     const item = raw as TextItem;
     if (typeof item.str !== "string") continue;
+    if (out.length + item.str.length + 1 > maxChars) throw new PdfExtractionLimitError("PDF exceeds the extracted text limit for semantic indexing.");
     out += item.str;
     out += item.hasEOL ? "\n" : " ";
   }
@@ -42,14 +45,17 @@ export function assemblePageText(items: unknown[]): string {
 }
 
 /** Extract per-page text from a PDF. Throws (caller skips the file) on unreadable/encrypted input. */
-export async function extractPdfPages(load: PdfLoader, data: ArrayBuffer): Promise<PdfPage[]> {
+export async function extractPdfPages(load: PdfLoader, data: ArrayBuffer, limits: { maxPages?: number; maxTextChars?: number } = {}): Promise<PdfPage[]> {
   const doc = await load(data);
   try {
+    if (doc.numPages > (limits.maxPages ?? Infinity)) throw new PdfExtractionLimitError("PDF exceeds the page limit for semantic indexing.");
     const pages: PdfPage[] = [];
+    let chars = 0;
     for (let n = 1; n <= doc.numPages; n++) {
       const page = await doc.getPage(n);
       const content = await page.getTextContent();
-      const text = assemblePageText(content.items);
+      const text = assemblePageText(content.items, (limits.maxTextChars ?? Infinity) - chars);
+      chars += text.length;
       if (text) pages.push({ page: n, text });
     }
     return pages;
