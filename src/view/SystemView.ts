@@ -17,6 +17,7 @@ export interface SystemViewDeps {
   reviewSafeFixes(fixes: SafeFix[], done: () => void): void;
   reviewTagMerges(done: () => void): void;
   connectOrphans(done: () => void): void;
+  typeUntypedNotes(done: () => void): void;
   openSetupWizard(): void;
   openSettings(): void;
   openClipperSetup(): void;
@@ -151,6 +152,9 @@ export class SystemView extends ItemView {
         return;
       case "orphans":
         if (section.count > 0) action("Connect orphan notes", () => this.deps.connectOrphans(() => void this.render()));
+        return;
+      case "untyped":
+        if (section.count > 0) action("Type untyped notes", () => this.deps.typeUntypedNotes(() => void this.render()));
         return;
       case "links":
         return;

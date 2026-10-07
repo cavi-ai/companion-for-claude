@@ -1,7 +1,6 @@
 import type { CompletionRequest } from "../providers/types";
 import { completeJsonWithRepair } from "../providers/jsonRepair";
 import type { ProviderRouter, ProviderSelection } from "../providers/router";
-import type { Verdict } from "./classify";
 
 export class ClassifierStoppedError extends Error {
   constructor(message: string) {
@@ -25,7 +24,7 @@ export interface ClassifierHandle {
   local: boolean;
   label: string;
   model: string;
-  complete(req: { system: string; user: string; schema: Record<string, unknown> }, parse: (raw: string) => Verdict[]): Promise<Verdict[]>;
+  complete<T>(req: { system: string; user: string; schema: Record<string, unknown> }, parse: (raw: string) => T): Promise<T>;
 }
 
 export function createClassifier(deps: ClassifierGlueDeps): (opts: { interactive: boolean }) => Promise<ClassifierHandle> {
@@ -46,7 +45,7 @@ export function createClassifier(deps: ClassifierGlueDeps): (opts: { interactive
       local: router.selectionRunsLocally(selection),
       label: router.providerLabel(selection.provider),
       model: selection.model,
-      complete: async (req, parse) => {
+      complete: async <T>(req: { system: string; user: string; schema: Record<string, unknown> }, parse: (raw: string) => T): Promise<T> => {
         guard();
         if (deps.router() !== router) throw new ClassifierStoppedError("Classifier settings changed");
         const completion: CompletionRequest = {

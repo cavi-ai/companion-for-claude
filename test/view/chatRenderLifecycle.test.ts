@@ -73,6 +73,7 @@ describe("Chat render lifecycle", () => {
       interruptActiveConversationTurn: vi.fn(async () => undefined),
       composeSystemPrompt: () => "system",
       semanticSearch: async () => [],
+      loadedOntology: vi.fn(async () => null),
       turnService: () => new ChatTurnService(),
     } as unknown as ClaudeCompanionPlugin;
     const view = new ChatView(new WorkspaceLeaf(new App()), plugin);
@@ -104,6 +105,62 @@ describe("Chat render lifecycle", () => {
     releasePersist();
     await running;
     expect(stream).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    [{ linkedNotes: false, searchVault: false }, 0],
+    [{ linkedNotes: true, searchVault: false }, 1],
+    [{ linkedNotes: false, searchVault: true }, 1],
+  ])("loads the ontology for a turn only when linked notes or vault search is on (%o)", async (toggles, calls) => {
+    const stream = vi.fn(async (_request: unknown, handlers: { onDone(text: string): void }) => { handlers.onDone("answer"); });
+    const provider = { id: "anthropic", hasCredentials: () => true, stream };
+    const plugin = {
+      settings: {
+        ...structuredClone(DEFAULT_SETTINGS),
+        agentModeEnabled: false,
+        context: { activeNote: false, selection: false, ...toggles },
+      },
+      router: () => ({
+        chatProvider: () => ({ provider, model: DEFAULT_SETTINGS.model }),
+        chatBackend: "claude",
+        chatCapabilities: () => ({ agentActions: false, claudeControls: true, metered: true, local: false, cli: false }),
+        chatToolCapable: async () => false,
+        anthropic: provider,
+        claudeCli: { hasCredentials: () => false, available: () => false },
+        localFallback: async () => null,
+      }),
+      beginActiveConversationTurn: vi.fn(async () => ({ conversationId: "conversation-1", turnId: "turn-1" })),
+      registerActiveChatTurn: vi.fn(() => () => undefined),
+      completeActiveConversationTurn: vi.fn(async () => undefined),
+      interruptActiveConversationTurn: vi.fn(async () => undefined),
+      composeSystemPrompt: () => "system",
+      semanticSearch: async () => [],
+      loadedOntology: vi.fn(async () => null),
+      turnService: () => new ChatTurnService(),
+    } as unknown as ClaudeCompanionPlugin;
+    const view = new ChatView(new WorkspaceLeaf(new App()), plugin);
+    const seam = view as unknown as {
+      app: { workspace: { getActiveViewOfType?: () => null; getActiveFile?: () => null } };
+      controls: ReturnType<typeof defaultChatControls>;
+      messagesEl: HTMLElement;
+      sendBtn: HTMLButtonElement;
+      usageEl: HTMLElement;
+      gaugeFillEl: HTMLElement;
+      renderMarkdownInto(el: HTMLElement, markdown: string): Promise<void>;
+      run(userText: string): Promise<void>;
+    };
+    seam.controls = defaultChatControls(DEFAULT_SETTINGS.model);
+    seam.messagesEl = fakeElement();
+    seam.sendBtn = fakeElement() as unknown as HTMLButtonElement;
+    seam.usageEl = fakeElement();
+    seam.gaugeFillEl = fakeElement();
+    seam.app.workspace.getActiveViewOfType = () => null;
+    seam.app.workspace.getActiveFile = () => null;
+    seam.renderMarkdownInto = async () => undefined;
+
+    await seam.run("Research this");
+    expect(stream).toHaveBeenCalledOnce();
+    expect(plugin.loadedOntology).toHaveBeenCalledTimes(calls);
   });
 
   it("keeps a turn running (and persisting) after the view closes, and replays it once on reopen", async () => {
@@ -141,6 +198,7 @@ describe("Chat render lifecycle", () => {
       interruptActiveConversationTurn: vi.fn(async () => undefined),
       composeSystemPrompt: () => "system",
       semanticSearch: async () => [],
+      loadedOntology: vi.fn(async () => null),
       turnService: () => turnService,
     } as unknown as ClaudeCompanionPlugin;
     const view = new ChatView(new WorkspaceLeaf(new App()), plugin);
@@ -432,6 +490,7 @@ describe("Chat render lifecycle", () => {
       }),
       composeSystemPrompt: () => "system",
       semanticSearch: async () => [],
+      loadedOntology: vi.fn(async () => null),
       beginActiveConversationTurn: vi.fn(async () => ({ conversationId: "conversation-1", turnId: "turn-1" })),
       registerActiveChatTurn: vi.fn(() => () => undefined),
       completeActiveConversationTurn: vi.fn(async () => undefined),

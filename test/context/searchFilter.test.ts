@@ -55,6 +55,15 @@ describe("matchesSearchFilter", () => {
   it("requires every set field", () => {
     expect(matchesSearchFilter(alpha, ["#x"], { type: "research-evidence", tag: "y" })).toBe(false);
   });
+  it("matches a declared subtype through lineageOf, by any element of a list-valued type", () => {
+    const lineageOf = (t: string): readonly string[] | undefined => (t === "article" ? ["article", "source", "entity"] : undefined);
+    expect(matchesSearchFilter({ type: "article" }, [], { type: "source" }, lineageOf)).toBe(true);
+    expect(matchesSearchFilter({ type: ["note", "article"] }, [], { type: "source" }, lineageOf)).toBe(true);
+    expect(matchesSearchFilter({ type: "source" }, [], { type: "article" }, lineageOf)).toBe(false);
+    expect(matchesSearchFilter({ type: "memo" }, [], { type: "source" }, lineageOf)).toBe(false);
+    expect(matchesSearchFilter({ type: "article" }, [], { type: "Source" }, lineageOf)).toBe(false);
+    expect(matchesSearchFilter({ type: "article" }, [], { type: "source" })).toBe(false);
+  });
 });
 
 describe("hitMetadata / describeFilter", () => {

@@ -181,6 +181,18 @@ describe("LinkWeaveController dismissals and state", () => {
     expect(Object.keys(ctx.getState().verdicts)).toEqual(["a|b"]);
   });
 
+  it("dismiss keeps typeVerdicts and dismissedTypes", async () => {
+    const typeFields = {
+      typeVerdicts: { "a.md": { type: "project", model: "m", at: "2026-10-07T10:00:00.000Z", mtime: 4 } },
+      dismissedTypes: ["z.md"],
+    };
+    let state: OptimizeState = { dismissed: [], verdicts: {}, ...typeFields };
+    const ctx = setup({}, {}, { getState: () => state, setState: async (next) => { state = next; } });
+    await ctx.controller.dismiss({ source: "a.md", target: "b.md" });
+    expect(state).toMatchObject(typeFields);
+    expect(state.dismissedLinks).toEqual([dismissalKey("a.md", "b.md")]);
+  });
+
   it("dismissing never writes a note, the run note, or any link", async () => {
     const ctx = setup({ "a.md": "x" });
     await ctx.controller.dismiss({ source: "a.md", target: "b.md" });

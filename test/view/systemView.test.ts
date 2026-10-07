@@ -28,6 +28,7 @@ function harness(sections: HealthSection[]): { view: SystemView; deps: SystemVie
     reviewSafeFixes: vi.fn(),
     reviewTagMerges: vi.fn(),
     connectOrphans: vi.fn(),
+    typeUntypedNotes: vi.fn(),
     openSetupWizard: vi.fn(),
     openSettings: vi.fn(),
     openClipperSetup: vi.fn(),
@@ -207,6 +208,20 @@ describe("SystemView", () => {
     const none = harness([section({ id: "orphans", title: "Orphan notes", count: 0 })]);
     await none.view.onOpen();
     expect(root(none.view).querySelectorAll("button").find((b) => b.textContent === "Connect orphan notes")).toBeUndefined();
+  });
+
+  it("untyped section offers Type untyped notes only when there are some, and refreshes after", async () => {
+    const some = harness([section({ id: "untyped", title: "Untyped notes", count: 4, severity: "info", summary: true, items: [{ path: "", message: "4 notes without a type" }] })]);
+    await some.view.onOpen();
+    click(button(some.view, "Type untyped notes"));
+    expect(some.deps.typeUntypedNotes).toHaveBeenCalledTimes(1);
+    (some.deps.typeUntypedNotes as ReturnType<typeof vi.fn>).mock.calls[0]![0]();
+    await settle();
+    expect(some.scan).toHaveBeenCalledTimes(2);
+
+    const none = harness([section({ id: "untyped", title: "Untyped notes", count: 0 })]);
+    await none.view.onOpen();
+    expect(root(none.view).querySelectorAll("button").find((b) => b.textContent === "Type untyped notes")).toBeUndefined();
   });
 
   it("tags section offers Review tag merges only when there are candidates, and refreshes after", async () => {

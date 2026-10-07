@@ -2,7 +2,7 @@
 // Pure + testable; the ChatView setup card and send gate both key off this.
 
 export interface SetupInputs {
-  backend: "claude" | "local" | "auto" | "custom" | "claude-cli" | "codex-cli" | "opencode-cli";
+  backend: "claude" | "local" | "auto" | "custom" | "device" | "claude-cli" | "codex-cli" | "opencode-cli";
   hasAnthropicCredential: boolean;
   /** Claude Code binary found and signed in (desktop). */
   hasClaudeCli?: boolean;
@@ -38,7 +38,7 @@ export function credentialSetupInputs(router: {
  */
 export function needsCredentialSetup(s: SetupInputs): boolean {
   // Local backends never need an Anthropic credential.
-  if (s.backend === "local" || s.backend === "custom") return false;
+  if (s.backend === "local" || s.backend === "custom" || s.backend === "device") return false;
   if (s.backend === "claude-cli") return s.hasClaudeCli !== true;
   if (s.backend === "codex-cli") return s.hasCodexCli !== true;
   if (s.backend === "opencode-cli") return s.hasOpencodeCli !== true;

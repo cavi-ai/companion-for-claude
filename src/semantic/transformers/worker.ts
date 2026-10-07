@@ -21,6 +21,8 @@ import "./forceWebEnv"; // MUST precede the transformers import — see that fil
 import { pipeline, env } from "@huggingface/transformers";
 import type { WorkerRequest, WorkerResponse } from "./protocol";
 import { TRANSFORMERS_CACHE_NAME } from "./cache";
+import { handleDeviceRequest } from "../../device/worker";
+import type { DeviceWorkerRequest, DeviceWorkerResponse } from "../../device/protocol";
 
 // Enforce consent at the network boundary, including ORT sidecars. A partial
 // cache must fail closed instead of silently downloading missing assets.
@@ -39,8 +41,8 @@ env.fetch = guardedFetch;
 // The dedicated-worker global, narrowed to what this file uses. (A plain
 // `declare const self` would collide with lib.dom's declaration.)
 const ctx = self as unknown as {
-  onmessage: ((e: { data: WorkerRequest }) => void) | null;
-  postMessage(msg: WorkerResponse): void;
+  onmessage: ((e: { data: WorkerRequest | DeviceWorkerRequest }) => void) | null;
+  postMessage(msg: WorkerResponse | DeviceWorkerResponse): void;
 };
 
 env.allowLocalModels = false; // hub + cache only; never probe local /models/ paths
@@ -258,6 +260,13 @@ function validVectors(vectors: number[][], count: number): number[][] {
 
 ctx.onmessage = (e) => {
   const msg = e.data;
+  if (msg.type === "device-download" || msg.type === "device-generate") {
+    void handleDeviceRequest(msg, (response) => ctx.postMessage(response), (allowed) => { allowNetwork = allowed; }, guardedFetch).catch((error: unknown) => {
+      allowNetwork = false;
+      ctx.postMessage({ type: "device-error", id: msg.id, message: error instanceof Error ? error.message : String(error) });
+    });
+    return;
+  }
   const fail = (err: unknown) =>
     ctx.postMessage({
       id: msg.id,

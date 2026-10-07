@@ -3,9 +3,12 @@ import { type RepliesConfig, buildContentsRequest, parseDirListing, parseFileRes
 import type { CloudBuildHttpRequest } from "../build/cloudExecutor";
 import type { PluginSettings } from "../types";
 import { errorHint } from "../providers/errorHints";
+import type { ActivityStore } from "../activity/store";
+import { beginActivity } from "../activity/progress";
 
 export interface CloudControllerDeps {
   settings: () => PluginSettings;
+  activity: () => ActivityStore;
   http: (req: { url: string; method: string; headers: Record<string, string>; body?: string }) => Promise<{ status: number; text: string }>;
   vault: {
     fileExists: (path: string) => boolean;
@@ -67,12 +70,12 @@ export class CloudController {
   }
 
   private async fireSession(instruction: string, context?: string): Promise<void> {
-    const pending = this.deps.ui.notice("Dispatching cloud session…", 0);
+    const pending = beginActivity(this.deps.activity(), "Dispatching cloud session", "cloud-task");
     try {
       const req = buildFireRequest(this.dispatchConfig(), composeDispatchText(instruction, context));
       const res = await this.deps.http({ url: req.url, method: req.method, headers: req.headers, body: req.body });
       const result = parseFireResponse(res.status, res.text);
-      pending.hide();
+      pending.finish();
       if (result.sessionUrl) {
         await this.deps.ui.clipboard(result.sessionUrl).catch(() => {});
         this.deps.ui.notice(`Cloud session started — link copied to clipboard:\n${result.sessionUrl}`, 12000);
@@ -80,7 +83,7 @@ export class CloudController {
         this.deps.ui.notice("Cloud session fired. (No session link was returned.)", 8000);
       }
     } catch (e) {
-      pending.hide();
+      pending.fail(e);
       const msg = e instanceof Error ? e.message : String(e);
       const hint = errorHint(msg, "anthropic");
       this.deps.ui.notice(`Cloud dispatch failed: ${msg}${hint ? ` — ${hint}` : ""}`, 10000);
@@ -110,14 +113,16 @@ export class CloudController {
       this.deps.ui.notice(`Cloud replies not configured: ${cfgErr}`, 9000);
       return;
     }
-    const pending = this.deps.ui.notice("Checking for cloud replies…", 0);
+    const pending = beginActivity(this.deps.activity(), "Checking for cloud replies", "cloud-task");
     try {
       const list = buildContentsRequest(cfg, cfg.folder);
       const listRes = await this.deps.http({ url: list.url, method: list.method, headers: list.headers });
       const files = parseDirListing(listRes.status, listRes.text).filter((f) => isMarkdown(f.name));
       let pulled = 0;
       let failed = 0;
+      let checked = 0;
       for (const f of files) {
+        pending.setMessage(f.name, checked++, files.length);
         if (this.deps.vault.fileExists(this.deps.vault.normalizePath(f.path))) continue;
         try {
           const fileReq = buildContentsRequest(cfg, f.path);
@@ -132,12 +137,13 @@ export class CloudController {
           console.warn("[companion] cloud reply skipped", f.path, error);
         }
       }
-      pending.hide();
+      if (failed > 0) pending.fail(`${failed} cloud replies could not be pulled.`);
+      else pending.finish();
       const pulledMsg = pulled > 0 ? `Pulled ${pulled} cloud repl${pulled === 1 ? "y" : "ies"} into the vault.` : "No new cloud replies.";
       const failedMsg = failed > 0 ? ` ${failed} couldn't be pulled (see console).` : "";
       this.deps.ui.notice(pulledMsg + failedMsg, 7000);
     } catch (e) {
-      pending.hide();
+      pending.fail(e);
       const msg = e instanceof Error ? e.message : String(e);
       const hint = errorHint(msg, "anthropic");
       this.deps.ui.notice(`Couldn't pull cloud replies: ${msg}${hint ? ` — ${hint}` : ""}`, 10000);

@@ -12,6 +12,7 @@ import { type MediaAttachment, arrayBufferToBase64, maxBytesFor, mediaBlock, med
 import { type AttachedPage, detectPageUrl, pageLabel } from "../../context/urlContext";
 import type { ContentBlock } from "../../providers/types";
 import { CLAUDE_MODELS } from "../../claude/models";
+import { DEVICE_MODELS } from "../../device/models";
 import { capabilitiesFor, effortLevels } from "../../claude/capabilities";
 import { type ChatControls, knobVisibility } from "../../claude/chatControls";
 import { mergeDetectedModels } from "../../providers/localModels";
@@ -134,7 +135,7 @@ export class Composer {
       if (this.slashMenu.isOpen()) {
         if (e.key === "ArrowDown") { e.preventDefault(); this.slashMenu.move(1); return; }
         if (e.key === "ArrowUp") { e.preventDefault(); this.slashMenu.move(-1); return; }
-        if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); this.slashMenu.choose(); return; }
+        if (e.key === "Enter") { e.preventDefault(); this.slashMenu.choose(); return; }
         if (e.key === "Escape") { e.preventDefault(); this.slashMenu.hide(); return; }
       }
       // Desktop: Enter sends, Shift+Enter breaks a line. Mobile soft keyboards
@@ -152,7 +153,7 @@ export class Composer {
       this.syncPageOffer();
     });
     // Close the menus when focus leaves the composer.
-    this.inputEl.addEventListener("blur", () => window.setTimeout(() => { this.slashMenu.hide(); this.atMenu.hide(); }, 120));
+    this.inputEl.addEventListener("blur", () => window.setTimeout(() => { this.slashMenu.hideUnlessFocused(this.inputEl); this.atMenu.hideUnlessFocused(this.inputEl); }, 120));
     // Paste a screenshot/image straight into the composer to attach it.
     this.inputEl.addEventListener("paste", (evt: ClipboardEvent) => {
       const items = evt.clipboardData?.items;
@@ -475,6 +476,9 @@ export class Composer {
     for (const m of CLAUDE_MODELS) claudeGroup.createEl("option", { value: m.id, text: m.label });
     if (!ids.has(this.controls.model)) claudeGroup.createEl("option", { value: this.controls.model, text: this.controls.model });
     select.value = this.controls.model;
+    const deviceGroup = select.createEl("optgroup", { attr: { label: "On-device GPU" } });
+    for (const model of DEVICE_MODELS) deviceGroup.createEl("option", { value: `device:${model.id}`, text: model.name });
+    if (this.plugin.settings.chatBackend === "device") select.value = `device:${this.plugin.settings.deviceChatModel}`;
     select.addEventListener("change", () => void this.deps.onModelSelect(select.value));
     // Pull in detected Ollama models so a local model can be picked here without
     // opening settings. Async — appended once the local server answers.

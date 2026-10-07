@@ -29,7 +29,7 @@ export interface QuickOptionDefinition {
 
 export interface QuickOptionsState {
   isMobile?: boolean;
-  chatBackend: "claude" | "local" | "auto" | "custom" | "claude-cli" | "codex-cli" | "opencode-cli";
+  chatBackend: "claude" | "local" | "auto" | "custom" | "device" | "claude-cli" | "codex-cli" | "opencode-cli";
   chatModel: string;
   agentModeEnabled: boolean;
   vaultContextEnabled: boolean;

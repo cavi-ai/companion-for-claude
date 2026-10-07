@@ -4,6 +4,7 @@ import type { Provider, ProviderId, TaskRole, CompletionRequest } from "./types"
 import { AnthropicProvider } from "./anthropic";
 import { OllamaProvider } from "./ollama";
 import { OpenAICompatProvider } from "./openaiCompat";
+import { DeviceProvider } from "./device";
 import { CliProvider } from "./cliProvider";
 import { claudeBackend } from "../cli/backends/claude";
 import { codexBackend } from "../cli/backends/codex";
@@ -97,6 +98,7 @@ export class ProviderRouter {
   readonly anthropic: AnthropicProvider;
   readonly ollama: OllamaProvider;
   readonly openaiCompat: OpenAICompatProvider;
+  readonly device: Provider;
   readonly claudeCli: CliProvider;
   readonly codexCli: CliProvider;
   readonly opencodeCli: CliProvider;
@@ -107,7 +109,7 @@ export class ProviderRouter {
   constructor(
     private settings: PluginSettings,
     private utilitySelectionResolver?: UtilitySelectionResolver,
-    private options: { isMobile?: boolean; cliRuntime?: CliRuntime | null; cliProvider?: CliProvider; codexProvider?: CliProvider; opencodeProvider?: CliProvider } = {},
+    private options: { isMobile?: boolean; cliRuntime?: CliRuntime | null; cliProvider?: CliProvider; codexProvider?: CliProvider; opencodeProvider?: CliProvider; deviceProvider?: Provider } = {},
   ) {
     this.anthropicEnv = readAnthropicEnv();
     this.anthropic = new AnthropicProvider({
@@ -119,6 +121,7 @@ export class ProviderRouter {
     });
     this.ollama = new OllamaProvider(settings.ollamaHost, settings.ollamaModel);
     this.openaiCompat = new OpenAICompatProvider(settings.openaiCompatHost, settings.openaiCompatModel, settings.openaiCompatKey);
+    this.device = options.deviceProvider ?? new DeviceProvider(null);
     const runtime = options.cliRuntime ?? null;
     this.claudeCli = options.cliProvider ?? new CliProvider(claudeBackend, runtime);
     this.codexCli = options.codexProvider ?? new CliProvider(codexBackend, runtime);
@@ -147,6 +150,7 @@ export class ProviderRouter {
   }
 
   get(id: ProviderId): Provider {
+    if (id === "device") return this.device;
     if (id === "ollama") return this.ollama;
     if (id === "openai-compat") return this.openaiCompat;
     if (id === "claude-cli" || id === "codex-cli" || id === "opencode-cli") return this.cliProviders[id];
@@ -172,6 +176,7 @@ export class ProviderRouter {
     // OpenAI-compatible endpoint; "claude"/"auto" start on Claude (auto
     // degrades to local on failure — handled in ChatView).
     if (role === "chat") {
+      if (this.chatBackend === "device") return { provider: this.device, model: this.settings.deviceChatModel };
       if (this.chatBackend === "claude-cli" || this.chatBackend === "codex-cli" || this.chatBackend === "opencode-cli") {
         const id = this.chatBackend;
         const provider = this.cliProviders[id];

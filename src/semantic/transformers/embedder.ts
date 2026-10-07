@@ -47,7 +47,8 @@ export class TransformersEmbedder implements Embedder {
       // worker with an un-loaded embed.
       if (!this.loaded) throw new Error("embedding worker terminated");
       const req = this.tracker.create<number[][]>();
-      this.post({ id: req.id, type: "embed", texts });
+      try { this.post({ id: req.id, type: "embed", texts }); }
+      catch (error) { this.tracker.rejectAll(error instanceof Error ? error : new Error(String(error))); }
       return req.promise;
     });
     this.inferenceChain = result.then(() => undefined, () => undefined);
@@ -66,7 +67,6 @@ export class TransformersEmbedder implements Embedder {
   private ensureLoaded(onProgress?: (p: ProgressEvent) => void, allowDownload = false): Promise<void> {
     if (!this.loaded) {
       const req = this.tracker.create<number[][]>(onProgress);
-      this.post({ id: req.id, type: "load", repo: this.model.hfRepo, pooling: this.model.pooling, revision: this.model.revision, dtype: this.model.dtype, maxTokens: this.model.maxTokens, dim: this.model.dim, allowDownload });
       const loadPromise = req.promise.then(() => undefined).catch((e: unknown) => {
         if (this.loaded === loadPromise) this.loaded = null; // allow retry after a failed load
         throw e;
@@ -76,6 +76,8 @@ export class TransformersEmbedder implements Embedder {
       // caller already got its own rejection from tracker.rejectAll()).
       loadPromise.catch(() => {});
       this.loaded = loadPromise;
+      try { this.post({ id: req.id, type: "load", repo: this.model.hfRepo, pooling: this.model.pooling, revision: this.model.revision, dtype: this.model.dtype, maxTokens: this.model.maxTokens, dim: this.model.dim, allowDownload }); }
+      catch (error) { this.tracker.rejectAll(error instanceof Error ? error : new Error(String(error))); }
     }
     return this.loaded;
   }

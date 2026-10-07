@@ -19,7 +19,7 @@ import {
   type ClassifyPair,
   type Verdict,
 } from "./classify";
-import { ClassifierStoppedError } from "./classifierGlue";
+import { ClassifierStoppedError, type ClassifierHandle } from "./classifierGlue";
 import { normalizeOptimizeState, type OptimizeState, type StoredVerdict } from "./state";
 import { tagCentroids } from "./tagCentroids";
 import { scanTags, type TagScanReport } from "./tagScan";
@@ -35,12 +35,7 @@ export interface OptimizeDeps {
   setState(next: OptimizeState): Promise<void>;
   now(): string;
   /** The only path that sends tag names or titles to a model. Rejects with UtilityUnavailableError. */
-  classifier(opts: { interactive: boolean }): Promise<{
-    local: boolean;
-    label: string;
-    model: string;
-    complete(req: { system: string; user: string; schema: Record<string, unknown> }, parse: (raw: string) => Verdict[]): Promise<Verdict[]>;
-  }>;
+  classifier(opts: { interactive: boolean }): Promise<ClassifierHandle>;
 }
 
 export interface ClassifyResult {

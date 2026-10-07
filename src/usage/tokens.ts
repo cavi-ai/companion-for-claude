@@ -77,8 +77,8 @@ export interface ContextGauge {
 }
 
 /** Build the pre-send context gauge from estimated input + reserved output. */
-export function contextGauge(estimatedInput: number, modelId: string, reservedOutput: number): ContextGauge {
-  const { contextWindow } = limitsFor(modelId);
+export function contextGauge(estimatedInput: number, modelId: string, reservedOutput: number, windowOverride?: number): ContextGauge {
+  const contextWindow = windowOverride ?? limitsFor(modelId).contextWindow;
   const used = estimatedInput + reservedOutput;
   const fraction = Math.min(1, used / contextWindow);
   return { used, window: contextWindow, fraction, remaining: Math.max(0, contextWindow - used) };

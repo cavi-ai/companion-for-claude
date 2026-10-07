@@ -68,6 +68,11 @@ export class AtMenu {
     this.listEl.empty();
   }
 
+  /** Keeps the menu while focus is back in `input`. */
+  hideUnlessFocused(input: Element): void {
+    if ((this.el.ownerDocument?.activeElement ?? null) !== input) this.hide();
+  }
+
   move(delta: number): void {
     if (this.matches.length === 0) return;
     this.selected = (this.selected + delta + this.matches.length) % this.matches.length;

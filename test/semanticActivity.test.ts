@@ -48,6 +48,19 @@ function makeDeps(overrides?: Partial<SemanticControllerDeps>): SemanticControll
 }
 
 describe("semantic activity", () => {
+  it("refuses to allocate a mobile embedding worker while device chat owns memory", async () => {
+    const controller = new SemanticController(makeDeps({ isMobile: true, deviceChatBusy: () => true }));
+    await expect(controller.builtinEmbedder().download()).rejects.toThrow("Stop on-device chat");
+    controller.destroy();
+  });
+  it("can rebuild after device chat paused the old index operation", async () => {
+    const controller = new SemanticController(makeDeps({ isMobile: true }));
+    controller.indexer();
+    controller.pauseForDeviceChat();
+    const result = await controller.indexer()!.build();
+    expect(result.aborted).not.toBe(true);
+    controller.destroy();
+  });
   beforeEach(() => clearNotices());
 
   it("clears obsolete index failures after a successful rebuild with a different model", async () => {

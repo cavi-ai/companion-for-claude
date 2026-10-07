@@ -5,6 +5,7 @@ import type { ChatMessage } from "../../types";
 import type { Conversation } from "../../conversations/store";
 import { SessionDropdown } from "./SessionDropdown";
 import { modelLabel } from "../../claude/models";
+import { DEVICE_MODELS, DEVICE_MAX_INPUT_TOKENS, DEVICE_MAX_OUTPUT_TOKENS, deviceModelCached } from "../../device/models";
 import { isMobileModelChoiceActive, mobileModelChoices } from "../mobileModelChoices";
 import type { ChatControls } from "../../claude/chatControls";
 import type { ChatMode } from "../ModeControl";
@@ -166,11 +167,13 @@ export class HeaderControls {
    * after each response, and when the model changes.
    */
   updateUsageBar(): void {
-    const { model: resolvedModel } = this.plugin.router().chatProvider();
+    const { model: resolvedModel, provider } = this.plugin.router().chatProvider();
     const caps = this.plugin.router().chatCapabilities();
     const local = caps.local;
     const model = local ? resolvedModel : this.controls?.model ?? this.plugin.settings.model;
-    const reserved = this.controls?.maxTokens ?? this.plugin.settings.maxTokens;
+    const device = provider.id === "device";
+    const configuredOutput = this.controls?.maxTokens ?? this.plugin.settings.maxTokens;
+    const reserved = device ? Math.min(configuredOutput, DEVICE_MAX_OUTPUT_TOKENS) : configuredOutput;
 
     // Estimate input tokens: system + conversation so far + the draft + a
     // rough allowance for the vault context that will be attached.
@@ -178,16 +181,16 @@ export class HeaderControls {
     const draft = this.inputEl?.value ?? "";
     const ctxAllowance = this.deps.anyContextEnabled() ? this.plugin.settings.contextCharBudget : 0;
     const project = this.deps.currentProject();
-    const estIn = estimateTokens(this.plugin.composeSystemPrompt({ ...(project ? { project } : {}) })) + estimateTokens(convo) + estimateTokens(draft) + estimateTokensForChars(ctxAllowance);
+    const estIn = estimateTokens(this.plugin.composeSystemPrompt({ ...(project ? { project } : {}), compact: device })) + estimateTokens(convo) + estimateTokens(draft) + estimateTokensForChars(ctxAllowance);
 
-    const g = contextGauge(estIn, model, reserved);
+    const g = contextGauge(estIn, model, reserved, device ? DEVICE_MAX_INPUT_TOKENS + DEVICE_MAX_OUTPUT_TOKENS : undefined);
     this.gaugeFillEl.setCssStyles({ width: `${Math.round(g.fraction * 100)}%` });
     this.gaugeFillEl.toggleClass("is-warn", g.fraction >= 0.75 && g.fraction < 0.92);
     this.gaugeFillEl.toggleClass("is-danger", g.fraction >= 0.92);
 
     const parts: string[] = [];
     if (local) {
-      parts.push(`~${formatTokens(estIn)} ctx · local (no metered cost)`);
+      parts.push(device ? `~${formatTokens(estIn)} / ${formatTokens(DEVICE_MAX_INPUT_TOKENS)} input · on-device` : `~${formatTokens(estIn)} ctx · local (no metered cost)`);
       // Local turns report token counts too (Ollama), so show running totals
       // without a cost — the same shape as the OAuth/subscription branch.
       if (this.session.requests > 0) {
@@ -215,7 +218,8 @@ export class HeaderControls {
     const { model: resolvedModel } = this.plugin.router().chatProvider();
     const caps = this.plugin.router().chatCapabilities();
     const chosen = modelLabel(this.controls?.model ?? this.plugin.settings.model);
-    const label = caps.local ? `${modelLabel(resolvedModel)} · local` : chosen;
+    const deviceName = DEVICE_MODELS.find((model) => model.id === resolvedModel)?.name ?? resolvedModel;
+    const label = this.plugin.settings.chatBackend === "device" ? `${deviceName} · on-device` : caps.local ? `${modelLabel(resolvedModel)} · local` : chosen;
     // Desktop nests the dot + chevron inside cc-model, so the name text goes into
     // its own child span; mobile has no such child and keeps setting cc-model directly.
     (this.modelTextEl ?? this.modelLabelEl).setText(label);
@@ -233,6 +237,14 @@ export class HeaderControls {
     const backend = router.chatBackend;
     const el = this.backendPillEl;
     el.removeClass("is-ok", "is-warn");
+    if (backend === "device") {
+      const model = this.plugin.settings.deviceChatModel;
+      const cached = await deviceModelCached(model, typeof caches === "undefined" ? undefined : caches);
+      if (this.plugin.settings.chatBackend !== "device" || this.plugin.settings.deviceChatModel !== model) return;
+      el.setText(cached ? "● On-device GPU · downloaded" : "● On-device GPU · download model");
+      el.toggleClass("is-warn", !cached);
+      return;
+    }
     if (backend === "claude-cli" || backend === "codex-cli" || backend === "opencode-cli") {
       const entry = this.deps.cliEntries(router).find((e) => e.backend.id === backend);
       const label = entry?.backend.label ?? "CLI";
@@ -365,6 +377,10 @@ export class HeaderControls {
   openModelMenu(): void {
     const resolved = this.plugin.router().chatProvider();
     const activeModel = resolved.provider.id === "anthropic" ? this.controls.model : resolved.model;
+    const deviceItems: ActionModalItem[] = DEVICE_MODELS.map((model) => ({
+      title: `${model.name} · on-device`, checked: resolved.provider.id === "device" && activeModel === model.id,
+      run: () => void this.onModelSelect(`device:${model.id}`),
+    }));
     const items = mobileModelChoices({
       // Avoid a network probe on tap: the configured local model is the one
       // mobile users need to retain/switch back to. Discovery remains in settings.
@@ -377,7 +393,7 @@ export class HeaderControls {
       checked: isMobileModelChoiceActive(choice, resolved.provider.id, activeModel),
       run: () => void this.onModelSelect(choice.value),
     }));
-    new ActionModal(this.app, "Choose model", items).open();
+    new ActionModal(this.app, "Choose model", [...deviceItems, ...items]).open();
   }
 
   /** Show the session-grant pill only while the grant is live. */
@@ -391,7 +407,12 @@ export class HeaderControls {
    * back to Claude (backend → auto, so it still falls back to local when needed).
    */
   async onModelSelect(value: string): Promise<void> {
-    if (value.startsWith("ollama:")) {
+    if (value.startsWith("device:")) {
+      const model = DEVICE_MODELS.find((m) => m.id === value.slice("device:".length));
+      if (!model) return;
+      this.plugin.settings.deviceChatModel = model.id;
+      this.plugin.settings.chatBackend = "device";
+    } else if (value.startsWith("ollama:")) {
       this.plugin.settings.ollamaModel = value.slice("ollama:".length);
       this.plugin.settings.chatBackend = "local";
     } else if (value.startsWith("custom:")) {
@@ -401,7 +422,7 @@ export class HeaderControls {
       this.plugin.settings.chatBackend = "custom";
     } else {
       this.controls.model = value;
-      if (this.plugin.settings.chatBackend === "local" || this.plugin.settings.chatBackend === "custom") this.plugin.settings.chatBackend = "auto";
+      if (this.plugin.settings.chatBackend === "local" || this.plugin.settings.chatBackend === "custom" || this.plugin.settings.chatBackend === "device") this.plugin.settings.chatBackend = "auto";
     }
     await this.plugin.saveSettings();
     this.deps.renderKnobs(); // capabilities/provider changed → rebuild dependent knobs

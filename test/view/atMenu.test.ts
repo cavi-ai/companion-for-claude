@@ -4,6 +4,7 @@ import type { AtItem, ClaimAtSource } from "../../src/context/atMention";
 import type { AttachedPath } from "../../src/context/vaultContext";
 import type ClaudeCompanionPlugin from "../../src/main";
 import { DEFAULT_SETTINGS } from "../../src/types";
+import { AtMenu } from "../../src/view/AtMenu";
 import { ChatView } from "../../src/view/ChatView";
 
 function fixture() {
@@ -140,5 +141,23 @@ describe("claim reload coalescing", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("AtMenu.hideUnlessFocused", () => {
+  it("stays open while focus is back in the composer input, and hides when it went elsewhere", () => {
+    const parent = new FakeElement();
+    const input = new FakeElement();
+    const menu = new AtMenu(parent as unknown as HTMLElement, () => [{ id: "note:Notes/Alpha.md", kind: "note-path", label: "Alpha" }], vi.fn());
+    const menuEl = parent.querySelector(".cc-at-menu")! as unknown as { ownerDocument: { activeElement: unknown } };
+    menuEl.ownerDocument = { activeElement: input };
+    menu.show("alpha");
+
+    menu.hideUnlessFocused(input as unknown as Element);
+    expect(menu.isOpen()).toBe(true);
+
+    menuEl.ownerDocument = { activeElement: new FakeElement() };
+    menu.hideUnlessFocused(input as unknown as Element);
+    expect(menu.isOpen()).toBe(false);
   });
 });

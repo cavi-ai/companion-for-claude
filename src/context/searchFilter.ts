@@ -1,6 +1,7 @@
 // Frontmatter and tag filters for vault_search; pure, no Obsidian imports.
 
 import { parseWikilink } from "../ontology/relations";
+import { typeMatches } from "./typedContext";
 
 export interface SearchFilter {
   type?: string;
@@ -54,8 +55,14 @@ function tagMatches(tags: readonly string[], wanted: string): boolean {
   });
 }
 
-export function matchesSearchFilter(frontmatter: Record<string, unknown> | undefined, tags: readonly string[], filter: SearchFilter): boolean {
-  if (filter.type !== undefined && !strings(frontmatter?.type).includes(filter.type)) return false;
+export function matchesSearchFilter(
+  frontmatter: Record<string, unknown> | undefined,
+  tags: readonly string[],
+  filter: SearchFilter,
+  lineageOf?: (type: string) => readonly string[] | undefined,
+): boolean {
+  const wanted = filter.type;
+  if (wanted !== undefined && !strings(frontmatter?.type).some((t) => typeMatches(t, wanted, lineageOf))) return false;
   if (filter.project !== undefined && !projectMatches(frontmatter?.project, filter.project)) return false;
   if (filter.tag !== undefined && !tagMatches(tags, filter.tag)) return false;
   return true;

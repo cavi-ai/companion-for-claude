@@ -21,6 +21,7 @@ export interface SemanticControllerDeps {
   enrichDiagnostics: () => EnrichDiagnostics;
   router: () => ProviderRouter;
   isMobile: boolean;
+  deviceChatBusy?: () => boolean;
   vault: {
     adapterSize?: (path: string) => Promise<number | undefined>;
     adapterExists: (path: string) => Promise<boolean>;
@@ -519,7 +520,10 @@ export class SemanticController {
       this._builtinEmbedder = null;
       this._builtinModelCached = false;
     }
-    if (!this._builtinEmbedder) this._builtinEmbedder = new TransformersEmbedder(() => createEmbedWorker() as unknown as WorkerLike, model);
+    if (!this._builtinEmbedder) this._builtinEmbedder = new TransformersEmbedder(() => {
+      if (this.deps.isMobile && this.deps.deviceChatBusy?.()) throw new Error("Stop on-device chat before loading an embedding model.");
+      return createEmbedWorker() as unknown as WorkerLike;
+    }, model);
     return this._builtinEmbedder;
   }
 
@@ -549,6 +553,18 @@ export class SemanticController {
   private pauseInference(): void {
     this.inferencePaused = true;
     this._builtinEmbedder?.terminate();
+  }
+
+  /** Mobile cannot keep the embedding model and chat model resident together.
+   * Explicit Rebuild index resumes embeddings after local chat has finished. */
+  pauseForDeviceChat(): void {
+    this.invalidateIndexer();
+    this.mobileInferenceEnabled = false;
+    this.reindexQueue.clear();
+    if (this.reindexTimer !== null) window.clearTimeout(this.reindexTimer);
+    this.reindexTimer = null;
+    this._builtinEmbedder?.terminate();
+    this._builtinEmbedder = null;
   }
 
   async canEmbedWithoutDownload(): Promise<boolean> {

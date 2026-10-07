@@ -1,6 +1,7 @@
 // Shared types for the Claude Companion plugin.
 
 import type { ResearchModel } from "./research/researchModel";
+import { DEFAULT_DEVICE_MODEL } from "./device/models";
 
 export type ChatRole = "user" | "assistant";
 
@@ -119,7 +120,9 @@ export interface PluginSettings {
   /** Chat backend: always Claude, always local, auto (Claude with local
    *  fallback), custom (an OpenAI-compatible endpoint), or the user's
    *  Claude Code / Codex / OpenCode CLI sign-in (desktop only). */
-  chatBackend: "claude" | "local" | "auto" | "custom" | "claude-cli" | "codex-cli" | "opencode-cli";
+  chatBackend: "claude" | "local" | "auto" | "custom" | "device" | "claude-cli" | "codex-cli" | "opencode-cli";
+  /** Pinned on-device GPU model. Assets are cached separately on each device. */
+  deviceChatModel: string;
   /** Codex CLI model id passed as `-m`; empty lets the CLI pick its own default. */
   codexModel: string;
   /** OpenCode CLI model id passed as `-m` (e.g. "anthropic/claude-sonnet-5"); empty lets the CLI pick its own default. */
@@ -317,6 +320,7 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   chatFontSize: 14,
   maxConversations: 200,
 
+  deviceChatModel: DEFAULT_DEVICE_MODEL,
   ollamaHost: "http://localhost:11434",
   ollamaModel: "llama3.1",
   ollamaUtilityModel: "",

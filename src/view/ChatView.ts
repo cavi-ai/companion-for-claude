@@ -930,7 +930,7 @@ export class ChatView extends ItemView {
     this.updateModeControl();
     const agentActive = this.agentCapable;
     if (this.plugin.settings.agentModeEnabled && !toolCapable && caps.local) {
-      new Notice(`The selected local model doesn't support tools, so the agent is off. Pick a tool-capable model (e.g. llama3.1, qwen3) in settings → Local models.`, 8000);
+      new Notice(provider.id === "device" ? "On-device GPU models support text chat. Agent tools are off for this backend." : "The selected local model doesn't support tools, so the agent is off. Pick a tool-capable model (e.g. llama3.1, qwen3) in settings → Local models.", 8000);
     }
 
     // Build context-augmented copy of the message list for the API. In agent
@@ -952,6 +952,7 @@ export class ChatView extends ItemView {
       [...this.attachedPaths, ...pinnedPaths],
       this.attachedPages,
       searchScope,
+      toggles.linkedNotes || toggles.searchVault ? await this.plugin.loadedOntology() : null,
     );
     if (controller.signal.aborted) return true;
     // A resumed Claude Code session already owns its history. Sending the whole
@@ -992,7 +993,7 @@ export class ChatView extends ItemView {
     // this view closes mid-turn. Mirrors the fallback policy run() used to
     // apply itself: an agent turn that already produced text/trace despite an
     // error is a completed answer with a notice, never a fallback trigger.
-    const fallbackProviderId: ErrorHintProvider = caps.cli ? (caps.cliBackend ?? "claude-cli") : startedOnLocal ? "ollama" : "anthropic";
+    const fallbackProviderId: ErrorHintProvider = provider.id;
     const coreRun = async (handlers: AgentTurnHandlers, signal: AbortSignal): Promise<AgentTurnResult> => {
       const primary = agentActive || caps.cli
         ? await this.agentTurn(apiMessages, handlers, signal, turn.conversationId)
@@ -1007,6 +1008,7 @@ export class ChatView extends ItemView {
         return { text: primary.text, trace: primary.trace, ...(primary.aborted !== undefined ? { aborted: primary.aborted } : {}), ...(primary.capped !== undefined ? { capped: primary.capped } : {}) };
       }
 
+      if (backend === "device") { tagProvider(primary.error, "device"); return primary; }
       const fb = await router.localFallback();
       const doFallback = shouldFallbackToLocal({ backend, localAvailable: fb !== null, error: primary.error });
       if (!doFallback || !fb) {
@@ -1071,11 +1073,11 @@ export class ChatView extends ItemView {
     // "local" = the configured non-Claude chat backend (Ollama, or the custom
     // OpenAI-compatible endpoint when that's the chat backend) — or, for a
     // fallback attempt, whichever local backend the router found reachable.
-    const useCustom = !onClaude && !localOverride && this.plugin.settings.chatBackend === "custom";
-    const provider = onClaude ? router.anthropic : localOverride?.provider ?? (useCustom ? router.openaiCompat : router.ollama);
+    const local = onClaude ? undefined : localOverride ?? router.chatProvider();
+    const provider = onClaude ? router.anthropic : local!.provider;
     const model = onClaude
       ? (this.turnModelOverride ?? this.controls.model)
-      : localOverride?.model ?? (useCustom ? this.plugin.settings.openaiCompatModel : this.plugin.settings.ollamaModel);
+      : local!.model;
     const shape = shapeRequest({ ...this.controls, model: onClaude ? model : this.controls.model }, this.maxTokensOverride ?? this.plugin.settings.maxTokens);
 
     return new Promise((resolve) => {
@@ -1098,7 +1100,7 @@ export class ChatView extends ItemView {
         finish({ text: buffer, trace: [], error: err });
       };
       const request: CompletionRequest = {
-        system: this.plugin.composeSystemPrompt({ project: this.currentChatProject }),
+        system: this.plugin.composeSystemPrompt({ project: this.currentChatProject, compact: provider.id === "device" }),
         messages: apiMessages,
         model,
         maxTokens: shape.maxTokens,

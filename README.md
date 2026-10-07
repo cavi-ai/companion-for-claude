@@ -30,7 +30,8 @@ source of truth.
 ## What Companion adds to Obsidian
 
 - **Vault-aware chat** with the active note, selection, links, search results,
-  folders, PDFs, images, and pasted screenshots as context.
+  notes a typed search result relates to, folders, PDFs, images, and pasted
+  screenshots as context.
 - **Agent mode** that can search, read, and follow links while showing every tool
   call; writes remain behind confirmation.
 - **Reviewable edits** with per-hunk acceptance before a note changes.
@@ -99,6 +100,12 @@ take or a backend you choose.
   the background it runs only when the classifier is served from this machine
   or a private-network address (`localhost` or a loopback or private-range IP);
   no other host name qualifies.
+- **Note type classifier model:** **Check with model** in the type review sends
+  each untyped note's title, folder, up to 10 tags, up to 5 headings, and its
+  first 200 characters, plus the names of the ontology types and up to 6
+  property keys per type, to the configured classifier model. Secrets
+  (API keys, tokens, passwords) are removed from note text before sending. It
+  runs only on that click, never in the background.
 - **Hugging Face and jsDelivr:** the one-time embedding download requests only
   the model and ONNX runtime after you approve it; both are cached.
 - **Cloud-session services:** **Send to cloud Claude session** sends the prompt

@@ -1,12 +1,50 @@
 # Local models & semantic search
 
-Two independent local-first paths:
+Independent local-first paths:
 
 - **Chat and utility work on a local LLM** via Ollama — optional. A loopback
   server is desktop-only; mobile utility work can use a LAN or remote endpoint.
 - **Semantic search on an on-device embedding model** — every platform, on by default, no external runtime.
+- **On-device GPU chat inside Obsidian** — a downloaded, quantized model answers
+  in the existing chat panel. Requires WebGPU, float16 support, and a persistent
+  browser cache in Obsidian's runtime. No helper app or server.
 
 You don't need the first to get the second.
+
+## On-device GPU chat
+
+1. In *Settings → Companion for Claude → Connection*, choose **On-device GPU**
+   as the chat backend.
+2. Start with **SmolLM2 360M** (about 275 MB, the smaller default), or select
+   **Qwen3 0.6B** (about 579 MB).
+   These are pinned 4-bit ONNX exports. Download sizes exclude runtime assets
+   and do not represent peak memory use.
+3. Click **Download model**. The plugin checks GPU support inside Obsidian
+   before downloading from Hugging Face and the ONNX runtime CDN.
+4. Open Companion chat and send a text request. The reply streams into the
+   conversation; no app switch is involved.
+
+Chat uses only cached assets and never retries on a cloud provider. If the OS
+evicts model files, download explicitly again. The cache belongs to this device
+and does not sync with vault settings. **Delete model** removes the selected
+export without deleting embedding models.
+
+This backend supports text chat, up to 2048 input tokens and 256 output tokens.
+Agent tools and media are unavailable. Longer context is rejected rather than
+silently truncated. Custom system instructions and project context still apply;
+the large HTML design prompt is omitted to leave room for the conversation.
+Utility tasks continue to use their separately configured backend.
+
+Models never load on startup. Each foreground request owns one worker, which
+is released on completion, failure, cancellation, or backgrounding. Mobile
+embedding inference pauses when chat loads its model; use **Rebuild index** to
+resume it afterward. A smaller export reduces weight storage but cannot
+guarantee immunity from iOS memory termination.
+
+Run **Companion: Check on-device GPU support** to diagnose the actual Obsidian
+runtime. Safari support alone does not establish support in an embedded WebView.
+The earlier native MLX result callback remains available for pending requests;
+the plugin no longer offers the command that launches the helper app.
 
 ## Never lose functionality: the Auto backend
 
@@ -126,7 +164,7 @@ removes the cached model.
 **OpenAI-compatible endpoint** — embeds against the endpoint configured under
 *Local models*, using its embedding model.
 
-The built-in worker uses WebGPU or WASM; it does not use native MLX/Metal or Android LiteRT. Chat models run through the API or your configured endpoint. Arctic XS is the mobile recommendation because it has the smallest download and vector dimensions in this catalog. Download size is not peak runtime memory, and retrieval quality depends on the vault.
+The built-in embedding worker uses WebGPU or WASM. On-device chat uses WebGPU with quantized ONNX exports; neither worker uses native MLX or Android LiteRT. Arctic XS is the mobile recommendation because it has the smallest download and vector dimensions in this catalog. Download size is not peak runtime memory, and retrieval quality depends on the vault.
 
 | Built-in model | q8 model assets (decimal MB) | Vector dimensions |
 |---|---|---|
@@ -176,6 +214,7 @@ chunk, so a brand-new note isn't invisible while the index catches up.
 | Feature | Desktop | Mobile |
 |---|---|---|
 | Chat, artifacts, agent mode | Yes | Yes |
+| On-device GPU text chat | Requires WebGPU and float16 | Requires WebGPU and float16 in Obsidian |
 | Built-in semantic search + index build | Yes | Yes |
 | Ollama chat | Yes | Reachable LAN/remote endpoint |
 | Ollama utility work | Yes | Yes — with a reachable LAN/remote HTTP(S) endpoint |

@@ -79,6 +79,46 @@ describe("OntologyRegistry", () => {
     expect(reg.resolve("person")).toBeDefined(); // newer load owns the state
     expect(reg.digest()).toContain("- person");
   });
+  it("a stale load settles only after the newest load swaps state, with the newest load's result", async () => {
+    type Notes = Awaited<ReturnType<OntologyIO["listSchemaNotes"]>>;
+    const pending: Array<(notes: Notes) => void> = [];
+    const io: OntologyIO = { parseYaml, listSchemaNotes: () => new Promise<Notes>((res) => { pending.push(res); }) };
+    const reg = new OntologyRegistry(io);
+    let aSettled = false;
+    const a = reg.load().then((r) => { aSettled = true; return r; });
+    const b = reg.load();
+    pending[0]!([]); // A's listing resolves first
+    await new Promise((r) => setTimeout(r, 0));
+    expect(aSettled).toBe(false);
+    const broken = { path: "Ontology/bad.md", content: "---\nontology: type\n---\nno name" };
+    pending[1]!(await ioFromNotes([...seededNotes, broken]).listSchemaNotes());
+    const ra = await a;
+    expect(reg.resolved().size).toBeGreaterThan(0);
+    const rb = await b;
+    expect(ra.errors).toEqual(rb.errors);
+    expect(ra.errors.some((e) => e.path === "Ontology/bad.md")).toBe(true);
+  });
+  it("a stale load whose IO throws returns the newest load's errors", async () => {
+    type Notes = Awaited<ReturnType<OntologyIO["listSchemaNotes"]>>;
+    let rejectA!: (e: Error) => void;
+    let resolveB!: (notes: Notes) => void;
+    let call = 0;
+    const io: OntologyIO = {
+      parseYaml,
+      listSchemaNotes: () => (++call === 1 ? new Promise<Notes>((_, rej) => { rejectA = rej; }) : new Promise<Notes>((res) => { resolveB = res; })),
+    };
+    const reg = new OntologyRegistry(io);
+    const a = reg.load();
+    const b = reg.load();
+    rejectA(new Error("io"));
+    const broken = { path: "Ontology/bad.md", content: "---\nontology: type\n---\nno name" };
+    resolveB(await ioFromNotes([...seededNotes, broken]).listSchemaNotes());
+    const [ra, rb] = await Promise.all([a, b]);
+    expect(ra.errors.some((e) => e.path === "Ontology/bad.md")).toBe(true);
+    expect(ra.errors.some((e) => /io/.test(e.message))).toBe(false);
+    expect(ra.errors).toEqual(rb.errors);
+    expect(reg.resolve("person")).toBeDefined();
+  });
   it("a successful load of an empty list clears a previously populated schema", async () => {
     const notes = [...seededNotes];
     const io: OntologyIO = { parseYaml, listSchemaNotes: () => ioFromNotes(notes).listSchemaNotes() };

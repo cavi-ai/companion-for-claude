@@ -2,7 +2,7 @@
 
 import { sanitizeEndpointForDisplay } from "./endpointPolicy";
 
-export type ErrorHintProvider = "anthropic" | "ollama" | "openai-compat" | "claude-cli" | "codex-cli" | "opencode-cli";
+export type ErrorHintProvider = "anthropic" | "ollama" | "openai-compat" | "device" | "claude-cli" | "codex-cli" | "opencode-cli";
 
 const CLI_LABELS: Record<"claude-cli" | "codex-cli" | "opencode-cli", string> = { "claude-cli": "Claude Code", "codex-cli": "Codex", "opencode-cli": "OpenCode" };
 const CLI_SIGN_IN: Record<"claude-cli" | "codex-cli" | "opencode-cli", string> = { "claude-cli": "run `claude auth login`", "codex-cli": "run `codex login`", "opencode-cli": "run `opencode auth login`" };
@@ -15,12 +15,14 @@ function endpointName(provider: ErrorHintProvider, endpoint?: string): string {
   const safeEndpoint = endpoint?.trim() ? sanitizeEndpointForDisplay(endpoint) : "";
   const at = safeEndpoint ? ` at ${safeEndpoint}` : "";
   if (provider === "ollama") return `Ollama${at}`;
+  if (provider === "device") return "the on-device GPU model";
   if (provider === "openai-compat") return `the OpenAI-compatible endpoint${at}`;
   if (provider === "claude-cli" || provider === "codex-cli" || provider === "opencode-cli") return CLI_LABELS[provider];
   return `Anthropic${at}`;
 }
 
 export function errorHint(message: string, provider: ErrorHintProvider = "anthropic", endpoint?: string): string | null {
+  if (provider === "device") return null; // bounded worker failures already include a recovery action
   const m = message.toLowerCase();
   if (provider === "claude-cli" || provider === "codex-cli" || provider === "opencode-cli") {
     const label = CLI_LABELS[provider];

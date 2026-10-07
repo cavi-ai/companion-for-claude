@@ -7,7 +7,9 @@ export type ActivityKind =
   | "embedding-download"
   | "link-review"
   | "clipper-verification"
-  | "standing-order";
+  | "standing-order"
+  | "vault-task"
+  | "cloud-task";
 
 export interface ActivityRecoveryAction {
   id: string;

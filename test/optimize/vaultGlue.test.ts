@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { App } from "obsidian";
+import { App, TFile } from "obsidian";
 import { collapseMerges, planTagMerges } from "../../src/optimize/mergePlan";
-import { acceptsRelated, addRelatedLinks, applyNoteMerge, linkScanNotes, noteTagInput, processNoteBody, writeOptimizeRunNote } from "../../src/optimize/vaultGlue";
+import { OntologyRegistry } from "../../src/ontology/registry";
+import { acceptsRelated, addRelatedLinks, applyNoteMerge, linkScanNotes, loadedOntology, noteTagInput, processNoteBody, setNoteType, typeScanNotes,writeOptimizeRunNote } from "../../src/optimize/vaultGlue";
+import { TypeWeaveController } from "../../src/optimize/typeController";
 import { SEED_TYPES } from "../../src/ontology/seed";
 import { resolveTypes } from "../../src/ontology/schema";
 import type { ResolvedType } from "../../src/ontology/types";
@@ -187,6 +189,111 @@ describe("linkScanNotes", () => {
   });
 });
 
+describe("loadedOntology", () => {
+  it("loads a registry created after startup before acceptsRelated reads it", async () => {
+    const app = new App();
+    app.vault.seed("a.md", "x", { mtime: 1, frontmatter: { type: "island" } });
+    const registryNotes = [{ path: "Ontology/island.md", frontmatter: { ontology: "type", type_name: "island" }, body: "" }];
+    const reg = new OntologyRegistry({ listSchemaNotes: async () => registryNotes, parseYaml: () => ({}) });
+    expect(linkScanNotes(app as never, reg)[0]?.acceptsRelated).toBe(true);
+    const loaded = await loadedOntology(reg);
+    expect(loaded).toBe(reg);
+    expect(reg.resolved().has("island")).toBe(true);
+    expect(linkScanNotes(app as never, loaded)[0]?.acceptsRelated).toBe(false);
+  });
+
+  it("passes null through without loading", async () => {
+    expect(await loadedOntology(null)).toBeNull();
+  });
+});
+
+describe("typeScanNotes", () => {
+  it("reads path, mtime, the raw frontmatter and frontmatter plus inline tags", () => {
+    const app = new App();
+    app.vault.seed("a/Café 🧠.md", "x", { mtime: 5, frontmatter: { type: 3, tags: ["one", "two"] }, inlineTags: [{ tag: "inline", start: 0, end: 7 }] });
+    app.vault.seed("b.md", "x", { mtime: 6 });
+    app.vault.seed("c.md", "x", { mtime: 7, frontmatter: { type: "", tag: "p q" } });
+    const notes = typeScanNotes(app as never);
+    expect(notes).toEqual([
+      { path: "a/Café 🧠.md", mtime: 5, frontmatter: { type: 3, tags: ["one", "two"] }, tags: ["one", "two", "#inline"] },
+      { path: "b.md", mtime: 6, frontmatter: undefined, tags: [] },
+      { path: "c.md", mtime: 7, frontmatter: { type: "", tag: "p q" }, tags: ["p", "q"] },
+    ]);
+  });
+});
+
+describe("setNoteType", () => {
+  it("creates frontmatter on a note that has none and keeps the body", async () => {
+    const app = new App();
+    const file = app.vault.seed("n.md", "Body line\n");
+    expect(await setNoteType(app as never, "n.md", "project")).toEqual({ written: true });
+    expect(file._content).toContain('type: "project"');
+    expect(file._content).toContain("Body line");
+  });
+
+  it("adds type beside other keys without changing them", async () => {
+    const app = new App();
+    const file = app.vault.seed("n.md", '---\ntitle: "Café"\nstatus: "x"\n---\nBody\n');
+    expect(await setNoteType(app as never, "n.md", "person")).toEqual({ written: true });
+    expect(file._content).toContain('title: "Café"');
+    expect(file._content).toContain('status: "x"');
+    expect(file._content).toContain('type: "person"');
+  });
+
+  it("leaves a note whose type is a string, even empty, untouched", async () => {
+    const app = new App();
+    const typed = app.vault.seed("t.md", '---\ntype: "project"\n---\nBody\n', { frontmatter: { type: "project" } });
+    const empty = app.vault.seed("e.md", '---\ntype: ""\n---\nBody\n', { frontmatter: { type: "" } });
+    const before = [typed._content, empty._content];
+    expect(await setNoteType(app as never, "t.md", "person")).toEqual({ written: false });
+    expect(await setNoteType(app as never, "e.md", "person")).toEqual({ written: false });
+    expect([typed._content, empty._content]).toEqual(before);
+  });
+
+  it("skips inside the write when the cache lagged and the file is typed now", async () => {
+    const fm: Record<string, unknown> = { type: "project", keep: "me" };
+    const app = {
+      vault: { getAbstractFileByPath: () => new TFile("n.md", "x", 1) },
+      metadataCache: { getFileCache: () => ({ frontmatter: {} }) },
+      fileManager: { processFrontMatter: async (_f: unknown, fn: (fm: Record<string, unknown>) => void) => fn(fm) },
+    };
+    expect(await setNoteType(app as never, "n.md", "person")).toEqual({ written: false });
+    expect(fm).toEqual({ type: "project", keep: "me" });
+  });
+
+  it("never overwrites a present non-null type (number, list, object, empty string), cache or file", async () => {
+    for (const present of [3, ["project"], {}, ""]) {
+      for (const cacheLags of [false, true]) {
+        const fm: Record<string, unknown> = { type: present, keep: "me" };
+        const app = {
+          vault: { getAbstractFileByPath: () => new TFile("n.md", "x", 1) },
+          metadataCache: { getFileCache: () => ({ frontmatter: cacheLags ? {} : { type: present } }) },
+          fileManager: { processFrontMatter: async (_f: unknown, fn: (fm: Record<string, unknown>) => void) => fn(fm) },
+        };
+        expect(await setNoteType(app as never, "n.md", "person")).toEqual({ written: false });
+        expect(fm).toEqual({ type: present, keep: "me" });
+      }
+    }
+  });
+
+  it("writes over type: null and an absent type, touching no other key", async () => {
+    for (const initial of [{ type: null, keep: "me" }, { keep: "me" }]) {
+      const fm: Record<string, unknown> = { ...initial };
+      const app = {
+        vault: { getAbstractFileByPath: () => new TFile("n.md", "x", 1) },
+        metadataCache: { getFileCache: () => ({ frontmatter: { ...initial } }) },
+        fileManager: { processFrontMatter: async (_f: unknown, fn: (fm: Record<string, unknown>) => void) => fn(fm) },
+      };
+      expect(await setNoteType(app as never, "n.md", "person")).toEqual({ written: true });
+      expect(fm).toEqual({ type: "person", keep: "me" });
+    }
+  });
+
+  it("throws for a missing note", async () => {
+    await expect(setNoteType(new App() as never, "gone.md", "project")).rejects.toThrow("Note not found: gone.md");
+  });
+});
+
 describe("processNoteBody", () => {
   it("transforms the current content and throws for a missing note", async () => {
     const app = new App();
@@ -253,5 +360,41 @@ describe("addRelatedLinks", () => {
 
   it("throws for a missing note", async () => {
     await expect(addRelatedLinks(new App() as never, "gone.md", ["[[N]]"])).rejects.toThrow("Note not found: gone.md");
+  });
+});
+
+describe("TypeWeaveController.apply through the real setNoteType", () => {
+  it("adds only type; non-ASCII, emoji, quoted and list values and the body are unchanged", async () => {
+    const app = new App();
+    const file = app.vault.seed(
+      "Projects/Café ☕.md",
+      '---\ntitle: "Café ☕ 🧠"\nmood: "say: hi"\naliases:\n  - "Ünï"\n  - "🧠 brain"\n---\nBody ünï 🧠\n',
+      { frontmatter: { title: "Café ☕ 🧠" } },
+    );
+    const snapshot = async (): Promise<Record<string, unknown>> => {
+      let copy: Record<string, unknown> = {};
+      await app.fileManager.processFrontMatter(file, (fm) => { copy = structuredClone(fm); });
+      return copy;
+    };
+    const before = await snapshot();
+    expect(before).toMatchObject({ title: "Café ☕ 🧠", mood: "say: hi", aliases: ["Ünï", "🧠 brain"] });
+    const { resolved } = resolveTypes(SEED_TYPES);
+    const controller = new TypeWeaveController({
+      notes: () => [],
+      registry: async () => ({ resolve: (n) => resolved.get(n), resolved: () => resolved as ReadonlyMap<string, ResolvedType> }),
+      ontologyFolder: () => "Ontology",
+      read: async () => "",
+      setNoteType: (path, type) => setNoteType(app as never, path, type),
+      writeRunNote: async () => "run.md",
+      getState: () => ({ dismissed: [], verdicts: {} }),
+      setState: async () => undefined,
+      now: () => "2026-10-07T10:00:00.000Z",
+      classifier: async () => { throw new Error("unused"); },
+    });
+    const result = await controller.apply([{ path: "Projects/Café ☕.md", type: "person" }]);
+    expect(result).toMatchObject({ typed: 1, skipped: [], failed: [] });
+    const after = await snapshot();
+    expect(after).toEqual({ ...before, type: "person" });
+    expect(file._content).toContain("Body ünï 🧠");
   });
 });

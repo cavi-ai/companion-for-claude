@@ -168,6 +168,7 @@ describe("ChatView per-leaf conversation state", () => {
       completeActiveConversationTurn: vi.fn(async () => undefined),
       interruptActiveConversationTurn: vi.fn(async () => undefined),
       semanticSearch: async () => [],
+      loadedOntology: async () => null,
       turnService: () => new ChatTurnService(),
       setChatProject,
       chatProjectFor: async () => project,

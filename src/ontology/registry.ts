@@ -19,6 +19,8 @@ export class OntologyRegistry {
   private _errors: SchemaError[] = [];
   /** Reentrancy guard: only the newest load() may swap state (overlapping triggers: layout-ready, folder watcher). */
   private _loadGen = 0;
+  /** The newest load(); a stale load settles with it. */
+  private _latest: Promise<{ errors: readonly SchemaError[] }> | null = null;
 
   constructor(private io: OntologyIO) {}
 
@@ -27,19 +29,26 @@ export class OntologyRegistry {
    * silently skipped (docs are welcome in the folder). If listing throws, the
    * previous schema is kept and the failure is reported as an error. If a
    * newer load() started while this one was awaiting IO, the stale load leaves
-   * state untouched and returns the current errors.
+   * state untouched and settles with the newest load's result, so no awaited
+   * load() resolves before state at least as new as its own start is in place.
    */
-  async load(): Promise<{ errors: readonly SchemaError[] }> {
+  load(): Promise<{ errors: readonly SchemaError[] }> {
     const gen = ++this._loadGen;
+    const run = this.run(gen);
+    this._latest = run;
+    return run;
+  }
+
+  private async run(gen: number): Promise<{ errors: readonly SchemaError[] }> {
     let notes;
     try {
       notes = await this.io.listSchemaNotes();
     } catch (e) {
-      if (gen !== this._loadGen) return { errors: this._errors }; // a newer load owns the state
+      if (gen !== this._loadGen && this._latest) return this._latest;
       this._errors = [{ message: `ontology load failed: ${e instanceof Error ? e.message : String(e)}` }];
       return { errors: this._errors };
     }
-    if (gen !== this._loadGen) return { errors: this._errors }; // a newer load owns the state
+    if (gen !== this._loadGen && this._latest) return this._latest;
     const defs: TypeDef[] = [];
     const errors: SchemaError[] = [];
     const parseYaml = (src: string): unknown => this.io.parseYaml(src);

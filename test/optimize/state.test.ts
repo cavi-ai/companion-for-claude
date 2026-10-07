@@ -84,3 +84,75 @@ describe("normalizeOptimizeState dismissedLinks", () => {
     expect(out).toEqual({ dismissed: [], verdicts: {}, dismissedLinks: ["a\u0000b"], lastBackgroundRun: "2026-10-05T00:00:00.000Z" });
   });
 });
+
+describe("normalizeOptimizeState type weave fields", () => {
+  const tv = (over: Record<string, unknown> = {}) => ({ type: "project", model: "m", at: "2026-10-07T10:00:00.000Z", mtime: 5, ...over });
+
+  it("omits typeVerdicts and dismissedTypes when empty, so existing state is unchanged", () => {
+    expect(normalizeOptimizeState({ dismissed: ["a|b"] })).toEqual({ dismissed: ["a|b"], verdicts: {} });
+    const out = normalizeOptimizeState({ typeVerdicts: "x", dismissedTypes: 4 });
+    expect(out).not.toHaveProperty("typeVerdicts");
+    expect(out).not.toHaveProperty("dismissedTypes");
+  });
+
+  it("keeps valid type verdicts including a null type, and drops hostile entries", () => {
+    const out = normalizeOptimizeState({
+      typeVerdicts: {
+        "Café 🧠.md": tv(),
+        "none.md": tv({ type: null, types: "person,project" }),
+        "noneNoTypes.md": tv({ type: null }),
+        "noneBadTypes.md": tv({ type: null, types: 3 }),
+        "badType.md": tv({ type: 3 }),
+        "noModel.md": tv({ model: 1 }),
+        "noAt.md": tv({ at: undefined }),
+        "strMtime.md": tv({ mtime: "5" }),
+        "nanMtime.md": tv({ mtime: Number.NaN }),
+        "infMtime.md": tv({ mtime: Number.POSITIVE_INFINITY }),
+        "null.md": null,
+        "arr.md": [],
+      },
+    });
+    expect(Object.keys(out.typeVerdicts ?? {}).sort()).toEqual(["Café 🧠.md", "none.md"]);
+    expect(out.typeVerdicts?.["none.md"]).toEqual({ type: null, model: "m", at: "2026-10-07T10:00:00.000Z", mtime: 5, types: "person,project" });
+  });
+
+  it("strips unknown keys from a type verdict", () => {
+    const out = normalizeOptimizeState({ typeVerdicts: { "a.md": { ...tv(), extra: "x" } } });
+    expect(out.typeVerdicts?.["a.md"]).toEqual(tv());
+  });
+
+  it("ignores an array or null typeVerdicts", () => {
+    expect(normalizeOptimizeState({ typeVerdicts: [tv()] })).not.toHaveProperty("typeVerdicts");
+    expect(normalizeOptimizeState({ typeVerdicts: null })).not.toHaveProperty("typeVerdicts");
+  });
+
+  it("keeps the newest 2000 of 2,100 type verdicts by at", () => {
+    const entries = Array.from({ length: 2100 }, (_, i) => [`n${i}.md`, tv({ at: `2026-10-07T10:${String(Math.floor(i / 60)).padStart(2, "0")}:${String(i % 60).padStart(2, "0")}.000Z` })]);
+    const out = normalizeOptimizeState({ typeVerdicts: Object.fromEntries(entries) });
+    expect(Object.keys(out.typeVerdicts ?? {})).toHaveLength(2000);
+    expect(out.typeVerdicts?.["n2099.md"]).toBeDefined();
+    expect(out.typeVerdicts?.["n0.md"]).toBeUndefined();
+  });
+
+  it("keeps the newest 2000 distinct dismissedTypes in order and drops non-strings", () => {
+    const out = normalizeOptimizeState({ dismissedTypes: ["a.md", 3, null, "a.md", "b.md"] });
+    expect(out.dismissedTypes).toEqual(["a.md", "b.md"]);
+    const many = normalizeOptimizeState({ dismissedTypes: Array.from({ length: 2100 }, (_, i) => `n${i}.md`) });
+    expect(many.dismissedTypes).toHaveLength(2000);
+    expect(many.dismissedTypes?.[0]).toBe("n100.md");
+    expect(many.dismissedTypes?.[1999]).toBe("n2099.md");
+  });
+
+  it("keeps every other field alongside the type fields", () => {
+    const input = {
+      dismissed: ["t|u"],
+      dismissedLinks: ["a\u0000b"],
+      verdicts: {},
+      typeVerdicts: { "a.md": tv() },
+      dismissedTypes: ["z.md"],
+      lastBackgroundRun: "2026-10-05T00:00:00.000Z",
+    };
+    expect(normalizeOptimizeState(input)).toEqual(input);
+    expect(normalizeOptimizeState(normalizeOptimizeState(input))).toEqual(input);
+  });
+});

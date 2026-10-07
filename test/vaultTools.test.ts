@@ -4,6 +4,7 @@ import { parse as parseYaml } from "yaml";
 import { VaultTools, assertVaultPath, type SemanticSearch } from "../src/mcp/vaultTools";
 import { OntologyRegistry } from "../src/ontology/registry";
 import { schemaNoteContent, SEED_TYPES } from "../src/ontology/seed";
+import type { TypeDef } from "../src/ontology/types";
 
 function tools(allowWrites = true) {
   const app = new App();
@@ -558,6 +559,72 @@ describe("vault_search filters", () => {
 
   it("names the active filters when nothing matches", async () => {
     expect(await searchTools().call("vault_search", { query: "pelican", type: "nope" })).toBe('No matches for "pelican" (type: nope).');
+  });
+});
+
+describe("vault_search type filter with an ontology", () => {
+  function typedApp(): App {
+    const app = new App();
+    app.vault.seed("Clips/Article.md", "pelican", { frontmatter: { type: "article" } });
+    app.vault.seed("Clips/Source.md", "pelican", { frontmatter: { type: "source" } });
+    app.vault.seed("Clips/Memo.md", "pelican", { frontmatter: { type: "memo" } });
+    app.vault.seed("Notes/Loose.md", "pelican pelican");
+    return app;
+  }
+  function registryOf(defs: () => TypeDef[]): OntologyRegistry {
+    return new OntologyRegistry({
+      listSchemaNotes: () =>
+        Promise.resolve(
+          defs().map((d) => {
+            const m = schemaNoteContent(d).match(/^---\n([\s\S]*?)\n---\n?([\s\S]*)$/)!;
+            return { path: `Ontology/${d.name}.md`, frontmatter: parseYaml(m[1] ?? "") as Record<string, unknown>, body: m[2] ?? "" };
+          }),
+        ),
+      parseYaml,
+    });
+  }
+
+  it("matches a declared subtype: type source returns article notes, article does not return source notes", async () => {
+    const reg = await seededRegistry();
+    const vt = new VaultTools(typedApp() as never, { allowWrites: false, defaultFolder: "Claude", ontology: () => reg });
+    const bySource = await vt.call("vault_search", { query: "pelican", type: "source" });
+    expect(bySource).toContain("## Clips/Article.md");
+    expect(bySource).toContain("## Clips/Source.md");
+    expect(bySource).not.toContain("Memo.md");
+    expect(bySource).not.toContain("Loose.md");
+    const byArticle = await vt.call("vault_search", { query: "pelican", type: "article" });
+    expect(byArticle).toContain("## Clips/Article.md");
+    expect(byArticle).not.toContain("Source.md");
+  });
+
+  it("falls back to the exact match with no registry or an empty registry", async () => {
+    const empty = registryOf(() => []);
+    for (const ontology of [() => null, () => empty, undefined]) {
+      const vt = new VaultTools(typedApp() as never, { allowWrites: false, defaultFolder: "Claude", ...(ontology ? { ontology } : {}) });
+      const out = await vt.call("vault_search", { query: "pelican", type: "source" });
+      expect(out).toContain("## Clips/Source.md");
+      expect(out).not.toContain("Article.md");
+    }
+  });
+
+  it("loads the registry on each type-filtered call only, so a schema edit applies to the next search", async () => {
+    let parent = "source";
+    const reg = registryOf(() => SEED_TYPES.map((d) => (d.name === "article" ? { ...d, extendsType: parent } : d)));
+    const load = vi.spyOn(reg, "load");
+    const vt = new VaultTools(typedApp() as never, { allowWrites: false, defaultFolder: "Claude", ontology: () => reg });
+    await vt.call("vault_search", { query: "pelican" });
+    await vt.call("vault_search", { query: "pelican", tag: "x" });
+    expect(load).not.toHaveBeenCalled();
+    expect(await vt.call("vault_search", { query: "pelican", type: "source" })).toContain("## Clips/Article.md");
+    parent = "entity";
+    expect(await vt.call("vault_search", { query: "pelican", type: "source" })).not.toContain("Article.md");
+    expect(load).toHaveBeenCalledTimes(2);
+  });
+
+  it("says in the tool description that subtypes match", () => {
+    const def = new VaultTools(new App() as never, { allowWrites: false, defaultFolder: "Claude" }).definitions().find((d) => d.name === "vault_search");
+    const props = def?.inputSchema.properties as Record<string, { description: string }>;
+    expect(props.type?.description).toMatch(/subtype/);
   });
 });
 

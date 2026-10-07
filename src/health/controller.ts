@@ -13,6 +13,8 @@ export interface HealthDeps {
   index(): Promise<{ enabled: boolean; built: boolean; failed: Array<{ path: string; message: string }> }>;
   tags(): Promise<HealthInput["tags"]>;
   orphanCount(): number;
+  /** Untyped candidate notes; null when the registry has no proposable type. */
+  untypedCount(): Promise<number | null>;
   inboxPending(): number;
   companion(): CompanionStatus;
   now(): string;
@@ -41,6 +43,7 @@ export class HealthController {
       index: await this.deps.index(),
       tags: await this.deps.tags(),
       orphans: this.deps.orphanCount(),
+      untyped: await this.deps.untypedCount(),
       inboxPending: this.deps.inboxPending(),
       companion: this.deps.companion(),
       now: this.deps.now(),

@@ -8,6 +8,7 @@ const base = (over: Partial<HealthInput> = {}): HealthInput => ({
   index: { enabled: true, built: true, failed: [] },
   tags: null,
   orphans: 0,
+  untyped: null,
   inboxPending: 0,
   companion: { connection: { backend: "claude", needsCredential: false }, activity: [], bridge: { applicable: true, enabled: false, running: false, port: 27124 }, clipper: { applicable: true, status: "current" }, orders: { invalid: [] } },
   now: "2026-10-01T00:00:00.000Z",
@@ -137,6 +138,17 @@ describe("scanVaultHealth", () => {
   it("tags sorts after links within the same severity", () => {
     const ids = scanVaultHealth(base({ unresolved: { "a.md": { X: 1 } }, tags: { total: 5, singleUse: 1, candidates: 1 } })).sections.map((s) => s.id);
     expect(ids.indexOf("links")).toBeLessThan(ids.indexOf("tags"));
+  });
+
+  it("untyped is a vault info summary section after ontology, ok at zero, absent when null", () => {
+    expect(section(base({ untyped: 7 }), "untyped")).toEqual({
+      id: "untyped", group: "vault", title: "Untyped notes", count: 7, severity: "info", summary: true, items: [{ path: "", message: "7 notes without a type" }],
+    });
+    expect(section(base({ untyped: 0 }), "untyped")).toMatchObject({ count: 0, severity: "ok", items: [] });
+    expect(section(base({ untyped: null }), "untyped")).toBeUndefined();
+    const ids = scanVaultHealth(base({ typedNotes: [], untyped: 0 })).sections.map((s) => s.id);
+    expect(ids.indexOf("ontology")).toBeLessThan(ids.indexOf("untyped"));
+    expect(ids.indexOf("untyped")).toBeLessThan(ids.indexOf("links"));
   });
 
   it("orphans is a vault info section after links, ok when there are none", () => {

@@ -21,6 +21,7 @@ function deps(over: Partial<HealthDeps> = {}): HealthDeps {
     index: async () => ({ enabled: false, built: false, failed: [] }),
     tags: async () => null,
     orphanCount: () => 0,
+    untypedCount: async () => null,
     inboxPending: () => 0,
     companion: () => ({ connection: { backend: "claude", needsCredential: true }, activity: [], bridge: { applicable: false, enabled: false, running: false, port: 0 }, clipper: { applicable: false, status: "current" }, orders: { invalid: [] } }),
     now: () => "2026-10-01T00:00:00.000Z",
@@ -100,6 +101,13 @@ describe("HealthController", () => {
   it("passes the tag stats from deps.tags into the scan", async () => {
     const report = await new HealthController(deps({ tags: async () => ({ total: 9, singleUse: 4, candidates: 2 }) })).scan();
     expect(report.sections.find((s) => s.id === "tags")).toMatchObject({ count: 2 });
+  });
+
+  it("passes the untyped count from deps.untypedCount into the scan, and omits the section for null", async () => {
+    const some = await new HealthController(deps({ untypedCount: async () => 3 })).scan();
+    expect(some.sections.find((s) => s.id === "untyped")).toMatchObject({ count: 3 });
+    const none = await new HealthController(deps()).scan();
+    expect(none.sections.find((s) => s.id === "untyped")).toBeUndefined();
   });
 
   it("passes the orphan count from deps.orphanCount into the scan", async () => {

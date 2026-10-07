@@ -1,6 +1,7 @@
-import { App, clearNotices, getNoticeMessages } from "obsidian";
+import { App, clearNotices, getNoticeMessages, getNotices } from "obsidian";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import ClaudeCompanionPlugin from "../src/main";
+import { DEFAULT_SETTINGS } from "../src/types";
 import type { EnrichOutcomeLike } from "../src/research/triage";
 
 function harness(outcomes: Record<string, EnrichOutcomeLike>) {
@@ -14,17 +15,42 @@ function harness(outcomes: Record<string, EnrichOutcomeLike>) {
   const plugin = Object.create(ClaudeCompanionPlugin.prototype) as ClaudeCompanionPlugin;
   Object.assign(plugin as unknown as Record<string, unknown>, {
     app,
-    settings: { sourceInboxFolder: "Clippings", clipOrganizedFolder: "Library" },
+    settings: { ...DEFAULT_SETTINGS, sourceInboxFolder: "Clippings", clipOrganizedFolder: "Library" },
     enrichment: () => ({ runEnrich, markEnrichRecentlyWritten: vi.fn() }),
     router: () => ({ complete, resolve: () => ({ provider: { id: "anthropic" } }) }),
   });
   const triage = () => (plugin as unknown as { triageClippings(folder?: string): Promise<void> }).triageClippings("Clippings");
-  return { triage, runEnrich, complete };
+  return { plugin, triage, runEnrich, complete };
 }
 
 beforeEach(() => clearNotices());
 
 describe("finding research themes", () => {
+  it("keeps pending work in activity without a persistent progress toast", async () => {
+    const { plugin, triage, runEnrich } = harness({});
+    let release!: (outcome: EnrichOutcomeLike) => void;
+    runEnrich.mockImplementationOnce(() => new Promise((resolve) => { release = resolve; }));
+    const task = triage();
+    try {
+      await vi.waitFor(() => expect(release).toBeTypeOf("function"));
+      expect(getNotices().some((notice) => notice.timeout === 0)).toBe(false);
+      expect(plugin.activity.snapshot().records).toEqual([expect.objectContaining({ state: "running", title: expect.stringContaining("Finding themes") })]);
+    } finally {
+      release({ status: "enriched" });
+      await task;
+    }
+    expect(plugin.activity.snapshot().records[0]?.state).toBe("succeeded");
+    plugin.activity.dispose();
+  });
+
+  it("retains a failed task in activity after the error notification", async () => {
+    const { plugin, triage, runEnrich } = harness({});
+    runEnrich.mockRejectedValueOnce(new Error("Provider disconnected"));
+    await triage();
+    expect(plugin.activity.snapshot().records[0]).toMatchObject({ state: "needs-attention", technicalDetails: "Provider disconnected" });
+    expect(getNoticeMessages().some((message) => message.includes("Provider disconnected"))).toBe(true);
+    plugin.activity.dispose();
+  });
   it("keeps going past a failed clip and leaves it out of the model payload", async () => {
     const { triage, complete } = harness({ "Clippings/b.md": { status: "failed", error: new Error("boom") } });
 

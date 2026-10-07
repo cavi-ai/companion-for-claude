@@ -1291,6 +1291,24 @@ pre.cc-has-copy:hover .cc-code-copy { opacity: 1; }
   animation: cc-rise 0.12s ease-out;
 }
 .cc-slash-list { max-height: min(420px, 55vh); overflow-y: auto; padding: 4px; }
+.cc-slash-footer {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--background-modifier-border);
+  background: var(--background-secondary);
+}
+.cc-slash-selected {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+}
+.cc-slash-run { flex: 0 0 auto; min-height: 44px; padding: 0 16px; }
 .cc-slash-item {
   display: flex;
   align-items: baseline;
@@ -1307,6 +1325,7 @@ pre.cc-has-copy:hover .cc-code-copy { opacity: 1; }
   text-align: left;
 }
 .cc-slash-item.is-selected { background: var(--cc-surface-raised); }
+.cc-slash-item:hover { background: var(--background-modifier-hover); }
 /* "@" picker rows: an icon + label + path. */
 .cc-at-item { align-items: center; }
 .cc-at-icon {

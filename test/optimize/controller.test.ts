@@ -549,6 +549,28 @@ describe("OptimizeController.classifierInfo", () => {
   });
 });
 
+describe("OptimizeController state writes keep the type weave fields", () => {
+  const typeFields = {
+    typeVerdicts: { "a.md": { type: "project", model: "m", at: "2026-10-07T10:00:00.000Z", mtime: 4 } },
+    dismissedTypes: ["z.md"],
+  };
+
+  it("dismiss, background classify and foreground classify keep typeVerdicts and dismissedTypes", async () => {
+    let state: OptimizeState = { dismissed: [], verdicts: {}, ...typeFields };
+    const { controller } = setup({
+      getState: () => state,
+      setState: async (next) => { state = next; },
+      classifier: async () => ({ local: true, label: "l", model: "m", complete: async () => [] }),
+    }, NOTES);
+    await controller.dismiss("x|y");
+    expect(state).toMatchObject(typeFields);
+    await controller.classify({ background: true });
+    expect(state).toMatchObject(typeFields);
+    await controller.classify();
+    expect(state).toMatchObject(typeFields);
+  });
+});
+
 describe("OptimizeController state writes keep dismissedLinks", () => {
   it("dismiss and background classify spread the link dismissals through the normalizer", async () => {
     let state: OptimizeState = { dismissed: [], verdicts: {}, dismissedLinks: ["a.md\u0000b.md"] };

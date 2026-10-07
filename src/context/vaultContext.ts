@@ -1,7 +1,10 @@
 import { App, MarkdownView, TFile } from "obsidian";
 import type { ContextToggles, PluginSettings } from "../types";
+import { extractEdges } from "../ontology/relations";
+import type { OntologyRegistry } from "../ontology/registry";
 import { clip, section } from "./search";
 import { fuseKeywordAndSemantic, keywordVaultSearch, type SemanticSearch } from "./hybridSearch";
+import { MAX_RELATION_EXPANSION, noteType, planRelationExpansion, typeLabel } from "./typedContext";
 import type { AttachedPage } from "./urlContext";
 
 export interface GatheredContext {
@@ -33,13 +36,19 @@ export async function gatherContext(
   attachedPages: AttachedPage[] = [],
   /** Restricts automatic vault search (keyword + semantic) to notes it accepts — e.g. a chat project's folder. */
   searchScope?: (path: string) => boolean,
+  /** Loaded ontology; null or empty leaves the context untyped. */
+  ontology?: Pick<OntologyRegistry, "resolve" | "resolved"> | null,
 ): Promise<GatheredContext> {
   const sources: string[] = [];
   const blocks: string[] = [];
   let budget = settings.contextCharBudget;
+  const typed = ontology && ontology.resolved().size > 0 ? ontology : null;
+  const label = (path: string): string => (typed ? typeLabel(noteType(frontmatterOf(app, path))) : "");
+  const included = new Set<string>();
 
   const view = app.workspace.getActiveViewOfType(MarkdownView);
   const activeFile = view?.file ?? app.workspace.getActiveFile();
+  if (activeFile instanceof TFile) included.add(activeFile.path);
 
   // 1. Current selection (highest priority).
   if (toggles.selection && view) {
@@ -77,6 +86,7 @@ export async function gatherContext(
         const clipped = clip(block, Math.min(budget, 6000));
         blocks.push(clipped);
         budget -= clipped.length;
+        included.add(f.path);
         added++;
       }
     }
@@ -105,10 +115,11 @@ export async function gatherContext(
     for (const f of linked) {
       if (budget <= 0) break;
       const content = await app.vault.cachedRead(f);
-      const block = section(`Linked note: ${f.path}`, content);
+      const block = section(`Linked note: ${f.path}${label(f.path)}`, content);
       const clipped = clip(block, Math.min(budget, 4000));
       blocks.push(clipped);
       budget -= clipped.length;
+      included.add(f.path);
       added++;
     }
     if (added > 0) sources.push(`${added} linked note${added > 1 ? "s" : ""}`);
@@ -128,22 +139,55 @@ export async function gatherContext(
       }
     }
     const fused = fuseKeywordAndSemantic(keyword, semantic, settings.maxContextNotes);
-    let added = 0;
+    const matched: string[] = [];
     for (const item of fused) {
       if (budget <= 0) break;
-      const block = section(`Search match: ${item.path}`, item.snippet);
+      const block = section(`Search match: ${item.path}${label(item.path)}`, item.snippet);
       const clipped = clip(block, Math.min(budget, 3000));
       blocks.push(clipped);
       budget -= clipped.length;
-      added++;
+      included.add(item.path);
+      matched.push(item.path);
     }
+    let related = 0;
+    if (typed && matched.length > 0) {
+      const expansion = planRelationExpansion({
+        matches: matched,
+        edgesOf: (path) => {
+          const fm = frontmatterOf(app, path);
+          const type = noteType(fm);
+          const resolved = type ? typed.resolve(type) : undefined;
+          return fm && resolved ? extractEdges(path, fm, resolved) : [];
+        },
+        resolve: (linkpath, fromPath) => {
+          const f = app.metadataCache.getFirstLinkpathDest(linkpath, fromPath);
+          return f instanceof TFile && f.extension === "md" ? f.path : null;
+        },
+        include: (path) => !searchScope || searchScope(path),
+        already: included,
+        limit: MAX_RELATION_EXPANSION,
+      });
+      for (const r of expansion) {
+        if (budget <= 0) break;
+        const f = app.vault.getAbstractFileByPath(r.path);
+        if (!(f instanceof TFile)) continue;
+        const block = section(`Related (${r.key} of ${r.from}): ${r.path}${label(r.path)}`, await app.vault.cachedRead(f));
+        const clipped = clip(block, Math.min(budget, 1500));
+        blocks.push(clipped);
+        budget -= clipped.length;
+        related++;
+      }
+    }
+    const added = matched.length;
     if (added > 0) {
       sources.push(`${added} ${semantic.length ? "semantic" : "search"} match${added > 1 ? "es" : ""}`);
+      if (related > 0) sources.push(`${related} related note${related > 1 ? "s" : ""}`);
       // Ask for click-through citations to the source notes (the 1.2 "ask your
       // vault with citations" behavior). Count it against the budget so context
       // never exceeds contextCharBudget; drop it if there's no room left.
+      const cited = related > 0 ? '"Search match" or "Related" notes' : '"Search match" notes';
       const citation =
-        'When you draw on the "Search match" notes above, cite each inline as an ' +
+        `When you draw on the ${cited} above, cite each inline as an ` +
         "Obsidian wikilink — [[Note Name]], using the note's file name without the " +
         "folder path or .md extension — so the reader can click through to the source.";
       if (budget >= citation.length) {
@@ -155,6 +199,11 @@ export async function gatherContext(
   if (blocks.length === 0) return { text: "", sources: [] };
   const text = ["<vault_context>", ...blocks, "</vault_context>"].join("\n\n");
   return { text, sources };
+}
+
+function frontmatterOf(app: App, path: string): Record<string, unknown> | undefined {
+  const f = app.vault.getAbstractFileByPath(path);
+  return f instanceof TFile ? app.metadataCache.getFileCache(f)?.frontmatter : undefined;
 }
 
 /** Markdown files directly under a folder path (newest first), capped at `limit`. */

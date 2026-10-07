@@ -11,6 +11,7 @@ import { conform } from "../ontology/conform";
 import { describeOntology } from "../ontology/describe";
 import { validateProposal } from "../ontology/propose";
 import type { OntologyRegistry } from "../ontology/registry";
+import { loadedOntology } from "../optimize/vaultGlue";
 import { replaceSection } from "./edit";
 import { readFrontmatter } from "./frontmatterRead";
 import { DELEGABLE_RESEARCH_KEYS, RESEARCH_ROUTE_HINT, planResearchRouting, runResearchRouting, type ResearchRoutePlan } from "./researchRouting";
@@ -104,7 +105,7 @@ export class VaultTools {
           properties: {
             query: { type: "string", description: "Keywords to search for." },
             limit: { type: "number", description: "Max results (default 8)." },
-            type: { type: "string", description: "Only notes whose frontmatter `type` equals this (e.g. 'research-evidence')." },
+            type: { type: "string", description: "Only notes whose frontmatter `type` equals this or a declared subtype of it (e.g. 'research-evidence'; 'source' also matches 'article')." },
             project: { type: "string", description: "Only notes whose frontmatter `project` is this project note path (e.g. 'Research/Alpha/Project.md' or 'Alpha/Project')." },
             tag: { type: "string", description: "Only notes with this tag or a nested child of it ('ml' matches #ml and #ml/vision)." },
           },
@@ -569,10 +570,12 @@ export class VaultTools {
 
   private async search(query: string, limit: number, filter: SearchFilter | null): Promise<string> {
     const terms = tokenize(query);
+    const registry = filter?.type !== undefined ? await loadedOntology(this.opts.ontology?.() ?? null) : null;
+    const lineageOf = registry ? (type: string) => registry.resolve(type)?.lineage : undefined;
     const accept = filter
       ? (path: string): boolean => {
           const meta = this.noteMeta(path);
-          return meta !== null && matchesSearchFilter(meta.frontmatter, meta.tags, filter);
+          return meta !== null && matchesSearchFilter(meta.frontmatter, meta.tags, filter, lineageOf);
         }
       : undefined;
     const keyword = await keywordVaultSearch(this.app, query, null, accept);

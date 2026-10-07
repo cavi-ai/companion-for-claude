@@ -8,9 +8,11 @@ import { type SlashCommand, filterCommands, moveSelection } from "./slashCommand
 export class SlashMenu {
   private el: HTMLElement;
   private listEl: HTMLElement;
+  private selectedEl: HTMLElement;
   private matches: SlashCommand[] = [];
   private selected = 0;
   private open = false;
+  private gesture: { id: number; x: number; y: number; scroll: number; moved: boolean } | undefined;
 
   constructor(
     parent: HTMLElement,
@@ -20,6 +22,11 @@ export class SlashMenu {
     this.el = parent.createDiv({ cls: "cc-slash-menu" });
     this.el.setCssStyles({ display: "none" });
     this.listEl = this.el.createDiv({ cls: "cc-slash-list" });
+    const footer = this.el.createDiv({ cls: "cc-slash-footer" });
+    this.selectedEl = footer.createSpan({ cls: "cc-slash-selected" });
+    const run = footer.createEl("button", { cls: "cc-slash-run mod-cta", text: "Run", attr: { type: "button", "aria-label": "Run selected command" } });
+    run.addEventListener("mousedown", (event) => event.preventDefault());
+    run.addEventListener("click", () => this.choose());
   }
 
   isOpen(): boolean {
@@ -48,6 +55,7 @@ export class SlashMenu {
   hide(): void {
     if (!this.open && this.el.style.display === "none") return;
     this.open = false;
+    this.gesture = undefined;
     this.el.setCssStyles({ display: "none" });
     this.listEl.empty();
   }
@@ -55,7 +63,23 @@ export class SlashMenu {
   /** Arrow navigation. Returns true if handled. */
   move(delta: number): void {
     this.selected = moveSelection(this.selected, delta, this.matches.length);
-    this.render();
+    this.highlight();
+    this.listEl.children[this.selected]?.scrollIntoView?.({ block: "nearest" });
+  }
+
+  /** Keeps the menu while focus is inside it or back in `input`. */
+  hideUnlessFocused(input?: Element): void {
+    const active = this.el.ownerDocument?.activeElement ?? null;
+    if (active !== null && (active === input || this.el.contains(active))) return;
+    this.hide();
+  }
+
+  private highlight(): void {
+    Array.from(this.listEl.children).forEach((row, i) => {
+      row.toggleClass("is-selected", i === this.selected);
+      row.setAttr("aria-pressed", String(i === this.selected));
+    });
+    this.selectedEl.setText(`Selected: /${this.matches[this.selected]?.name ?? ""}`);
   }
 
   /** Commit the current selection. */
@@ -79,21 +103,28 @@ export class SlashMenu {
       row.setAttr("title", `/${cmd.name} — ${cmd.description}${aliasNote}`);
       row.createSpan({ cls: "cc-slash-name", text: `/${cmd.name}` });
       row.createSpan({ cls: "cc-slash-desc", text: cmd.description });
-      row.addEventListener("mouseenter", () => {
-        this.selected = i;
-        this.render();
+      row.addEventListener("pointerdown", (e) => {
+        this.gesture = { id: e.pointerId, x: e.clientX, y: e.clientY, scroll: this.listEl.scrollTop, moved: false };
+        // Preserve desktop input focus without blocking native touch scrolling.
+        if (e.pointerType === "mouse") e.preventDefault();
       });
-      const select = (e: Event) => {
-        // Pointer/mouse down (not click) beats the textarea's blur. `choose`
-        // ignores the compatibility mouse event that may follow pointerdown.
-        if (e.type !== "click") e.preventDefault();
-        this.selected = i;
-        this.choose();
+      const moved = (e: PointerEvent): void => {
+        const gesture = this.gesture;
+        if (gesture?.id === e.pointerId && (Math.abs(e.clientX - gesture.x) > 8 || Math.abs(e.clientY - gesture.y) > 8)) gesture.moved = true;
       };
-      row.addEventListener("pointerdown", select);
-      row.addEventListener("mousedown", select);
-      row.addEventListener("click", select);
+      row.addEventListener("pointermove", moved);
+      row.addEventListener("pointerup", moved);
+      row.addEventListener("pointercancel", () => { if (this.gesture) this.gesture.moved = true; });
+      row.addEventListener("mousedown", (e) => e.preventDefault());
+      row.addEventListener("click", () => {
+        const gesture = this.gesture;
+        this.gesture = undefined;
+        if (gesture && (gesture.moved || gesture.scroll !== this.listEl.scrollTop)) return;
+        this.selected = i;
+        this.highlight();
+      });
     });
+    this.highlight();
   }
 
   destroy(): void {

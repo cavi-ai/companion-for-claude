@@ -1,4 +1,5 @@
 import { chatBackendForRuntime, chatBackendOptions } from "./providers/runtimeBackend";
+import { DEVICE_MODELS, clearDeviceModel, deviceModelCached } from "./device/models";
 import { researchModelOptions } from "./research/researchModel";
 import { App, Notice, Platform, PluginSettingTab, Setting, type ButtonComponent, type SettingDefinition, type SettingDefinitionItem, type SettingGroupItem } from "obsidian";
 import type ClaudeCompanionPlugin from "./main";
@@ -119,6 +120,7 @@ const SETTING_TIERS: Record<keyof PluginSettings, SettingsTier> = {
   classifierBackend: "advanced",
   classifierModel: "advanced",
   chatBackend: "basic",
+  deviceChatModel: "basic",
   codexModel: "advanced",
   opencodeModel: "advanced",
   researchModel: "basic",
@@ -195,6 +197,7 @@ const SETTING_TIERS: Record<keyof PluginSettings, SettingsTier> = {
 
 /** Custom `render` rows with no `control.key`, promoted to basic by name. */
 const BASIC_ACTION_NAMES: ReadonlySet<string> = new Set([
+  "On-device model download",
   "Desktop integrations", // "vault tools connect"
   "Embedding model", // "semantic on/off + download"
   "Anthropic API key", // "credential" — the apiKey field itself is a custom render
@@ -659,11 +662,50 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
       },
       {
         name: "Chat backend",
-        desc: "Where chat runs. Auto starts with Claude and can fall back to a reachable local endpoint. Desktop CLI backends use the CLI signed in on that computer. Mobile uses the Claude API or a reachable endpoint; a remote endpoint needs a network connection.",
+        desc: "On-device GPU runs text chat inside Obsidian with a downloaded model. It requires WebGPU and float16 support in this app. Auto starts with Claude and can fall back to a reachable endpoint. CLI backends run on desktop.",
         control: {
           type: "dropdown",
           key: "chatBackend",
           options: chatBackendOptions(Platform.isMobile),
+        },
+      },
+      {
+        name: "On-device model",
+        desc: "SmolLM2 is the smaller default; Qwen3 is a larger alternative for broader chat tasks. Download sizes exclude runtime files and are smaller than peak memory use. Text only; agent tools are unavailable. Context is limited to 2048 input tokens and replies to 256 tokens.",
+        visible: () => this.plugin.settings.chatBackend === "device",
+        control: { type: "dropdown", key: "deviceChatModel", options: Object.fromEntries(DEVICE_MODELS.map((m) => [m.id, m.label])) },
+      },
+      {
+        name: "On-device model download",
+        desc: "One explicit download from Hugging Face and the ONNX runtime CDN, cached on this device. Missing files require another explicit download. On-device chat text stays in Obsidian; utility task routing is separate. Loading pauses mobile embeddings to reduce memory use. No model loads when Obsidian starts.",
+        visible: () => this.plugin.settings.chatBackend === "device",
+        render: (setting) => {
+          const status = setting.descEl.createDiv();
+          const storage = typeof caches === "undefined" ? undefined : caches;
+          const id = this.plugin.settings.deviceChatModel;
+          void deviceModelCached(id, storage).then((ready) => status.setText(ready ? "Downloaded on this device." : "Model not downloaded on this device."));
+          let abort: AbortController | undefined;
+          setting.addButton((button) => button.setButtonText("Download model").setCta().onClick(async () => {
+            if (abort) return;
+            abort = new AbortController();
+            button.setDisabled(true);
+            status.setText("Checking GPU support inside Obsidian…");
+            try {
+              const support = await this.plugin.router().device.test();
+              if (abort.signal.aborted) return;
+              if (!support.ok) throw new Error(support.detail);
+              status.setText("Downloading and preparing model…");
+              await this.plugin.deviceChat().download(id, (percent) => status.setText(`Downloading model · ${percent}%`), abort.signal);
+              status.setText("Downloaded. Open Companion chat to use this model.");
+            } catch (error) { status.setText(error instanceof Error ? error.message : String(error)); }
+            finally { abort = undefined; button.setDisabled(false); }
+          }));
+          setting.addButton((button) => button.setButtonText("Stop").onClick(() => { abort?.abort(); this.plugin.deviceChat().cancel(); status.setText("On-device request stopped."); }));
+          setting.addButton((button) => button.setButtonText("Delete model").onClick(async () => {
+            if (this.plugin.deviceChat().busy() || abort) { new Notice("Stop the on-device request before deleting its model."); return; }
+            try { await clearDeviceModel(id, storage); status.setText("Model removed from this device."); }
+            catch (error) { status.setText(error instanceof Error ? error.message : String(error)); }
+          }));
         },
       },
       ...(Platform.isMobile ? [] : this.cliStatusItems(claudeBackend, (r) => r.claudeCli)),

@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import { ClassifierStoppedError, createClassifier, type ClassifierGlueDeps } from "../../src/optimize/classifierGlue";
 import { VerdictParseError, parseVerdicts, type ClassifyPair } from "../../src/optimize/classify";
@@ -103,6 +105,19 @@ describe("createClassifier", () => {
     });
     await expect(c.complete(req, (raw) => parseVerdicts(raw, pairs))).rejects.toMatchObject({ name: "ClassifierStoppedError" });
     expect(s.provider.complete).not.toHaveBeenCalled();
+  });
+
+  it("round-trips a parser that does not return Verdicts", async () => {
+    const s = setup({ replies: ['{"types":["project"]}'] });
+    const c = await s.classifier({ interactive: true });
+    const out: string[] = await c.complete(req, (raw) => (JSON.parse(raw) as { types: string[] }).types);
+    expect(out).toEqual(["project"]);
+  });
+
+  it("an unloaded plugin names the model check, not the tag check", async () => {
+    const message = readFileSync(fileURLToPath(new URL("../../src/main.ts", import.meta.url)), "utf8");
+    expect(message).toContain("while the model check was running");
+    expect(message).not.toContain("while the tag check was running");
   });
 
   it("garbage twice is two provider calls and a VerdictParseError", async () => {

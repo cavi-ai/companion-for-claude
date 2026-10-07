@@ -75,6 +75,19 @@ test("mobile chat stays contained and opens Research Desk from a touch slash sel
   for (const width of [320, 360, 390, 428, 768]) await expectChatFits(width);
 
   const research = chat.locator(".cc-slash-menu:not(.cc-at-menu)").getByRole("button", { name: /\/research/i });
-  await research.dispatchEvent("pointerdown", { pointerType: "touch", button: 0 });
-  await expect(harness.page.locator(".cc-research-desk")).toBeVisible();
+  const cdp = await harness.page.context().newCDPSession(harness.page);
+  try {
+    const box = (await research.boundingBox())!;
+    await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: box.x + box.width / 2, y: box.y + box.height / 2 }] });
+    await expect(harness.page.locator(".cc-research-desk")).toHaveCount(0);
+    await expect(research).toBeVisible();
+    await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+    await expect(harness.page.locator(".cc-research-desk")).toHaveCount(0);
+    await expect(research).toHaveAttribute("aria-pressed", "true");
+    const run = chat.getByRole("button", { name: "Run selected command" });
+    const runBox = (await run.boundingBox())!;
+    await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: runBox.x + runBox.width / 2, y: runBox.y + runBox.height / 2 }] });
+    await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+    await expect(harness.page.locator(".cc-research-desk")).toBeVisible();
+  } finally { await cdp.detach(); }
 });
