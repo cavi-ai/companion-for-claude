@@ -3955,6 +3955,7 @@ export default class ClaudeCompanionPlugin extends Plugin {
             return file ? this.app.vault.cachedRead(file) : "";
           },
           neighbours: async (path, accept) => (indexer ? indexer.relatedStored(path, MAX_PROPOSALS_PER_KIND, accept) : []),
+          yieldEvery: () => new Promise((resolve) => window.setTimeout(resolve, 0)),
         });
       },
       processBody: (path, transform) => processNoteBody(this.app, path, transform),

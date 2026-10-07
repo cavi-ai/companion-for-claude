@@ -50,8 +50,8 @@ export interface LinkScanInput {
   read(path: string): Promise<string>;
   /** Stored vectors only; `accept` filters candidate paths before the top-k cut. */
   neighbours(path: string, accept: (path: string) => boolean): Promise<NeighbourHit[]>;
-  /** Awaited after every `YIELD_EVERY` notes read; defaults to a macrotask turn. */
-  yieldEvery?: () => Promise<void>;
+  /** Awaited after every `YIELD_EVERY` notes read and every `YIELD_EVERY_LOOKUPS` neighbour lookups. */
+  yieldEvery: () => Promise<void>;
   /** Notes read so far of the notes to read at most. */
   onProgress?: (done: number, total: number) => void;
 }
@@ -122,7 +122,7 @@ export async function scanOrphans(input: LinkScanInput): Promise<LinkScanReport>
   };
 
   const sources = notes.filter((n) => !isExcluded(n, ontologyFolder)).sort((a, b) => b.mtime - a.mtime || a.path.localeCompare(b.path));
-  const yieldTurn = input.yieldEvery ?? ((): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0)));
+  const yieldTurn = input.yieldEvery;
   let reads = 0;
   for (const note of sources) {
     const isOrphan = orphanPaths.has(note.path);

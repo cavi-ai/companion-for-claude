@@ -22,6 +22,7 @@ function setup(notes: LinkScanNote[], files: Record<string, string>, over: Parti
       return files[path] ?? "";
     },
     neighbours: async () => [],
+    yieldEvery: async () => undefined,
     ...over,
   };
   return { input, reads };

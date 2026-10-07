@@ -26,7 +26,7 @@ import type { DeviceWorkerRequest, DeviceWorkerResponse } from "../../device/pro
 
 // Enforce consent at the network boundary, including ORT sidecars. A partial
 // cache must fail closed instead of silently downloading missing assets.
-const networkFetch = globalThis.fetch.bind(globalThis);
+const networkFetch = self.fetch.bind(self);
 let allowNetwork = false;
 const guardedFetch: typeof fetch = async (input, init) => {
   if (allowNetwork) return networkFetch(input, init);
@@ -35,7 +35,7 @@ const guardedFetch: typeof fetch = async (input, init) => {
   if (cached) return cached;
   throw new Error("Embedding assets missing from cache — download the model in Companion settings.");
 };
-globalThis.fetch = guardedFetch;
+self.fetch = guardedFetch;
 env.fetch = guardedFetch;
 
 // The dedicated-worker global, narrowed to what this file uses. (A plain

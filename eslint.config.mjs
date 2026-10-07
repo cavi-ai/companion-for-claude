@@ -53,6 +53,9 @@ export default tseslint.config(
       // sentence-case, and the auto-suggestions mangle proper nouns
       // (OAuth→OAUTH). Off to match the reviewer.
       "obsidianmd/ui/sentence-case": "off",
+      // The store scan reports these as warnings against the plugin's score.
+      "obsidianmd/no-global-this": "error",
+      "obsidianmd/prefer-window-timers": "error",
     },
   },
 

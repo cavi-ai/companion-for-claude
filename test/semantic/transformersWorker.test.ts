@@ -13,6 +13,11 @@ const transformers = vi.hoisted(() => ({
 
 vi.mock("@huggingface/transformers", () => transformers);
 
+/** A dedicated-worker global: `fetch` lives on `self`, delegating to the global stub. */
+function stubWorkerSelf(scope: object): void {
+  vi.stubGlobal("self", Object.assign(scope, { fetch: (...args: Parameters<typeof fetch>) => fetch(...args) }));
+}
+
 describe("built-in embedding worker", () => {
   it("bounds tokenizer context before GPU warm-up and fallback inference", async () => {
     const observed: number[] = [];
@@ -26,7 +31,7 @@ describe("built-in embedding worker", () => {
     });
     const responses: WorkerResponse[] = [];
     const scope = { onmessage: null as ((e: { data: WorkerRequest }) => void) | null, postMessage: (m: WorkerResponse) => responses.push(m) };
-    vi.stubGlobal("self", scope);
+    stubWorkerSelf(scope);
     vi.stubGlobal("navigator", { gpu: { requestAdapter: async () => ({}) } });
     await import("../../src/semantic/transformers/worker");
     scope.onmessage?.({ data: { id: 1, type: "load", repo: "test", revision: "pinned", dtype: "q8", maxTokens: 512, dim: 2, pooling: "cls" } });
@@ -43,10 +48,10 @@ describe("built-in embedding worker", () => {
     const network = vi.fn(async () => new Response("download"));
     vi.stubGlobal("fetch", network);
     vi.stubGlobal("caches", { open: async () => ({ match: async () => undefined }) });
-    transformers.pipeline.mockImplementation(async () => { await globalThis.fetch("https://huggingface.co/missing/model.onnx"); return Object.assign(async () => ({ tolist: () => [] }), { tokenizer: { config: { model_max_length: 8192 } } }); });
+    transformers.pipeline.mockImplementation(async () => { await (self as unknown as { fetch: typeof fetch }).fetch("https://huggingface.co/missing/model.onnx"); return Object.assign(async () => ({ tolist: () => [] }), { tokenizer: { config: { model_max_length: 8192 } } }); });
     const responses: WorkerResponse[] = [];
     const scope = { onmessage: null as ((e: { data: WorkerRequest }) => void) | null, postMessage: (m: WorkerResponse) => responses.push(m) };
-    vi.stubGlobal("self", scope);
+    stubWorkerSelf(scope);
     vi.stubGlobal("navigator", {});
     await import("../../src/semantic/transformers/worker");
     scope.onmessage?.({ data: { id: 1, type: "load", repo: "test", revision: "d8c86521100d3556476a063fc2342036d45c106f", dtype: "q8", maxTokens: 512, dim: 2, pooling: "cls" } });
@@ -84,7 +89,7 @@ describe("built-in embedding worker", () => {
       onmessage: null,
       postMessage: (message) => responses.push(message),
     };
-    vi.stubGlobal("self", workerScope);
+    stubWorkerSelf(workerScope);
     vi.stubGlobal("navigator", {
       gpu: { requestAdapter: async () => null },
     });
@@ -136,7 +141,7 @@ describe("built-in embedding worker", () => {
       onmessage: null,
       postMessage: (message) => responses.push(message),
     };
-    vi.stubGlobal("self", workerScope);
+    stubWorkerSelf(workerScope);
     vi.stubGlobal("navigator", {
       gpu: { requestAdapter: async () => ({}) },
     });
@@ -196,7 +201,7 @@ describe("built-in embedding worker", () => {
       onmessage: null,
       postMessage: (message) => responses.push(message),
     };
-    vi.stubGlobal("self", workerScope);
+    stubWorkerSelf(workerScope);
     vi.stubGlobal("navigator", { gpu: { requestAdapter: async () => ({}) } });
 
     await import("../../src/semantic/transformers/worker");
