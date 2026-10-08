@@ -57,8 +57,8 @@ contents and the model call.
 More than 2,100 tests across 223 Vitest files cover the pure and Obsidian-backed modules, grouped by concern
 (`test/research/`, `test/semantic/`, `test/discovery/`, `test/ontology/`,
 `test/sources/`, `test/mcp/`). CI runs version lockstep, typecheck, lint, test,
-the docs-artifact and generated-skill contracts, build, a production bundle
-budget, and a reproducible-build-output check on Node 20 and 22, plus a
+the docs-artifact and generated-skill contracts, build, and a production
+bundle budget on Node 20 and 22, plus a
 production dependency audit and real-Obsidian Playwright suite on 22.
 
 ```bash

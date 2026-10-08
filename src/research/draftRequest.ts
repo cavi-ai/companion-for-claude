@@ -43,7 +43,7 @@ export function parseDraftResponse(packet: DraftGroundingPacket, raw: string): V
   let markdown = value.markdown;
   for (const key of evidenceByKey.keys()) {
     const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    markdown = markdown.replace(new RegExp(`\\[@${escaped}\\s+[^\\]]+\\]`, "g"), `[@${key}]`);
+    markdown = markdown.replace(new RegExp(`\\[@${escaped}\\s+[^\\]]+\\]`, "g"), () => `[@${key}]`);
   }
   const normalized = { ...value, markdown };
   try { return validateDraftResponse(packet, normalized); }

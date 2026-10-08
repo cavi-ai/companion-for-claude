@@ -16,6 +16,7 @@ import { InboxView, INBOX_VIEW_TYPE } from "../../src/view/InboxView";
 import { summarizeAndTag } from "../../src/indexing/autoTagger";
 import { OrganizeReviewModal } from "../../src/view/OrganizeReviewModal";
 import { SourceEnrichmentController } from "../../src/sources/controller";
+import { OptimizeFeature } from "../../src/optimize/feature";
 
 interface PrivateEnrich {
   sourceEnrichmentErrorHint(message: string): string | null;
@@ -1164,7 +1165,7 @@ describe("source enrichment wiring", () => {
 describe("background tag check wiring", () => {
   const idleHook = (classify: ReturnType<typeof vi.fn>) => {
     const { plugin } = mobilePlugin();
-    Object.assign(plugin, { _optimize: { classify } });
+    Object.assign(plugin, { _optimize: Object.assign(Object.create(OptimizeFeature.prototype) as OptimizeFeature, { _tags: { classify } }) });
     const controller = enrichmentController(plugin) as unknown as { deps: { onEnrichQueueIdle(): void } };
     return controller.deps.onEnrichQueueIdle;
   };

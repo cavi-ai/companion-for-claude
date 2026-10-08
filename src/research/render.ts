@@ -12,10 +12,10 @@ function wikilink(path: string): string {
 function researchFrontmatter(data: FrontmatterData, exactStrings: Record<string, string | undefined> = {}, exactJson: Record<string, string | undefined> = {}): string {
   let rendered = buildFrontmatter(data);
   for (const [key, value] of Object.entries(exactStrings)) {
-    if (value !== undefined) rendered = rendered.replace(new RegExp(`^${key}:.*$`, "m"), `${key}: ${JSON.stringify(value)}`);
+    if (value !== undefined) rendered = rendered.replace(new RegExp(`^${key}:.*$`, "m"), () => `${key}: ${JSON.stringify(value)}`);
   }
   for (const [key, value] of Object.entries(exactJson)) {
-    if (value !== undefined) rendered = rendered.replace(new RegExp(`^${key}:.*$`, "m"), `${key}: ${value}`);
+    if (value !== undefined) rendered = rendered.replace(new RegExp(`^${key}:.*$`, "m"), () => `${key}: ${value}`);
   }
   return rendered;
 }

@@ -3,9 +3,10 @@ import { sanitize } from "../memory/sanitize";
 import { UtilityUnavailableError } from "../providers/endpointPolicy";
 import { ClassifierStoppedError, type ClassifierHandle } from "./classifierGlue";
 import { normalizeOptimizeState, type OptimizeState, type StoredTypeVerdict } from "./state";
+import { noteExcerpt } from "../markdown/excerpt";
 import {
+  EXCERPT_CHARS,
   MAX_TYPE_BATCHES,
-  noteExcerpt,
   noteHeadings,
   parseTypeVerdicts,
   TYPE_BATCH,
@@ -182,7 +183,7 @@ export class TypeWeaveController {
               folder: sanitize(folderOf(item.path)),
               tags: note.tags.map((t) => sanitize(t.replace(/^#+/, ""))).filter(Boolean),
               headings: noteHeadings(content),
-              excerpt: noteExcerpt(content),
+              excerpt: noteExcerpt(content, EXCERPT_CHARS),
             },
           });
         }

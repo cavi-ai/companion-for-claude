@@ -2,6 +2,7 @@
 // TypeDefs, and resolve inheritance into ResolvedTypes. Pure — the YAML
 // parser is injected (obsidian's parseYaml at runtime, `yaml` in tests).
 
+import { isRecord } from "../records";
 import { PROPERTY_TYPES, ROOT_TYPE } from "./types";
 import type { PropertyDef, PropertyType, RelationDef, ResolvedType, SchemaError, TypeDef } from "./types";
 
@@ -9,10 +10,6 @@ import type { PropertyDef, PropertyType, RelationDef, ResolvedType, SchemaError,
 export function extractYamlBlock(body: string): string | null {
   const m = body.match(/^```yaml[ \t]*\r?\n([\s\S]*?)^```[ \t]*$/m);
   return m?.[1] ?? null;
-}
-
-function isRecord(v: unknown): v is Record<string, unknown> {
-  return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
 function isPropertyType(v: string): v is PropertyType {

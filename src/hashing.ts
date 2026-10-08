@@ -16,9 +16,14 @@ export function fnv1a32(text: string): number {
   return hash >>> 0;
 }
 
-/** FNV-1a as 8 lowercase hex digits (callers add their own `fnv1a-` prefix). */
+/** FNV-1a as 8 lowercase hex digits. */
 export function fnv1aHex(text: string): string {
   return fnv1a32(text).toString(16).padStart(8, "0");
+}
+
+/** A change-detection fingerprint: `fnv1a-` plus fnv1aHex. */
+export function fnv1aFingerprint(text: string): string {
+  return `fnv1a-${fnv1aHex(text)}`;
 }
 
 /**

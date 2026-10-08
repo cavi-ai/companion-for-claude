@@ -3,6 +3,7 @@
 // its own vault tools. Pure — file contents and the model call are injected.
 
 import { buildFrontmatter, normalizeTags } from "../indexing/frontmatter";
+import { frontmatterBlock } from "../markdown/frontmatter";
 
 export const MEMORY_NOTE_BASENAME = "What Claude Knows";
 
@@ -25,7 +26,7 @@ export function selectDigests(files: DigestSource[], opts?: { max?: number; maxC
   const maxChars = opts?.maxChars ?? DEFAULT_MAX_CHARS;
   const digests = files
     .filter((f) => !f.path.endsWith(`/${MEMORY_NOTE_BASENAME}.md`) && f.path !== `${MEMORY_NOTE_BASENAME}.md`)
-    .filter((f) => /^---\r?\n[\s\S]*?^session_id:/m.test(f.content))
+    .filter((f) => /^session_id:/m.test(frontmatterBlock(f.content)?.yaml ?? ""))
     .sort((a, b) => b.mtime - a.mtime)
     .slice(0, max);
 

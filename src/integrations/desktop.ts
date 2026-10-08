@@ -1,3 +1,5 @@
+import { isRecord } from "../records";
+
 export type DesktopPlatform = "darwin" | "win32" | "linux" | "unsupported";
 
 /** The published CAVI catalog: the repo `marketplace add` takes. */
@@ -100,9 +102,6 @@ export function claudeDesktopConfigPath(
   }
   throw new DesktopIntegrationError("Configure Claude Desktop", "Automatic Claude Desktop setup is not supported on this platform.");
 }
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 function parseJsonArray(body: string, stage: string): unknown[] {
   let parsed: unknown;

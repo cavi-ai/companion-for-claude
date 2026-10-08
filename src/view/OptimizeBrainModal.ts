@@ -2,6 +2,7 @@ import { App, Modal, Notice, Setting } from "obsidian";
 import { formatClassifyNotice, type ApplyResult, type ClassifyResult } from "../optimize/controller";
 import type { MergeCandidate } from "../optimize/tagScan";
 import { createOptimizeState, removeRow, selectedMerges, swapRow, toggleRow, type OptimizeViewState } from "./optimizeState";
+import { errorMessage } from "../records";
 
 export interface OptimizeBrainActions {
   apply(merges: Array<{ from: string; to: string }>): Promise<ApplyResult>;
@@ -145,8 +146,4 @@ export class OptimizeBrainModal extends Modal {
       this.onDone(null);
     }
   }
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

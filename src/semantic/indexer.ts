@@ -2,9 +2,12 @@
 // IO is injected (vault read, embed, load/save) so the logic is unit-testable
 // without Obsidian or a running Ollama. main.ts wires the real implementations.
 
-import { chunkNote, contentHash, stripFrontmatter, type Chunk } from "./chunk";
+import { chunkNote, contentHash, type Chunk } from "./chunk";
+import { stripFrontmatter } from "../markdown/frontmatter";
 import { chunkPdfPages, pdfPagesText, type PdfPage } from "./pdf";
-import { SemanticStore, type IndexData, type SearchHit } from "./store";
+import { SemanticStore, type PersistedIndex, type SearchHit } from "./store";
+
+const chunkTexts = (chunks: readonly Chunk[]): string[] => chunks.map((c) => c.text);
 
 export interface IndexFile {
   path: string;
@@ -40,7 +43,13 @@ export interface IndexerDeps {
   /** Load the persisted index blob (or null/undefined if none). */
   load(): Promise<unknown>;
   /** Persist the index blob. */
-  save(data: IndexData): Promise<void>;
+  save(data: PersistedIndex): Promise<void>;
+  /**
+   * Run a save later. Delete and rename events arrive in bursts (a folder move
+   * fires one per note), so they share one deferred save instead of rewriting
+   * the whole index per event. Absent → they save immediately.
+   */
+  deferSave?: (run: () => void) => void;
 }
 
 export interface BuildResult {
@@ -71,6 +80,7 @@ export class SemanticIndexer {
   private store: SemanticStore | null = null;
   private loading: Promise<SemanticStore> | null = null;
   private mutationChain: Promise<void> = Promise.resolve();
+  private saveDeferred = false;
 
   constructor(private deps: IndexerDeps) {}
 
@@ -126,6 +136,7 @@ export class SemanticIndexer {
     const live = new Set(files.map((f) => f.path));
     let indexed = 0;
     let skipped = 0;
+    let refreshed = 0;
     let failureCount = 0;
     let aborted = false;
     const failures: Array<{ path: string; message: string }> = [];
@@ -144,7 +155,9 @@ export class SemanticIndexer {
         const prepared = await this.prepare(f.path);
         if (!prepared) {
           skipped++;
-        } else if (!opts.force && !store.needsReindex(f.path, prepared.hash)) {
+        } else if (!opts.force && !store.needsReindex(f.path, prepared.hash, chunkTexts(prepared.chunks))) {
+          store.markCurrent(f.path, f.mtime);
+          refreshed++;
           skipped++;
         } else {
           await this.embedInto(store, f.path, f.mtime, prepared.chunks, prepared.hash);
@@ -170,7 +183,7 @@ export class SemanticIndexer {
 
     this.assertActive();
     const removed = store.pruneTo(live);
-    if (indexed > 0 || removed > 0) await this.persistStore(store);
+    if (indexed > 0 || removed > 0 || refreshed > 0) await this.persistStore(store);
     return { indexed, skipped, removed, failureCount, failures, ...(aborted ? { aborted: true } : {}) };
   }
 
@@ -192,7 +205,7 @@ export class SemanticIndexer {
     }
     const prepared = await this.prepare(path);
     if (!prepared) return;
-    if (!store.needsReindex(path, prepared.hash)) return;
+    if (!store.needsReindex(path, prepared.hash, chunkTexts(prepared.chunks))) return;
     await this.embedInto(store, path, mtime, prepared.chunks, prepared.hash);
     await this.persistStore(store);
   }
@@ -214,7 +227,7 @@ export class SemanticIndexer {
         try {
           this.assertInputSize(path, size);
           const prepared = await this.prepare(path);
-          if (prepared && store.needsReindex(path, prepared.hash)) {
+          if (prepared && store.needsReindex(path, prepared.hash, chunkTexts(prepared.chunks))) {
             await this.embedInto(store, path, mtime, prepared.chunks, prepared.hash);
             changed = true;
           }
@@ -239,7 +252,7 @@ export class SemanticIndexer {
       const store = await this.ensureLoaded();
       if (!store.hasNote(path)) return;
       store.removeNote(path);
-      await this.persistStore(store);
+      await this.persistSoon(store);
     });
   }
 
@@ -249,7 +262,7 @@ export class SemanticIndexer {
       const store = await this.ensureLoaded();
       if (!store.hasNote(oldPath)) return false;
       store.renameNote(oldPath, newPath);
-      await this.persistStore(store);
+      await this.persistSoon(store);
       return true;
     });
   }
@@ -334,7 +347,7 @@ export class SemanticIndexer {
       let embedded: number[][];
       try {
         embedded = await this.deps.embed(batch.map((c) => c.text));
-        const dim = store.toJSON().dim || embedded[0]?.length;
+        const dim = store.dim || embedded[0]?.length;
         if (!dim || embedded.length !== batch.length || embedded.some((v) => !Array.isArray(v) || v.length !== dim || !v.every(Number.isFinite))) {
           throw new Error("Embedding engine returned invalid vectors");
         }
@@ -356,6 +369,27 @@ export class SemanticIndexer {
   private async persistStore(store: SemanticStore): Promise<void> {
     this.assertActive();
     await this.deps.save(store.toJSON());
+  }
+
+  /** Saves through deps.deferSave when wired: one save per burst, run in mutation order. */
+  private async persistSoon(store: SemanticStore): Promise<void> {
+    const defer = this.deps.deferSave;
+    if (!defer) return this.persistStore(store);
+    if (this.saveDeferred) return;
+    this.saveDeferred = true;
+    defer(() => {
+      void this.runMutation(async () => {
+        this.saveDeferred = false;
+        if (this.store === store) await this.persistStore(store);
+      }).catch((e: unknown) => console.debug("Claude Companion: deferred semantic index save failed", e));
+    });
+  }
+
+  /** Starts a pending deferred save now, outside the mutation chain; call before aborting the signal so shutdown keeps it. */
+  flushDeferredSave(): void {
+    if (!this.saveDeferred || !this.store) return;
+    this.saveDeferred = false;
+    void this.deps.save(this.store.toJSON()).catch((e: unknown) => console.debug("Claude Companion: semantic index save on shutdown failed", e));
   }
 
   private assertActive(): void {

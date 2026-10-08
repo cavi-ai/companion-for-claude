@@ -172,6 +172,75 @@ describe("rename and startup catch-up", () => {
   });
 });
 
+describe("index saves for delete and rename bursts", () => {
+  async function builtController() {
+    let writes = 0;
+    let written = "";
+    const deps = makeDeps(["a.md", "b.md", "c.md"], {
+      settings: () => ({ ...DEFAULT_SETTINGS, semanticEnabled: true, embeddingEngine: "builtin" }),
+    });
+    deps.vault.getMarkdownFiles = () => ["a.md", "b.md", "c.md"].map((path) => ({ path, mtime: 1, size: 4 }));
+    deps.vault.cachedRead = async (path: string) => `note ${path}`;
+    deps.vault.adapterWrite = async (_path: string, data: string) => { writes++; written = data; };
+    const ctrl = new SemanticController(deps);
+    (ctrl as unknown as { builtinEmbedder: () => { embed: (input: string[]) => Promise<number[][]> } }).builtinEmbedder = () => ({
+      embed: async (input: string[]) => input.map(() => [1, 0]),
+    });
+    (ctrl as unknown as { canEmbedWithoutDownload: () => Promise<boolean> }).canEmbedWithoutDownload = async () => true;
+    const ix = ctrl.indexer()!;
+    expect((await ix.build()).indexed).toBe(3);
+    return { ctrl, ix, writes: () => writes, notes: () => Object.keys((JSON.parse(written) as { notes: Record<string, unknown> }).notes).sort() };
+  }
+
+  it("writes the index once, two seconds after the burst starts", async () => {
+    const { ctrl, ix, writes } = await builtController();
+    const before = writes();
+    vi.useFakeTimers();
+    try {
+      await ix.removeNote("a.md");
+      await ctrl.renameNote("b.md", "x/b.md");
+      await ctrl.renameNote("c.md", "x/c.md");
+      expect(writes()).toBe(before);
+      await vi.advanceTimersByTimeAsync(2000);
+      await vi.waitFor(() => expect(writes()).toBe(before + 1));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("writes a pending save once when the controller is destroyed", async () => {
+    const { ctrl, ix, writes, notes } = await builtController();
+    const before = writes();
+    vi.useFakeTimers();
+    try {
+      await ix.removeNote("a.md");
+      ctrl.destroy();
+      await vi.waitFor(() => expect(writes()).toBe(before + 1));
+      expect(notes()).toEqual(["b.md", "c.md"]);
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(writes()).toBe(before + 1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("writes a pending save before the indexer is invalidated", async () => {
+    const { ctrl, writes, notes } = await builtController();
+    const before = writes();
+    vi.useFakeTimers();
+    try {
+      await ctrl.renameNote("b.md", "x/b.md");
+      ctrl.invalidateIndexer();
+      await vi.waitFor(() => expect(writes()).toBe(before + 1));
+      expect(notes()).toEqual(["a.md", "c.md", "x/b.md"]);
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(writes()).toBe(before + 1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
 describe("built-in indexing memory bounds", () => {
   it("embeds one chunk at a time on desktop so a large note cannot exhaust one inference batch", async () => {
     const batches: number[] = [];

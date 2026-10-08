@@ -1,18 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { extractJson, validateAgainstSchema } from "../../src/sources/validate";
+import { validateAgainstSchema } from "../../src/sources/validate";
 import { getSchema } from "../../src/sources/registry";
-
-describe("extractJson", () => {
-  it("parses a bare object", () => {
-    expect(extractJson('{"a":1}')).toEqual({ a: 1 });
-  });
-  it("parses a fenced json block with prose around it", () => {
-    expect(extractJson('Here:\n```json\n{"a":"b"}\n```\nthanks')).toEqual({ a: "b" });
-  });
-  it("throws when there is no object", () => {
-    expect(() => extractJson("no json here")).toThrow();
-  });
-});
 
 describe("validateAgainstSchema", () => {
   const article = getSchema("article");

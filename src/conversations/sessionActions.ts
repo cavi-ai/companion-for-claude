@@ -3,7 +3,7 @@
 
 import type { ChatMessage } from "../types";
 import type { Conversation } from "./store";
-import { stripFrontmatter } from "../semantic/chunk";
+import { stripFrontmatter } from "../markdown/frontmatter";
 
 export interface SessionActionsDeps {
   find(id: string): Conversation | undefined;

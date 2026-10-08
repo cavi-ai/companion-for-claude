@@ -89,6 +89,135 @@ export const SEED_TYPES: TypeDef[] = [
     relations: [{ key: "project", targets: ["research-project"], description: "owning research project" }],
   },
   {
+    // Mirrors renderResearchRecord (src/research/render.ts).
+    name: "research-source", version: 2, extendsType: "entity",
+    properties: [
+      { key: "source_kind", type: "string", required: true },
+      { key: "canonical_id", type: "string", required: false },
+      { key: "url", type: "string", required: false },
+      { key: "asset", type: "string", required: false },
+      { key: "content_fingerprint", type: "string", required: false },
+      { key: "doi", type: "string", required: false },
+      { key: "arxiv_id", type: "string", required: false },
+      { key: "zotero_key", type: "string", required: false },
+      { key: "authors", type: "string[]", required: false },
+      { key: "published", type: "string", required: false },
+      { key: "publication", type: "string", required: false },
+      { key: "abstract", type: "string", required: false },
+      { key: "open_access_url", type: "string", required: false },
+      { key: "discovery_provenance", type: "list", required: false, description: "discovery adapters and their ids" },
+    ],
+    relations: [{ key: "project", targets: ["research-project"], description: "owning research project" }],
+  },
+  {
+    // The excerpt lives in the body as a quote, not in frontmatter.
+    name: "evidence", version: 2, extendsType: "entity",
+    properties: [
+      { key: "source_fingerprint", type: "string", required: false },
+      { key: "locator_kind", type: "string", required: false },
+      { key: "locator_value", type: "string", required: false },
+      { key: "interpretation", type: "string", required: false },
+      { key: "review_state", type: "string", required: true },
+      { key: "model", type: "string", required: false },
+    ],
+    relations: [
+      { key: "source", targets: ["research-source"], description: "source record this evidence came from" },
+      { key: "project", targets: ["research-project"], description: "owning research project" },
+    ],
+  },
+  {
+    name: "claim", version: 2, extendsType: "entity",
+    properties: [
+      { key: "proposition", type: "string", required: true },
+      { key: "confidence", type: "string", required: true },
+      { key: "review_state", type: "string", required: true },
+      { key: "limitations", type: "string[]", required: true },
+    ],
+    relations: [
+      { key: "supports", targets: ["evidence"], description: "evidence supporting this claim" },
+      { key: "challenges", targets: ["evidence"], description: "evidence challenging this claim" },
+      { key: "contextualizes", targets: ["evidence"], description: "evidence providing context for this claim" },
+      { key: "project", targets: ["research-project"], description: "owning research project" },
+    ],
+  },
+  {
+    name: "research-question", version: 1, extendsType: "entity",
+    properties: [
+      { key: "question", type: "string", required: true },
+      { key: "status", type: "string", required: true },
+    ],
+    relations: [
+      { key: "about", targets: ["entity"], description: "subject of the question" },
+      { key: "project", targets: ["research-project"], description: "owning research project" },
+    ],
+  },
+  {
+    name: "research-document", version: 2, extendsType: "entity",
+    properties: [{ key: "document_kind", type: "string", required: true }],
+    relations: [
+      { key: "claims", targets: ["claim"], description: "claims used by this document" },
+      { key: "project", targets: ["research-project"], description: "owning research project" },
+    ],
+  },
+  {
+    // Mirrors renderDistilledNote (src/conversations/distill.ts).
+    name: "chat-summary", version: 1, extendsType: "entity",
+    properties: [{ key: "conversation", type: "string", required: false, description: "id of the summarized conversation" }],
+    relations: [],
+  },
+  {
+    // Mirrors projectNoteBody and parseProjectNote (src/projects/model.ts).
+    name: "chat-project", version: 1, extendsType: "entity",
+    properties: [
+      { key: "folder", type: "string", required: false, description: "folder that scopes the project's context" },
+      { key: "pinned", type: "string[]", required: false, description: "notes always attached to the project's chats" },
+    ],
+    relations: [],
+  },
+  {
+    // Mirrors renderTriageNote (src/research/triage.ts).
+    name: "triage", version: 1, extendsType: "entity",
+    properties: [
+      { key: "source_enriched", type: "boolean", required: false },
+      { key: "generated", type: "date", required: false },
+    ],
+    relations: [],
+  },
+  {
+    // Mirrors renderOrderRun (src/orders/output.ts).
+    name: "order-run", version: 1, extendsType: "entity",
+    properties: [
+      { key: "order", type: "string", required: false, description: "the standing order that ran" },
+      { key: "trigger", type: "string", required: false },
+      { key: "proposed_edits", type: "number", required: false },
+    ],
+    relations: [],
+  },
+  {
+    // Mirrors the Optimize brain run notes (src/optimize/mergePlan.ts, linkPlan.ts, typeController.ts).
+    name: "optimize-run", version: 1, extendsType: "entity",
+    properties: [
+      { key: "merges", type: "number", required: false },
+      { key: "links", type: "number", required: false },
+      { key: "notes", type: "number", required: false },
+    ],
+    relations: [],
+  },
+  {
+    // Mirrors renderMemoryNote (src/memory/consolidate.ts): updated + digests
+    // alongside the universal base keys.
+    name: "claude-memory", version: 1, extendsType: "entity",
+    properties: [
+      { key: "updated", type: "date", required: false, description: "date of the last consolidation run" },
+      { key: "digests", type: "number", required: false, description: "how many session digests were folded in" },
+    ],
+    relations: [],
+  },
+];
+
+/** Version 1 of the research types, whose keys did not match what renderResearchRecord writes. */
+const SUPERSEDED_SEED_TYPES: TypeDef[] = [
+  {
     name: "research-source", version: 1, extendsType: "entity",
     properties: [
       { key: "sourceKind", type: "string", required: true },
@@ -131,17 +260,6 @@ export const SEED_TYPES: TypeDef[] = [
     ],
   },
   {
-    name: "research-question", version: 1, extendsType: "entity",
-    properties: [
-      { key: "question", type: "string", required: true },
-      { key: "status", type: "string", required: true },
-    ],
-    relations: [
-      { key: "about", targets: ["entity"], description: "subject of the question" },
-      { key: "project", targets: ["research-project"], description: "owning research project" },
-    ],
-  },
-  {
     name: "research-document", version: 1, extendsType: "entity",
     properties: [{ key: "documentKind", type: "string", required: true }],
     relations: [
@@ -149,17 +267,31 @@ export const SEED_TYPES: TypeDef[] = [
       { key: "project", targets: ["research-project"], description: "owning research project" },
     ],
   },
-  {
-    // Mirrors renderMemoryNote (src/memory/consolidate.ts): updated + digests
-    // alongside the universal base keys.
-    name: "claude-memory", version: 1, extendsType: "entity",
-    properties: [
-      { key: "updated", type: "date", required: false, description: "date of the last consolidation run" },
-      { key: "digests", type: "number", required: false, description: "how many session digests were folded in" },
-    ],
-    relations: [],
-  },
 ];
+
+/** The schema note an earlier seed wrote for this file, when Seed ontology may replace an unedited copy. */
+function supersededSeedContent(fileName: string): string | undefined {
+  const def = SUPERSEDED_SEED_TYPES.find((d) => `${d.name}.md` === fileName);
+  return def ? schemaNoteContent(def) : undefined;
+}
+
+export interface SeedWrite {
+  fileName: string;
+  content: string;
+  /** Replaces an unedited superseded seed note instead of creating a missing one. */
+  upgrade: boolean;
+}
+
+/** Schema notes to write: each missing type, and each superseded seed note nobody edited. Edited notes are never touched. */
+export function planSeed(current: (fileName: string) => string | null): SeedWrite[] {
+  const out: SeedWrite[] = [];
+  for (const f of seedFiles()) {
+    const existing = current(f.fileName);
+    if (existing === null) out.push({ ...f, upgrade: false });
+    else if (existing === supersededSeedContent(f.fileName)) out.push({ ...f, upgrade: true });
+  }
+  return out;
+}
 
 function yamlBlock(def: TypeDef): string {
   const lines: string[] = [];

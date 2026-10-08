@@ -1,5 +1,7 @@
 import type { FieldValue, SourceTypeSchema } from "./types";
-import { extractJson, validateAgainstSchema } from "./validate";
+import { validateAgainstSchema } from "./validate";
+import { replyJson } from "../providers/replyJson";
+import { isRecord } from "../records";
 
 export class ExtractError extends Error {
   constructor(readonly errors: string[]) {
@@ -81,10 +83,8 @@ export async function extractFields(
   for (let attempt = 0; attempt <= maxRepairs; attempt++) {
     const user = attempt === 0 ? base : `${base}\n\nYour previous reply was invalid: ${lastErrors.join("; ")}. Return corrected JSON only.`;
     const raw = await deps.complete(system, user, opts);
-    let obj: unknown;
-    try {
-      obj = extractJson(raw);
-    } catch {
+    const obj = replyJson(raw, isRecord);
+    if (obj === undefined) {
       lastErrors = ["reply was not valid JSON"];
       continue;
     }

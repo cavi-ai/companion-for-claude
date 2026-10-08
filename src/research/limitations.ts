@@ -8,7 +8,7 @@ export function renderLimitationsBlock(limitations: readonly string[]): string {
 export function upsertLimitations(content: string, limitations: readonly string[]): string {
   if (!limitations.length) return content;
   const block = renderLimitationsBlock(limitations);
-  if (LIMITATIONS_BLOCK.test(content)) return content.replace(LIMITATIONS_BLOCK, `\n\n${block}\n`);
+  if (LIMITATIONS_BLOCK.test(content)) return content.replace(LIMITATIONS_BLOCK, () => `\n\n${block}\n`);
   const heading = /^## Proposition[^\n]*\n/m.exec(content);
   if (!heading) return `${content.replace(/\s+$/, "")}\n\n${block}\n`;
   const start = heading.index + heading[0].length;

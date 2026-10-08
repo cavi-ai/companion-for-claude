@@ -1,6 +1,6 @@
 import { SemanticIndexer, SemanticEmbeddingError, type IndexFile } from "./indexer";
 import { extractPdfPages, PdfExtractionLimitError } from "./pdf";
-import type { IndexData } from "./store";
+import type { PersistedIndex } from "./store";
 import { OllamaEmbedder, embedderId, type Embedder } from "./embedder";
 import { builtinModelById } from "./transformers/model";
 import { clearCachedModel, hasCachedModel } from "./transformers/cache";
@@ -11,6 +11,9 @@ import type { PluginSettings } from "../types";
 import type { ProviderRouter } from "../providers/router";
 import type { ActivityStore } from "../activity/store";
 import type { EnrichDiagnostics } from "../sources/enrichDiagnostics";
+
+/** Delete and rename events within this window share one index save. */
+const INDEX_SAVE_DELAY_MS = 2000;
 
 export interface SemanticControllerDeps {
   settings: () => PluginSettings;
@@ -64,6 +67,7 @@ export class SemanticController {
   private _builtinModelCached = false;
   private reindexPausedNotified = false;
   private reindexTimer: number | null = null;
+  private saveTimer: number | null = null;
   private reindexQueue = new Set<string>();
   private reindexSuspended = 0;
   private indexAbort = new AbortController();
@@ -75,10 +79,18 @@ export class SemanticController {
 
   destroy(): void {
     this.destroyed = true;
+    this.flushPendingSave();
     this.indexAbort.abort();
     this._builtinEmbedder?.terminate();
     this._builtinEmbedder = null;
     if (this.reindexTimer !== null) window.clearTimeout(this.reindexTimer);
+  }
+
+  /** Writes a delete/rename save still waiting on its timer, before the indexer's signal aborts. */
+  private flushPendingSave(): void {
+    if (this.saveTimer !== null) window.clearTimeout(this.saveTimer);
+    this.saveTimer = null;
+    this._indexer?.flushDeferredSave();
   }
 
   private indexPath(): string {
@@ -152,14 +164,21 @@ export class SemanticController {
         }
         try {
           if (await this.deps.vault.adapterExists(path)) {
-            return JSON.parse(await this.deps.vault.adapterRead(path)) as IndexData;
+            return JSON.parse(await this.deps.vault.adapterRead(path)) as unknown;
           }
         } catch (e) {
           console.debug("Claude Companion: corrupt/missing semantic index, rebuilding", e);
         }
         return null;
       },
-      save: async (data: IndexData) => {
+      deferSave: (run: () => void) => {
+        if (this.saveTimer !== null) window.clearTimeout(this.saveTimer);
+        this.saveTimer = window.setTimeout(() => {
+          this.saveTimer = null;
+          run();
+        }, INDEX_SAVE_DELAY_MS);
+      },
+      save: async (data: PersistedIndex) => {
         this.deps.enrichDiagnostics().log("serialize-start", { notes: Object.keys(data.notes).length });
         const json = JSON.stringify(data);
         if (this.deps.isMobile && utf8Size(json) > 8 * 1024 * 1024) {
@@ -248,6 +267,7 @@ export class SemanticController {
   }
 
   invalidateIndexer(): void {
+    this.flushPendingSave();
     this.indexAbort.abort();
     this.indexAbort = new AbortController();
     this._indexer = null;

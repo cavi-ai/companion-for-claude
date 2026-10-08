@@ -1,5 +1,6 @@
 import type { FieldType, SourceRecord, SourceTypeSchema } from "./types";
 import { sanitize } from "../memory/sanitize";
+import { stripFrontmatter } from "../markdown/frontmatter";
 
 const REDACTION_MARKER = "‹REDACTED›";
 const PLACEHOLDER_TITLES = new Set([
@@ -178,21 +179,7 @@ export function validateEnrichment(
   if (errors.length > 0) throw new EnrichmentQualityError(errors);
 }
 
-export function markdownBody(content: string): string {
-  const opening = /^---[ \t]*\r?\n/.exec(content);
-  if (!opening) return content;
-
-  let offset = opening[0].length;
-  while (offset <= content.length) {
-    const nextLf = content.indexOf("\n", offset);
-    const lineEnd = nextLf === -1 ? content.length : nextLf > offset && content[nextLf - 1] === "\r" ? nextLf - 1 : nextLf;
-    const line = content.slice(offset, lineEnd);
-    if (/^---[ \t]*$/.test(line)) return content.slice(nextLf === -1 ? lineEnd : nextLf + 1);
-    if (nextLf === -1) break;
-    offset = nextLf + 1;
-  }
-  return content;
-}
+export const markdownBody = stripFrontmatter;
 
 export function assertBodyPreserved(before: string, after: string): void {
   if (markdownBody(before) !== markdownBody(after)) {

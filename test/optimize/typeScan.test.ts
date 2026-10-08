@@ -8,13 +8,13 @@ import type { StoredTypeVerdict } from "../../src/optimize/state";
 import {
   conformanceLine,
   MAX_TYPE_ROWS,
-  PLUGIN_OWNED_TYPES,
   proposableTypes,
   scanUntyped,
   type TypeRegistry,
   type TypeScanInput,
   type TypeScanNote,
 } from "../../src/optimize/typeScan";
+import { PLUGIN_NOTE_TYPES } from "../../src/ontology/pluginTypes";
 
 function registryOf(defs: TypeDef[]): TypeRegistry {
   const { resolved } = resolveTypes(defs);
@@ -39,11 +39,11 @@ const projectFolder = (n: number, other = 0): TypeScanNote[] => [
 
 describe("proposableTypes", () => {
   it("drops the root, generated, and plugin-owned types, sorted", () => {
-    const { resolved } = resolveTypes([...SEED_TYPES, def("triage"), def("optimize-run"), def("order-run"), def("zebra"), def("apple")]);
+    const { resolved } = resolveTypes([...SEED_TYPES, def("zebra"), def("apple")]);
     const names = proposableTypes({ resolve: (n) => resolved.get(n), resolved: () => resolved as ReadonlyMap<string, ResolvedType> });
     expect(names).toContain("person");
     expect(names).toContain("project");
-    for (const hidden of ["entity", "triage", "order-run", "optimize-run", ...PLUGIN_OWNED_TYPES]) expect(names).not.toContain(hidden);
+    for (const hidden of ["entity", "triage", "order-run", "optimize-run", "chat-project", ...PLUGIN_NOTE_TYPES]) expect(names).not.toContain(hidden);
     expect(names).toEqual([...names].sort((a, b) => a.localeCompare(b)));
   });
 

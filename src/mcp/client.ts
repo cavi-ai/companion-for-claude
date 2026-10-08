@@ -4,6 +4,7 @@
 
 import type { JsonRpcRequest, JsonRpcResponse, McpToolDef } from "./protocol";
 import { MCP_PROTOCOL_VERSION } from "./protocol";
+import { isRecord } from "../records";
 
 export interface McpTransport {
   /** Send one JSON-RPC message; resolves with the correlated reply, or null for notifications (HTTP 202). */
@@ -16,11 +17,7 @@ export interface McpCallResult {
   isError: boolean;
 }
 
-const CLIENT_INFO = { name: "claude-companion", version: "0.1.0" };
-
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return typeof value === "object" && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined;
-}
+const asRecord = (value: unknown): Record<string, unknown> | undefined => (isRecord(value) ? value : undefined);
 
 function text(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() !== "" ? value : undefined;
@@ -61,7 +58,8 @@ export class McpClientSession {
   private nextId = 1;
   private ready = false;
 
-  constructor(private transport: McpTransport) {}
+  /** `clientVersion` is the plugin version reported in the initialize handshake. */
+  constructor(private transport: McpTransport, private clientVersion = "unknown") {}
 
   private async request(method: string, params?: unknown): Promise<unknown> {
     const id = this.nextId++;
@@ -77,7 +75,7 @@ export class McpClientSession {
     const result = asRecord(await this.request("initialize", {
       protocolVersion: MCP_PROTOCOL_VERSION,
       capabilities: {},
-      clientInfo: CLIENT_INFO,
+      clientInfo: { name: "claude-companion", version: this.clientVersion },
     }));
     if (typeof result?.protocolVersion !== "string") throw new Error("MCP server returned a malformed initialize result.");
     await this.transport.send({ jsonrpc: "2.0", method: "notifications/initialized" });

@@ -13,6 +13,8 @@
 // thinking, tool_use {name, input}, tool_result {content}. The schema is internal
 // to Claude Code and may change, so every field is read defensively.
 
+import { isRecord } from "../records";
+
 export interface ProseTurn {
   role: "user" | "assistant";
   text: string;
@@ -50,9 +52,7 @@ const FILE_TOOLS = new Set(["Edit", "Write", "Read", "NotebookEdit", "MultiEdit"
 const TARGET_KEYS = ["file_path", "path", "notebook_path", "command", "pattern", "query", "url"];
 const MAX_TARGET = 160;
 
-function asRecord(v: unknown): Record<string, unknown> | null {
-  return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
-}
+const asRecord = (v: unknown): Record<string, unknown> | null => (isRecord(v) ? v : null);
 function str(v: unknown): string | undefined {
   return typeof v === "string" && v.length > 0 ? v : undefined;
 }

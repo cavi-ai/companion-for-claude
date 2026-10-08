@@ -51,7 +51,7 @@ describe("renderResearchRecord", () => {
     expect(rendered).toContain("> Measured effect.\n> Across cohorts.");
   });
 
-  it.each(["0014", "1e3", "1.0"])("preserves exact locator text %s", (locatorValue) => {
+  it.each(["0014", "1e3", "1.0", "eq. $$E=mc^2$$", "costs $& and $' and $`"])("preserves exact locator text %s", (locatorValue) => {
     const evidence = { ...records[2]!, locatorValue };
     const rendered = renderResearchRecord(evidence);
     expect(rendered).toContain(`locator_value: ${JSON.stringify(locatorValue)}`);

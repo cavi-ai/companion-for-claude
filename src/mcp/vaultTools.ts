@@ -12,8 +12,9 @@ import { describeOntology } from "../ontology/describe";
 import { validateProposal } from "../ontology/propose";
 import type { OntologyRegistry } from "../ontology/registry";
 import { loadedOntology } from "../optimize/vaultGlue";
+import { PROPERTY_TYPE_VALUES } from "../ontology/types";
 import { replaceSection } from "./edit";
-import { readFrontmatter } from "./frontmatterRead";
+import { readFrontmatter, stripFrontmatter } from "../markdown/frontmatter";
 import { DELEGABLE_RESEARCH_KEYS, RESEARCH_ROUTE_HINT, planResearchRouting, runResearchRouting, type ResearchRoutePlan } from "./researchRouting";
 import { parseResearchRecord } from "../research/parse";
 import type { ResearchRecord } from "../research/types";
@@ -220,7 +221,7 @@ export class VaultTools {
       });
     }
 
-    if (this.opts.memoryRecord?.enabled()) {
+    if (this.opts.allowWrites && this.opts.memoryRecord?.enabled()) {
       defs.push({
         name: "memory_record",
         description: "Record one durable, still-true fact about the user's work (a decision, preference, or project state) in the vault's 'What Claude Knows' memory note. Not for transient chatter. Pass `source` as your agent name (e.g. 'claude-code', 'codex').",
@@ -427,7 +428,7 @@ export class VaultTools {
             properties: {
               name: { type: "string", description: "Type name, lowercase kebab-case." },
               parent: { type: "string", description: "Parent type (default: entity)." },
-              properties: { type: "array", items: { type: "object", properties: { key: { type: "string" }, type: { type: "string", enum: ["string", "number", "boolean", "date", "duration", "string[]"] }, required: { type: "boolean" }, description: { type: "string" } }, required: ["key", "type"] } },
+              properties: { type: "array", items: { type: "object", properties: { key: { type: "string" }, type: { type: "string", enum: [...PROPERTY_TYPE_VALUES] }, required: { type: "boolean" }, description: { type: "string" } }, required: ["key", "type"] } },
               relations: { type: "array", items: { type: "object", properties: { key: { type: "string" }, targets: { type: "array", items: { type: "string" } }, description: { type: "string" } }, required: ["key", "targets"] } },
             },
             required: ["name"],
@@ -895,8 +896,7 @@ export class VaultTools {
     const content = await this.app.vault.cachedRead(file);
     const frontmatter = readFrontmatter(content, (yaml) => parseYaml(yaml) as unknown);
     if (!frontmatter) return undefined;
-    const body = content.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, "");
-    return parseResearchRecord({ path: file.path, frontmatter, body }).record;
+    return parseResearchRecord({ path: file.path, frontmatter, body: stripFrontmatter(content) }).record;
   }
 
   private async frontmatterQuery(field: string, value: string | undefined): Promise<string> {

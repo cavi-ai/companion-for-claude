@@ -4,8 +4,9 @@
 // the other — the failure mode of hand-maintained parallel lists. Pure: no
 // Obsidian, safe to import from the agent layer.
 
-/** Tools that mutate the vault (notes, canvas, bases, ontology). */
+/** Tools that mutate the vault (notes, canvas, bases, ontology, memory). */
 export const VAULT_WRITE_TOOLS: ReadonlySet<string> = new Set([
+  "memory_record",
   "note_create",
   "note_append",
   "note_update",

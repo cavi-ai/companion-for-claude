@@ -9,6 +9,7 @@ import { sourceFrontmatter, buildSidecarNote } from "./sourceNote";
 import { applySourceFrontmatter } from "./frontmatterMerge";
 import { sanitizeFileName } from "../artifacts/parse";
 import { validateEnrichment, validateMergedSourceProvenance } from "./enrichmentQuality";
+import { readFrontmatter } from "../markdown/frontmatter";
 
 export interface EnrichDeps {
   app: App;
@@ -95,14 +96,7 @@ function existingFrontmatter(app: App, path: string, content: string): Record<st
   const file = app.vault.getAbstractFileByPath(path);
   const cached = file instanceof TFile ? app.metadataCache.getFileCache(file)?.frontmatter : undefined;
   if (cached) return cached;
-  const m = /^---\r?\n([\s\S]*?)\r?\n---/.exec(content);
-  if (!m || m[1] === undefined) return undefined;
-  try {
-    const parsed: unknown = parseYaml(m[1]);
-    return parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : undefined;
-  } catch {
-    return undefined;
-  }
+  return readFrontmatter(content, (yaml) => parseYaml(yaml) as unknown) ?? undefined;
 }
 
 /** Run a capture through the pipeline and write the typed result. */

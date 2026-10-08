@@ -1,25 +1,9 @@
 import { conform } from "../ontology/conform";
 import { ROOT_TYPE, type ResolvedType } from "../ontology/types";
-import { GENERATED_NOTE_TYPES } from "../health/controller";
+import { PLUGIN_NOTE_TYPES } from "../ontology/pluginTypes";
 import { tagId } from "../tags/vocabulary";
 import { OPTIMIZE_OUTPUT_ROOT } from "./mergePlan";
 import type { StoredTypeVerdict } from "./state";
-
-export const PLUGIN_OWNED_TYPES: ReadonlySet<string> = new Set([
-  "chat",
-  "artifact",
-  "plan",
-  "build-spec",
-  "build-tracker",
-  "research-project",
-  "research-source",
-  "evidence",
-  "claim",
-  "research-question",
-  "research-document",
-  "claude-memory",
-  "chat-summary",
-]);
 
 export const MAX_TYPE_ROWS = 100;
 export const FOLDER_MIN_TYPED = 3;
@@ -95,7 +79,7 @@ export const isTyped = (frontmatter: Record<string, unknown> | undefined): boole
 export function proposableTypes(registry: TypeRegistry | null): string[] {
   if (!registry) return [];
   return [...registry.resolved().keys()]
-    .filter((name) => name !== ROOT_TYPE && !GENERATED_NOTE_TYPES.has(name) && !PLUGIN_OWNED_TYPES.has(name))
+    .filter((name) => name !== ROOT_TYPE && !PLUGIN_NOTE_TYPES.has(name))
     .sort((a, b) => a.localeCompare(b));
 }
 

@@ -31,6 +31,9 @@ const DATE_RE = /^\d{4}-\d{2}-\d{2}/;
 
 function checkProperty(p: PropertyDef, value: unknown, fixed: Record<string, unknown>, issues: ConformanceIssue[]): void {
   switch (p.type) {
+    case "list":
+      if (!Array.isArray(value)) issues.push({ kind: "wrong-type", key: p.key, message: `'${p.key}' should be a list` });
+      return;
     case "string[]":
       if (typeof value === "string") fixed[p.key] = [value];
       else if (!Array.isArray(value)) issues.push({ kind: "wrong-type", key: p.key, message: `'${p.key}' should be a list` });

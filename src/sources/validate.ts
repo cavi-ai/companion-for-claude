@@ -1,16 +1,5 @@
 import type { FieldValue, SourceTypeSchema } from "./types";
 
-/** Pull the first JSON object out of a model reply (handles ```json fences + prose). */
-export function extractJson(raw: string): unknown {
-  let s = raw.trim();
-  const fence = /```(?:json)?\s*([\s\S]*?)```/i.exec(s);
-  if (fence && fence[1] !== undefined) s = fence[1].trim();
-  const start = s.indexOf("{");
-  const end = s.lastIndexOf("}");
-  if (start === -1 || end === -1 || end < start) throw new Error("no JSON object in reply");
-  return JSON.parse(s.slice(start, end + 1));
-}
-
 export interface ValidationResult {
   ok: boolean;
   errors: string[];

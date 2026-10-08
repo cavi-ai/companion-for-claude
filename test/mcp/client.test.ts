@@ -55,6 +55,12 @@ describe("McpClientSession", () => {
     expect(failure).toEqual({ text: "kaboom", isError: true });
   });
 
+  it("reports the plugin version it was given in the handshake", async () => {
+    const { transport, sent } = scripted(HELLO);
+    await new McpClientSession(transport, "0.43.0").listTools();
+    expect((sent.find((m) => m.method === "initialize")?.params as { clientInfo: unknown }).clientInfo).toEqual({ name: "claude-companion", version: "0.43.0" });
+  });
+
   it("throws on RPC errors and malformed shapes", async () => {
     const bad = new McpClientSession(scripted({ initialize: () => ({ noVersion: true }) }).transport);
     await expect(bad.listTools()).rejects.toThrow(/malformed initialize/);

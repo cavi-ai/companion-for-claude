@@ -11,6 +11,23 @@ describe("transformNoteForPublish", () => {
     expect(transformNoteForPublish("---\r\na: 1\r\n---\r\nbody")).toBe("body\n");
   });
 
+  it("keeps the body between an empty frontmatter block and a later horizontal rule", () => {
+    expect(transformNoteForPublish("---\n---\nIntro paragraph.\n\n---\n\nSection two.\n")).toBe("Intro paragraph.\n\n---\n\nSection two.\n");
+  });
+
+  it("leaves wikilinks inside a fenced code block in a list item alone", () => {
+    expect(transformNoteForPublish("- step:\n  ```md\n  [[Secret Note]]\n  ```\n")).toBe("- step:\n  ```md\n  [[Secret Note]]\n  ```\n");
+  });
+
+  it("keeps code and drops comments around list-marked or quoted fence lines inside a fence", () => {
+    expect(transformNoteForPublish("```\n- ```\ncode [[X]]\n```\n%% after %%\n")).toBe("```\n- ```\ncode [[X]]\n```\n");
+    expect(transformNoteForPublish("```markdown\n> ```\ncode [[X]]\n```\n%% after %%\n")).toBe("```markdown\n> ```\ncode [[X]]\n```\n");
+  });
+
+  it("does not treat an unclosed indented ``` as a fence", () => {
+    expect(transformNoteForPublish("Syntax reference:\n\n    ```python\n\n%% private %%\nSee [[Budget]]\n")).toBe("Syntax reference:\n\n    ```python\n\n\nSee Budget\n");
+  });
+
   it("keeps a horizontal rule that is not frontmatter", () => {
     expect(transformNoteForPublish("intro\n\n---\n\nafter")).toBe("intro\n\n---\n\nafter\n");
   });

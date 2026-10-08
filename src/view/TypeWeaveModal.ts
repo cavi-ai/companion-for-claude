@@ -2,6 +2,7 @@ import { App, Modal, Notice, Setting } from "obsidian";
 import { formatTypeClassifyNotice, type TypeApplyResult, type TypeClassifyResult } from "../optimize/typeController";
 import type { TypeScanReport } from "../optimize/typeScan";
 import { createTypeWeaveState, removeRow, rowDescription, selectedTypes, setRowType, toggleRow, type TypeWeaveViewState } from "./typeWeaveState";
+import { errorMessage } from "../records";
 
 export interface TypeWeaveActions {
   apply(rows: Array<{ path: string; type: string }>): Promise<TypeApplyResult>;
@@ -157,8 +158,4 @@ export class TypeWeaveModal extends Modal {
       this.onDone(null);
     }
   }
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

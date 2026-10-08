@@ -1,4 +1,7 @@
 import type { ResearchSourceRecord, SourceLocatorKind } from "./types";
+import { stripFrontmatter } from "../markdown/frontmatter";
+import { replyJson } from "../providers/replyJson";
+import { isRecord } from "../records";
 
 export interface SourceText { text: string; pages?: Array<{ page: number; text: string }> }
 export interface ProposedPassage { title: string; excerpt: string; locatorKind: SourceLocatorKind; locatorValue: string; interpretation?: string }
@@ -16,7 +19,7 @@ export async function resolveSourceText(source: Pick<ResearchSourceRecord, "path
     if (pages?.length) return { text: pages.map(({ text }) => text).join("\n\n"), pages };
   }
   const note = await io.readNote(source.path);
-  const body = note?.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, "").trim();
+  const body = note === null ? undefined : stripFrontmatter(note).trim();
   return body ? { text: body } : null;
 }
 
@@ -104,20 +107,9 @@ function trimTitle(raw: string, excerpt: string): string {
   return (space > 0 ? cut.slice(0, space) : cut).trim();
 }
 
-function extractJson(raw: string): unknown {
-  const candidates = [raw.trim(), ...[...raw.matchAll(/```(?:json)?\s*([\s\S]*?)```/gi)].map((match) => match[1]!.trim())];
-  const first = raw.indexOf("{");
-  const last = raw.lastIndexOf("}");
-  if (first >= 0 && last > first) candidates.push(raw.slice(first, last + 1));
-  for (const candidate of candidates) {
-    try { return JSON.parse(candidate); } catch { /* try the next shape */ }
-  }
-  return null;
-}
-
 export function parseExtraction(raw: string, source: SourceText, existingExcerpts: readonly string[]): ProposedPassage[] {
-  const parsed = extractJson(raw) as { passages?: unknown } | null;
-  if (!parsed || !Array.isArray(parsed.passages)) return [];
+  const parsed = replyJson(raw, (value) => isRecord(value) && Array.isArray(value.passages)) as { passages: unknown[] } | undefined;
+  if (!parsed) return [];
   const haystack = normalize(source.text);
   const seen = new Set(existingExcerpts.map(normalize));
   const out: ProposedPassage[] = [];

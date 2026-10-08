@@ -2,6 +2,7 @@ import { App, Modal, Notice, Setting } from "obsidian";
 import type { LinkApplyResult } from "../optimize/linkController";
 import type { LinkProposal, LinkScanReport } from "../optimize/linkScan";
 import { createLinkWeaveState, kindLabel, removeRow, selectedProposals, toggleRow, type LinkWeaveViewState } from "./linkWeaveState";
+import { errorMessage } from "../records";
 
 export interface LinkWeaveActions {
   apply(selected: LinkProposal[]): Promise<LinkApplyResult>;
@@ -96,8 +97,4 @@ export class LinkWeaveModal extends Modal {
       this.onDone(null);
     }
   }
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

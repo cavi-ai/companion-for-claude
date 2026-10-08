@@ -6,6 +6,7 @@
 import type { SourceTypeSchema } from "../sources/types";
 import { extractFields, type ExtractDeps } from "../sources/extract";
 import { sanitize } from "../memory/sanitize";
+import { readFrontmatter, stripFrontmatter } from "../markdown/frontmatter";
 import { parseYaml } from "obsidian";
 
 export interface ResearchSourceEnrichment {
@@ -39,23 +40,11 @@ export function capturedTextFromBody(body: string): string | null {
   return body.slice(start, end);
 }
 
-function leadingFrontmatter(content: string): Record<string, unknown> | undefined {
-  const m = /^---\r?\n([\s\S]*?)\r?\n---/.exec(content);
-  if (!m || m[1] === undefined) return undefined;
-  try {
-    const parsed: unknown = parseYaml(m[1]);
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
 /** The text worth summarizing: captured page content, else the abstract. */
 export function researchSourceText(content: string): string | null {
-  const body = content.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, "");
-  const captured = capturedTextFromBody(body)?.trim();
+  const captured = capturedTextFromBody(stripFrontmatter(content))?.trim();
   if (captured && captured.length >= MIN_SOURCE_TEXT) return captured;
-  const abstract = leadingFrontmatter(content)?.abstract;
+  const abstract = readFrontmatter(content, (yaml) => parseYaml(yaml) as unknown)?.abstract;
   if (typeof abstract === "string" && abstract.trim().length >= MIN_SOURCE_TEXT) return abstract.trim();
   return null;
 }
@@ -74,7 +63,7 @@ export async function extractResearchSourceEnrichment(
   input: { content: string },
   deps: ExtractDeps,
 ): Promise<ResearchSourceEnrichment | null> {
-  const frontmatter = leadingFrontmatter(input.content);
+  const frontmatter = readFrontmatter(input.content, (yaml) => parseYaml(yaml) as unknown);
   const existing = frontmatter?.summary;
   if (typeof existing === "string" && existing.trim().length > 0) return null;
   const text = researchSourceText(input.content);

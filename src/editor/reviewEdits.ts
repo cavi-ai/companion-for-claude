@@ -6,6 +6,8 @@ import type { EditPlan } from "../edit/diff";
 import { DiffModal } from "../view/DiffModal";
 import { createSession, type InlineDiffSession } from "./inlineDiffState";
 import { cancelInline, reviewInline } from "./inlineDiffExtension";
+import { fenceAt, fenceEnd } from "../markdown/fences";
+import { frontmatterBlock } from "../markdown/frontmatter";
 
 export interface ReviewEditsInput {
   file: TFile;
@@ -83,21 +85,15 @@ export function hiddenRanges(content: string): HiddenRange[] {
   const ranges: HiddenRange[] = [];
   const push = (first: number, last: number) => ranges.push({ from: lines[first]!.from, to: lines[last]!.to });
   let i = 0;
-  if (lines[0]?.text === "---") {
-    const close = lines.findIndex((line, index) => index > 0 && /^---[ \t]*$/.test(line.text));
-    if (close !== -1) { push(0, close); i = close + 1; }
-  }
+  const frontmatter = frontmatterBlock(content);
+  if (frontmatter) { push(0, frontmatter.closeLine); i = frontmatter.closeLine + 1; }
+  const texts = lines.map((line) => line.text);
   while (i < lines.length) {
     const text = lines[i]!.text;
     const trimmed = text.trim();
-    const fence = /^\s*(`{3,}|~{3,})/.exec(text);
+    const fence = fenceAt(texts, i);
     if (fence) {
-      const marker = fence[1]!;
-      let end = lines.length - 1;
-      for (let j = i + 1; j < lines.length; j++) {
-        const closer = /^\s*(`{3,}|~{3,})\s*$/.exec(lines[j]!.text);
-        if (closer && closer[1]![0] === marker[0] && closer[1]!.length >= marker.length) { end = j; break; }
-      }
+      const end = fenceEnd(texts, i, fence);
       push(i, end);
       i = end + 1;
     } else if (trimmed.startsWith("$$")) {

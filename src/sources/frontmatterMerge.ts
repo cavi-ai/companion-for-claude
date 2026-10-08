@@ -1,6 +1,7 @@
 import { App, TFile, parseYaml, stringifyYaml } from "obsidian";
 import { normalizeTags, type FrontmatterData } from "../indexing/frontmatter";
 import { assertBodyPreserved } from "./enrichmentQuality";
+import { frontmatterBlock } from "../markdown/frontmatter";
 
 export type MergedFrontmatterValidator = (frontmatter: Readonly<Record<string, unknown>>) => void;
 
@@ -18,28 +19,13 @@ function missing(value: unknown): boolean {
 }
 
 function leadingFrontmatter(content: string): { frontmatter: Record<string, unknown>; body: string; eol: "\n" | "\r\n" } {
-  const opening = /^---[ \t]*(\r?\n)/.exec(content);
-  if (!opening) return { frontmatter: {}, body: content, eol: "\n" };
-
-  let offset = opening[0].length;
-  while (offset <= content.length) {
-    const nextLf = content.indexOf("\n", offset);
-    const lineEnd = nextLf === -1 ? content.length : nextLf > offset && content[nextLf - 1] === "\r" ? nextLf - 1 : nextLf;
-    if (/^---[ \t]*$/.test(content.slice(offset, lineEnd))) {
-      const parsed: unknown = parseYaml(content.slice(opening[0].length, offset));
-      if (parsed !== null && (typeof parsed !== "object" || Array.isArray(parsed))) {
-        throw new Error("leading YAML frontmatter must be a mapping");
-      }
-      return {
-        frontmatter: (parsed ?? {}) as Record<string, unknown>,
-        body: content.slice(nextLf === -1 ? lineEnd : nextLf + 1),
-        eol: opening[1] === "\r\n" ? "\r\n" : "\n",
-      };
-    }
-    if (nextLf === -1) break;
-    offset = nextLf + 1;
+  const block = frontmatterBlock(content);
+  if (!block) return { frontmatter: {}, body: content, eol: "\n" };
+  const parsed: unknown = parseYaml(block.yaml);
+  if (parsed !== null && (typeof parsed !== "object" || Array.isArray(parsed))) {
+    throw new Error("leading YAML frontmatter must be a mapping");
   }
-  return { frontmatter: {}, body: content, eol: "\n" };
+  return { frontmatter: (parsed ?? {}) as Record<string, unknown>, body: content.slice(block.end), eol: block.eol };
 }
 
 /** Pure, frontmatter-only merge. Live values win; system enrichment markers deliberately refresh. */

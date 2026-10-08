@@ -22,8 +22,7 @@ import type {
 } from "./types";
 import { isReviewState } from "./types";
 import { upsertLimitations } from "./limitations";
-
-const FRONTMATTER = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/;
+import { frontmatterBlock } from "../markdown/frontmatter";
 
 export interface ResearchRepositoryIO {
   listMarkdown(): Promise<ResearchNoteInput[]>;
@@ -361,12 +360,12 @@ export class ResearchRepository {
     if (JSON.stringify(input.currentEvidence) !== JSON.stringify(input.envelope.evidence)) throw new Error("Draft evidence changed after the preview was generated");
     if (!input.envelope.claimFingerprint || input.currentClaimFingerprint !== input.envelope.claimFingerprint) throw new Error("Draft claim changed after the preview was generated");
     await this.io.updateText(input.documentPath, (current) => {
-      const frontmatter = FRONTMATTER.exec(current);
-      if (!frontmatter || !/^type:\s*["']?research-document["']?\s*$/m.test(frontmatter[1] ?? "")) throw new Error(`Research record is not a document: ${input.documentPath}`);
-      let head = frontmatter[0];
-      if (/^document_kind:\s*["']?outline["']?\s*$/m.test(frontmatter[1] ?? "")) head = head.replace(/^document_kind:\s*["']?outline["']?\s*$/m, "document_kind: draft");
-      else if (!/^document_kind:\s*["']?draft["']?\s*$/m.test(frontmatter[1] ?? "")) throw new Error(`Research document kind is invalid: ${input.documentPath}`);
-      return `${head}${applyDraftSection(current.slice(frontmatter[0].length), input.preview, input.envelope, input.markdown)}`;
+      const frontmatter = frontmatterBlock(current);
+      if (!frontmatter || !/^type:\s*["']?research-document["']?\s*$/m.test(frontmatter.yaml)) throw new Error(`Research record is not a document: ${input.documentPath}`);
+      let head = current.slice(0, frontmatter.end);
+      if (/^document_kind:\s*["']?outline["']?\s*$/m.test(frontmatter.yaml)) head = head.replace(/^document_kind:\s*["']?outline["']?\s*$/m, "document_kind: draft");
+      else if (!/^document_kind:\s*["']?draft["']?\s*$/m.test(frontmatter.yaml)) throw new Error(`Research document kind is invalid: ${input.documentPath}`);
+      return `${head}${applyDraftSection(current.slice(frontmatter.end), input.preview, input.envelope, input.markdown)}`;
     });
   }
 
@@ -384,11 +383,11 @@ export class ResearchRepository {
     if (!this.io.updateText) throw new Error("Atomic research document updates are unavailable");
     let converted = 0;
     await this.io.updateText(documentPath, (current) => {
-      const frontmatter = FRONTMATTER.exec(current);
-      if (!frontmatter || !/^type:\s*["']?research-document["']?\s*$/m.test(frontmatter[1] ?? "")) throw new Error(`Research record is not a document: ${documentPath}`);
-      const result = convertV1Document(current.slice(frontmatter[0].length));
+      const frontmatter = frontmatterBlock(current);
+      if (!frontmatter || !/^type:\s*["']?research-document["']?\s*$/m.test(frontmatter.yaml)) throw new Error(`Research record is not a document: ${documentPath}`);
+      const result = convertV1Document(current.slice(frontmatter.end));
       converted = result.converted;
-      return converted ? `${frontmatter[0]}${result.document}` : current;
+      return converted ? `${current.slice(0, frontmatter.end)}${result.document}` : current;
     });
     return converted;
   }

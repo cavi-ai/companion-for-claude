@@ -53,6 +53,33 @@ And \`Weekly Review\` inline. But GTD in prose.`;
     expect(paths).toEqual(["GTD.md"]);
   });
 
+  it("skips code fences inside list items and callouts", () => {
+    const content = "- deploy step:\n  ```bash\n  run # Weekly Review\n  ```\n> [!note]\n> ```\n> Weekly Review\n> ```\nBut GTD in prose.";
+    expect(findUnlinkedMentions(content, candidates, "X.md").map((m) => m.path)).toEqual(["GTD.md"]);
+  });
+
+  it("keeps a fence open across list-marked or quoted fence lines inside it", () => {
+    for (const inner of ["- ```", "> ```", "1. ```"]) {
+      expect(findUnlinkedMentions(`\`\`\`\n${inner}\nGTD\n\`\`\`\n`, candidates, "X.md")).toEqual([]);
+    }
+  });
+
+  it("finds and links mentions after a character whose lowercase is longer (İ)", () => {
+    const content = "Trip to İstanbul, then a Weekly Review.";
+    const [m] = findUnlinkedMentions(content, candidates, "X.md");
+    expect(m).toMatchObject({ path: "Weekly Review.md", surface: "Weekly Review" });
+    expect(linkMention(content, m!)).toBe("Trip to İstanbul, then a [[Weekly Review]].");
+  });
+
+  it("finds mentions after an unclosed indented ```", () => {
+    expect(findUnlinkedMentions("    ```\nGTD\n", candidates, "X.md").map((m) => m.path)).toEqual(["GTD.md"]);
+  });
+
+  it("finds a mention between an empty frontmatter block and a later horizontal rule", () => {
+    const content = "---\n---\nThe Weekly Review.\n\n---\n\nAfter.";
+    expect(findUnlinkedMentions(content, candidates, "X.md").map((m) => m.path)).toEqual(["Weekly Review.md"]);
+  });
+
   it("never suggests the note itself or short names", () => {
     const content = "Weekly Review and Ok are words.";
     const paths = findUnlinkedMentions(content, candidates, "Weekly Review.md").map((m) => m.path);
@@ -118,6 +145,47 @@ And \`Weekly Review\` inline. But GTD in prose.`;
     }
 
     expect(noteNormalizations).toBe(1);
+  });
+});
+
+/** The original per-candidate scan, kept as the oracle for the single-pass index. Prose-only input, so no masking. */
+function naiveMentions(content: string, cands: LinkCandidate[], selfPath: string) {
+  const isWordChar = (ch: string | undefined) => ch !== undefined && /[\p{L}\p{N}_]/u.test(ch);
+  const lower = content.toLowerCase();
+  const found: Array<{ path: string; start: number; end: number; viaAlias: boolean; surface: string }> = [];
+  for (const c of cands) {
+    if (c.path === selfPath) continue;
+    let best: (typeof found)[number] | null = null;
+    for (const { name, viaAlias } of [{ name: c.basename, viaAlias: false }, ...c.aliases.map((name) => ({ name, viaAlias: true }))]) {
+      if (name.trim().length < 3) continue;
+      const needle = name.toLowerCase();
+      let idx = lower.indexOf(needle);
+      while (idx !== -1 && (isWordChar(content[idx - 1]) || isWordChar(content[idx + needle.length]))) idx = lower.indexOf(needle, idx + 1);
+      if (idx !== -1 && (best === null || idx < best.start)) best = { path: c.path, start: idx, end: idx + name.length, viaAlias, surface: content.slice(idx, idx + name.length) };
+    }
+    if (best) found.push(best);
+  }
+  return found.sort((a, b) => a.start - b.start).slice(0, 20);
+}
+
+describe("findUnlinkedMentions matches the per-candidate scan", () => {
+  it("on 300 random prose notes against overlapping names and aliases", () => {
+    let seed = 7;
+    const rand = () => ((seed = (seed * 1103515245 + 12345) % 2 ** 31) / 2 ** 31);
+    const pick = <T,>(xs: readonly T[]): T => xs[Math.floor(rand() * xs.length)]!;
+    const words = ["alpha", "Alpha", "alphabet", "beta", "gamma", "delta", "al", "pha", "Beta Gamma", "gam", "x_alpha", "élan", "Élan", "42"];
+    const seps = [" ", " ", " ", ", ", ".\n", "\n\n", "-", "_"];
+    for (let round = 0; round < 300; round++) {
+      const cands: LinkCandidate[] = Array.from({ length: 1 + Math.floor(rand() * 30) }, (_, i) => ({
+        path: `N${i}.md`,
+        basename: Array.from({ length: 1 + Math.floor(rand() * 2) }, () => pick(words)).join(" "),
+        aliases: Array.from({ length: Math.floor(rand() * 3) }, () => Array.from({ length: 1 + Math.floor(rand() * 2) }, () => pick(words)).join(pick([" ", "-"]))),
+      }));
+      const content = Array.from({ length: 5 + Math.floor(rand() * 60) }, () => pick(words) + pick(seps)).join("");
+      const self = pick(cands).path;
+      const actual = findUnlinkedMentions(content, cands, self).map(({ path, start, end, viaAlias, surface }) => ({ path, start, end, viaAlias, surface }));
+      expect(actual).toEqual(naiveMentions(content, cands, self));
+    }
   });
 });
 

@@ -1,4 +1,5 @@
 import { conform } from "../ontology/conform";
+import { GENERATED_NOTE_TYPES } from "../ontology/pluginTypes";
 import type { ResolvedType } from "../ontology/types";
 import type { AuditFinding } from "../research/audit";
 import { scanVaultHealth, type CompanionStatus, type HealthInput, type HealthReport } from "./scan";
@@ -21,8 +22,6 @@ export interface HealthDeps {
 }
 
 export interface SafeFix { path: string; changes: Array<{ key: string; from: unknown; to: unknown }>; fixed: Record<string, unknown> }
-
-export const GENERATED_NOTE_TYPES: ReadonlySet<string> = new Set(["triage", "order-run", "optimize-run"]);
 
 export class HealthController {
   constructor(private readonly deps: HealthDeps) {}

@@ -5,11 +5,7 @@
 import type { App } from "obsidian";
 import type { ResearchRepository } from "../research/repository";
 import { parseProjectNote, fromResearchProject, type ChatProject } from "./model";
-
-function stripFrontmatterBlock(content: string): string {
-  const match = /^---\r?\n[\s\S]*?\r?\n---\r?\n?/.exec(content);
-  return match ? content.slice(match[0].length) : content;
-}
+import { stripFrontmatter } from "../markdown/frontmatter";
 
 /** Every chat project available in this vault, note projects first. */
 export async function listChatProjects(app: App, research: ResearchRepository | null): Promise<ChatProject[]> {
@@ -18,7 +14,7 @@ export async function listChatProjects(app: App, research: ResearchRepository | 
     const frontmatter = app.metadataCache.getFileCache(file)?.frontmatter as Record<string, unknown> | undefined;
     if (frontmatter?.type !== "chat-project") continue;
     const content = await app.vault.cachedRead(file);
-    const project = parseProjectNote(file.path, frontmatter, stripFrontmatterBlock(content));
+    const project = parseProjectNote(file.path, frontmatter, stripFrontmatter(content));
     if (project) notes.push(project);
   }
   const noteFolders = new Set(notes.map((p) => p.folder).filter((f): f is string => f !== null));

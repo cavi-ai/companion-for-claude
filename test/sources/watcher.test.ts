@@ -13,6 +13,9 @@ describe("shouldEnrich", () => {
   it("skips a note already enriched", () => {
     expect(shouldEnrich({ ...base, path: "Clippings/a.md", ext: "md", content: "---\nsource_enriched: true\n---" })).toBe(false);
   });
+  it("enriches a clip whose body, not frontmatter, says source_enriched", () => {
+    expect(shouldEnrich({ ...base, path: "Clippings/a.md", ext: "md", content: "---\nsource: x\n---\nThe plugin writes:\nsource_enriched: true\n" })).toBe(true);
+  });
   it("skips files outside the inbox", () => {
     expect(shouldEnrich({ ...base, path: "Notes/a.md", ext: "md", content: "" })).toBe(false);
   });

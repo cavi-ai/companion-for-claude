@@ -722,10 +722,10 @@ describe("research state through the generic frontmatter tools", () => {
 
 describe("memory_record", () => {
   const MEMORY = "Claude/Sessions/What Claude Knows.md";
-  function memTools(enabled = true, source?: string) {
+  function memTools(enabled = true, source?: string, allowWrites = true) {
     const app = new App();
     const vt = new VaultTools(app as never, {
-      allowWrites: false,
+      allowWrites,
       defaultFolder: "Claude",
       memoryRecord: {
         enabled: () => enabled,
@@ -739,7 +739,7 @@ describe("memory_record", () => {
   }
   const read = (app: App) => (app.vault.getAbstractFileByPath(MEMORY) as unknown as { _content: string })._content;
 
-  it("is listed and appends a line while writes are off", async () => {
+  it("is listed and appends a line while writes are on", async () => {
     const { app, vt } = memTools();
     expect(vt.definitions().map(({ name }) => name)).toContain("memory_record");
     expect(await vt.call("memory_record", { fact: "Prefers terse answers", source: "e2e" })).toBe("Recorded.");
@@ -747,9 +747,16 @@ describe("memory_record", () => {
     expect(await vt.call("memory_record", { fact: "prefers TERSE answers" })).toBe("Already recorded.");
   });
 
-  it("is not a write tool", async () => {
+  it("is absent and fails closed while writes are off", async () => {
+    const { app, vt } = memTools(true, undefined, false);
+    expect(vt.definitions().map(({ name }) => name)).not.toContain("memory_record");
+    await expect(vt.call("memory_record", { fact: "x1" })).rejects.toThrow("Write tools are disabled");
+    expect(app.vault.getAbstractFileByPath(MEMORY)).toBeNull();
+  });
+
+  it("is a write tool, so Plan Mode, propose-only runs, and write confirmation gate it", async () => {
     const { isWriteTool } = await import("../src/agent/tools");
-    expect(isWriteTool("memory_record")).toBe(false);
+    expect(isWriteTool("memory_record")).toBe(true);
   });
 
   it("is absent and fails closed when the toggle is off", async () => {
@@ -760,7 +767,7 @@ describe("memory_record", () => {
   });
 
   it("is absent when the host gives no memory deps", async () => {
-    const { vt } = tools(false);
+    const { vt } = tools(true);
     expect(vt.definitions().map(({ name }) => name)).not.toContain("memory_record");
     await expect(vt.call("memory_record", { fact: "x1" })).rejects.toThrow("Memory recording is off");
   });

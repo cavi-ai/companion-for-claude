@@ -3,7 +3,8 @@
 // the model call, vault scan, and renames are wired in main.ts; tests drive
 // the prompt, parsing, and move planning directly.
 
-import { extractJson } from "./validate";
+import { replyJson } from "../providers/replyJson";
+import { isRecord } from "../records";
 import { sanitizeFileName } from "../artifacts/parse";
 
 export interface OrganizeCandidate {
@@ -79,19 +80,12 @@ function isTruncatedReply(raw: string): boolean {
 export function parseOrganizeResponse(raw: string, candidates: OrganizeCandidate[]): ParsedOrganizeResponse {
   if (isTruncatedReply(raw)) return { proposals: [], unresolved: candidates.map((c) => c.path) };
 
-  let entries: Array<Record<string, unknown>>;
-  try {
-    // Models reply with a JSON array as asked (possibly fenced/prose-wrapped),
-    // or (llama3.1 in the wild) a bare object for the first clip — the array
-    // slice is tried first, then a single object.
-    const start = raw.indexOf("[");
-    const end = raw.lastIndexOf("]");
-    const parsed: unknown = start !== -1 && end > start ? JSON.parse(raw.slice(start, end + 1)) : extractJson(raw);
-    const arr: unknown[] = Array.isArray(parsed) ? parsed : [parsed];
-    entries = arr.filter((e): e is Record<string, unknown> => typeof e === "object" && e !== null);
-  } catch {
-    return { proposals: [], unresolved: candidates.map((c) => c.path) };
-  }
+  // Models reply with a JSON array as asked (possibly fenced/prose-wrapped),
+  // or (llama3.1 in the wild) a bare object for the first clip — the array is
+  // tried first, then a single object.
+  const parsed = replyJson(raw, Array.isArray) ?? replyJson(raw, isRecord);
+  if (parsed === undefined) return { proposals: [], unresolved: candidates.map((c) => c.path) };
+  const entries = (Array.isArray(parsed) ? parsed : [parsed]).filter((e): e is Record<string, unknown> => typeof e === "object" && e !== null);
 
   const byPath = new Map<string, string>();
   const byBasename = new Map<string, string>();

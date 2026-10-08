@@ -7,6 +7,7 @@
 import { App, TFile, normalizePath, parseYaml } from "obsidian";
 import { ResearchRepository } from "./repository";
 import type { ResearchNoteInput } from "./parse";
+import { frontmatterBlock } from "../markdown/frontmatter";
 
 export interface ResearchRepositoryFactoryOptions {
   /** Create missing parent folders before createWithParents writes. */
@@ -31,10 +32,10 @@ export function createResearchRepository(app: App, opts: ResearchRepositoryFacto
     Promise.all(
       files.map(async (file) => {
         const content = await app.vault.cachedRead(file);
-        const body = content.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, "");
+        const block = frontmatterBlock(content);
+        const body = block ? content.slice(block.end) : content;
         const cached = app.metadataCache.getFileCache(file)?.frontmatter as Record<string, unknown> | undefined;
-        const match = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/.exec(content);
-        const frontmatter = cached ?? (match ? (parseYaml(match[1] ?? "") as Record<string, unknown>) : undefined);
+        const frontmatter = cached ?? (block ? (parseYaml(block.yaml) as Record<string, unknown>) : undefined);
         return { path: file.path, ...(frontmatter ? { frontmatter } : {}), body };
       }),
     );

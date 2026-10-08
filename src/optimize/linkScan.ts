@@ -1,4 +1,4 @@
-import { GENERATED_NOTE_TYPES } from "../health/controller";
+import { GENERATED_NOTE_TYPES } from "../ontology/pluginTypes";
 import { findUnlinkedMentions, withLinktext, type LinkCandidate, type Mention } from "../links/unlinkedMentions";
 
 export type LinkProposalKind = "inbound" | "outbound" | "related";

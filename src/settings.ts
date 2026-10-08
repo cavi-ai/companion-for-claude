@@ -1,15 +1,15 @@
 import { chatBackendForRuntime, chatBackendOptions } from "./providers/runtimeBackend";
 import { DEVICE_MODELS, clearDeviceModel, deviceModelCached } from "./device/models";
 import { researchModelOptions } from "./research/researchModel";
-import { App, Notice, Platform, PluginSettingTab, Setting, type ButtonComponent, type SettingDefinition, type SettingDefinitionItem, type SettingGroupItem } from "obsidian";
+import { App, Notice, Platform, PluginSettingTab, Setting, type SettingDefinition, type SettingDefinitionItem, type SettingGroupItem } from "obsidian";
 import type ClaudeCompanionPlugin from "./main";
 import { CLAUDE_MODELS } from "./claude/models";
 import type { ProviderStatus } from "./providers/types";
 import { readAnthropicEnv, hasAnthropicEnvCredential } from "./providers/env";
-import { mergeDetectedModels } from "./providers/localModels";
 import { generateToken, bridgeUrl, claudeCodeCommand, claudeDesktopConfig, maskToken, resolveMcpToken, mcpTokenEnvRef, MCP_TOKEN_ENV } from "./mcp/clientConfig";
 import { dispatchSetupSteps, repliesSetupSteps } from "./cloud/setup";
-import { BUILTIN_EMBEDDING_MODELS, builtinModelById } from "./semantic/transformers/model";
+import { semanticItems } from "./settingsItems/semantic";
+import { localModelsItems, type DetectedModels } from "./settingsItems/localModels";
 import { ChoiceModal } from "./view/ChoiceModal";
 import { type McpServerConfig, type PluginSettings } from "./types";
 import { needsCredentialSetup } from "./providers/setupState";
@@ -26,12 +26,6 @@ function capitalize(s: string): string {
 /** Text controls hand back a string; anything else is an empty field. */
 function asText(v: unknown): string {
   return typeof v === "string" ? v : "";
-}
-
-function setSemanticActionBusy(button: ButtonComponent, busy: boolean, label: string): void {
-  button.setDisabled(busy).setButtonText(label);
-  button.buttonEl.toggleClass("is-running", busy);
-  button.buttonEl.setAttribute("aria-busy", String(busy));
 }
 
 /** Settings whose stored shape differs from the control's value. */
@@ -296,10 +290,8 @@ function applyTiers(items: SettingDefinitionItem[], showAdvanced: () => boolean,
 }
 
 export class ClaudeCompanionSettingTab extends PluginSettingTab {
-  /** Cached list of Ollama models from the last Detect, for the dropdown. */
-  private detectedOllamaModels: string[] | null = null;
-  /** Same, for the OpenAI-compatible endpoint (LM Studio, mlx-lm, vLLM, Jan). */
-  private detectedEndpointModels: string[] | null = null;
+  /** Models from the last Detect (Ollama; the OpenAI-compatible endpoint such as LM Studio, mlx-lm, vLLM, Jan), for the dropdowns. */
+  private detectedModels: DetectedModels = { ollama: null, endpoint: null };
   /** Transient (not persisted): reveal the real MCP token in the snippets. */
   private revealMcpToken = false;
 
@@ -957,427 +949,16 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
   }
 
   private localModelsItems(): SettingGroupItem[] {
-    return [
-      {
-        name: "Utility tasks backend",
-        desc: "Summaries, auto-tagging, and ingestion go to this backend instead of Claude. Claude Code sign-in covers chat only. Background tasks (tagging, source enrichment, memory) need an API key or a local model.",
-        control: { type: "dropdown", key: "utilityBackend", options: { claude: "Claude", ollama: "Ollama (local)", custom: "OpenAI-compatible endpoint" } },
-      },
-      { name: "Ollama host", desc: "Base URL of your local Ollama server.", control: { type: "text", key: "ollamaHost", placeholder: "http://localhost:11434" } },
-      {
-        name: "Local chat model",
-        desc: "Choose a detected model, or type one (e.g. llama3.1, qwen2.5). Click Detect to refresh the list.",
-        render: (setting) => {
-          const detected = this.detectedOllamaModels;
-          if (detected && detected.length > 0) {
-            setting.addDropdown((dd) => {
-              for (const m of detected) dd.addOption(m, m);
-              // Keep the current value selectable even if not in the detected list.
-              if (!detected.includes(this.plugin.settings.ollamaModel)) dd.addOption(this.plugin.settings.ollamaModel, `${this.plugin.settings.ollamaModel} (current)`);
-              dd.setValue(this.plugin.settings.ollamaModel).onChange(async (v) => {
-                this.plugin.settings.ollamaModel = v;
-                await this.plugin.saveSettings();
-              });
-            });
-          } else {
-            setting.addText((text) =>
-              text.setValue(this.plugin.settings.ollamaModel).onChange(async (v) => {
-                this.plugin.settings.ollamaModel = v.trim() || "llama3.1";
-                await this.plugin.saveSettings();
-              }),
-            );
-          }
-          setting.addButton((btn) =>
-            btn
-              .setButtonText("Detect")
-              .setTooltip("Query the Ollama server for installed models")
-              .onClick(async () => {
-                await this.plugin.saveSettings();
-                btn.setButtonText("Detecting…").setDisabled(true);
-                const models = await this.plugin.router().ollama.listModels();
-                this.detectedOllamaModels = models;
-                if (models.length === 0) {
-                  new Notice("No Ollama models detected. Is `ollama serve` running, and have you pulled a model?");
-                } else {
-                  if (!models.includes(this.plugin.settings.ollamaModel)) {
-                    const first = models[0];
-                    if (first) this.plugin.settings.ollamaModel = first;
-                    await this.plugin.saveSettings();
-                  }
-                  new Notice(`Detected ${models.length} model(s).`);
-                }
-                this.update(); // rebuild the row so the dropdown appears/updates
-              }),
-          );
-          // Capability badges per detected model — tools gates the agent; thinking
-          // means the model reasons before answering.
-          const capsEl = setting.settingEl.createDiv({ cls: "cc-model-caps setting-item-description" });
-          void (async () => {
-            const models = this.detectedOllamaModels ?? [];
-            if (models.length === 0) return;
-            const ollama = this.plugin.router().ollama;
-            for (const m of models) {
-              const caps = await ollama.capabilities(m);
-              const tools = caps.includes("tools");
-              const thinking = caps.includes("thinking");
-              const row = capsEl.createDiv({ cls: "cc-model-caps-row" });
-              row.createSpan({ text: m, cls: "cc-model-caps-name" });
-              row.createSpan({ text: `tools ${tools ? "✓" : "✗"}`, cls: tools ? "is-ok" : "is-err" });
-              row.createSpan({ text: `thinking ${thinking ? "✓" : "✗"}`, cls: thinking ? "is-ok" : "" });
-              if (!tools) row.createSpan({ text: " — chat only, no agent", cls: "setting-item-description" });
-            }
-          })();
-        },
-      },
-      {
-        name: "Test local connection",
-        desc: "Checks that Ollama is reachable and lists pulled models.",
-        render: (setting) => {
-          const status = setting.settingEl.createDiv({ cls: "cc-conn-status" });
-          setting.addButton((btn) =>
-            btn.setButtonText("Test Ollama").onClick(async () => {
-              await this.plugin.saveSettings();
-              this.renderStatus(status, { ok: true, detail: "Testing…" });
-              this.renderStatus(status, await this.plugin.router().ollama.test());
-            }),
-          );
-        },
-      },
-      { name: "Utility model (optional)", desc: "A smaller model for utility tasks (tagging, summaries, ingestion). Empty = use the chat model above. A 1–3B model is plenty and much faster.", control: { type: "text", key: "ollamaUtilityModel" } },
-      {
-        name: "Tag classifier backend",
-        desc: "Which model judges uncertain tag merges in Optimize brain. Tag names and note titles go to it. Ollama and endpoint choices never fall back to Claude.",
-        control: { type: "dropdown", key: "classifierBackend", options: { utility: "Same as utility tasks", ollama: "Ollama (local)", custom: "OpenAI-compatible endpoint" } },
-      },
-      { name: "Tag classifier model (optional)", desc: "Model id for the classifier. Empty = the backend's configured model. Ignored when the backend is the same as utility tasks.", control: { type: "text", key: "classifierModel" } },
-      { name: "Endpoint host", desc: "Base URL, with or without /v1 (e.g. http://localhost:1234).", control: { type: "text", key: "openaiCompatHost", placeholder: "http://localhost:1234" } },
-      {
-        name: "Endpoint model",
-        desc: "Choose a model the server exposes, or type its id. Click Detect to refresh the list.",
-        render: (setting) => {
-          const detected = this.detectedEndpointModels;
-          if (detected && detected.length > 0) {
-            setting.addDropdown((dd) => {
-              const models = mergeDetectedModels(detected, this.plugin.settings.openaiCompatModel);
-              for (const m of models) dd.addOption(m, m);
-              const current = this.plugin.settings.openaiCompatModel.trim() || models[0] || "";
-              dd.setValue(current).onChange(async (v) => {
-                this.plugin.settings.openaiCompatModel = v;
-                await this.plugin.saveSettings();
-                this.plugin.refreshViews();
-              });
-            });
-          } else {
-            setting.addText((text) =>
-              text.setValue(this.plugin.settings.openaiCompatModel).onChange(async (v) => {
-                this.plugin.settings.openaiCompatModel = v.trim();
-                await this.plugin.saveSettings();
-                this.plugin.refreshViews();
-              }),
-            );
-          }
-          setting.addButton((btn) =>
-            btn
-              .setButtonText("Detect")
-              .setTooltip("Query the endpoint for the models it serves")
-              .onClick(async () => {
-                await this.plugin.saveSettings();
-                btn.setButtonText("Detecting…").setDisabled(true);
-                const models = await this.plugin.router().openaiCompat.listModels();
-                this.detectedEndpointModels = models;
-                if (models.length === 0) {
-                  new Notice("No models detected. Check the endpoint host, and that the server has a model loaded.");
-                } else {
-                  if (!models.includes(this.plugin.settings.openaiCompatModel)) {
-                    const first = models[0];
-                    if (first) this.plugin.settings.openaiCompatModel = first;
-                    await this.plugin.saveSettings();
-                  }
-                  new Notice(`Detected ${models.length} model(s).`);
-                }
-                this.plugin.refreshViews();
-                this.update();
-              }),
-          );
-        },
-      },
-      {
-        name: "Endpoint API key",
-        desc: "Optional. Most local servers accept anything or nothing.",
-        render: (setting) => {
-          setting.addText((text) => {
-            text.inputEl.type = "password";
-            text.setValue(this.plugin.settings.openaiCompatKey).onChange(async (v) => {
-              this.plugin.settings.openaiCompatKey = v.trim();
-              await this.plugin.saveSettings();
-            });
-          });
-        },
-      },
-      {
-        name: "Test endpoint",
-        desc: "Checks the endpoint is reachable and lists its models.",
-        render: (setting) => {
-          const status = setting.settingEl.createDiv({ cls: "cc-conn-status" });
-          setting.addButton((btn) =>
-            btn.setButtonText("Test endpoint").onClick(async () => {
-              await this.plugin.saveSettings();
-              this.renderStatus(status, { ok: true, detail: "Testing…" });
-              this.renderStatus(status, await this.plugin.router().openaiCompat.test());
-            }),
-          );
-        },
-      },
-    ];
+    return localModelsItems({
+      plugin: this.plugin,
+      detected: this.detectedModels,
+      update: () => this.update(),
+      renderStatus: (el, status) => this.renderStatus(el, status),
+    });
   }
 
   private semanticItems(): SettingGroupItem[] {
-    const enabled = (): boolean => this.plugin.settings.semanticEnabled;
-    return [
-      { name: "Enable semantic search", desc: "Build a local vector index so the vault is searchable by meaning, not just keywords. Private and on-device. Powers the “Search vault” context and Ask-your-vault.", control: { type: "toggle", key: "semanticEnabled" } },
-      {
-        name: "Embedding engine",
-        desc: "Built-in runs inside Obsidian on every platform (one-time download). Ollama uses a reachable server; mobile needs a LAN or remote address. Endpoint uses the OpenAI-compatible server from Local models.",
-        visible: enabled,
-        render: (setting) => {
-          setting.addDropdown((dd) => {
-            dd.addOption("builtin", "Built-in (recommended)");
-            dd.addOption("ollama", "Ollama");
-            dd.addOption("custom", "OpenAI-compatible endpoint");
-            dd.setValue(this.plugin.settings.embeddingEngine).onChange(async (v) => {
-              if (v === this.plugin.settings.embeddingEngine) return;
-              const hadNotes = ((await this.plugin.indexer()?.stats().catch(() => null))?.notes ?? 0) > 0;
-              this.plugin.settings.embeddingEngine = v as PluginSettings["embeddingEngine"];
-              await this.plugin.saveSettings();
-              this.plugin.invalidateIndexer();
-              this.update();
-              if (hadNotes) this.offerIndexRebuild(v === "builtin" ? "the built-in model" : v);
-            });
-          });
-        },
-      },
-      {
-        name: "Built-in model",
-        desc: "Arctic XS is recommended on mobile for its smaller memory footprint. Larger models use more memory; retrieval quality depends on your notes. Use Rebuild index after switching.",
-        visible: () => enabled() && this.plugin.settings.embeddingEngine === "builtin",
-        render: (setting) => {
-          setting.addDropdown((dd) => {
-            for (const m of BUILTIN_EMBEDDING_MODELS) {
-              const recommendation = Platform.isMobile && m.id === BUILTIN_EMBEDDING_MODELS[0]?.id ? " · recommended on mobile" : "";
-              dd.addOption(m.id, `${m.hfRepo.split("/")[1]} · ${m.dim}d · ~${m.approxDownloadMB} MB${recommendation}`);
-            }
-            dd.setValue(builtinModelById(this.plugin.settings.builtinEmbeddingModel).id).onChange(async (v) => {
-              if (v === this.plugin.settings.builtinEmbeddingModel) return;
-              const hadNotes = ((await this.plugin.indexer()?.stats().catch(() => null))?.notes ?? 0) > 0;
-              const label = v.replace(/^builtin:/, "");
-              this.plugin.settings.builtinEmbeddingModel = v;
-              await this.plugin.saveSettings();
-              this.plugin.invalidateIndexer();
-              this.update();
-              if (hadNotes) this.offerIndexRebuild(label);
-            });
-          });
-        },
-      },
-      {
-        name: "Embedding model",
-        visible: () => enabled() && this.plugin.settings.embeddingEngine === "builtin",
-        render: (setting) => {
-          const model = builtinModelById(this.plugin.settings.builtinEmbeddingModel);
-          const backend = this.plugin.builtinEmbedder().backend();
-          setting.setDesc(`${model.hfRepo} (~${model.approxDownloadMB} MB from huggingface.co + ~23 MB ONNX runtime from cdn.jsdelivr.net; cached and on-device afterwards). Updated model assets require an explicit download and index rebuild.`);
-          const status = setting.settingEl.createDiv({ cls: "cc-conn-status setting-item-description" });
-          status.setText(backend ? `Model ready · ${backend === "webgpu" ? "WebGPU" : "WASM"}` : "Model not downloaded yet.");
-
-          let mainBtn: ButtonComponent | null = null;
-          let clearBtn: ButtonComponent | null = null;
-          let running = false;
-          let clearing = false;
-          setting.addButton((btn) => {
-            // Non-CTA: delete the downloaded model from the local cache. Hidden
-            // until we know there is something to clear (loaded or cached).
-            clearBtn = btn;
-            btn.buttonEl.addClass("cc-semantic-action");
-            btn.setButtonText("Clear").onClick(async () => {
-              if (clearing || running) return;
-              clearing = true;
-              setSemanticActionBusy(btn, true, "Clearing…");
-              mainBtn?.setDisabled(true);
-              try {
-                await this.plugin.clearBuiltinModel();
-                this.update(); // status returns to "Model not downloaded yet."
-              } catch (e) {
-                status.setText(`Clear failed: ${e instanceof Error ? e.message : String(e)}`);
-                status.addClass("is-err");
-              } finally {
-                clearing = false;
-                setSemanticActionBusy(btn, false, "Clear");
-                mainBtn?.setDisabled(false);
-              }
-            });
-            if (!backend) btn.buttonEl.hide();
-          });
-          setting.addButton((btn) => {
-            mainBtn = btn;
-            btn.buttonEl.addClass("cc-semantic-action");
-            btn
-              .setButtonText(backend ? "Re-check" : `Download (~${model.approxDownloadMB} MB)`)
-              .setCta()
-              .onClick(async () => {
-                if (running || clearing) return;
-                running = true;
-                setSemanticActionBusy(btn, true, backend ? "Checking…" : "Downloading…");
-                clearBtn?.setDisabled(true);
-                status.removeClass("is-ok");
-                status.removeClass("is-err");
-                status.setText(backend ? "Checking built-in model…" : "Downloading built-in model…");
-                try {
-                  await this.plugin.builtinEmbedder().download((p) => status.setText(`Downloading… ${p.percent}% (${p.file})`));
-                  const b = this.plugin.builtinEmbedder().backend();
-                  if (!b) throw new Error("model did not load");
-                  status.setText(`Model ready · ${b === "webgpu" ? "WebGPU" : "WASM"}`);
-                  status.addClass("is-ok");
-                  btn.setButtonText("Re-check");
-                  clearBtn?.buttonEl.show();
-                } catch (e) {
-                  status.setText(`Download failed: ${e instanceof Error ? e.message : String(e)} — check your connection and retry.`);
-                  status.addClass("is-err");
-                  btn.setButtonText("Retry download");
-                } finally {
-                  running = false;
-                  setSemanticActionBusy(btn, false, btn.buttonEl.textContent ?? "Re-check");
-                  clearBtn?.setDisabled(false);
-                }
-              });
-          });
-          if (!backend) {
-            // Distinguish "downloaded earlier, not loaded this session" (offline
-            // load) from "never downloaded" (network download needing consent).
-            void this.plugin.builtinModelCached().then((cached) => {
-              if (!cached || running || this.plugin.builtinEmbedder().backend()) return;
-              status.setText(Platform.isMobile ? "Model cached — choose Load or Rebuild index to start this session." : "Model cached — loads on first use.");
-              mainBtn?.setButtonText("Load");
-              clearBtn?.buttonEl.show();
-            });
-          }
-        },
-      },
-      {
-        name: "Ollama embedding model",
-        desc: "An Ollama embedding model. Pull one first, e.g. `ollama pull nomic-embed-text`.",
-        visible: () => enabled() && this.plugin.settings.embeddingEngine === "ollama",
-        render: (setting) => {
-          setting.addDropdown((dd) => {
-            const cur = this.plugin.settings.embeddingModel || "nomic-embed-text";
-            // Always show the current selection; the running server's models are
-            // added asynchronously below.
-            dd.addOption(cur, cur);
-            dd.setValue(cur).onChange(async (v) => {
-              this.plugin.settings.embeddingModel = v.trim() || "nomic-embed-text";
-              await this.plugin.saveSettings();
-            });
-            void this.plugin
-              .router()
-              .ollama.listModels()
-              .then((models) => {
-                for (const m of models) if (m !== cur) dd.addOption(m, m);
-              })
-              .catch(() => {
-                /* Ollama not reachable — leave just the current value. */
-              });
-          });
-        },
-      },
-      {
-        name: "Endpoint embedding model",
-        desc: "An embedding model the OpenAI-compatible endpoint (configured under Local models) serves, e.g. text-embedding-nomic-embed-text-v1.5.",
-        visible: () => enabled() && this.plugin.settings.embeddingEngine === "custom",
-        render: (setting) => {
-          setting.addDropdown((dd) => {
-            const cur = this.plugin.settings.openaiCompatEmbeddingModel;
-            // Always show the current selection; the endpoint's models are added
-            // asynchronously below.
-            if (cur) dd.addOption(cur, cur);
-            else dd.addOption("", "Not set — pick one once detected");
-            dd.setValue(cur).onChange(async (v) => {
-              this.plugin.settings.openaiCompatEmbeddingModel = v.trim();
-              await this.plugin.saveSettings();
-              this.plugin.invalidateIndexer();
-            });
-            void this.plugin
-              .router()
-              .openaiCompat.listModels()
-              .then((models) => {
-                for (const m of models) if (m !== cur) dd.addOption(m, m);
-              })
-              .catch(() => {
-                /* Endpoint not reachable — leave just the current value. */
-              });
-          });
-        },
-      },
-      {
-        name: "Index PDF text",
-        desc: "Extract text from vault PDFs into the semantic index (page numbers kept, so results cite the page). Rebuilds the index on the next save or manual rebuild.",
-        visible: enabled,
-        control: { type: "toggle", key: "semanticIndexPdfs" },
-      },
-      {
-        name: "Rebuild index",
-        desc: "Embed every note now. Re-embeds only changed notes on save afterward.",
-        visible: enabled,
-        render: (setting) => {
-          const previousStatuses = Array.from(setting.settingEl.querySelectorAll(".cc-conn-status"));
-          const status = (previousStatuses[0] as HTMLElement | undefined)
-            ?? setting.settingEl.createDiv({ cls: "cc-conn-status setting-item-description" });
-          status.addClass("cc-semantic-index-status");
-          for (const duplicate of previousStatuses.slice(1)) duplicate.remove();
-          let running = false;
-          void this.plugin
-            .indexer()
-            ?.stats()
-            .then((s) => { if (!running) status.setText(`Index: ${s.notes} note(s), ${s.chunks} chunk(s).`); })
-            .catch(() => { if (!running) status.setText("Index: not built yet."); });
-          setting.addButton((btn) => {
-            btn.buttonEl.addClass("cc-semantic-action");
-            btn
-              .setButtonText("Rebuild")
-              .setCta()
-              .onClick(async () => {
-                if (running) return;
-                running = true;
-                setSemanticActionBusy(btn, true, "Rebuilding…");
-                status.removeClass("is-ok");
-                status.removeClass("is-err");
-                status.setText("Rebuilding index…");
-                try {
-                  await this.plugin.rebuildSemanticIndex();
-                  const s = await this.plugin.indexer()?.stats();
-                  const outcome = this.plugin.activity.snapshot().records.find((record) =>
-                    record.kind === "semantic-index" && record.title === "Building semantic index",
-                  );
-                  if (outcome?.state === "needs-attention") {
-                    status.setText("Index needs attention — open Companion activity for details.");
-                    status.addClass("is-err");
-                  } else if (outcome?.state === "succeeded" && s) {
-                    status.setText(`Index ready · ${s.notes} note(s), ${s.chunks} chunk(s).`);
-                    status.addClass("is-ok");
-                  } else {
-                    status.setText("Rebuild result unavailable — open Companion activity for details.");
-                    status.addClass("is-err");
-                  }
-                } catch (e) {
-                  status.setText(`Rebuild failed: ${e instanceof Error ? e.message : String(e)}`);
-                  status.addClass("is-err");
-                } finally {
-                  running = false;
-                  setSemanticActionBusy(btn, false, "Rebuild");
-                }
-              });
-          });
-        },
-      },
-    ];
+    return semanticItems({ plugin: this.plugin, update: () => this.update(), offerIndexRebuild: (label) => this.offerIndexRebuild(label) });
   }
 
   private mcpClientItems(): SettingGroupItem[] {
@@ -1707,7 +1288,7 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
         },
       },
       { name: "Allow writes", desc: "Let connected clients create and append notes (read & search are always allowed).", control: { type: "toggle", key: "mcpAllowWrites" } },
-      { name: "Agents can record memory", desc: "Outside agents and chat can add facts to What Claude Knows.", control: { type: "toggle", key: "memoryRecordEnabled" } },
+      { name: "Agents can record memory", desc: "Add facts to What Claude Knows: outside agents when Allow writes is on, chat when Allow write tools is on.", control: { type: "toggle", key: "memoryRecordEnabled" } },
       { name: "Write folder", desc: "Default folder for notes created via MCP.", control: { type: "text", key: "mcpWriteFolder", placeholder: "Claude/Inbox" } },
       {
         name: "Bridge status",

@@ -37,6 +37,10 @@ const NOTE = [
 const lines = NOTE.split("\n");
 
 describe("findSection", () => {
+  it("does not take a quoted fence line inside a fence as its closer", () => {
+    expect(findSection("```\n> ```\n# Not a heading\n```\n# Real\n".split("\n"), "Not a heading")).toBeNull();
+  });
+
   it("finds a heading's body range, skipping fenced code", () => {
     const tasks = findSection(lines, "tasks");
     expect(tasks).toEqual({ heading: 9, body: { start: 10, end: 20 } });

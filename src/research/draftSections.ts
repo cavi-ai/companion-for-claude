@@ -1,4 +1,6 @@
-import { fnv1aHex } from "../hashing";
+import { fnv1aFingerprint } from "../hashing";
+import { fencedLines } from "../markdown/fences";
+import { isRecord } from "../records";
 
 export interface DraftSectionEnvelope {
   id: string;
@@ -45,7 +47,6 @@ export const PROVENANCE_LANGUAGE = "claude-provenance";
 const PROVENANCE_FENCE = `\`\`\`${PROVENANCE_LANGUAGE}`;
 const V1_MARKER = "<!-- cavi:draft-section";
 const V1_START = /<!-- cavi:draft-section version=1 meta=([^\s]+) fingerprint=([a-z0-9-]+) -->\n/g;
-const FENCE_LINE = /^\s*(```|~~~)/;
 
 interface Line { text: string; start: number; next: number }
 interface Block { start: number; end: number; json: string }
@@ -54,16 +55,12 @@ interface V1Section extends ParsedDraftSection { start: number; end: number; acc
 
 const validString = (value: unknown): value is string => typeof value === "string" && Boolean(value.trim());
 const optionalString = (value: unknown): value is string | undefined => value === undefined || validString(value);
-const isRecord = (value: unknown): value is Record<string, unknown> => Boolean(value) && typeof value === "object" && !Array.isArray(value);
 const isEvidenceRef = (value: unknown): value is { path: string; fingerprint: string } => isRecord(value) && validString(value.path) && validString(value.fingerprint);
 const isCitation = (value: unknown): value is { key: string; sourcePath: string } => isRecord(value) && validString(value.key) && validString(value.sourcePath);
 
-function fingerprintText(value: string): string {
-  return `fnv1a-${fnv1aHex(value)}`;
-}
 
 export function draftMarkdownFingerprint(markdown: string): string {
-  return fingerprintText(markdown.trim());
+  return fnv1aFingerprint(markdown.trim());
 }
 
 export function containsReservedMarker(text: string): boolean {
@@ -103,11 +100,9 @@ export function sectionHeading(value: string): string {
 }
 
 function mapOutsideFences(markdown: string, map: (line: string) => string): string {
-  let fenced = false;
-  return markdown.split("\n").map((line) => {
-    if (FENCE_LINE.test(line)) { fenced = !fenced; return line; }
-    return fenced ? line : map(line);
-  }).join("\n");
+  const rows = markdown.split("\n");
+  const fenced = fencedLines(rows);
+  return rows.map((line, i) => (fenced[i] ? line : map(line))).join("\n");
 }
 
 export function normalizeSectionBody(markdown: string): string {
@@ -156,10 +151,10 @@ function provenanceBlocks(text: string): Block[] {
 
 function h2Headings(text: string, limit: number): Array<{ text: string; start: number; bodyStart: number }> {
   const out: Array<{ text: string; start: number; bodyStart: number }> = [];
-  let fenced = false;
-  for (const line of lines(text, limit)) {
-    if (FENCE_LINE.test(line.text)) { fenced = !fenced; continue; }
-    if (fenced) continue;
+  const all = lines(text, limit);
+  const fenced = fencedLines(all.map((line) => line.text));
+  for (const [index, line] of all.entries()) {
+    if (fenced[index]) continue;
     const match = /^## (.*\S)\s*$/.exec(line.text);
     if (match) out.push({ text: sectionHeading(match[1]!), start: line.start, bodyStart: line.next });
   }
@@ -232,7 +227,7 @@ function locateV1(text: string): { sections: V1Section[]; issues: string[] } {
       envelope,
       heading: lead ? sectionHeading(lead[1]!) : v1Heading(envelope),
       markdown: normalizeSectionBody(lead ? trimmed.slice(trimmed.indexOf("\n") < 0 ? trimmed.length : trimmed.indexOf("\n") + 1) : raw),
-      modifiedSinceReview: fingerprintText(raw) !== acceptedFingerprint,
+      modifiedSinceReview: fnv1aFingerprint(raw) !== acceptedFingerprint,
       acceptedFingerprint,
       start: match.index ?? 0,
       end: markerIndex + endMarker.length,

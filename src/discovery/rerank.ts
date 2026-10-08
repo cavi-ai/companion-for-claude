@@ -1,4 +1,6 @@
 import type { CompletionRequest, Provider } from "../providers/types";
+import { replyJson } from "../providers/replyJson";
+import { isRecord } from "../records";
 import type { RankedCandidate } from "./rank";
 import type { DiscoveryQuery } from "./types";
 
@@ -96,19 +98,10 @@ export function buildRerankRequest(
   };
 }
 
-function isObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 export function parseRerankResponse(raw: string, candidateIds: readonly string[]): RerankResponse {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch (e) {
-    console.debug("Claude Companion: rerank response JSON parse failed", e);
-    throw new Error("Rerank response must be a valid JSON object", { cause: e });
-  }
-  if (!isObject(parsed) || !Array.isArray(parsed.order)) {
+  const parsed = replyJson(raw);
+  if (parsed === undefined) throw new Error("Rerank response must be a valid JSON object");
+  if (!isRecord(parsed) || !Array.isArray(parsed.order)) {
     throw new Error("Rerank response must be a JSON object with an order array");
   }
 
@@ -118,7 +111,7 @@ export function parseRerankResponse(raw: string, candidateIds: readonly string[]
   }
   const seen = new Set<string>();
   const order = parsed.order.map((item): RerankOrderItem => {
-    if (!isObject(item) || typeof item.id !== "string" || typeof item.reason !== "string") {
+    if (!isRecord(item) || typeof item.id !== "string" || typeof item.reason !== "string") {
       throw new Error("Every rerank order item must contain a string id and reason");
     }
     if (!knownIds.has(item.id)) {

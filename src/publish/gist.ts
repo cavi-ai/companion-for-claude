@@ -1,5 +1,7 @@
 // Pure GitHub Gist request builders and response parsers; the caller owns the network.
 
+import { isRecord } from "../records";
+
 export const GITHUB_API = "https://api.github.com";
 
 export interface GistRequest {
@@ -56,7 +58,7 @@ export function testTokenRequest(base: string, token: string): GistRequest {
   return { url: `${baseOf(base)}/gists?per_page=1`, method: "GET", headers: headers(token, false) };
 }
 
-const asRecord = (v: unknown): Record<string, unknown> => (v && typeof v === "object" ? (v as Record<string, unknown>) : {});
+const asRecord = (v: unknown): Record<string, unknown> => (isRecord(v) ? v : {});
 
 export function parseGistResponse(status: number, json: unknown, op: GistOp): GistOutcome {
   const body = asRecord(json);

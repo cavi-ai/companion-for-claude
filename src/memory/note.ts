@@ -7,6 +7,7 @@ import { buildFrontmatter, normalizeTags, type FrontmatterData } from "../indexi
 import { sanitizeFileName } from "../artifacts/parse";
 import { ensureVaultFolder, uniqueNotePath } from "../vault/vaultFiles";
 import type { SessionDigest } from "./transcript";
+import { noteName } from "../text";
 
 export interface RenderOptions {
   baseTags: string[];
@@ -22,14 +23,8 @@ export interface RenderOptions {
 const DEFAULT_MAX_PROSE = 200;
 const DEFAULT_MAX_ACTIONS = 200;
 
-function basename(p: string): string {
-  const name = p.split("/").pop() ?? p;
-  const dot = name.lastIndexOf(".");
-  return dot > 0 ? name.slice(0, dot) : name;
-}
-
 function renderFile(path: string, vaultNotes?: Set<string>): string {
-  if (path.endsWith(".md") && vaultNotes?.has(basename(path))) return `[[${basename(path)}]]`;
+  if (path.endsWith(".md") && vaultNotes?.has(noteName(path))) return `[[${noteName(path)}]]`;
   return `\`${path}\``;
 }
 

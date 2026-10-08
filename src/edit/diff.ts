@@ -1,6 +1,8 @@
 // The apply-to-note edit model (spec 2026-07-05): validate exact-string
 // replacements against a note, render them as reviewable per-hunk line diffs,
-// and apply the user-accepted subset. Pure and dependency-free.
+// and apply the user-accepted subset. Pure.
+
+import { countOccurrences } from "../text";
 
 export interface ProposedEdit {
   old_str: string;
@@ -297,17 +299,6 @@ function mergeNear(regions: Region[]): Region[] {
     }
   }
   return out;
-}
-
-function countOccurrences(haystack: string, needle: string): number {
-  if (needle.length === 0) return 0;
-  let n = 0;
-  let idx = haystack.indexOf(needle);
-  while (idx !== -1) {
-    n++;
-    idx = haystack.indexOf(needle, idx + 1);
-  }
-  return n;
 }
 
 // ---- internals ----

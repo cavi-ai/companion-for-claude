@@ -5,6 +5,8 @@
 // embedding keeps topical context even when the body is split mid-section.
 
 import { fnv1a32 } from "../hashing";
+import { fencedLines } from "../markdown/fences";
+import { stripFrontmatter } from "../markdown/frontmatter";
 
 export interface Chunk {
   /** Position of this chunk within the note (stable ordering). */
@@ -13,13 +15,6 @@ export interface Chunk {
   text: string;
   /** Nearest heading title, or "" if the chunk sits above any heading. */
   heading: string;
-}
-
-const FRONTMATTER_RE = /^---\r?\n[\s\S]*?\r?\n---\r?\n?/;
-
-/** Strip a leading YAML frontmatter block. */
-export function stripFrontmatter(md: string): string {
-  return md.replace(FRONTMATTER_RE, "");
 }
 
 /**
@@ -57,8 +52,10 @@ export function chunkNote(md: string, opts: ChunkOptions = {}): Chunk[] {
     if (text) sections.push({ heading: curHeading, text });
     buf = [];
   };
-  for (const line of body.split("\n")) {
-    const m = /^(#{1,6})\s+(.*)$/.exec(line);
+  const lines = body.split("\n");
+  const fenced = fencedLines(lines);
+  for (const [i, line] of lines.entries()) {
+    const m = fenced[i] ? null : /^(#{1,6})\s+(.*)$/.exec(line);
     if (m) {
       flush();
       curHeading = m[2]?.trim() ?? "";

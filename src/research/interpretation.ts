@@ -9,6 +9,6 @@ export function upsertInterpretation(content: string, interpretation: string): s
   const trimmed = interpretation.trim();
   if (!trimmed) throw new Error("Interpretation must not be empty");
   const block = `Interpretation: ${trimmed}`;
-  if (INTERPRETATION_PATTERN.test(content)) return content.replace(INTERPRETATION_PATTERN, block);
+  if (INTERPRETATION_PATTERN.test(content)) return content.replace(INTERPRETATION_PATTERN, () => block);
   return `${content.replace(/\s+$/, "")}\n\n${block}\n`;
 }

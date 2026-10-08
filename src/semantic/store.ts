@@ -2,8 +2,14 @@
 // indexer service feeds it embeddings and persists toJSON()/fromJSON().
 
 import { cosineSimilarity } from "./similarity";
+import { isRecord } from "../records";
 
-export const INDEX_VERSION = 1;
+/** Version 2 persists each vector as base64 little-endian float32 (3.9x smaller than JSON numbers). */
+export const INDEX_VERSION = 2;
+/** Version 1 persisted vectors as JSON number arrays; still read, and rewritten as version 2 on the next save. */
+const LEGACY_INDEX_VERSION = 1;
+/** An mtime no vault file has: the entry is re-read on the next build. */
+export const REREAD_MTIME = -1;
 
 export interface ChunkRecord {
   ord: number;
@@ -27,6 +33,42 @@ export interface IndexData {
   notes: Record<string, NoteEntry>;
 }
 
+/** The on-disk shape: IndexData with each vector encoded by encodeVector. */
+export interface PersistedIndex {
+  version: number;
+  model: string;
+  dim: number;
+  notes: Record<string, { hash: string; mtime: number; chunks: Array<{ ord: number; text: string; vector: string }> }>;
+}
+
+/** A vector as base64 little-endian float32. */
+export function encodeVector(vector: readonly number[]): string {
+  const view = new DataView(new ArrayBuffer(vector.length * 4));
+  vector.forEach((value, i) => view.setFloat32(i * 4, value, true));
+  return btoa(String.fromCharCode(...new Uint8Array(view.buffer)));
+}
+
+/** The vector encodeVector wrote, or null when it is not `dim` finite float32 values. */
+export function decodeVector(encoded: unknown, dim: number): number[] | null {
+  if (typeof encoded !== "string" || dim <= 0) return null;
+  let binary: string;
+  try {
+    binary = atob(encoded);
+  } catch {
+    return null;
+  }
+  if (binary.length !== dim * 4) return null;
+  const view = new DataView(new ArrayBuffer(binary.length));
+  for (let i = 0; i < binary.length; i++) view.setUint8(i, binary.charCodeAt(i));
+  const vector = new Array<number>(dim);
+  for (let i = 0; i < dim; i++) {
+    const value = view.getFloat32(i * 4, true);
+    if (!Number.isFinite(value)) return null;
+    vector[i] = value;
+  }
+  return vector;
+}
+
 export interface SearchHit {
   path: string;
   ord: number;
@@ -38,17 +80,28 @@ export function emptyIndex(model: string): IndexData {
   return { version: INDEX_VERSION, model, dim: 0, notes: {} };
 }
 
-/** A plain (non-null, non-array) object — the shape `notes` and each entry must have. */
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+/**
+ * The notes with every vector read back, or null when any entry lacks the fields
+ * the store reads (hash, mtime, chunks[] of ord/text/`dim`-long finite vector).
+ */
+function readNotes(notes: Record<string, unknown>, dim: number, readVector: (vector: unknown) => number[] | null): Record<string, NoteEntry> | null {
+  const out: Record<string, NoteEntry> = {};
+  for (const [path, entry] of Object.entries(notes)) {
+    if (!isRecord(entry) || typeof entry.hash !== "string" || !Number.isFinite(entry.mtime) || !Array.isArray(entry.chunks)) return null;
+    const chunks: ChunkRecord[] = [];
+    for (const chunk of entry.chunks as unknown[]) {
+      if (!isRecord(chunk) || !Number.isInteger(chunk.ord) || (chunk.ord as number) < 0 || typeof chunk.text !== "string") return null;
+      const vector = readVector(chunk.vector);
+      if (!vector) return null;
+      chunks.push({ ord: chunk.ord as number, text: chunk.text, vector });
+    }
+    out[path] = { hash: entry.hash, mtime: entry.mtime as number, chunks };
+  }
+  return out;
 }
 
-/** True when every note entry has the fields the store reads (hash, chunks[]). */
-function notesAreWellFormed(notes: Record<string, unknown>, dim: number): boolean {
-  return Object.values(notes).every((entry) => isRecord(entry) && typeof entry.hash === "string" && Number.isFinite(entry.mtime) && Array.isArray(entry.chunks)
-    && entry.chunks.every((chunk: unknown) => isRecord(chunk) && Number.isInteger(chunk.ord) && (chunk.ord as number) >= 0 && typeof chunk.text === "string"
-      && Array.isArray(chunk.vector) && dim > 0 && chunk.vector.length === dim && chunk.vector.every(Number.isFinite)));
-}
+const legacyVector = (dim: number) => (vector: unknown): number[] | null =>
+  Array.isArray(vector) && dim > 0 && vector.length === dim && vector.every(Number.isFinite) ? (vector as number[]) : null;
 
 /**
  * A thin, pure wrapper over IndexData with the operations the indexer needs.
@@ -59,39 +112,56 @@ export class SemanticStore {
 
   /** Rebuild from persisted JSON, or start empty if absent/stale/model-changed/corrupt. */
   static load(raw: unknown, model: string): SemanticStore {
-    const d = raw as Partial<IndexData> | null | undefined;
+    const d = raw as { version?: unknown; model?: unknown; dim?: unknown; notes?: unknown } | null | undefined;
     // `typeof null === "object"`, so a persisted `notes: null` would otherwise
     // pass and crash on the first read. Validate shape, not just typeof.
     if (
       !d ||
-      d.version !== INDEX_VERSION ||
+      (d.version !== INDEX_VERSION && d.version !== LEGACY_INDEX_VERSION) ||
       d.model !== model ||
       !isRecord(d.notes) ||
-      !Number.isInteger(d.dim) || (d.dim as number) < 0 ||
-      !notesAreWellFormed(d.notes, d.dim as number)
+      !Number.isInteger(d.dim) || (d.dim as number) < 0
     ) {
       return new SemanticStore(emptyIndex(model));
     }
-    return new SemanticStore({
-      version: INDEX_VERSION,
-      model,
-      dim: d.dim ?? 0,
-      notes: d.notes,
-    });
+    const dim = d.dim as number;
+    const notes = readNotes(d.notes, dim, d.version === INDEX_VERSION ? (vector) => decodeVector(vector, dim) : legacyVector(dim));
+    if (!notes) return new SemanticStore(emptyIndex(model));
+    // Version 1 was chunked before fenced headings and empty frontmatter were
+    // handled. An mtime no file has makes the next build re-read each note once;
+    // only notes whose chunks changed are re-embedded.
+    if (d.version === LEGACY_INDEX_VERSION) for (const entry of Object.values(notes)) entry.mtime = REREAD_MTIME;
+    return new SemanticStore({ version: INDEX_VERSION, model, dim, notes });
   }
 
   get model(): string {
     return this.data.model;
   }
 
-  toJSON(): IndexData {
-    return this.data;
+  get dim(): number {
+    return this.data.dim;
   }
 
-  /** True if this path is absent or its content hash differs from what's indexed. */
-  needsReindex(path: string, hash: string): boolean {
+  /** The persisted form; JSON.stringify calls this. */
+  toJSON(): PersistedIndex {
+    const notes: PersistedIndex["notes"] = {};
+    for (const [path, entry] of Object.entries(this.data.notes)) {
+      notes[path] = { hash: entry.hash, mtime: entry.mtime, chunks: entry.chunks.map((c) => ({ ord: c.ord, text: c.text, vector: encodeVector(c.vector) })) };
+    }
+    return { version: INDEX_VERSION, model: this.data.model, dim: this.data.dim, notes };
+  }
+
+  /** True if this path is absent, its content hash differs, or (when given) its chunk texts differ from what's indexed. */
+  needsReindex(path: string, hash: string, chunkTexts?: readonly string[]): boolean {
     const e = this.data.notes[path];
-    return !e || e.hash !== hash;
+    if (!e || e.hash !== hash) return true;
+    return chunkTexts !== undefined && (chunkTexts.length !== e.chunks.length || chunkTexts.some((text, i) => text !== e.chunks[i]?.text));
+  }
+
+  /** Records that the indexed note was re-read at `mtime` and needed no re-embedding. */
+  markCurrent(path: string, mtime: number): void {
+    const e = this.data.notes[path];
+    if (e) e.mtime = mtime;
   }
 
   /** True if the path is indexed at exactly this mtime. */

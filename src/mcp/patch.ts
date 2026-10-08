@@ -1,5 +1,8 @@
 // Block-level Markdown patching. Pure; shared by note_patch and note_update.
 
+import { fencedLines, fenceOpen } from "../markdown/fences";
+import { frontmatterBlock } from "../markdown/frontmatter";
+
 export type PatchTarget = { kind: "heading"; heading: string } | { kind: "block"; id: string } | { kind: "document" };
 export type PatchOp = "replace" | "append" | "prepend";
 
@@ -17,27 +20,12 @@ export interface LineRange {
 
 const HEADING = /^#{1,6}\s+/;
 const LIST_ITEM = /^(\s*)(?:[-*+]|\d+[.)])\s+/;
-const isFence = (line: string): boolean => /^\s*(```|~~~)/.test(line);
+const isFence = (line: string): boolean => fenceOpen(line) !== null;
 const isBlank = (line: string | undefined): boolean => (line ?? "").trim() === "";
-
-/** True for every line inside a fence, fence lines included. */
-function fenceMap(lines: string[]): boolean[] {
-  const out: boolean[] = [];
-  let inFence = false;
-  for (const line of lines) {
-    if (isFence(line)) {
-      inFence = !inFence;
-      out.push(true);
-      continue;
-    }
-    out.push(inFence);
-  }
-  return out;
-}
 
 export function findSection(lines: string[], heading: string): { heading: number; body: LineRange } | null {
   const target = heading.trim().toLowerCase();
-  const fenced = fenceMap(lines);
+  const fenced = fencedLines(lines);
   let start = -1;
   let level = 0;
   for (let i = 0; i < lines.length; i += 1) {
@@ -67,7 +55,7 @@ function escapeRegExp(s: string): string {
 }
 
 export function findBlock(lines: string[], id: string): { range: LineRange; idLine: number; inline: boolean } | null {
-  const fenced = fenceMap(lines);
+  const fenced = fencedLines(lines);
   const marker = new RegExp(`(?:^|\\s)\\^${escapeRegExp(id)}\\s*$`);
   let idLine = -1;
   for (let i = 0; i < lines.length; i += 1) {
@@ -103,12 +91,6 @@ export function findBlock(lines: string[], id: string): { range: LineRange; idLi
   let start = idLine;
   while (start > 0 && !isBlank(lines[start - 1]) && !HEADING.test(lines[start - 1] ?? "") && !isFence(lines[start - 1] ?? "") && !LIST_ITEM.test(lines[start - 1] ?? "")) start -= 1;
   return { range: { start, end: idLine + 1 }, idLine, inline: true };
-}
-
-function frontmatterEnd(lines: string[]): number {
-  if (lines[0] !== "---") return 0;
-  for (let i = 1; i < lines.length; i += 1) if (lines[i] === "---") return i + 1;
-  return 0;
 }
 
 function dropLeadingBlank(lines: string[]): string[] {
@@ -155,7 +137,7 @@ export function applyPatch(markdown: string, patch: NotePatch): string {
       return join([...lines.slice(0, range.start), ...body, ...lines.slice(range.start)]);
     }
     case "document": {
-      const fm = frontmatterEnd(lines);
+      const fm = (frontmatterBlock(markdown)?.closeLine ?? -1) + 1;
       const head = fm > 0 ? [...lines.slice(0, fm), ""] : [];
       if (patch.op === "replace") return join([...head, ...body, ""]);
       if (patch.op === "prepend") return join([...head, ...body, "", ...dropLeadingBlank(lines.slice(fm))]);

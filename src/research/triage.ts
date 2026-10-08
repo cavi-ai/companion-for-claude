@@ -1,6 +1,9 @@
 // Clippings triage (Research Desk): group an inbox of raw clippings into
 // coherent research themes with one model call, then render a triage board
-// note the desk can act on. Pure and dependency-free.
+// note the desk can act on. Pure.
+
+import { replyJson } from "../providers/replyJson";
+import { isRecord } from "../records";
 
 export interface TriageNote {
   path: string;
@@ -90,18 +93,8 @@ export function buildTriageUser(notes: TriageNote[]): string {
 
 /** Parse the model's grouping, dropping unknown paths, empty groups, and duplicates. */
 export function parseTriageResponse(raw: string, validPaths: Set<string>): TriageGroup[] {
-  let text = raw.trim();
-  const fenced = /^```(?:json)?\s*\n([\s\S]*?)\n?```$/.exec(text);
-  if (fenced) text = fenced[1]!.trim();
-  const start = text.indexOf("{");
-  const end = text.lastIndexOf("}");
-  if (start === -1 || end <= start) throw new Error("Triage response was not JSON.");
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text.slice(start, end + 1));
-  } catch {
-    throw new Error("Triage response was not valid JSON.");
-  }
+  const parsed = replyJson(raw, isRecord);
+  if (parsed === undefined) throw new Error("Triage response was not valid JSON.");
   const groups = (parsed as { groups?: unknown }).groups;
   if (!Array.isArray(groups)) throw new Error("Triage response had no groups array.");
 
@@ -164,10 +157,4 @@ export function renderTriageNote(groups: TriageGroup[], notesByPath: Map<string,
     lines.push("");
   }
   return `${lines.join("\n")}\n`;
-}
-
-/** Plain-text excerpt of a note body: frontmatter stripped, whitespace collapsed. */
-export function noteExcerpt(content: string, max = 400): string {
-  const body = content.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, "");
-  return body.replace(/[\]#>*`[]/g, " ").replace(/\s+/g, " ").trim().slice(0, max);
 }

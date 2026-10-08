@@ -12,6 +12,24 @@ describe("keywordVaultSearch", () => {
     expect(hits[0]?.snippet).toContain("apple");
   });
 
+  it("ranks a short note on the topic above a long note full of common words", async () => {
+    const app = new App();
+    app.vault.seed("Notes/Pricing.md", "We decided the pricing tier is $20 a month.");
+    const ramble = "What did we talk about? The team said what they think about the roadmap and what comes next. ".repeat(60);
+    app.vault.seed("Notes/Weekly ramble.md", `${ramble}Pricing came up once.`);
+    const hits = await keywordVaultSearch(app, "what did I decide about the pricing");
+    expect(hits.map((h) => h.path)).toEqual(["Notes/Pricing.md", "Notes/Weekly ramble.md"]);
+  });
+
+  it("ranks the note with the rare term above one repeating a common term", async () => {
+    const app = new App();
+    for (let i = 0; i < 8; i++) app.vault.seed(`Notes/meeting ${i}.md`, "meeting meeting agenda");
+    app.vault.seed("Notes/Infra.md", "Kubernetes cluster upgrade plan.");
+    app.vault.seed("Notes/Busy.md", "meeting ".repeat(40));
+    const hits = await keywordVaultSearch(app, "kubernetes meeting");
+    expect(hits[0]?.path).toBe("Notes/Infra.md");
+  });
+
   it("excludes the active note and ignores empty queries", async () => {
     const app = new App();
     app.vault.seed("a.md", "apple");

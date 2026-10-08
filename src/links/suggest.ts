@@ -5,6 +5,7 @@
 import type { Mention } from "./unlinkedMentions";
 import { linkMention } from "./unlinkedMentions";
 import type { ProposedEdit } from "../edit/diff";
+import { countOccurrences, noteName } from "../text";
 
 export interface LinkSuggestion {
   path: string;
@@ -39,7 +40,7 @@ export function buildSuggestions(
       existing.reasons.push("related");
       existing.score = r.score;
     } else {
-      byPath.set(r.path, { path: r.path, name: basename(r.path), reasons: ["related"], score: r.score });
+      byPath.set(r.path, { path: r.path, name: noteName(r.path), reasons: ["related"], score: r.score });
     }
   }
   const all = [...byPath.values()];
@@ -108,18 +109,3 @@ function uniqueBlockStart(content: string, lines: string[], to: number): number 
   return null;
 }
 
-function countOccurrences(haystack: string, needle: string): number {
-  if (needle.length === 0) return 0;
-  let n = 0;
-  let idx = haystack.indexOf(needle);
-  while (idx !== -1) {
-    n++;
-    idx = haystack.indexOf(needle, idx + 1);
-  }
-  return n;
-}
-
-function basename(path: string): string {
-  const file = path.split("/").pop() ?? path;
-  return file.replace(/\.md$/, "");
-}

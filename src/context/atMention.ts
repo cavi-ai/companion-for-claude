@@ -2,6 +2,8 @@
 // list, filtering it, and detecting the active @-token at the cursor. The view
 // (AtMenu) and ChatView wire these to the editor + context-gathering.
 
+import { noteName } from "../text";
+
 export type AtKind = "note" | "selection" | "linked" | "vault" | "note-path" | "folder-path" | "media-path" | "base-path" | "claim" | "recent" | "project";
 
 export interface AtItem {
@@ -42,7 +44,7 @@ function buildRecentItems(recentPaths: string[]): AtItem[] {
   return recentPaths.map((p) => ({
     id: `recent:${p}`,
     kind: "recent",
-    label: `Recent · ${basename(p)}`,
+    label: `Recent · ${noteName(p)}`,
     sublabel: p,
     path: p,
   }));
@@ -53,7 +55,7 @@ function buildBaseItems(basePaths: string[]): AtItem[] {
   return basePaths.map((p) => ({
     id: `base-path:${p}`,
     kind: "base-path",
-    label: basename(p),
+    label: noteName(p),
     sublabel: p,
     path: p,
   }));
@@ -94,21 +96,21 @@ export function buildAtItems(
   const notes: AtItem[] = notePaths.map((p) => ({
     id: `note-path:${p}`,
     kind: "note-path",
-    label: basename(p),
+    label: noteName(p),
     sublabel: p,
     path: p,
   }));
   const folders: AtItem[] = folderPaths.map((p) => ({
     id: `folder-path:${p}`,
     kind: "folder-path",
-    label: `${basename(p)}/`,
+    label: `${noteName(p)}/`,
     sublabel: p,
     path: p,
   }));
   const media: AtItem[] = mediaPaths.map((p) => ({
     id: `media-path:${p}`,
     kind: "media-path",
-    label: basename(p),
+    label: noteName(p),
     sublabel: p,
     path: p,
   }));
@@ -159,12 +161,6 @@ function activeTokenQuery(text: string, cursor: number, trigger: string): { quer
   const query = upto.slice(at + 1);
   if (query.includes("\n")) return null;
   return { query, start: at };
-}
-
-function basename(path: string): string {
-  const i = path.lastIndexOf("/");
-  const name = i === -1 ? path : path.slice(i + 1);
-  return name.replace(/\.md$/i, "");
 }
 
 function trimLabel(text: string, max: number): string {

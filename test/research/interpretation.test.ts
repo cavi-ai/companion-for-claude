@@ -37,6 +37,12 @@ describe("upsertInterpretation", () => {
     expect(out).not.toContain("line two");
   });
 
+  it("writes dollar sequences literally when replacing", () => {
+    const out = upsertInterpretation(`${evidenceNote}\nInterpretation: Old reading.\n`, "Costs $$5 and $& more.");
+    expect(out).toContain("Interpretation: Costs $$5 and $& more.");
+    expect(out).not.toContain("Old reading.");
+  });
+
   it("trims and rejects empty interpretations", () => {
     expect(() => upsertInterpretation(evidenceNote, "   ")).toThrow(/must not be empty/);
   });

@@ -23,7 +23,8 @@ export class ExternalMcpManager {
   private errors = new Map<string, string>();
   private generation = 0;
 
-  constructor(private configs: () => McpServerConfig[]) {}
+  /** `clientVersion` is the plugin version each session reports to its server. */
+  constructor(private configs: () => McpServerConfig[], private clientVersion = "unknown") {}
 
   /** Last connection error per server name (for the settings status line). */
   errorFor(name: string): string | undefined {
@@ -46,7 +47,7 @@ export class ExternalMcpManager {
       const { createStdioMcpTransport } = await import("./stdioTransport");
       transport = await createStdioMcpTransport(command, config.args.trim() ? config.args.trim().split(/\s+/) : []);
     }
-    const session = new McpClientSession(transport);
+    const session = new McpClientSession(transport, this.clientVersion);
     const tools = await session.listTools();
     // `exposedAs` is the sanitized segment the model actually calls
     // (mcp__<exposedAs>__<tool>), so `call()` can match the parsed name back.

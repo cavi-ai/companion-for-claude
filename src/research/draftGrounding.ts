@@ -1,4 +1,4 @@
-import { fnv1aHex } from "../hashing";
+import { fnv1aFingerprint } from "../hashing";
 import { compareCodeUnits, isTrustedEvidence, type ProjectSnapshot } from "./graph";
 import type { EvidenceRelation, ResearchSourceRecord } from "./types";
 
@@ -15,16 +15,12 @@ export interface DraftGroundingEvidence {
   interpretation?: string;
 }
 
-function fingerprint(value: string): string {
-  return `fnv1a-${fnv1aHex(value)}`;
-}
-
 export function groundingEvidenceFingerprint(value: Omit<DraftGroundingEvidence, "fingerprint">): string {
-  return fingerprint(JSON.stringify(value));
+  return fnv1aFingerprint(JSON.stringify(value));
 }
 
 export function groundingClaimFingerprint(packet: Pick<DraftGroundingPacket, "claim" | "limitations">): string {
-  return fingerprint(JSON.stringify({ claim: packet.claim, limitations: packet.limitations }));
+  return fnv1aFingerprint(JSON.stringify({ claim: packet.claim, limitations: packet.limitations }));
 }
 
 export interface DraftGroundingPacket {

@@ -144,7 +144,7 @@ describe("classify", () => {
         '- "project": properties: status',
         "",
         "Notes:",
-        '1. {"title":"Café 🧠","folder":"Projects","tags":["idea"],"headings":["Head"],"excerpt":"# Head Prose here"}',
+        '1. {"title":"Café 🧠","folder":"Projects","tags":["idea"],"headings":["Head"],"excerpt":"Head Prose here"}',
       ].join("\n"),
     ]);
     expect(ctx.sent[0]).not.toContain("secret");

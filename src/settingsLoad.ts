@@ -10,7 +10,6 @@ import { migrateEmbeddingEngine } from "./semantic/embedder";
 export interface NamespacedData {
   settings?: Partial<PluginSettings>;
   conversations?: unknown;
-  researchDeskPreferences?: unknown;
   buildRuns?: unknown;
   activeBuildRunId?: unknown;
   standingOrders?: unknown;
@@ -22,7 +21,7 @@ export interface NamespacedData {
 /** True when data.json uses the namespaced { settings, conversations } shape
  * rather than the legacy flat shape (data.json *was* the settings object). */
 export function isNamespacedData(raw: unknown): raw is NamespacedData {
-  return !!raw && typeof raw === "object" && ("settings" in raw || "conversations" in raw || "researchDeskPreferences" in raw || "buildRuns" in raw);
+  return !!raw && typeof raw === "object" && ("settings" in raw || "conversations" in raw || "buildRuns" in raw);
 }
 
 const REMOVED_SETTING_KEYS = ["artifactHeight", "discoveryMaxResults", "discoveryExpansionLimit", "discoveryCacheHours", "cloudRoutineBetaHeader", "intelligenceNarrator", "discoveryReranker"];

@@ -1,7 +1,7 @@
 // Runs standing orders: schedule ticks and new-note events feed one serial queue. All IO is injected.
 
 import type { ActivityStore } from "../activity/store";
-import { stripFrontmatter } from "../semantic/chunk";
+import { stripFrontmatter } from "../markdown/frontmatter";
 import { enqueueEdit, type QueuedEdit } from "./editQueue";
 import { matchingOrders, type NoteFacts } from "./match";
 import type { StandingOrder } from "./order";

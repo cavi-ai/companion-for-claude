@@ -214,7 +214,8 @@ describe("write-tool registry completeness", () => {
     // VAULT_WRITE_TOOLS would be callable without the confirmation gate.
     // `ontology_propose` is only advertised when an ontology is wired, so it is
     // the one registry entry this keyless catalog legitimately omits.
-    const advertised = new VaultTools(new App() as never, { allowWrites: true, defaultFolder: "Claude" }).definitions();
+    const memoryRecord = { enabled: () => true, path: () => "Claude/What Claude Knows.md", today: () => "2026-10-07", newNote: (body: string) => body };
+    const advertised = new VaultTools(new App() as never, { allowWrites: true, defaultFolder: "Claude", memoryRecord }).definitions();
     const writeNames = new Set(advertised.map(({ name }) => name).filter((name) => VAULT_WRITE_TOOLS.has(name)));
     const expected = new Set([...VAULT_WRITE_TOOLS].filter((name) => name !== "ontology_propose"));
     expect(writeNames).toEqual(expected);

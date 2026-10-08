@@ -8,6 +8,7 @@ import { passageContext, pickClaimForReview, pickEvidenceForReview } from "../..
 import type { ResearchRepository } from "../../research/repository";
 import type { WebCapture } from "../../research/webCapture";
 import { parseClipUrl } from "../../sources/detect";
+import { stripFrontmatter } from "../../markdown/frontmatter";
 import { ClaimCreateModal, ClaimReviewModal } from "./claimModals";
 import { EvidenceExtractModal, type PassageLoad } from "./evidenceExtractModal";
 import { EvidenceReviewModal } from "./evidenceReviewModal";
@@ -90,7 +91,7 @@ export class ResearchActions {
           if (ext === "md") {
             const text = new TextDecoder().decode(data);
             const clipUrl = parseClipUrl(text);
-            const body = text.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, "").trim();
+            const body = stripFrontmatter(text).trim();
             const res = await this.deps.repository.importSource(project, { title: base, sourceKind: "vault", capturedContent: body.slice(0, 50000), ...(clipUrl ? { url: clipUrl } : {}) });
             if (res.kind === "created") imported.push(base);
             continue;
@@ -107,7 +108,7 @@ export class ResearchActions {
           void (async () => {
             try {
               const content = await this.deps.app.vault.cachedRead(file);
-              const body = content.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, "").trim();
+              const body = stripFrontmatter(content).trim();
               const clipUrl = parseClipUrl(content);
               const res = await this.deps.repository.importSource(project, { title: file.basename, sourceKind: "vault", capturedContent: body.slice(0, 50000), ...(clipUrl ? { url: clipUrl } : {}) });
               await this.deps.changed();

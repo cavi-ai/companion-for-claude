@@ -2,8 +2,6 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
-  EXCERPT_CHARS,
-  noteExcerpt,
   noteHeadings,
   parseTypeVerdicts,
   TypeParseError,
@@ -15,37 +13,6 @@ const notes = [{ path: "a.md" }, { path: "b.md" }, { path: "Café 🧠.md" }];
 const types = ["project", "person"];
 const reply = (verdicts: unknown): string => JSON.stringify({ verdicts });
 
-describe("noteExcerpt", () => {
-  it("drops frontmatter and fenced code and keeps 200 characters of prose", () => {
-    const content = "---\ntitle: x\ntype: secret\n---\nHello   world\n\n```js\nconst key = 'sk-123';\n```\nAfter ~~~ text\n~~~\nhidden\n~~~\nTail";
-    expect(noteExcerpt(content)).toBe("Hello world After ~~~ text Tail");
-  });
-
-  it("an unclosed fence hides the rest", () => {
-    expect(noteExcerpt("intro\n```\nsecret")).toBe("intro");
-  });
-
-  it("a tilde fence is not closed by a backtick fence", () => {
-    expect(noteExcerpt("a\n~~~\nsecret\n```\nstill secret\n~~~\nb")).toBe("a b");
-  });
-
-  it("truncates by code point, not by UTF-16 unit", () => {
-    const out = noteExcerpt("🧠".repeat(500));
-    expect(Array.from(out)).toHaveLength(EXCERPT_CHARS);
-    expect(out).toBe("🧠".repeat(EXCERPT_CHARS));
-  });
-
-  it("handles no frontmatter, empty frontmatter, and CRLF", () => {
-    expect(noteExcerpt("Plain Café 2024")).toBe("Plain Café 2024");
-    expect(noteExcerpt("---\n---\nBody")).toBe("Body");
-    expect(noteExcerpt("---\r\ntype: x\r\n---\r\nBody")).toBe("Body");
-    expect(noteExcerpt(`${String.fromCharCode(0xfeff)}---\ntype: x\n---\nBody`)).toBe("Body");
-  });
-
-  it("is empty for an empty note", () => {
-    expect(noteExcerpt("")).toBe("");
-  });
-});
 
 describe("noteHeadings", () => {
   it("returns up to 5 headings of 80 characters, skipping code and frontmatter", () => {

@@ -27,7 +27,7 @@ export function composeSkillPrompt(entry: SkillEntry, args: string): string {
     : entry.argHint
       ? `Run this skill now. It accepts: ${entry.argHint} — none were given, so use the default or ask.`
       : "Run this skill now.";
-  return [SKILL_PREAMBLE.replace("{name}", entry.name), `# Skill: ${entry.name}`, entry.body, "# Task", task].join("\n\n");
+  return [SKILL_PREAMBLE.replace("{name}", () => entry.name), `# Skill: ${entry.name}`, entry.body, "# Task", task].join("\n\n");
 }
 
 export function skillDisplay(entry: SkillEntry, args: string): string {

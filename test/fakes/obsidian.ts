@@ -423,6 +423,9 @@ export abstract class BasesView extends Component {
 }
 
 export class Plugin {}
+// Obsidian always hands a plugin its manifest; tests that build the plugin with
+// Object.create(…prototype) read this one.
+(Plugin.prototype as unknown as { manifest: unknown }).manifest = { id: "claude-companion", name: "Companion for Claude", version: "0.0.0-test" };
 export class MarkdownView {
   getState(): Record<string, unknown> { return {}; }
 }
