@@ -45,7 +45,16 @@ export function createSession(content: string, plan: EditPlan, meta: SessionMeta
   return withMeta(meta, hunks);
 }
 
-export function createRangeSession(content: string, range: { from: number; to: number; newText: string }, meta: SessionMeta): InlineDiffSession {
+export function createRangeSession(
+  content: string,
+  range: { from: number; to: number; newText: string },
+  meta: SessionMeta,
+  opts: { insert?: boolean } = {},
+): InlineDiffSession {
+  if (opts.insert) {
+    if (range.from !== range.to || range.from < 0 || range.from > content.length) throw new Error("An insertion needs one cursor position inside the note.");
+    return withMeta(meta, [{ index: 0, from: range.from, to: range.from, oldText: "", newText: range.newText, status: "pending" }]);
+  }
   const oldText = content.slice(range.from, range.to);
   if (oldText.length === 0) throw new Error("Nothing selected.");
   return withMeta(meta, [{ index: 0, from: range.from, to: range.to, oldText, newText: range.newText, status: "pending" }]);
@@ -60,7 +69,7 @@ export function planResolve(
   const hunk = s.hunks[index];
   if (!hunk || hunk.status !== "pending") return { change: null, drifted: false };
   if (decision === "rejected") return { change: null, drifted: false };
-  if (content.slice(hunk.from, hunk.to) !== hunk.oldText) return { change: null, drifted: true };
+  if (hunk.from > hunk.to || content.slice(hunk.from, hunk.to) !== hunk.oldText) return { change: null, drifted: true };
   return { change: { from: hunk.from, to: hunk.to, insert: hunk.newText }, drifted: false };
 }
 

@@ -344,9 +344,9 @@ export class HeaderControls {
       { title: "Model controls…", icon: "sliders-horizontal", run: () => this.openTuneModal() },
       { title: "Options…", icon: "settings-2", run: () => new QuickOptionsModal(this.app, "chat", this.plugin.companionChrome()).open() },
     );
-    // Session toggles that live in the hidden desktop controls bar — without
-    // these, phone users can't reach agent writes, Plan Mode, or memory ingest.
-    const canAct = this.plugin.settings.agentModeEnabled && this.plugin.router().chatCapabilities().agentActions;
+    // Session toggles from the desktop controls bar. Phones set Ask / Plan / Act
+    // from the composer toolbar, so the mode items are desktop-only here.
+    const canAct = !Platform.isMobile && this.plugin.settings.agentModeEnabled && this.plugin.router().chatCapabilities().agentActions;
     if (canAct) {
       items.push(
         { title: "Act on vault", icon: "pencil-line", checked: this.plugin.settings.agentAllowWrites, separatorBefore: true, run: () => void this.deps.applyMode(this.plugin.settings.agentAllowWrites ? "ask" : "act") },

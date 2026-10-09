@@ -59,15 +59,16 @@ import { DESIGN_SYSTEM_PROMPT, PLANNING_INSTRUCTION } from "./artifacts/designSy
 import { AGENT_INSTRUCTION, PLAN_MODE_INSTRUCTION } from "./agent/prompt";
 import { findUnlinkedMentions, linkMention, withLinktext, type LinkCandidate } from "./links/unlinkedMentions";
 import { mentionEdits } from "./links/suggest";
-import { planEdits, applyPlan, diffToEdits, type EditPlan } from "./edit/diff";
-import { inlineDiffExtension, reviewInline } from "./editor/inlineDiffExtension";
+import { planEdits, applyPlan, diffToEdits } from "./edit/diff";
+import { inlineDiffExtension } from "./editor/inlineDiffExtension";
+import { reviewInlineWithKeys } from "./editor/reviewKeys";
 import { selectionActionExtension } from "./editor/selectionAction";
 import { editorViewOf } from "./editor/reviewEdits";
-import { createRangeSession } from "./editor/inlineDiffState";
+import { inlinePromptExtension, openInlinePrompt } from "./editor/inlinePrompt";
+import { commitModalRewrite, inlineEditMenuTitle, planModalRewrite, runInlineEdit, type ModalRewrite } from "./editor/inlineEdit";
 import { REWRITE_SYSTEM, buildRewriteUser, buildGroundedRewriteUser, rewriteMaxTokens, parseRewrite } from "./edit/rewrite";
 import { DiffModal } from "./view/DiffModal";
 import { BatchDiffModal } from "./view/BatchDiffModal";
-import { RewriteModal } from "./view/RewriteModal";
 import { ARTIFACT_HEIGHT, renderArtifactInline, ArtifactModal, openArtifactExternally } from "./artifacts/renderInline";
 import type { McpHttpServer } from "./mcp/server";
 import { VaultTools, SEMANTIC_OFF_MESSAGE, type VaultToolsOptions } from "./mcp/vaultTools";
@@ -612,13 +613,14 @@ export default class ClaudeCompanionPlugin extends Plugin {
     this.registerArtifactBlocks();
 
     this.registerEditorExtension(inlineDiffExtension());
+    this.registerEditorExtension(inlinePromptExtension());
     if (Platform.isDesktop) {
       this.registerEditorExtension(
         selectionActionExtension({
           enabled: () => this.settings.selectionActionEnabled,
           run: () => {
             const view = this.app.workspace.getActiveViewOfType(MarkdownView);
-            if (view) void this.runInlineRewrite(view.editor, view);
+            if (view) void this.startInlineEdit(view.editor, view);
           },
         }),
       );
@@ -810,12 +812,12 @@ export default class ClaudeCompanionPlugin extends Plugin {
   private registerContextMenus(): void {
     this.registerEvent(
       this.app.workspace.on("editor-menu", (menu, editor, view) => {
-        if (!(view instanceof MarkdownView) || editor.getSelection().trim().length === 0) return;
+        if (!(view instanceof MarkdownView) || !view.file) return;
         menu.addItem((item) =>
           item
-            .setTitle("Rewrite with Claude…")
+            .setTitle(inlineEditMenuTitle(editor.getSelection()))
             .setIcon("sparkles")
-            .onClick(() => void this.runInlineRewrite(editor, view)),
+            .onClick(() => void this.startInlineEdit(editor, view)),
         );
       }),
     );
@@ -883,7 +885,7 @@ export default class ClaudeCompanionPlugin extends Plugin {
       newChatTab: () => void this.openNewChatTab(),
       generatePlanFromNote: () => void this.generatePlanFromNote(),
       generateArtifactFromContext: () => void this.generateArtifactFromContext(),
-      rewriteSelection: (editor, view) => void this.runInlineRewrite(editor, view),
+      editWithClaude: (editor, view) => void this.startInlineEdit(editor, view),
       enrichNote: (file) => void this.enrichNoteFlow(file),
       enableVaultSearch: () => void this.enableVaultSearch(),
       rebuildSemanticIndex: () => void this.rebuildSemanticIndex(),
@@ -1369,76 +1371,50 @@ export default class ClaudeCompanionPlugin extends Plugin {
   }
 
   /**
-   * Inline rewrite (roadmap Track B): selection → instruction modal → one
-   * chat-free completion → per-hunk DiffModal review → vault.process apply.
-   * When the selection isn't unique in the note, the diff is planned against
-   * the selection alone and the apply is anchored at the editor offsets.
+   * Edit with Claude at the cursor: the inline prompt opens over the
+   * selection (rewrite) or at the cursor (insert); the flow lives in
+   * editor/inlineEdit.ts and writes only through review.
    */
-  private async runInlineRewrite(editor: Editor, view: MarkdownView): Promise<void> {
+  private async startInlineEdit(editor: Editor, view: MarkdownView): Promise<void> {
     const file = view.file;
-    const selection = editor.getSelection();
-    if (!file || selection.trim().length === 0) {
-      new Notice("Select some text to rewrite first.");
+    const cm = editorViewOf(editor);
+    if (!file || !cm) {
+      new Notice("Open a note in the editor to edit with Claude.");
       return;
     }
-    const anchorFrom = editor.posToOffset(editor.getCursor("from"));
-    const anchorTo = editor.posToOffset(editor.getCursor("to"));
-
-    const instruction = await new Promise<string | null>((resolve) =>
-      new RewriteModal(this.app, selection.length, resolve).open(),
+    await runInlineEdit(
+      { doc: editor.getValue(), from: editor.posToOffset(editor.getCursor("from")), to: editor.posToOffset(editor.getCursor("to")) },
+      {
+        path: file.path,
+        inlineDiffEnabled: this.settings.inlineDiffEnabled,
+        openPrompt: (opts) => openInlinePrompt(cm, opts),
+        complete: async (req) => (await this.router().complete("chat", req)).text,
+        currentDoc: () => cm.state.doc.toString(),
+        review: (session) => reviewInlineWithKeys(this.app, cm, session),
+        reviewModal: (rewrite) => this.reviewRewriteInModal(file, cm.state.doc.toString(), rewrite),
+        notice: (message) => new Notice(message),
+        begin: (label) => beginActivity(this.activity, label),
+        failureMessage: (e) => {
+          const message = e instanceof Error ? e.message : String(e);
+          const hint = this.providerErrorHint(message, this.router().resolve("chat").provider.id);
+          return `Edit failed — ${hint ?? message}`;
+        },
+      },
     );
-    if (!instruction) return;
+  }
 
-    const progress = beginActivity(this.activity, "Rewriting selection…");
-    try {
-      const { text: raw } = await this.router().complete("chat", {
-        system: REWRITE_SYSTEM,
-        user: buildRewriteUser(selection, instruction),
-        maxTokens: rewriteMaxTokens(selection),
-        temperature: 0.3,
-      });
-      const rewritten = parseRewrite(raw, selection);
-
-      const cm = this.settings.inlineDiffEnabled ? editorViewOf(editor) : null;
-      if (cm && editor.getValue().slice(anchorFrom, anchorTo) === selection) {
-        const session = createRangeSession(editor.getValue(), { from: anchorFrom, to: anchorTo, newText: rewritten }, { path: file.path, description: `Rewrite — ${instruction}` });
-        progress.finish();
-        const accepted = await reviewInline(cm, session);
-        if (accepted) new Notice("Rewrite applied.");
-        return;
-      }
-
-      const content = editor.getValue();
-      let plan: EditPlan;
-      let anchor: { start: number; end: number } | null = null;
-      try {
-        plan = planEdits(content, [{ old_str: selection, new_str: rewritten }]);
-      } catch {
-        plan = planEdits(selection, [{ old_str: selection, new_str: rewritten }]);
-        anchor = { start: anchorFrom, end: anchorTo };
-      }
-
-      progress.finish();
-      const accepted = await new Promise<boolean[] | null>((resolve) =>
-        new DiffModal(this.app, { path: file.path, description: `Rewrite — ${instruction}`, plan }, resolve).open(),
-      );
-      if (!accepted) return;
-
-      await this.app.vault.process(file, (current) => {
-        if (anchor && current.slice(anchor.start, anchor.end) === selection) {
-          return accepted[0] ? current.slice(0, anchor.start) + rewritten + current.slice(anchor.end) : current;
-        }
-        return applyPlan(current, plan, accepted);
-      });
-      new Notice("Rewrite applied.");
-    } catch (e) {
-      progress.fail(e);
-      const { provider } = this.router().resolve("chat");
-      const hint = this.providerErrorHint(e instanceof Error ? e.message : String(e), provider.id);
-      new Notice(`Rewrite failed${hint ? ` — ${hint}` : ` — ${e instanceof Error ? e.message : String(e)}`}`);
-    } finally {
-      progress.finish();
-    }
+  /**
+   * Inline diff off: per-hunk DiffModal review → vault.process apply. When the
+   * selection isn't unique in the note, the diff is planned against the
+   * selection alone and the apply is anchored at the editor offsets.
+   */
+  private async reviewRewriteInModal(file: TFile, content: string, rewrite: ModalRewrite): Promise<void> {
+    const prepared = planModalRewrite(content, rewrite);
+    const accepted = await new Promise<boolean[] | null>((resolve) =>
+      new DiffModal(this.app, { path: file.path, description: `Rewrite — ${rewrite.instruction}`, plan: prepared.plan }, resolve).open(),
+    );
+    if (!accepted) return;
+    await commitModalRewrite((transform) => this.app.vault.process(file, transform), prepared, accepted, (message) => new Notice(message));
   }
 
   /** One step runner shared by the Research Desk and Workbench. */

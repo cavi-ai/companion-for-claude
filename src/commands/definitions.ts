@@ -21,7 +21,7 @@ export interface CommandActions {
   newChatTab(): void;
   generatePlanFromNote(): void;
   generateArtifactFromContext(): void;
-  rewriteSelection(editor: Editor, view: MarkdownView): void;
+  editWithClaude(editor: Editor, view: MarkdownView): void;
   enrichNote(file: TFile): void;
   enableVaultSearch(): void;
   rebuildSemanticIndex(): void;
@@ -112,11 +112,11 @@ export function companionCommands(actions: CommandActions): Command[] {
     { id: "artifact-from-selection", name: "Turn selection / note into a beautiful artifact", callback: () => actions.generateArtifactFromContext() },
     {
       id: "rewrite-selection",
-      name: "Rewrite selection with Claude…",
+      name: "Edit with Claude at cursor…",
       editorCheckCallback: (checking: boolean, editor: Editor, view: MarkdownView | MarkdownFileInfo) => {
-        const has = editor.getSelection().trim().length > 0 && view instanceof MarkdownView && !!view.file;
+        const has = view instanceof MarkdownView && !!view.file;
         if (checking) return has;
-        actions.rewriteSelection(editor, view as MarkdownView);
+        actions.editWithClaude(editor, view as MarkdownView);
         return true;
       },
     },

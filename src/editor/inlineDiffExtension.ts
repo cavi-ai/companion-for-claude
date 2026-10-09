@@ -1,7 +1,7 @@
 // CM6 layer for inline edit review. One field owns the session; anchors follow every transaction.
 
-import { EditorState, Prec, StateEffect, StateField, type Extension, type Range, type Transaction, type TransactionSpec } from "@codemirror/state";
-import { Decoration, EditorView, ViewPlugin, WidgetType, keymap, type DecorationSet, type ViewUpdate } from "@codemirror/view";
+import { EditorState, StateEffect, StateField, type Extension, type Range, type Transaction, type TransactionSpec } from "@codemirror/state";
+import { Decoration, EditorView, ViewPlugin, WidgetType, type DecorationSet, type ViewUpdate } from "@codemirror/view";
 import { wordDiff } from "../edit/wordDiff";
 import { decisions, markHunk, mapSession, pendingHunks, planResolve, type InlineChange, type InlineDiffSession } from "./inlineDiffState";
 
@@ -189,11 +189,6 @@ const watcher = ViewPlugin.fromClass(
   },
 );
 
-export const inlineDiffKeymap = [
-  { key: "Mod-Enter", run: (view: EditorView) => resolveAll(view, "accepted") },
-  { key: "Escape", run: (view: EditorView) => resolveAll(view, "rejected") },
-];
-
 export function inlineDiffExtension(): Extension {
-  return [inlineDiffField, watcher, Prec.high(keymap.of(inlineDiffKeymap))];
+  return [inlineDiffField, watcher];
 }

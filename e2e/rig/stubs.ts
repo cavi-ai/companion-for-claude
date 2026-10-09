@@ -29,6 +29,8 @@ class RuleCursor {
 
 export interface StubState {
   requests: number;
+  /** Replies the provider stub has sent (after any delay). */
+  served: number;
   replyRules: ReplyRule[];
   failRules: FailRule[];
   delayMs: number;
@@ -38,7 +40,7 @@ export interface StubState {
 }
 
 export function freshStubState(): StubState {
-  return { requests: 0, replyRules: [], failRules: [], delayMs: 0, endpointModels: [], endpointReply: "Answered locally by the endpoint stub.", cursor: new RuleCursor() };
+  return { requests: 0, served: 0, replyRules: [], failRules: [], delayMs: 0, endpointModels: [], endpointReply: "Answered locally by the endpoint stub.", cursor: new RuleCursor() };
 }
 
 function failStatus(state: StubState, body: string): number | null {
@@ -100,7 +102,11 @@ export function startProviderStub(state: StubState): Promise<{ server: Server; p
         response.writeHead(200, { "content-type": "application/json" });
         response.end(JSON.stringify({ content: [{ type: "text", text }] }));
       };
-      if (state.delayMs) setTimeout(respond, state.delayMs); else respond();
+      const serve = (): void => {
+        state.served += 1;
+        respond();
+      };
+      if (state.delayMs) setTimeout(serve, state.delayMs); else serve();
     });
   });
   return new Promise((resolve, reject) => {

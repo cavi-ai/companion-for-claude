@@ -11,6 +11,14 @@ describe("buildContextManagerModel", () => {
     expect(buildContextManagerModel({ toggles: off, activeNotePath: null, paths: [{ kind: "note", path: "Notes/A source name that is deliberately too long for the trigger.md" }], media: [], pages: [] }).summary).toBe("Context · 1");
   });
 
+  it("drops the Context prefix from the compact summary", () => {
+    expect(buildContextManagerModel({ toggles: off, activeNotePath: null, paths: [], media: [], pages: [] }).compactSummary).toBe("Add context");
+    expect(buildContextManagerModel({ toggles: { ...off, activeNote: true }, activeNotePath: "Notes/Alpha.md", paths: [], media: [], pages: [] }).compactSummary).toBe("This note");
+    expect(buildContextManagerModel({ toggles: { ...off, activeNote: true, linkedNotes: true }, activeNotePath: "Notes/Alpha.md", paths: [{ kind: "folder", path: "Research" }], media: [], pages: [] }).compactSummary).toBe("This note + 2");
+    expect(buildContextManagerModel({ toggles: off, activeNotePath: null, paths: [{ kind: "note", path: "Notes/A source name that is deliberately too long for the trigger.md" }], media: [], pages: [] }).compactSummary).toBe("1 item");
+    expect(buildContextManagerModel({ toggles: off, activeNotePath: null, paths: [{ kind: "note", path: "Notes/A source name that is deliberately too long for the trigger.md" }, { kind: "folder", path: "Research" }], media: [], pages: [] }).compactSummary).toBe("2 items");
+  });
+
   it("counts and classifies every automatic and explicit source", () => {
     const input = {
       toggles: { activeNote: true, selection: true, linkedNotes: true, searchVault: true },

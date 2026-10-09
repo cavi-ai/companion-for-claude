@@ -60,6 +60,35 @@ describe("createRangeSession", () => {
   it("refuses an empty range", () => {
     expect(() => createRangeSession(DOC, { from: 3, to: 3, newText: "x" }, { path: "a.md" })).toThrow(/Nothing selected/);
   });
+
+  it("wraps an empty range as one pending insertion when asked to insert", () => {
+    const at = DOC.indexOf("- [ ] Ship");
+    const s = createRangeSession(DOC, { from: at, to: at, newText: "- [ ] Test it\n" }, { path: "a.md" }, { insert: true });
+    expect(s.hunks).toEqual([{ index: 0, from: at, to: at, oldText: "", newText: "- [ ] Test it\n", status: "pending" }]);
+    expect(planResolve(s, 0, "accepted", DOC)).toEqual({ change: { from: at, to: at, insert: "- [ ] Test it\n" }, drifted: false });
+  });
+
+  it("refuses a non-empty range or an out-of-bounds position in insert mode", () => {
+    expect(() => createRangeSession(DOC, { from: 2, to: 5, newText: "x" }, { path: "a.md" }, { insert: true })).toThrow(/insert/i);
+    expect(() => createRangeSession(DOC, { from: DOC.length + 1, to: DOC.length + 1, newText: "x" }, { path: "a.md" }, { insert: true })).toThrow(/insert/i);
+  });
+
+  it("an insertion shifts with edits above it and lands at the mapped position", () => {
+    const at = DOC.indexOf("- [ ] Ship");
+    const s = createRangeSession(DOC, { from: at, to: at, newText: "X" }, { path: "a.md" }, { insert: true });
+    const edited = "## " + DOC;
+    const mapped = mapSession(s, (pos) => pos + 3);
+    expect(planResolve(mapped, 0, "accepted", edited)).toEqual({ change: { from: at + 3, to: at + 3, insert: "X" }, drifted: false });
+  });
+
+  it("an insertion whose point was typed over drifts instead of writing", () => {
+    const at = 10;
+    const s = createRangeSession(DOC, { from: at, to: at, newText: "X" }, { path: "a.md" }, { insert: true });
+    // Text typed at the insertion point: from maps after it (assoc 1), to before it (assoc -1).
+    const typed = DOC.slice(0, at) + "ab" + DOC.slice(at);
+    const mapped = mapSession(s, (pos, assoc) => (pos > at || (pos === at && assoc === 1) ? pos + 2 : pos));
+    expect(planResolve(mapped, 0, "accepted", typed)).toEqual({ change: null, drifted: true });
+  });
 });
 
 describe("planResolve", () => {

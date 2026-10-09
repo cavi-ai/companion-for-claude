@@ -5,7 +5,8 @@ import type { EditorView } from "@codemirror/view";
 import type { EditPlan } from "../edit/diff";
 import { DiffModal } from "../view/DiffModal";
 import { createSession, type InlineDiffSession } from "./inlineDiffState";
-import { cancelInline, reviewInline } from "./inlineDiffExtension";
+import { cancelInline } from "./inlineDiffExtension";
+import { reviewInlineWithKeys } from "./reviewKeys";
 import { fenceAt, fenceEnd } from "../markdown/fences";
 import { frontmatterBlock } from "../markdown/frontmatter";
 
@@ -23,12 +24,12 @@ export interface ReviewEditsDeps {
   openModal: (app: App, input: { path: string; description?: string; plan: EditPlan }, signal?: AbortSignal) => Promise<boolean[] | null>;
 }
 
-const defaultDeps: ReviewEditsDeps = {
-  reviewInline,
+const defaultDeps = (app: App): ReviewEditsDeps => ({
+  reviewInline: (view, session) => reviewInlineWithKeys(app, view, session),
   cancelInline,
-  openModal: (app, input, signal) => new Promise((resolve) => {
+  openModal: (modalApp, input, signal) => new Promise((resolve) => {
     if (signal?.aborted) { resolve(null); return; }
-    const modal = new DiffModal(app, input, (accepted) => {
+    const modal = new DiffModal(modalApp, input, (accepted) => {
       signal?.removeEventListener("abort", onAbort);
       resolve(accepted);
     });
@@ -36,7 +37,7 @@ const defaultDeps: ReviewEditsDeps = {
     signal?.addEventListener("abort", onAbort, { once: true });
     modal.open();
   }),
-};
+});
 
 function awaitReview(pending: Promise<boolean[] | null>, signal: AbortSignal | undefined, cancel: () => void): Promise<boolean[] | null> {
   if (!signal) return pending;
@@ -131,7 +132,7 @@ function touchesHidden(plan: EditPlan, ranges: HiddenRange[]): boolean {
   return plan.hunks.some((hunk) => ranges.some((range) => hunk.start < range.to && hunk.start + Math.max(hunk.oldText.length, 1) > range.from));
 }
 
-export async function reviewEdits(app: App, input: ReviewEditsInput, opts: { inlineEnabled: boolean; signal?: AbortSignal }, deps: ReviewEditsDeps = defaultDeps): Promise<ReviewOutcome> {
+export async function reviewEdits(app: App, input: ReviewEditsInput, opts: { inlineEnabled: boolean; signal?: AbortSignal }, deps: ReviewEditsDeps = defaultDeps(app)): Promise<ReviewOutcome> {
   const meta = { path: input.file.path, ...(input.description !== undefined ? { description: input.description } : {}) };
   if (opts.inlineEnabled) {
     const view = findOpenMarkdownView(app, input.file.path);

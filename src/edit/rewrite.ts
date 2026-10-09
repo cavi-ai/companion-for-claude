@@ -47,6 +47,53 @@ export function buildGroundedRewriteUser(selection: string, instruction: string,
   ].join("\n");
 }
 
+export const INSERT_CONTEXT_CHARS = 2000;
+
+export const INSERT_SYSTEM = [
+  "You write new markdown text to insert at the cursor in an Obsidian note.",
+  "Return ONLY the text to insert — no preamble, no explanation, no wrapping quotes, no code fences around prose, and never repeat the text around the cursor.",
+  "Match the note's language, voice, and markdown structure; keep wiki-links ([[...]]) and URLs intact.",
+].join(" ");
+
+const isHighSurrogate = (code: number): boolean => code >= 0xd800 && code <= 0xdbff;
+const isLowSurrogate = (code: number): boolean => code >= 0xdc00 && code <= 0xdfff;
+
+/** The last INSERT_CONTEXT_CHARS of text, starting on a code-point boundary. */
+function tailWindow(text: string): string {
+  let start = Math.max(0, text.length - INSERT_CONTEXT_CHARS);
+  if (start > 0 && isLowSurrogate(text.charCodeAt(start)) && isHighSurrogate(text.charCodeAt(start - 1))) start++;
+  return text.slice(start);
+}
+
+/** The first INSERT_CONTEXT_CHARS of text, ending on a code-point boundary. */
+function headWindow(text: string): string {
+  let end = Math.min(text.length, INSERT_CONTEXT_CHARS);
+  if (end < text.length && isHighSurrogate(text.charCodeAt(end - 1)) && isLowSurrogate(text.charCodeAt(end))) end--;
+  return text.slice(0, end);
+}
+
+export function buildInsertUser(before: string, after: string, instruction: string): string {
+  return [
+    `Instruction: ${instruction}`,
+    "",
+    "<before_cursor>",
+    tailWindow(before),
+    "</before_cursor>",
+    "<after_cursor>",
+    headWindow(after),
+    "</after_cursor>",
+  ].join("\n");
+}
+
+/** Trim and unwrap a reply that is exactly one prose fence; a code-language fence or several blocks are real content. */
+export function parseInsert(raw: string): string {
+  let text = raw.trim();
+  const fenced = /^```(?:markdown|md|text|plaintext)?[ \t]*\n([\s\S]*?)\n?```$/.exec(text);
+  if (fenced && !/^```/m.test(fenced[1]!)) text = fenced[1]!.trim();
+  if (text.length === 0) throw new Error("The model returned nothing to insert — try rephrasing the instruction.");
+  return text;
+}
+
 /** Rough char→token budget with headroom for expansions; bounded so a huge
  *  selection doesn't blow past the model's output limit. */
 export function rewriteMaxTokens(selection: string): number {

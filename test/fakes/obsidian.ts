@@ -253,6 +253,17 @@ export class FakeSecretStorage {
   listSecrets(): string[] { return [...this.data.keys()]; }
 }
 
+/** Minimal Obsidian Scope: registered handlers, matched by the test, plus the parent chain. */
+export class Scope {
+  keys: Array<{ modifiers: string[] | null; key: string | null; func: (evt: KeyboardEvent, ctx: unknown) => unknown }> = [];
+  constructor(public parent?: Scope) {}
+  register(modifiers: string[] | null, key: string | null, func: (evt: KeyboardEvent, ctx: unknown) => unknown) {
+    const handler = { modifiers, key, func };
+    this.keys.push(handler);
+    return handler;
+  }
+}
+
 export class App {
   vault = new FakeVault();
   metadataCache = new FakeMetadataCache(this.vault);
@@ -262,6 +273,12 @@ export class App {
     getLeavesOfType: (_type: string): unknown[] => [],
   };
   secretStorage = new FakeSecretStorage();
+  scope = new Scope();
+  keymap = {
+    scopes: [] as Scope[],
+    pushScope(scope: Scope): void { this.scopes.push(scope); },
+    popScope(scope: Scope): void { this.scopes = this.scopes.filter((s) => s !== scope); },
+  };
 }
 
 /** Version the fake reports; tests flip it to exercise the pre-1.11.5 path. */
@@ -371,7 +388,12 @@ export class FakeElement {
   }
   scrollIntoView(): void {}
   dispatchEvent(event: any): boolean { for (const listener of this.listeners.get(event.type) ?? []) listener(event); return true; }
-  focus(): void { this.attributes.set("data-focused", "true"); }
+  focus(): void { this.attributes.set("data-focused", "true"); fakeDocument.activeElement = this; }
+  private ownDocument: { activeElement: unknown; body?: unknown } | null = null;
+  get ownerDocument(): { activeElement: unknown; body?: unknown } { return this.ownDocument ?? fakeDocument; }
+  set ownerDocument(doc: { activeElement: unknown; body?: unknown }) { this.ownDocument = doc; }
+  readOnly = false;
+  toggle(show: boolean): void { if (show) this.show(); else this.hide(); }
   selectionStart = 0;
   selectionEnd = 0;
   setSelectionRange(start: number, end: number): void { this.selectionStart = start; this.selectionEnd = end; }
@@ -398,6 +420,16 @@ function matches(item: FakeElement, selector: string): boolean {
   if (selector.startsWith(".")) return item.classList.has(selector.slice(1));
   return item.tagName === selector.toUpperCase();
 }
+/** The one document FakeElements belong to; focus() moves activeElement. */
+export const fakeDocument: { body: FakeElement; activeElement: unknown } = { body: new FakeElement("body"), activeElement: null };
+/** Obsidian's detached-element globals createEl() and createDiv(). */
+const detachedEl = (tag: string, options: any = {}): FakeElement => {
+  const element = new FakeElement("fragment").createEl(tag, options);
+  element.parent = null;
+  return element;
+};
+(globalThis as unknown as { createEl?: unknown }).createEl ??= detachedEl;
+(globalThis as unknown as { createDiv?: unknown }).createDiv ??= (options: any = {}): FakeElement => detachedEl("div", options);
 /** Obsidian exposes createFragment() as a global; settings descriptions use it. */
 (globalThis as unknown as { createFragment?: unknown }).createFragment ??= (
   callback?: (frag: FakeElement) => void,

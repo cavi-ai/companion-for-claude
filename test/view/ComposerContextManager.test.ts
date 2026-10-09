@@ -7,6 +7,7 @@ function modelWithAllKinds(): ContextManagerModel {
   const visible = {
     activeCount: 4,
     summary: "Context · This note + 3",
+    compactSummary: "This note + 3",
     automatic: [
       { key: "activeNote" as const, label: "This note", enabled: true, detail: "Notes/Alpha.md" },
       { key: "selection" as const, label: "Selection", enabled: false },
@@ -73,6 +74,17 @@ describe("ComposerContextManager", () => {
     expect(allText(byRole(host, "alert"))).toContain("Capture timed out");
     expect(byAria(host, "Remove Failed article")).toBeDefined();
     expect(byAria(host, "Retry Failed article")).toBeDefined();
+  });
+
+  it("labels the trigger with the full summary, or the compact one in the phone toolbar", () => {
+    manager.render(modelWithAllKinds());
+    expect(host.querySelector(".cc-context-trigger-label")?.textContent).toBe("Context · This note + 3");
+
+    const toolbar = new FakeElement();
+    const compact = new ComposerContextManager(toolbar as unknown as HTMLElement, callbacks as ComposerContextManagerCallbacks, { compact: true });
+    compact.render(modelWithAllKinds());
+    expect(toolbar.querySelector(".cc-context-trigger-label")?.textContent).toBe("This note + 3");
+    expect(byAria(toolbar, "Manage context, 4 items active")).toBeDefined();
   });
 
   it("dispatches toggle, remove, retry, and add actions without closing", () => {

@@ -31,10 +31,11 @@ const rewrite = async (page: Page): Promise<void> => {
     const app = (window as unknown as { app: { commands: { executeCommandById(id: string): Promise<void> } } }).app;
     await app.commands.executeCommandById("claude-companion:rewrite-selection");
   });
-  const modal = page.locator(".modal-container").filter({ hasText: "characters selected" });
-  await expect(modal).toBeVisible();
-  await modal.locator(".cc-rewrite-preset").first().click();
-  await modal.getByRole("button", { name: "Rewrite", exact: true }).click();
+  const input = page.locator(".cc-inline-prompt-input");
+  await expect(input).toBeVisible();
+  await expect(input).toHaveAttribute("placeholder", "Rewrite selection…");
+  await page.locator(".cc-inline-prompt-chip").first().dispatchEvent("mousedown");
+  await input.press("Enter");
 };
 
 test("a rewrite reviews inline: accept applies, reject leaves the note alone", async ({ rig }) => {
@@ -78,7 +79,7 @@ test("the selection action appears over a settled selection and opens the rewrit
     const action = page.locator(".cc-selection-action button", { hasText: "Rewrite with Claude" });
     await expect(action).toBeVisible({ timeout: 5_000 });
     await action.dispatchEvent("mousedown");
-    await expect(page.locator(".modal-container").filter({ hasText: "characters selected" })).toBeVisible();
+    await expect(page.locator(".cc-inline-prompt-input")).toHaveAttribute("placeholder", "Rewrite selection…");
   } finally {
     await harness.close();
   }

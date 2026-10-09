@@ -15,6 +15,8 @@ export interface Rig {
   windows(): Page[];
   openSettings(tabId?: string): Promise<Page>;
   providerRequests(): Promise<number>;
+  /** Replies the provider stub has sent (after any delay) since the last reset. */
+  providerServed(): Promise<number>;
   /** Requests the GitHub Gist stub received since the last reset. */
   githubRequests(): Promise<GithubRequest[]>;
   /** Full scenario reset: stub rules, vault contents, plugin re-enable. Returns this rig for chaining. */
@@ -48,6 +50,7 @@ async function buildRig(): Promise<Rig> {
     windows: () => context.pages().filter((candidate) => !candidate.isClosed()),
     openSettings: (tabId = "claude-companion") => openSettingsSurface(context, page, tabId),
     providerRequests: () => control.providerRequests(),
+    providerServed: () => control.providerServed(),
     githubRequests: () => control.githubRequests(),
     async reset(options: ScenarioOptions = {}) {
       lastTheme = options.theme ?? "light";

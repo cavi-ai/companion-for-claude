@@ -138,10 +138,12 @@ async function main(): Promise<void> {
         if (request.method === "GET" && url.pathname === "/health") { sendJson(response, 200, { ok: true }); return; }
         if (request.method === "GET" && url.pathname === "/ports") { sendJson(response, 200, ports); return; }
         if (request.method === "GET" && url.pathname === "/providerRequests") { sendJson(response, 200, { count: provider.requests }); return; }
+        if (request.method === "GET" && url.pathname === "/providerServed") { sendJson(response, 200, { count: provider.served }); return; }
         if (request.method === "GET" && url.pathname === "/githubRequests") { sendJson(response, 200, { requests: github.requests }); return; }
         if (request.method === "POST" && url.pathname === "/stubs") {
           const body = await readJson(request) as ScenarioOptions;
           provider.requests = 0;
+          provider.served = 0;
           github.requests = [];
           github.created = 0;
           provider.replyRules = (body.providerReply ?? []) as ReplyRule[];

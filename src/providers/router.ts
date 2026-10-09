@@ -57,6 +57,7 @@ type BufferedCompletionInput = {
   responseFormat?: "json";
   responseSchema?: Record<string, unknown>;
   thinking?: CompletionRequest["thinking"];
+  signal?: AbortSignal;
 };
 
 /**
@@ -86,6 +87,36 @@ export interface ChatCapabilities {
   cli: boolean;
   /** Which CLI backend, when `cli` is true. */
   cliBackend?: CliBackendId;
+}
+
+/** A cancellable buffered completion: the provider's stream, settled at once when the signal aborts. */
+function streamUntilAbort(provider: Provider, req: CompletionRequest, signal: AbortSignal): Promise<string> {
+  return new Promise<string>((resolve, reject) => {
+    const aborted = (): Error => new DOMException("The request was aborted.", "AbortError");
+    if (signal.aborted) {
+      reject(aborted());
+      return;
+    }
+    let text = "";
+    const onAbort = (): void => reject(aborted());
+    const finish = (settle: () => void): void => {
+      signal.removeEventListener("abort", onAbort);
+      settle();
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+    provider
+      .stream(req, {
+        onText: (delta) => {
+          text += delta;
+        },
+        onDone: (full) => finish(() => resolve(typeof full === "string" ? full : text)),
+        onError: (error) => finish(() => reject(error)),
+      })
+      .then(
+        () => finish(() => resolve(text)),
+        (error: unknown) => finish(() => reject(error instanceof Error ? error : new Error(String(error)))),
+      );
+  });
 }
 
 /**
@@ -391,19 +422,22 @@ export class ProviderRouter {
     req: BufferedCompletionInput,
   ): Promise<{ text: string; provider: Provider }> {
     const { provider, model } = selection;
+    const request: CompletionRequest = {
+      system: req.system,
+      model,
+      maxTokens: req.maxTokens ?? 1024,
+      temperature: req.temperature ?? 0,
+      messages: [{ role: "user", content: req.user }],
+      ...(req.responseFormat ? { responseFormat: req.responseFormat } : {}),
+      ...(req.responseSchema ? { responseSchema: req.responseSchema } : {}),
+      ...(req.thinking ? { thinking: req.thinking } : {}),
+      ...(req.signal ? { signal: req.signal } : {}),
+    };
     try {
-      const text = await provider.complete({
-        system: req.system,
-        model,
-        maxTokens: req.maxTokens ?? 1024,
-        temperature: req.temperature ?? 0,
-        messages: [{ role: "user", content: req.user }],
-        ...(req.responseFormat ? { responseFormat: req.responseFormat } : {}),
-        ...(req.responseSchema ? { responseSchema: req.responseSchema } : {}),
-        ...(req.thinking ? { thinking: req.thinking } : {}),
-      });
+      const text = req.signal ? await streamUntilAbort(provider, request, req.signal) : await provider.complete(request);
       return { text, provider };
     } catch (error) {
+      if (req.signal?.aborted) throw error;
       const message = error instanceof Error ? error.message : String(error);
       throw new Error(providerFailureMessage(message, provider.id, selection.endpoint), { cause: error });
     }

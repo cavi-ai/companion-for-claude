@@ -76,6 +76,7 @@ export class ControlClient {
   health(): Promise<{ ok: boolean }> { return this.call("GET", "/health") as Promise<{ ok: boolean }>; }
   ports(): Promise<StubPorts> { return this.call("GET", "/ports") as Promise<StubPorts>; }
   providerRequests(): Promise<number> { return this.call("GET", "/providerRequests").then((r) => (r as { count: number }).count); }
+  providerServed(): Promise<number> { return this.call("GET", "/providerServed").then((r) => (r as { count: number }).count); }
   githubRequests(): Promise<GithubRequest[]> { return this.call("GET", "/githubRequests").then((r) => (r as { requests: GithubRequest[] }).requests); }
   setStubs(scenario: ScenarioOptions): Promise<void> { return this.call("POST", "/stubs", scenario).then(() => undefined); }
   shutdown(): Promise<void> { return this.call("POST", "/shutdown").then(() => undefined); }

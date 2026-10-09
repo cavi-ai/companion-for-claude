@@ -214,6 +214,35 @@ describe("ProviderRouter.completeResolved", () => {
     expect(complete).toHaveBeenCalledWith(expect.objectContaining({ model: "qwen3:1.7b" }));
   });
 
+  it("passes the caller's abort signal to the provider's stream", async () => {
+    const r = new ProviderRouter(settings({ utilityBackend: "claude" }));
+    const stream = vi.spyOn(r.anthropic, "stream").mockImplementation(async (_req, handlers) => handlers.onDone?.("ok"));
+    const controller = new AbortController();
+
+    await r.complete("chat", { system: "sys", user: "note", signal: controller.signal });
+
+    expect(stream.mock.calls[0]![0].signal).toBe(controller.signal);
+  });
+
+  it("an already-aborted signal rejects without a request", async () => {
+    const r = new ProviderRouter(settings({ utilityBackend: "claude" }));
+    const stream = vi.spyOn(r.anthropic, "stream");
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(r.complete("chat", { system: "sys", user: "note", signal: controller.signal })).rejects.toThrow(/abort/i);
+    expect(stream).not.toHaveBeenCalled();
+  });
+
+  it("sends no signal when the caller gives none", async () => {
+    const r = new ProviderRouter(settings({ utilityBackend: "claude" }));
+    const complete = vi.spyOn(r.anthropic, "complete").mockResolvedValue("ok");
+
+    await r.complete("chat", { system: "sys", user: "note" });
+
+    expect("signal" in complete.mock.calls[0]![0]).toBe(false);
+  });
+
   it("attributes provider failures to the pinned sanitized endpoint", async () => {
     const r = new ProviderRouter(settings({ utilityBackend: "custom" }));
     const selected = {
@@ -529,5 +558,39 @@ describe("ProviderRouter.selectionRunsLocally", () => {
     const b = new ProviderRouter(o);
     expect(a.selectionRunsLocally(await b.classifierSelection({ isMobile: false }))).toBe(false);
     expect(a.selectionRunsLocally({ provider: a.anthropic, model: "m", endpoint: "http://localhost:1" })).toBe(false);
+  });
+});
+
+describe("ProviderRouter.completeResolved with an abort signal", () => {
+  it("streams, and rejects at once on abort even when the provider ignores the signal", async () => {
+    const r = new ProviderRouter(settings({}));
+    const stream = vi.spyOn(r.anthropic, "stream").mockImplementation(() => new Promise<void>(() => undefined));
+    const complete = vi.spyOn(r.anthropic, "complete").mockImplementation(() => new Promise<string>(() => undefined));
+    const controller = new AbortController();
+    const run = r.complete("chat", { system: "sys", user: "note", signal: controller.signal });
+    await vi.waitFor(() => expect(stream).toHaveBeenCalled(), { timeout: 500 });
+    controller.abort();
+    await expect(run).rejects.toThrow(/abort/i);
+    expect(stream.mock.calls[0]![0].signal).toBe(controller.signal);
+    expect(complete).not.toHaveBeenCalled();
+  }, 3000);
+
+  it("accumulates the streamed text", async () => {
+    const r = new ProviderRouter(settings({}));
+    vi.spyOn(r.anthropic, "stream").mockImplementation(async (_req, handlers) => {
+      handlers.onText("Hel");
+      handlers.onText("lo");
+      handlers.onDone?.("Hello");
+    });
+    const result = await r.complete("chat", { system: "sys", user: "note", signal: new AbortController().signal });
+    expect(result.text).toBe("Hello");
+  });
+
+  it("rejects with the provider's stream error, attributed", async () => {
+    const r = new ProviderRouter(settings({}));
+    vi.spyOn(r.anthropic, "stream").mockImplementation(async (_req, handlers) => {
+      handlers.onError?.(new Error("overloaded"));
+    });
+    await expect(r.complete("chat", { system: "sys", user: "note", signal: new AbortController().signal })).rejects.toThrow(/overloaded/);
   });
 });

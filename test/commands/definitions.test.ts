@@ -3,7 +3,7 @@ import { MarkdownView, TFile } from "obsidian";
 import { companionCommands, type CommandActions } from "../../src/commands/definitions";
 
 const ACTION_NAMES = [
-  "openChat", "newChat", "newChatTab", "generatePlanFromNote", "generateArtifactFromContext", "rewriteSelection",
+  "openChat", "newChat", "newChatTab", "generatePlanFromNote", "generateArtifactFromContext", "editWithClaude",
   "enrichNote", "enableVaultSearch", "rebuildSemanticIndex", "openRelatedNotes", "openResearchDesk",
   "triageClippings", "startResearchFromActiveNote", "showSemanticIndexStatus",
   "browseConversations", "deleteActiveConversation", "handoffToBuild", "markNoteAsPlan", "organizeClippings",
@@ -216,7 +216,7 @@ describe("setting-gated commands", () => {
   });
 });
 
-describe("rewrite selection", () => {
+describe("edit with Claude at cursor", () => {
   const editor = (selection: string) => ({ getSelection: () => selection }) as unknown as Parameters<
     NonNullable<ReturnType<typeof companionCommands>[number]["editorCheckCallback"]>
   >[1];
@@ -224,9 +224,18 @@ describe("rewrite selection", () => {
   const run = (h: Harness, selection: string, view: unknown, checking: boolean): unknown =>
     byId(h.actions, "rewrite-selection").editorCheckCallback?.(checking, editor(selection), view as MarkdownView);
 
-  it("is unavailable with an empty or whitespace selection", () => {
-    expect(run(harness(), "", md(), true)).toBe(false);
-    expect(run(harness(), "   \n ", md(), true)).toBe(false);
+  it("keeps the rewrite-selection id under the new name, with no default hotkey", () => {
+    const command = byId(harness().actions, "rewrite-selection");
+    expect(command.name).toBe("Edit with Claude at cursor…");
+    expect(command.hotkeys).toBeUndefined();
+  });
+
+  it("is available with no selection so it can write at the cursor", () => {
+    const h = harness();
+    const view = md();
+    expect(run(h, "", view, true)).toBe(true);
+    run(h, "", view, false);
+    expect(h.calls.editWithClaude).toHaveBeenCalledTimes(1);
   });
 
   it("is unavailable outside a markdown view", () => {
@@ -242,7 +251,7 @@ describe("rewrite selection", () => {
     const view = md();
     expect(run(h, "text", view, true)).toBe(true);
     run(h, "text", view, false);
-    expect(h.calls.rewriteSelection).toHaveBeenCalledTimes(1);
-    expect(h.calls.rewriteSelection.mock.calls[0]?.[1]).toBe(view);
+    expect(h.calls.editWithClaude).toHaveBeenCalledTimes(1);
+    expect(h.calls.editWithClaude.mock.calls[0]?.[1]).toBe(view);
   });
 });

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { App, FakeElement, clearNotices, getLastOpenedModal, getNoticeMessages, WorkspaceLeaf } from "../fakes/obsidian";
+import { App, FakeElement, Platform, clearNotices, getLastOpenedModal, getNoticeMessages, WorkspaceLeaf } from "../fakes/obsidian";
 import { ChatView } from "../../src/view/ChatView";
 import { DEFAULT_SETTINGS, type PluginSettings } from "../../src/types";
 import type ClaudeCompanionPlugin from "../../src/main";
@@ -99,6 +99,20 @@ describe("ChatView on the claude-cli backend", () => {
     const content = getLastOpenedModal()?.contentEl as unknown as FakeElement;
     const buttons = content.querySelectorAll("button");
     expect(buttons.some((b) => b.getAttribute("aria-label") === "Act on vault" || (b.textContent ?? "").includes("Act on vault"))).toBe(true);
+  });
+
+  it("leaves Act on vault and Plan mode to the composer toolbar on mobile", () => {
+    Platform.isMobile = true;
+    try {
+      const view = new ChatView(new WorkspaceLeaf(new App()), pluginStub({ chatBackend: "claude" }, API, false));
+      (view as unknown as { openOverflowMenu(): void }).openOverflowMenu();
+      const labels = (getLastOpenedModal()?.contentEl as unknown as FakeElement).querySelectorAll("button").map((b) => b.getAttribute("aria-label"));
+      expect(labels).toContain("Settings");
+      expect(labels).not.toContain("Act on vault");
+      expect(labels).not.toContain("Plan mode");
+    } finally {
+      Platform.isMobile = false;
+    }
   });
 
   it("offers Research Desk in the mobile overflow and activates it", () => {

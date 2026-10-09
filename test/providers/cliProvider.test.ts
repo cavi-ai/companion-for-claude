@@ -166,3 +166,23 @@ describe.each([
     await expect(done).rejects.toThrow();
   });
 });
+
+describe("CliProvider abort", () => {
+  it("aborting one run kills only the child that run spawned", async () => {
+    const t = fakeSpawn();
+    const p = new CliProvider(codexBackend, runtime({ spawn: t.spawn }), () => "/vault");
+    const controller = new AbortController();
+    const first = p.complete({ ...req, signal: controller.signal });
+    first.catch(() => undefined);
+    const second = p.complete(req);
+    await flush();
+    expect(t.children).toHaveLength(2);
+    controller.abort();
+    expect(t.children[0]!.signals).toEqual(["SIGTERM"]);
+    expect(t.children[1]!.signals).toEqual([]);
+    await expect(first).rejects.toThrow();
+    reply(t.children[1]!, codexBackend, "ok");
+    t.children[1]!.emit("exit", 0);
+    await expect(second).resolves.toBe("ok");
+  });
+});
