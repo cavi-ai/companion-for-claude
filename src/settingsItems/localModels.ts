@@ -14,7 +14,7 @@ export interface DetectedModels {
 }
 
 export interface LocalModelsItemsContext {
-  plugin: ClaudeCompanionPlugin;
+  plugin: Pick<ClaudeCompanionPlugin, "refreshViews" | "router" | "saveSettings" | "settings">;
   detected: DetectedModels;
   /** Re-render the settings page. */
   update(): void;

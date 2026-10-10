@@ -1,19 +1,21 @@
 import { describe, expect, it } from "vitest";
 import { buildOrderPrompt, runOrder, type OrderRunDeps, type OrderTurnRequest } from "../../src/orders/runner";
 import type { StandingOrder } from "../../src/orders/order";
-import type { AnthropicToolDef, ToolUseBlock } from "../../src/providers/types";
+import type { McpToolDef } from "../../src/mcp/protocol";
+import type { ToolUseBlock } from "../../src/providers/types";
 
 const order: StandingOrder = { id: "o.md", name: "Follow ups", path: "o.md", prompt: "Review {note} on {date}.", enabled: true, onNote: { folder: "Meetings" } };
 const NOW = new Date(2026, 9, 2, 14, 5);
 const noteTrigger = { kind: "note" as const, path: "Meetings/a.md", content: "- [ ] ship" };
-const tool = (name: string): AnthropicToolDef => ({ name, description: name, input_schema: {} });
+const WRITES = new Set(["note_create", "note_update", "research_claim_create"]);
+const tool = (name: string): McpToolDef => ({ name, description: name, inputSchema: {}, annotations: { readOnlyHint: !WRITES.has(name) } });
 const block = (input: Record<string, unknown>): ToolUseBlock => ({ type: "tool_use", id: "t1", name: "propose_note_edit", input });
 
 function deps(over: Partial<OrderRunDeps> = {}): OrderRunDeps & { requests: OrderTurnRequest[] } {
   const requests: OrderTurnRequest[] = [];
   return {
     requests,
-    readTools: [tool("vault_search"), tool("note_read")],
+    vaultTools: [tool("vault_search"), tool("note_read")],
     toolsSupported: true,
     readNote: async () => "- [ ] ship\n",
     runTurn: async (request) => {
@@ -41,15 +43,16 @@ describe("buildOrderPrompt", () => {
 });
 
 describe("runOrder", () => {
-  it("offers read tools plus propose_note_edit and the order model", async () => {
+  it("offers read tools plus propose_note_edit and the order model, under propose-only access", async () => {
     const d = deps();
     await runOrder({ ...order, model: "m1" }, noteTrigger, NOW, d);
     expect(d.requests[0]?.tools.map((t) => t.name)).toEqual(["vault_search", "note_read", "propose_note_edit"]);
     expect(d.requests[0]?.model).toBe("m1");
+    expect(d.requests[0]?.run).toBe("propose");
   });
 
-  it("never offers a write tool even if readTools wrongly contains one", async () => {
-    const d = deps({ readTools: [tool("vault_search"), tool("note_create"), tool("note_update"), tool("research_claim_create")] });
+  it("never offers a write tool from the vault catalog", async () => {
+    const d = deps({ vaultTools: [tool("vault_search"), tool("note_create"), tool("note_update"), tool("research_claim_create")] });
     await runOrder(order, noteTrigger, NOW, d);
     const names = d.requests[0]?.tools.map((t) => t.name) ?? [];
     expect(names).toContain("propose_note_edit");
@@ -62,6 +65,7 @@ describe("runOrder", () => {
     const d = deps({ toolsSupported: false });
     const result = await runOrder(order, noteTrigger, NOW, d);
     expect(d.requests[0]?.tools).toEqual([]);
+    expect(d.requests[0]?.run).toBe("off");
     expect(result.error).toBeUndefined();
   });
 

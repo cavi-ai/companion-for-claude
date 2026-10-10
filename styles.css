@@ -2116,8 +2116,8 @@ pre.cc-has-copy:hover .cc-code-copy { opacity: 1; }
    then a toolbar with the context chip and the Ask / Plan / Act switch. The
    field starts at one line and grows to ~6 rows (autosizeInput caps it), then
    scrolls internally, so the composer never owns the screen. 16px input font
-   avoids iOS zoom-on-focus. No ancestor of the field clips (no overflow), so
-   iOS focus reveal sees the plain input row. No env(safe-area-inset-bottom) —
+   avoids iOS zoom-on-focus. Keyboard reveal scroll is undone in
+   chat/keyboardPin.ts. No env(safe-area-inset-bottom) —
    Obsidian's mobile .view-content already reserves the home-indicator inset. */
 .is-mobile .cc-composer {
   position: relative;

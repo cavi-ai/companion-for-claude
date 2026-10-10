@@ -7,7 +7,7 @@ export const MEMORY_VIEW_TYPE = "claude-memory-view";
 /** Sidebar list of captured session digest notes, with open / re-ingest. */
 export class MemoryView extends ItemView {
   private disposeChrome: ((remove?: boolean) => void) | null = null;
-  constructor(leaf: WorkspaceLeaf, private plugin: ClaudeCompanionPlugin) {
+  constructor(leaf: WorkspaceLeaf, private plugin: Pick<ClaudeCompanionPlugin, "companionChrome" | "openSessionPicker" | "reingestSession" | "settings">) {
     super(leaf);
   }
 

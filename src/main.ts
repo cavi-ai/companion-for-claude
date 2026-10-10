@@ -53,6 +53,7 @@ import { ClaudeCompanionSettingTab } from "./settings";
 import { companionCommands, type CommandActions } from "./commands/definitions";
 import { ProviderRouter, type ProviderSelection, type RuntimeUtilitySelection, type UtilityFallbackConsentContext } from "./providers/router";
 import { sanitizeEndpointForDisplay, UtilityUnavailableError, type UtilityFallbackApproval } from "./providers/endpointPolicy";
+import { sameConsentKey, UtilityFallbackConsent, type ConsentDialog } from "./providers/utilityConsent";
 import { ANTHROPIC_DEFAULT_BASE_URL } from "./providers/auth";
 import { DEFAULT_SETTINGS, type PluginSettings, type ArtifactOpenTarget } from "./types";
 import { DESIGN_SYSTEM_PROMPT, PLANNING_INSTRUCTION } from "./artifacts/designSystem";
@@ -77,7 +78,8 @@ import { MEMORY_NOTE_BASENAME, renderMemoryNote } from "./memory/consolidate";
 import { ExternalMcpManager } from "./mcp/externalManager";
 import { externalAnthropicTools } from "./mcp/external";
 import type { AnthropicToolDef, CompletionRequest, Provider, ProviderId } from "./providers/types";
-import { executeTool, readOnlyAnthropicTools } from "./agent/tools";
+import { executeTool } from "./agent/tools";
+import { toolAccess, type ToolRunKind } from "./agent/toolAccess";
 import { braveSearch, duckDuckGoSearch, formatSearchResults } from "./web/search";
 import { webFetch as webFetchPage } from "./web/fetch";
 import { parseTemplateNote, TEMPLATE_SCAFFOLD, type PromptTemplate } from "./templates/promptTemplates";
@@ -99,8 +101,9 @@ import { generateToken, bridgeHeaderValue, bridgeUrl, resolveMcpToken } from "./
 import type { BridgeSetupInput } from "./integrations/desktopRuntime";
 import { providerTurnRunner, type AgentTurnRunner } from "./agent/loop";
 import { CliSession } from "./cli/session";
+import { CliSessionPool, type PoolEntry } from "./cli/sessionPool";
 import { mcpConfigJson } from "./cli/argv";
-import { CLI_HIDDEN_TOOLS, cliAllowedTools, interactiveTools, perTurnTools, type InteractiveToolDeps } from "./cli/bridgeTools";
+import { bridgeTools, CLI_HIDDEN_TOOLS, cliAllowedTools, type InteractiveToolDeps } from "./cli/bridgeTools";
 import { createNodeCliRuntime, type CliRuntime } from "./cli/runtime";
 import { CliProvider } from "./providers/cliProvider";
 import { claudeBackend } from "./cli/backends/claude";
@@ -210,15 +213,6 @@ interface PersistedData {
   orderEditQueue?: unknown;
   published?: unknown;
   optimize?: unknown;
-}
-
-type UtilityFallbackConsentKey = Pick<UtilityFallbackConsentContext, "identity" | "destinationFingerprint">;
-
-function sameUtilityFallbackConsentContext(
-  left: UtilityFallbackConsentKey,
-  right: UtilityFallbackConsentKey | null | undefined,
-): boolean {
-  return !!right && left.identity === right.identity && left.destinationFingerprint === right.destinationFingerprint;
 }
 
 export default class ClaudeCompanionPlugin extends Plugin {
@@ -392,8 +386,10 @@ export default class ClaudeCompanionPlugin extends Plugin {
   private _opencodeProvider: CliProvider | null = null;
   private _discoveryCoordinator: DiscoveryCoordinator | null = null;
   private _viewDiscoveryCoordinators?: Set<DiscoveryCoordinator>;
-  private cliSessions = new Map<string, { session: CliSession; bridge: McpHttpServer; signature: string; promptFile: string; lastUsed: number }>();
-  private cliPromptFiles = new Set<string>();
+  private _cliPool?: CliSessionPool<CliSession>;
+  private get cliPool(): CliSessionPool<CliSession> {
+    return (this._cliPool ??= new CliSessionPool<CliSession>(3));
+  }
   private _cliRuntime: CliRuntime | null | undefined;
   private _desktopIntegrationModals?: Set<DesktopIntegrationsModal>;
   private _desktopRuntimeLoader: () => Promise<{
@@ -556,12 +552,11 @@ export default class ClaudeCompanionPlugin extends Plugin {
   private clipperVerificationTimers = new Map<string, number>();
   private utilityLifecycleEnded = false;
   private utilityLifecycleGeneration = 0;
-  /** Mobile loopback → Claude consent, scoped to one exact source/destination context. */
-  private mobileUtilityFallbackApproval: UtilityFallbackConsentKey & { decision: UtilityFallbackApproval } | undefined;
-  /** Coalesces concurrent automatic enrichments onto one consent decision. */
-  private mobileUtilityFallbackConsentInFlight: UtilityFallbackConsentKey & { promise: Promise<UtilityFallbackApproval> } | null = null;
-  /** Active fallback disclosure, closed fail-safe when the plugin unloads. */
-  private mobileUtilityFallbackModal: ChoiceModal<UtilityFallbackApproval> | null = null;
+  /** Mobile loopback → Claude consent for this plugin session. */
+  private _utilityConsent?: UtilityFallbackConsent;
+  private get utilityConsent(): UtilityFallbackConsent {
+    return (this._utilityConsent ??= new UtilityFallbackConsent((context) => this.askMobileUtilityFallback(context)));
+  }
   /** Source-inbox ribbon icon + its pending-count badge (debounced). */
   private inboxRibbonEl: HTMLElement | null = null;
   private inboxBadgeTimer: number | null = null;
@@ -603,9 +598,7 @@ export default class ClaudeCompanionPlugin extends Plugin {
     this.utilityLifecycleGeneration = (this.utilityLifecycleGeneration ?? 0) + 1;
     this.utilityLifecycleEnded = false;
     this._enrichment?.resetLifecycle();
-    this.mobileUtilityFallbackApproval = undefined;
-    this.mobileUtilityFallbackConsentInFlight = null;
-    this.mobileUtilityFallbackModal = null;
+    this.utilityConsent.start();
     await this.loadSettings();
 
     this.registerViews();
@@ -942,7 +935,7 @@ export default class ClaudeCompanionPlugin extends Plugin {
     if (selection.state === "unavailable-loopback") {
       const promptedContext = this.router().utilityFallbackConsentContext(Platform.isMobile);
       if (!promptedContext) throw new UtilityUnavailableError(this.utilityUnavailableMessage(selection), selection);
-      const approval = await this.mobileUtilityFallbackConsent(promptedContext);
+      const approval = await this.utilityConsent.decide(promptedContext);
       if (this.utilityLifecycleEnded) throw new Error("Companion unloaded before utility approval completed; no content was sent.");
 
       // Settings may rebuild the router while the modal is open. Reacquire it,
@@ -951,10 +944,8 @@ export default class ClaudeCompanionPlugin extends Plugin {
       const currentRouter = this.router();
       const current = currentRouter.resolveUtilityForRuntime({ isMobile: Platform.isMobile });
       const currentContext = currentRouter.utilityFallbackConsentContext(Platform.isMobile);
-      if (!sameUtilityFallbackConsentContext(promptedContext, currentContext)) {
-        if (sameUtilityFallbackConsentContext(promptedContext, this.mobileUtilityFallbackApproval)) {
-          this.mobileUtilityFallbackApproval = undefined;
-        }
+      if (!sameConsentKey(promptedContext, currentContext)) {
+        this.utilityConsent.forget(promptedContext);
         if (current.state === "unavailable-loopback" || current.state === "unavailable-without-Claude") {
           if (current.state === "unavailable-loopback" && currentContext) {
             throw new Error(
@@ -980,60 +971,10 @@ export default class ClaudeCompanionPlugin extends Plugin {
     throw new UtilityUnavailableError(this.utilityUnavailableMessage(selection), selection);
   }
 
-  private mobileUtilityFallbackConsent(context: UtilityFallbackConsentContext): Promise<UtilityFallbackApproval> {
-    if (this.utilityLifecycleEnded) return Promise.resolve("deny");
-    const lifecycleGeneration = this.utilityLifecycleGeneration ?? 0;
-    if (this.mobileUtilityFallbackApproval && !sameUtilityFallbackConsentContext(context, this.mobileUtilityFallbackApproval)) {
-      this.mobileUtilityFallbackApproval = undefined;
-    }
-    if (this.mobileUtilityFallbackApproval) return Promise.resolve(this.mobileUtilityFallbackApproval.decision);
-    const inFlight = this.mobileUtilityFallbackConsentInFlight;
-    if (inFlight && sameUtilityFallbackConsentContext(context, inFlight)) {
-      return inFlight.promise;
-    }
-    if (this.mobileUtilityFallbackConsentInFlight) {
-      // A different destination appeared while the old disclosure was open.
-      // Close the stale modal fail-safe before showing the current one.
-      this.mobileUtilityFallbackModal?.close();
-      this.mobileUtilityFallbackModal = null;
-    }
-    const pending = this.askMobileUtilityFallback(context).then((choice) => {
-      if (!this.isUtilityLifecycleActive(lifecycleGeneration)) return "deny";
-      const decision = choice;
-      const cached = this.mobileUtilityFallbackApproval;
-      // Denial is monotonic for concurrent callers in this exact context: no
-      // late/racing Allow can replace it.
-      if (!sameUtilityFallbackConsentContext(context, cached) || cached?.decision !== "deny") {
-        this.mobileUtilityFallbackApproval = {
-          identity: context.identity,
-          destinationFingerprint: context.destinationFingerprint,
-          decision,
-        };
-        return decision;
-      }
-      return cached.decision;
-    });
-    const shared = pending.finally(() => {
-      if (this.mobileUtilityFallbackConsentInFlight?.promise === shared) this.mobileUtilityFallbackConsentInFlight = null;
-    });
-    this.mobileUtilityFallbackConsentInFlight = {
-      identity: context.identity,
-      destinationFingerprint: context.destinationFingerprint,
-      promise: shared,
-    };
-    return shared;
-  }
-
   private runtimeUtilitySelection(): RuntimeUtilitySelection {
     const router = this.router();
-    const context = router.utilityFallbackConsentContext(Platform.isMobile);
-    if (this.mobileUtilityFallbackApproval && !sameUtilityFallbackConsentContext(this.mobileUtilityFallbackApproval, context)) {
-      this.mobileUtilityFallbackApproval = undefined;
-    }
-    return router.resolveUtilityForRuntime({
-      isMobile: Platform.isMobile,
-      ...(this.mobileUtilityFallbackApproval ? { fallbackApproval: this.mobileUtilityFallbackApproval.decision } : {}),
-    });
+    const decision = this.utilityConsent.current(router.utilityFallbackConsentContext(Platform.isMobile));
+    return router.resolveUtilityForRuntime({ isMobile: Platform.isMobile, ...(decision ? { fallbackApproval: decision } : {}) });
   }
 
   /** Runtime-selected utility backend shown alongside Inbox batch controls. */
@@ -1069,14 +1010,13 @@ export default class ClaudeCompanionPlugin extends Plugin {
     return this.providerErrorHint(message, provider);
   }
 
-  private askMobileUtilityFallback(context: UtilityFallbackConsentContext): Promise<UtilityFallbackApproval> {
-    return new Promise((resolve) => {
+  private askMobileUtilityFallback(context: UtilityFallbackConsentContext): ConsentDialog {
+    let modal!: ChoiceModal<UtilityFallbackApproval>;
+    const decision = new Promise<UtilityFallbackApproval>((resolve) => {
       let settled = false;
-      let modal: ChoiceModal<UtilityFallbackApproval>;
       const finish = (choice: UtilityFallbackApproval): void => {
         if (settled) return;
         settled = true;
-        if (this.mobileUtilityFallbackModal === modal) this.mobileUtilityFallbackModal = null;
         resolve(choice);
       };
       modal = new ChoiceModal<UtilityFallbackApproval>(this.app, {
@@ -1093,9 +1033,9 @@ export default class ClaudeCompanionPlugin extends Plugin {
         fallback: "deny",
         onChoice: finish,
       });
-      this.mobileUtilityFallbackModal = modal;
       modal.open();
     });
+    return { decision, close: () => modal.close() };
   }
 
   private mobileFallbackDestinationLabel(endpoint: string): string {
@@ -1582,10 +1522,7 @@ export default class ClaudeCompanionPlugin extends Plugin {
     this.utilityLifecycleEnded = true;
     this.utilityLifecycleGeneration = (this.utilityLifecycleGeneration ?? 0) + 1;
     this._enrichment?.destroy();
-    this.mobileUtilityFallbackApproval = undefined;
-    this.mobileUtilityFallbackModal?.close();
-    this.mobileUtilityFallbackModal = null;
-    this.mobileUtilityFallbackConsentInFlight = null;
+    this.utilityConsent.end();
     for (const timer of this.clipperVerificationTimers?.values() ?? []) window.clearTimeout(timer);
     this.clipperVerificationTimers?.clear();
     this._discoveryCoordinator?.cancel();
@@ -2890,12 +2827,10 @@ export default class ClaudeCompanionPlugin extends Plugin {
     return this._cliRuntime;
   }
 
-  private async createChatBridge(binding: { deps: InteractiveToolDeps; readOnly: boolean; tools: boolean; proposeOnly: boolean; backend: CliBackend }): Promise<{ server: McpHttpServer; port: number; token: string }> {
+  private async createChatBridge(binding: { deps: InteractiveToolDeps; run: ToolRunKind; backend: CliBackend }): Promise<{ server: McpHttpServer; port: number; token: string }> {
     const { McpHttpServer } = await import("./mcp/server");
     const token = generateToken();
-    const registry = binding.backend.supportsPermissionPrompt
-      ? interactiveTools(this.agentTools(), () => binding.deps, () => binding.readOnly, () => binding.tools, () => binding.proposeOnly)
-      : perTurnTools(this.agentTools(), () => binding.deps, () => binding.readOnly, () => binding.tools, () => binding.proposeOnly);
+    const registry = bridgeTools(this.agentTools(), { run: binding.run, deps: binding.deps, permissionPrompt: binding.backend.supportsPermissionPrompt, unavailable: (name) => this.agentTools().unavailable(name) });
     const server = new McpHttpServer(
       {
         port: 0,
@@ -2927,7 +2862,7 @@ export default class ClaudeCompanionPlugin extends Plugin {
     return claudeBackend;
   }
 
-  async cliTurnRunner(opts: { conversationId: string; planMode: boolean; agentMode: boolean; model: string; deps: InteractiveToolDeps; transcript: string; resumeSessionId?: string; proposeOnly?: boolean }): Promise<AgentTurnRunner> {
+  async cliTurnRunner(opts: { conversationId: string; run: ToolRunKind; model: string; deps: InteractiveToolDeps; transcript: string; resumeSessionId?: string }): Promise<AgentTurnRunner> {
     const backend = this.cliBackendFor(this.settings.chatBackend);
     const cli = this.router().get(backend.id) as CliProvider;
     const executable = cli.executable();
@@ -2935,27 +2870,28 @@ export default class ClaudeCompanionPlugin extends Plugin {
     const runtime = this.cliRuntime();
     const cwd = this.vaultBasePath();
     if (!runtime || !cwd) throw new Error(`${backend.label} runs on desktop only.`);
-    const allowedTools = opts.agentMode ? cliAllowedTools(this.agentTools().definitions(), opts.planMode) : [];
-    const proposeOnly = opts.proposeOnly === true;
-    const signature = JSON.stringify({ proposeOnly, backend: backend.id, model: opts.model, planMode: opts.planMode, agentMode: opts.agentMode, allowedTools, writes: this.settings.agentAllowWrites });
-    const existing = this.cliSessions.get(opts.conversationId);
-    if (!opts.resumeSessionId && existing && existing.signature === signature && !existing.session.isClosed()) {
-      existing.lastUsed = Date.now();
-      return existing.session;
-    }
-    if (existing) await this.closeCliSession(opts.conversationId);
-    while (this.cliSessions.size >= 3) {
-      const oldest = [...this.cliSessions.entries()].filter(([, e]) => !e.session.isBusy()).sort((a, b) => a[1].lastUsed - b[1].lastUsed)[0];
-      if (!oldest) break;
-      await this.closeCliSession(oldest[0]);
-    }
+    const vaultDefs = this.agentTools().definitions();
+    const allowedTools = cliAllowedTools(vaultDefs, toolAccess(opts.run, vaultDefs));
+    const signature = JSON.stringify({ run: opts.run, backend: backend.id, model: opts.model, allowedTools, writes: this.settings.agentAllowWrites });
+    const open = () => this.openCliSession(opts, { backend, executable, runtime, cwd, allowedTools });
+    return this.cliPool.acquire(opts.conversationId, signature, open, { fresh: !!opts.resumeSessionId });
+  }
+
+  /** A new CLI session with its own chat bridge and prompt file; on failure everything it opened is released. */
+  private async openCliSession(
+    opts: Parameters<ClaudeCompanionPlugin["cliTurnRunner"]>[0],
+    { backend, executable, runtime, cwd, allowedTools }: { backend: CliBackend; executable: string; runtime: CliRuntime; cwd: string; allowedTools: string[] },
+  ): Promise<PoolEntry<CliSession>> {
     const project = await this.chatProjectFor(opts.conversationId);
-    const systemPrompt = this.composeSystemPrompt({ agent: true, plan: opts.planMode, project });
+    const systemPrompt = this.composeSystemPrompt({ agent: true, plan: opts.run === "plan", project });
     const promptFile = backend.processModel === "persistent" ? await runtime.writeSystemPromptFile(systemPrompt) : "";
-    if (promptFile) this.cliPromptFiles.add(promptFile);
     let bridge: McpHttpServer | null = null;
+    const release = async (): Promise<void> => {
+      await bridge?.stop();
+      if (promptFile) await runtime.removeFile(promptFile);
+    };
     try {
-      const started = await this.createChatBridge({ deps: opts.deps, readOnly: opts.planMode, tools: opts.agentMode, proposeOnly, backend });
+      const started = await this.createChatBridge({ deps: opts.deps, run: opts.run, backend });
       bridge = started.server;
       const mcpConfig = mcpConfigJson(started.port, started.token);
       let session: CliSession;
@@ -2984,38 +2920,20 @@ export default class ClaudeCompanionPlugin extends Plugin {
           ...(opts.resumeSessionId ? { initialSessionId: opts.resumeSessionId } : {}),
         });
       }
-      this.cliSessions.set(opts.conversationId, { session, bridge, signature, promptFile, lastUsed: Date.now() });
       if (sessionIdToPersist) await this.setConversationCliSession(opts.conversationId, sessionIdToPersist);
-      return session;
+      return { session, release };
     } catch (error) {
-      this.cliSessions.delete(opts.conversationId);
-      await bridge?.stop();
-      if (promptFile) {
-        await runtime.removeFile(promptFile);
-        this.cliPromptFiles.delete(promptFile);
-      }
+      await release();
       throw error;
     }
   }
 
   interruptCliTurn(conversationId: string): void {
-    this.cliSessions.get(conversationId)?.session.interrupt();
-  }
-
-  private async closeCliSession(conversationId: string): Promise<void> {
-    const entry = this.cliSessions.get(conversationId);
-    if (!entry) return;
-    this.cliSessions.delete(conversationId);
-    await entry.session.close();
-    await entry.bridge.stop();
-    if (entry.promptFile) {
-      await this.cliRuntime()?.removeFile(entry.promptFile);
-      this.cliPromptFiles.delete(entry.promptFile);
-    }
+    this._cliPool?.interrupt(conversationId);
   }
 
   async closeCliSessions(): Promise<void> {
-    for (const id of [...(this.cliSessions?.keys() ?? [])]) await this.closeCliSession(id);
+    await this._cliPool?.closeAll();
   }
 
   async setConversationCliSession(conversationId: string, sessionId: string): Promise<void> {
@@ -3159,14 +3077,14 @@ export default class ClaudeCompanionPlugin extends Plugin {
     return { orders, invalid };
   }
 
-  /** Read tools plus propose_note_edit only; confirmWrite stays absent so any write call fails closed. */
+  /** Runs under the turn's propose-only access: reads plus propose_note_edit; writes are refused. */
   private async runStandingOrder(order: StandingOrder, trigger: OrderTrigger, now: Date): Promise<OrderRunResult> {
     const router = this.router();
     const caps = router.chatCapabilities();
     const toolsSupported = await router.chatToolCapable();
     const { provider, model: providerModel } = router.chatProvider();
     return runOrder(order, trigger, now, {
-      readTools: readOnlyAnthropicTools(this.agentTools().definitions()),
+      vaultTools: this.agentTools().definitions(),
       toolsSupported,
       readNote: (path) => this.readVaultNote(path),
       runTurn: async (turn, proposeEdit) => {
@@ -3182,16 +3100,16 @@ export default class ClaudeCompanionPlugin extends Plugin {
         if (!caps.cli) {
           return providerTurnRunner({
             stream: (req, h) => provider.stream(req, h),
-            execute: (block, signal) => executeTool({ ...(signal ? { signal } : {}), call: (name, args) => this.agentTools().call(name, args), proposeEdit }, block),
+            execute: (block, signal) => executeTool({ access: toolAccess(turn.run, this.agentTools().definitions()), unavailable: (name) => this.agentTools().unavailable(name), ...(signal ? { signal } : {}), call: (name, args) => this.agentTools().call(name, args), proposeEdit }, block),
             maxIterations: this.settings.agentMaxIterations,
           }).run(request, handlers);
         }
         const conversationId = `order:${order.id}`;
         try {
-          const runner = await this.cliTurnRunner({ conversationId, planMode: false, agentMode: toolsSupported, model, deps: { confirmWrite: async () => false, proposeEdit }, transcript: "", proposeOnly: true });
+          const runner = await this.cliTurnRunner({ conversationId, run: turn.run, model, deps: { confirmWrite: async () => false, proposeEdit }, transcript: "" });
           return await runner.run(request, handlers);
         } finally {
-          await this.closeCliSession(conversationId);
+          await this.cliPool.close(conversationId);
         }
       },
     });

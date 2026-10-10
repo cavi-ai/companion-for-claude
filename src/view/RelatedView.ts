@@ -18,7 +18,10 @@ export class RelatedView extends ItemView {
   private shownPath: string | null = null;
   private renderSeq = 0;
 
-  constructor(leaf: WorkspaceLeaf, private plugin: ClaudeCompanionPlugin) {
+  constructor(
+    leaf: WorkspaceLeaf,
+    private plugin: Pick<ClaudeCompanionPlugin, "activity" | "companionChrome" | "embeddingRecovery" | "linkCandidates" | "linkedTargets" | "ontology" | "relatedNotes" | "reviewLinkSuggestions" | "runActivityRecovery" | "settings">,
+  ) {
     super(leaf);
   }
 

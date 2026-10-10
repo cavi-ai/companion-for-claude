@@ -24,8 +24,6 @@ function plugin(rt: ReturnType<typeof runtime>): ClaudeCompanionPlugin {
     app,
     settings: { ...structuredClone(DEFAULT_SETTINGS), chatBackend: "claude-cli", apiKey: "" },
     convState: { conversations: [{ id: "c1", title: "t", createdAt: 1, updatedAt: 1, messages: [] }, { id: "c2", title: "t", createdAt: 1, updatedAt: 1, messages: [] }], activeId: "c1" },
-    cliSessions: new Map(),
-    cliPromptFiles: new Set(),
     utilityLifecycleEnded: false,
     utilityLifecycleGeneration: 0,
     mcpLifecycleGeneration: 0,
@@ -52,13 +50,13 @@ describe("plugin Claude CLI lifecycle", () => {
     const p = plugin(rt);
     await p.router().claudeCli.refresh();
     const deps = { confirmWrite: async () => true, proposeEdit: async () => "" };
-    const a = await p.cliTurnRunner({ conversationId: "c1", planMode: false, agentMode: true, model: "claude-sonnet-5", deps, transcript: "" });
-    const b = await p.cliTurnRunner({ conversationId: "c1", planMode: false, agentMode: true, model: "claude-sonnet-5", deps, transcript: "" });
+    const a = await p.cliTurnRunner({ conversationId: "c1", run: "chat" as const, model: "claude-sonnet-5", deps, transcript: "" });
+    const b = await p.cliTurnRunner({ conversationId: "c1", run: "chat" as const, model: "claude-sonnet-5", deps, transcript: "" });
     expect(a).toBe(b);
     expect(start).toHaveBeenCalledOnce();
-    const c = await p.cliTurnRunner({ conversationId: "c2", planMode: false, agentMode: true, model: "claude-sonnet-5", deps, transcript: "" });
+    const c = await p.cliTurnRunner({ conversationId: "c2", run: "chat" as const, model: "claude-sonnet-5", deps, transcript: "" });
     expect(c).not.toBe(a);
-    const off = await p.cliTurnRunner({ conversationId: "c1", planMode: false, agentMode: false, model: "claude-sonnet-5", deps, transcript: "" });
+    const off = await p.cliTurnRunner({ conversationId: "c1", run: "off" as const, model: "claude-sonnet-5", deps, transcript: "" });
     expect(off).not.toBe(a);
     expect(start).toHaveBeenCalledTimes(3);
     expect(run).not.toHaveBeenCalled();
@@ -84,13 +82,14 @@ describe("plugin Claude CLI lifecycle", () => {
     });
     await p.router().claudeCli.refresh();
     const deps = { confirmWrite: async () => true, proposeEdit: async () => "" };
-    await p.cliTurnRunner({ conversationId: "c1", planMode: false, agentMode: true, model: "claude-sonnet-5", deps, transcript: "" });
+    await p.cliTurnRunner({ conversationId: "c1", run: "chat" as const, model: "claude-sonnet-5", deps, transcript: "" });
     expect(seenPrompts[0]).toContain("Chat project: Widgets");
     expect(seenPrompts[0]).toContain("Ship widgets on time.");
   });
 
   it("keeps write confirmation bound to the conversation whose CLI called it", async () => {
-    vi.spyOn(McpHttpServer.prototype, "start").mockResolvedValue(undefined);
+    const bridges: McpHttpServer[] = [];
+    vi.spyOn(McpHttpServer.prototype, "start").mockImplementation(async function (this: McpHttpServer) { bridges.push(this); });
     vi.spyOn(McpHttpServer.prototype, "address").mockReturnValue({ port: 4321 });
     vi.spyOn(McpHttpServer.prototype, "stop").mockResolvedValue(undefined);
     const p = plugin(runtime());
@@ -101,16 +100,14 @@ describe("plugin Claude CLI lifecycle", () => {
       proposeEdit: async () => id,
     });
 
-    await p.cliTurnRunner({ conversationId: "c1", planMode: false, agentMode: true, model: "claude-sonnet-5", deps: deps("c1", false), transcript: "" });
-    await p.cliTurnRunner({ conversationId: "c2", planMode: false, agentMode: true, model: "claude-sonnet-5", deps: deps("c2", true), transcript: "" });
+    await p.cliTurnRunner({ conversationId: "c1", run: "chat" as const, model: "claude-sonnet-5", deps: deps("c1", false), transcript: "" });
+    await p.cliTurnRunner({ conversationId: "c2", run: "chat" as const, model: "claude-sonnet-5", deps: deps("c2", true), transcript: "" });
 
     type Registry = { call(name: string, args: Record<string, unknown>): Promise<string> };
-    type Entry = { bridge: McpHttpServer };
-    const sessions = (p as unknown as { cliSessions: Map<string, Entry> }).cliSessions;
-    const c1 = sessions.get("c1")!;
-    const c2 = sessions.get("c2")!;
-    expect(c1.bridge).not.toBe(c2.bridge);
-    const registry = (c1.bridge as unknown as { tools: Registry }).tools;
+    expect(bridges).toHaveLength(2);
+    const [c1, c2] = bridges;
+    expect(c1).not.toBe(c2);
+    const registry = (c1 as unknown as { tools: Registry }).tools;
     const result = JSON.parse(await registry.call("permission_prompt", {
       tool_name: "mcp__obsidian-vault__note_create",
       input: { title: "Scoped" },
@@ -131,7 +128,7 @@ describe("plugin Claude CLI lifecycle", () => {
     const p = plugin(rt);
     await p.router().claudeCli.refresh();
     const deps = { confirmWrite: async () => true, proposeEdit: async () => "" };
-    const opts = { conversationId: "c1", planMode: false, agentMode: true, model: "claude-sonnet-5", deps, transcript: "" };
+    const opts = { conversationId: "c1", run: "chat" as const, model: "claude-sonnet-5", deps, transcript: "" };
     const a = await p.cliTurnRunner(opts);
     type ConvOut = { convState: { conversations: { id: string; cliSessionId?: string; cliSessionHistory?: string[] }[] } };
     const firstConvo = () => (p as unknown as ConvOut).convState.conversations.find((c) => c.id === "c1")!;
@@ -150,7 +147,7 @@ describe("plugin Claude CLI lifecycle", () => {
     rt.probe = async () => ({ loggedIn: false, method: "" });
     const p = plugin(rt);
     await p.router().claudeCli.refresh();
-    await expect(p.cliTurnRunner({ conversationId: "c1", planMode: false, agentMode: true, model: "m", deps: { confirmWrite: async () => true, proposeEdit: async () => "" }, transcript: "" })).rejects.toThrow(/not signed in/);
+    await expect(p.cliTurnRunner({ conversationId: "c1", run: "chat" as const, model: "m", deps: { confirmWrite: async () => true, proposeEdit: async () => "" }, transcript: "" })).rejects.toThrow(/not signed in/);
   });
 
   it("keeps the sign-in probe across a settings save (router rebuild reuses the same ClaudeCliProvider)", async () => {

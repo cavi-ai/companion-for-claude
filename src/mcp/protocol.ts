@@ -44,6 +44,8 @@ export interface McpToolDef {
   name: string;
   description: string;
   inputSchema: Record<string, unknown>;
+  /** MCP tool annotations; `readOnlyHint: true` marks a tool that never changes the vault. */
+  annotations?: { readOnlyHint?: boolean };
 }
 
 /** A tool handler receives validated args and returns text content. */

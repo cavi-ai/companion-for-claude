@@ -1,10 +1,11 @@
 import { ItemView, MarkdownRenderer, MarkdownView, Notice, Platform, WorkspaceLeaf, setIcon, type ViewStateResult } from "obsidian";
-import type ClaudeCompanionPlugin from "../main";
+import type { ChatViewHost } from "./chat/hosts";
 import type { ChatMessage, ContextToggles } from "../types";
 import { effectiveToggles } from "./chat/contextScope";
 import { providerTurnRunner, type AgentTurnDeps, type AgentTurnHandlers, type AgentTurnResult, type AgentTurnRunner } from "../agent/loop";
 import { continuationFor, shouldAutoContinue } from "./chat/continuation";
-import { toAnthropicTools, executeTool, readOnlyAnthropicTools, PROPOSE_EDIT_TOOL, truncateResult } from "../agent/tools";
+import { toAnthropicTools, executeTool, PROPOSE_EDIT_TOOL, truncateResult } from "../agent/tools";
+import { toolAccess } from "../agent/toolAccess";
 import { parseExternalToolName } from "../mcp/external";
 import { WriteConfirmModal } from "./WriteConfirmModal";
 import { planEdits, parseProposedEdits } from "../edit/diff";
@@ -14,10 +15,11 @@ import { TFile } from "obsidian";
 import { compactArtifactsInHistory, compactMessages, toApiMessages, transcriptText, type Conversation } from "../conversations/store";
 import { resolveModelId } from "../claude/models";
 import { type ChatControls, defaultChatControls, shapeRequest } from "../claude/chatControls";
-import { shouldFallbackToLocal, fallbackReason } from "../providers/fallback";
+import { routeTurn, streamAttempt } from "../providers/chatTurn";
 import type { CompletionRequest } from "../providers/types";
 import { SlashMenu } from "./SlashMenu";
-import type { ChatMode } from "./ModeControl";
+import type { ChatModeState } from "./chat/chatMode";
+import { ChatSession, type TurnState } from "./chat/chatSession";
 import { buildSlashCatalog, type SlashCommand, runNativeSlashCommand, WORKFLOW_ACTION_PREFIX, SKILL_ACTION_PREFIX } from "./slashCommands";
 import { substitutePlaceholders } from "../templates/promptTemplates";
 import { type AttachedPage } from "../context/urlContext";
@@ -29,7 +31,6 @@ import { gatherContext, type AttachedPath } from "../context/vaultContext";
 import { type MediaAttachment } from "../context/attachments";
 import { type AtItem, type ClaimAtSource } from "../context/atMention";
 import { isProjectChange, projectSearchScope, type ChatProject } from "../projects/model";
-import { type ErrorHintProvider } from "../providers/errorHints";
 import { credentialSetupInputs, needsCredentialSetup } from "../providers/setupState";
 import { claudeBackend } from "../cli/backends/claude";
 import { codexBackend } from "../cli/backends/codex";
@@ -44,7 +45,8 @@ import { ComposerContextManager } from "./ComposerContextManager";
 import { type AutomaticContextKey } from "./contextManagerModel";
 import { HeaderControls } from "./chat/HeaderControls";
 import { Composer } from "./chat/Composer";
-import { Transcript, type TurnState } from "./chat/Transcript";
+import { pinChatAboveKeyboard } from "./chat/keyboardPin";
+import { Transcript } from "./chat/Transcript";
 import { SetupCard } from "./chat/SetupCard";
 
 export const CHAT_VIEW_TYPE = "claude-companion-chat";
@@ -54,11 +56,6 @@ function appendAssistantMessage(base: ChatMessage[], result: AgentTurnResult): C
   const full = result.text.trim();
   if (!full) return base;
   return [...base, { role: "assistant", content: result.text, ...(result.trace.length > 0 ? { toolTrace: result.trace } : {}) }];
-}
-
-/** Tag which provider a fallback-ineligible error actually failed on, for renderError's hint. */
-function tagProvider(error: Error | undefined, provider: ErrorHintProvider): void {
-  if (error) (error as Error & { ccProvider?: ErrorHintProvider }).ccProvider = provider;
 }
 
 interface ObsidianAppWithSettings {
@@ -74,7 +71,11 @@ export class ChatView extends ItemView {
   private get modelLabelEl(): HTMLElement { return this.header.modelLabelEl; }
   private set modelLabelEl(v: HTMLElement) { this.header.modelLabelEl = v; }
   private composer: Composer;
-  private messages: ChatMessage[] = [];
+  /** The conversation state the composer, header, and transcript share. */
+  readonly chat: ChatSession;
+  get mode(): ChatModeState { return this.chat.mode; }
+  private get messages(): ChatMessage[] { return this.chat.messages; }
+  private set messages(v: ChatMessage[]) { this.chat.messages = v; }
   private transcript: Transcript;
   private setupCard: SetupCard;
   private get messagesEl(): HTMLElement { return this.transcript.messagesEl; }
@@ -87,9 +88,9 @@ export class ChatView extends ItemView {
   private set usageEl(v: HTMLElement) { this.header.usageEl = v; }
   private get gaugeFillEl(): HTMLElement { return this.header.gaugeFillEl; }
   private set gaugeFillEl(v: HTMLElement) { this.header.gaugeFillEl = v; }
-  private streaming = false;
-  /** Turn/session state shared with Transcript. */
-  private readonly turn: TurnState = { lastBuffer: "", turnUsage: null, abort: null, currentTurn: null, session: { ...EMPTY_SESSION }, turnRenderUnsubscribe: null, unregisterCurrentTurn: null };
+  private get streaming(): boolean { return this.chat.streaming; }
+  private set streaming(v: boolean) { this.chat.streaming = v; }
+  private get turn(): TurnState { return this.chat.turn; }
   private get abort(): AbortController | null { return this.turn.abort; }
   private set abort(v: AbortController | null) { this.turn.abort = v; }
   private get currentTurn(): { conversationId: string; turnId: string } | null { return this.turn.currentTurn; }
@@ -107,7 +108,8 @@ export class ChatView extends ItemView {
   private get _turnUsage(): TokenUsage | null { return this.turn.turnUsage; }
   private set _turnUsage(v: TokenUsage | null) { this.turn.turnUsage = v; }
   /** Per-session chat controls (model, thinking, effort, temp, max). */
-  private controls!: ChatControls;
+  private get controls(): ChatControls { return this.chat.controls; }
+  private set controls(v: ChatControls) { this.chat.controls = v; }
   private get controlsEl(): HTMLElement { return this.composer.controlsEl; }
   private set controlsEl(v: HTMLElement) { this.composer.controlsEl = v; }
   private get contextManager(): ComposerContextManager { return this.composer.contextManager; }
@@ -125,13 +127,15 @@ export class ChatView extends ItemView {
   /** Per-turn max-output override (artifact/plan/workflow flows need headroom). */
   private maxTokensOverride: number | null = null;
   private contextStatusInterval: number | null = null;
+  private unpinKeyboard: (() => void) | null = null;
   /** Last visible context-manager state; skip DOM rebuilds when nothing changed. */
   private get lastContextManagerSignature(): string { return this.composer.lastContextManagerSignature; }
   private set lastContextManagerSignature(v: string) { this.composer.lastContextManagerSignature = v; }
   private lastMarkdownView: MarkdownView | null = null;
   private lastMarkdownFilePath: string | null = null;
   /** The last user message text, for the Regenerate action. */
-  private lastUserText = "";
+  private get lastUserText(): string { return this.chat.lastUserText; }
+  private set lastUserText(v: string) { this.chat.lastUserText = v; }
   /** The last user-bubble display text, when it differs from lastUserText (skill turns). */
   private lastDisplay: string | undefined = undefined;
   private get slashMenu(): SlashMenu { return this.composer.slashMenu; }
@@ -146,7 +150,8 @@ export class ChatView extends ItemView {
   /** Chat projects offered by the "@" picker, refreshed alongside claims. */
   private cachedProjects: ChatProject[] = [];
   /** The chat project this.conversationId is scoped to (null = none), kept in sync with the conversation. */
-  private currentChatProject: ChatProject | null = null;
+  private get currentChatProject(): ChatProject | null { return this.chat.project; }
+  private set currentChatProject(v: ChatProject | null) { this.chat.project = v; }
   /** A project chosen before the first send (no conversation yet); applied once `run()` creates one. */
   private pendingProjectId: string | null = null;
   /** Which trigger ("@" or "#") the open at-menu is currently showing matches for. */
@@ -161,12 +166,8 @@ export class ChatView extends ItemView {
   /** Latest streamed text of the in-flight turn (for clean abort handling). */
   private get _lastBuffer(): string { return this.turn.lastBuffer; }
   private set _lastBuffer(v: string) { this.turn.lastBuffer = v; }
-  /** "Allow for this session" on agent write confirmations (cleared with the view). */
-  private agentWriteAlways = false;
-  /** Plan Mode: read-only agent turn that ends in a plan (per conversation). */
-  private planMode = false;
-  /** Whether the current chat backend can run tool-driven agent turns (refreshed per turn + backend change). */
-  private agentCapable = false;
+  private get agentWriteAlways(): boolean { return this.chat.writeGrant; }
+  private set agentWriteAlways(v: boolean) { this.chat.writeGrant = v; }
   /** Guards the setup card's background sign-in probe against stacking on re-render, per CLI backend id. */
 
   private renderVersions = new WeakMap<HTMLElement, number>();
@@ -175,9 +176,15 @@ export class ChatView extends ItemView {
 
   constructor(
     leaf: WorkspaceLeaf,
-    private plugin: ClaudeCompanionPlugin,
+    private plugin: ChatViewHost,
   ) {
     super(leaf);
+    this.chat = new ChatSession({
+      writes: () => plugin.settings.agentAllowWrites,
+      setWrites: (on) => { plugin.settings.agentAllowWrites = on; },
+      save: () => plugin.saveSettings(),
+      notify: (message) => quickNotice(message),
+    });
     this.setupCard = new SetupCard({
       plugin,
       cliEntries: (router) => this.cliEntries(router),
@@ -187,8 +194,8 @@ export class ChatView extends ItemView {
       refreshModelLabel: () => this.refreshModelLabel(),
       openSettings: () => this.openSettings(),
     });
-    this.transcript = new Transcript(this.app, plugin, this.turn, {
-      autosizeInput: () => this.composer.autosizeInput(),
+    this.transcript = new Transcript(this.app, plugin, this.chat, {
+      setDraft: (text) => this.composer.setDraft(text),
       onSend: (...args) => this.onSend(...args),
       prepareWorkspaceQuestion: (...args) => this.prepareWorkspaceQuestion(...args),
       regenerate: (...args) => this.regenerate(...args),
@@ -203,15 +210,9 @@ export class ChatView extends ItemView {
       setupRequired: (...args) => this.setupRequired(...args),
       submitPrompt: async (text, display) => { await this.submitPrompt(text, display); },
       updateUsageBar: (...args) => this.updateUsageBar(...args),
-      controls: () => this.controls,
-      inputEl: () => this.composer.inputEl,
-      lastUserText: () => this.lastUserText,
-      messages: () => this.messages,
-      streaming: () => this.streaming,
     });
-    this.header = new HeaderControls(this.app, plugin, {
+    this.header = new HeaderControls(this.app, plugin, this.chat, {
       anyContextEnabled: () => this.composer.anyContextEnabled(),
-      applyMode: (...args) => this.applyMode(...args),
       clearChat: (...args) => this.clearChat(...args),
       cliEntries: (...args) => this.cliEntries(...args),
       loadConversation: (...args) => this.loadConversation(...args),
@@ -220,32 +221,18 @@ export class ChatView extends ItemView {
       renderKnobs: () => this.composer.renderKnobs(),
       renderKnobsInto: (parent) => this.composer.renderKnobsInto(parent),
       distillChat: () => this.distillThisChat(),
-      updateModeControl: (...args) => this.updateModeControl(...args),
-      agentCapable: () => this.agentCapable,
-      setAgentCapable: (v) => { this.agentCapable = v; },
-      agentWriteAlways: () => this.agentWriteAlways,
-      controls: () => this.controls,
-      inputEl: () => this.composer.inputEl,
-      messages: () => this.messages,
-      planMode: () => this.planMode,
-      reasoningEl: () => this.composer.reasoningEl,
-      session: () => this.session,
-      currentProject: () => this.currentChatProject,
+      draft: () => this.composer.draft(),
+      showReasoning: (active, label) => this.composer.showReasoning(active, label),
     });
-    this.composer = new Composer(this.app, plugin, {
+    this.composer = new Composer(this.app, plugin, this.chat, {
       applyChatFontSize: (...args) => this.applyChatFontSize(...args),
-      applyMode: (...args) => this.applyMode(...args),
-      currentMode: (...args) => this.currentMode(...args),
       onModelSelect: (...args) => this.header.onModelSelect(...args),
       refreshCapabilityIndicators: (...args) => this.header.refreshCapabilityIndicators(...args),
       registerDomEvent: (el, type, callback) => this.registerDomEvent(el, type, callback),
       resolveMarkdownContextView: (...args) => this.resolveMarkdownContextView(...args),
-      updateModeControl: (...args) => this.updateModeControl(...args),
       updateUsageBar: (...args) => this.updateUsageBar(...args),
       cachedClaims: () => this.cachedClaims,
       cachedProjects: () => this.cachedProjects.map((p) => ({ id: p.id, name: p.name })),
-      controls: () => this.controls,
-      streaming: () => this.streaming,
       mountUsage: (parent) => this.header.mountUsage(parent),
       onSlashCommand: (cmd) => void this.runSlashCommand(cmd),
       pickAtItems: () => (this.activeMenuTrigger === "#" ? this.hashItems() : this.atItems()),
@@ -330,6 +317,8 @@ export class ChatView extends ItemView {
       root,
       buildSlashCatalog(WORKFLOWS, SKILLS, []),
     );
+    this.unpinKeyboard?.();
+    this.unpinKeyboard = Platform.isMobile ? pinChatAboveKeyboard(root, window) : null;
     this.renderContextManager();
 
     // User templates: load now, refresh when a note in the folder changes.
@@ -478,6 +467,8 @@ export class ChatView extends ItemView {
       window.clearInterval(this.contextStatusInterval);
       this.contextStatusInterval = null;
     }
+    this.unpinKeyboard?.();
+    this.unpinKeyboard = null;
     this.composer.destroy();
   }
 
@@ -624,23 +615,17 @@ export class ChatView extends ItemView {
 
   prepareWorkspaceQuestion(workspace: Pick<CompanionWorkspaceCard, "kind" | "title" | "contextPath">): void {
     this.attachNote(workspace.contextPath);
-    this.inputEl.value = workspace.kind === "research"
+    this.composer.setDraft(workspace.kind === "research"
       ? `Help me continue ${workspace.title.replace(/^Continue /, "")}. `
-      : `Help me continue working with ${workspace.title.replace(/^Continue with /, "")}. `;
-    this.composer.autosizeInput();
+      : `Help me continue working with ${workspace.title.replace(/^Continue with /, "")}. `);
     this.updateUsageBar();
-    this.inputEl.focus();
   }
 
   enableVaultSearchForChat(): void { this.toggleAutomaticContext("searchVault", true); }
 
   clearChat(): void {
     this.detachTurnRendering();
-    this.messages = [];
-    this.session = { ...EMPTY_SESSION };
-    // Plan Mode is per-conversation — a fresh chat starts with it off.
-    this.planMode = false;
-    this.updateModeControl();
+    this.chat.clear();
     // The previous conversation is already auto-saved; detach so the next turn
     // begins a fresh one instead of continuing it.
     this.conversationId = null;
@@ -750,9 +735,7 @@ export class ChatView extends ItemView {
     if (cmd.kind === "prompt" && cmd.prompt) {
       if (cmd.awaitsInput) {
         // Insert the template and let the user finish typing (e.g. "/explain ").
-        this.inputEl.value = cmd.prompt;
-        this.inputEl.focus();
-        this.composer.autosizeInput();
+        this.composer.setDraft(cmd.prompt);
         this.updateUsageBar();
         return;
       }
@@ -763,9 +746,7 @@ export class ChatView extends ItemView {
 
     // A skill takes arguments: insert its token and let the user finish typing; Enter sends through onSend.
     if (cmd.action?.startsWith(SKILL_ACTION_PREFIX)) {
-      this.inputEl.value = `/${cmd.action.slice(SKILL_ACTION_PREFIX.length)} `;
-      this.inputEl.focus();
-      this.composer.autosizeInput();
+      this.composer.setDraft(`/${cmd.action.slice(SKILL_ACTION_PREFIX.length)} `);
       this.updateUsageBar();
       return;
     }
@@ -890,7 +871,7 @@ export class ChatView extends ItemView {
       turn = await this.plugin.beginActiveConversationTurn(this.conversationId, this.messages, {
         backend,
         model: this.turnModelOverride ?? model,
-        mode: this.currentMode(),
+        mode: this.mode.mode,
         ...(this.continuationDepth > 0 ? { continuationDepth: this.continuationDepth } : {}),
       });
     } catch (error) {
@@ -926,9 +907,8 @@ export class ChatView extends ItemView {
     // metadata reports "tools") — local-only setups get the same agent.
     const toolCapable = await router.chatToolCapable();
     if (controller.signal.aborted) return true;
-    this.agentCapable = this.plugin.settings.agentModeEnabled && toolCapable;
-    this.updateModeControl();
-    const agentActive = this.agentCapable;
+    this.mode.setCapable(this.plugin.settings.agentModeEnabled && toolCapable);
+    const agentActive = this.mode.capable;
     if (this.plugin.settings.agentModeEnabled && !toolCapable && caps.local) {
       new Notice(provider.id === "device" ? "On-device GPU models support text chat. Agent tools are off for this backend." : "The selected local model doesn't support tools, so the agent is off. Pick a tool-capable model (e.g. llama3.1, qwen3) in settings → Local models.", 8000);
     }
@@ -988,38 +968,20 @@ export class ChatView extends ItemView {
     const wantThinking = agentActive || caps.cli
       ? !!(this.controls.thinking && this.controls.showThinking)
       : !startedOnLocal && !!(this.controls.thinking && this.controls.showThinking);
-    // The primary-backend/local-fallback decision runs inside
-    // ChatTurnService.start() so it keeps going — and still persists — even if
-    // this view closes mid-turn. Mirrors the fallback policy run() used to
-    // apply itself: an agent turn that already produced text/trace despite an
-    // error is a completed answer with a notice, never a fallback trigger.
-    const fallbackProviderId: ErrorHintProvider = provider.id;
-    const coreRun = async (handlers: AgentTurnHandlers, signal: AbortSignal): Promise<AgentTurnResult> => {
-      const primary = agentActive || caps.cli
-        ? await this.agentTurn(apiMessages, handlers, signal, turn.conversationId)
-        : startedOnLocal
-          ? await this.streamTurn("local", apiMessages, handlers, signal)
-          : await this.streamTurn("claude", apiMessages, handlers, signal);
-      if (!primary.error) return primary;
-
-      const isAgent = agentActive || caps.cli;
-      if (isAgent && (primary.text.trim().length > 0 || primary.trace.length > 0)) {
-        handlers.onNotice?.(`Turn ended early: ${primary.error.message}`);
-        return { text: primary.text, trace: primary.trace, ...(primary.aborted !== undefined ? { aborted: primary.aborted } : {}), ...(primary.capped !== undefined ? { capped: primary.capped } : {}) };
-      }
-
-      if (backend === "device") { tagProvider(primary.error, "device"); return primary; }
-      const fb = await router.localFallback();
-      const doFallback = shouldFallbackToLocal({ backend, localAvailable: fb !== null, error: primary.error });
-      if (!doFallback || !fb) {
-        tagProvider(primary.error, fallbackProviderId);
-        return primary;
-      }
-      handlers.onNotice?.(`${fallbackReason(primary.error)} — answered locally with ${fb.model}.`);
-      const fallback = await this.streamTurn("local", apiMessages, handlers, signal, fb);
-      if (fallback.error) tagProvider(fallback.error, fb.provider.id);
-      return fallback;
-    };
+    // Routing runs inside ChatTurnService.start() so it keeps going — and still
+    // persists — even if this view closes mid-turn.
+    const agentRoute = agentActive || caps.cli;
+    const coreRun = (handlers: AgentTurnHandlers, signal: AbortSignal): Promise<AgentTurnResult> => routeTurn(
+      { backend, agent: agentRoute, providerId: provider.id },
+      {
+        primary: () => agentRoute
+          ? this.agentTurn(apiMessages, handlers, signal, turn.conversationId)
+          : this.streamTurn(startedOnLocal ? "local" : "claude", apiMessages, handlers, signal),
+        localFallback: () => router.localFallback(),
+        local: (fallback) => this.streamTurn("local", apiMessages, handlers, signal, fallback),
+      },
+      handlers,
+    );
 
     // Cache one instance for this turn's whole lifecycle — start() and the
     // subscribe() below must land on the same ChatTurnService (plugin.turnService()
@@ -1057,9 +1019,9 @@ export class ChatView extends ItemView {
   }
 
   /**
-   * Run one streaming attempt on a backend, emitting through `handlers` instead
-   * of touching the DOM directly — the view (attached or not) renders from the
-   * ChatTurnService event stream. Always resolves; never rejects.
+   * Build one streaming attempt on a backend; it emits through `handlers`, never
+   * the DOM, so the view (attached or not) renders from the ChatTurnService
+   * event stream.
    */
   private streamTurn(
     target: "claude" | "local",
@@ -1080,58 +1042,18 @@ export class ChatView extends ItemView {
       : local!.model;
     const shape = shapeRequest({ ...this.controls, model: onClaude ? model : this.controls.model }, this.maxTokensOverride ?? this.plugin.settings.maxTokens);
 
-    return new Promise((resolve) => {
-      let settled = false;
-      let buffer = "";
-      const finish = (result: AgentTurnResult): void => {
-        if (settled) return;
-        settled = true;
-        signal.removeEventListener("abort", onAbort);
-        resolve(result);
-      };
-      const onAbort = (): void => finish({ text: buffer, trace: [], aborted: true });
-      signal.addEventListener("abort", onAbort, { once: true });
-      if (signal.aborted) { onAbort(); return; }
-      const fail = (error: unknown): void => {
-        if (settled) return;
-        const status = (error as { status?: number } | null)?.status;
-        const err = error instanceof Error ? error : new Error(String(error));
-        if (status !== undefined) (err as Error & { status?: number }).status = status;
-        finish({ text: buffer, trace: [], error: err });
-      };
-      const request: CompletionRequest = {
-        system: this.plugin.composeSystemPrompt({ project: this.currentChatProject, compact: provider.id === "device" }),
-        messages: apiMessages,
-        model,
-        maxTokens: shape.maxTokens,
-        signal,
-      };
-      if (onClaude && shape.temperature !== undefined) request.temperature = shape.temperature;
-      if (onClaude && shape.thinking !== undefined) request.thinking = shape.thinking;
-      if (onClaude && shape.thinkingDisplay !== undefined) request.thinkingDisplay = shape.thinkingDisplay;
-      if (onClaude && shape.outputConfig !== undefined) request.outputConfig = shape.outputConfig;
-      void provider.stream(
-        request,
-        {
-          onThinking: (delta) => handlers.onThinking?.(delta),
-          onText: (delta) => {
-            if (settled) return;
-            buffer += delta;
-            handlers.onText(delta);
-          },
-          onError: (err) => fail(err),
-          onUsage: (usage) => handlers.onUsage?.(usage),
-          onTruncated: () => handlers.onTruncated?.(),
-          onDone: (full) => {
-            finish({ text: full, trace: [] });
-          },
-        },
-      ).then(() => {
-        // stream() resolved without onError/onDone (e.g. aborted) — keep the
-        // partial buffer, no error.
-        finish({ text: buffer, trace: [], aborted: true });
-      }).catch((error: unknown) => fail(error));
-    });
+    const request: CompletionRequest = {
+      system: this.plugin.composeSystemPrompt({ project: this.currentChatProject, compact: provider.id === "device" }),
+      messages: apiMessages,
+      model,
+      maxTokens: shape.maxTokens,
+      signal,
+    };
+    if (onClaude && shape.temperature !== undefined) request.temperature = shape.temperature;
+    if (onClaude && shape.thinking !== undefined) request.thinking = shape.thinking;
+    if (onClaude && shape.thinkingDisplay !== undefined) request.thinkingDisplay = shape.thinkingDisplay;
+    if (onClaude && shape.outputConfig !== undefined) request.outputConfig = shape.outputConfig;
+    return streamAttempt(provider, request, handlers, signal);
   }
 
   /**
@@ -1148,22 +1070,19 @@ export class ChatView extends ItemView {
   ): Promise<AgentTurnResult> {
     const { provider, model: providerModel } = this.plugin.router().chatProvider();
     const shape = shapeRequest(this.controls, this.maxTokensOverride ?? this.plugin.settings.maxTokens);
-    const externalTools = this.planMode ? [] : await this.plugin.externalMcpTools().catch(() => []);
+    const run = this.mode.run;
+    const externalTools = run === "chat" ? await this.plugin.externalMcpTools().catch(() => []) : [];
     if (signal.aborted) return { text: "", trace: [], aborted: true };
+    const vaultDefs = this.plugin.agentTools().definitions();
+    const access = toolAccess(run, vaultDefs);
 
     const request: CompletionRequest = {
-      system: this.plugin.composeSystemPrompt({ agent: true, plan: this.planMode, project: this.currentChatProject }),
+      system: this.plugin.composeSystemPrompt({ agent: true, plan: run === "plan", project: this.currentChatProject }),
       messages: apiMessages,
       model: this.turnModelOverride ?? providerModel,
       maxTokens: shape.maxTokens,
       signal,
-      // Plan Mode forces the read-only set regardless of agentAllowWrites, and
-      // drops propose_note_edit — the turn should end in a plan, not an edit.
-      // Otherwise propose_note_edit rides along regardless of agentAllowWrites —
-      // the diff modal is its own gate (spec 2026-07-05 apply-to-note, §7 Q1).
-      tools: this.planMode
-        ? readOnlyAnthropicTools(this.plugin.agentTools().definitions())
-        : [...toAnthropicTools(this.plugin.agentTools().definitions()), PROPOSE_EDIT_TOOL, ...externalTools],
+      tools: access.offered([...toAnthropicTools(vaultDefs), PROPOSE_EDIT_TOOL, ...externalTools]),
     };
     if (shape.temperature !== undefined) request.temperature = shape.temperature;
     if (shape.thinking !== undefined) request.thinking = shape.thinking;
@@ -1173,10 +1092,12 @@ export class ChatView extends ItemView {
     const deps: AgentTurnDeps = {
       stream: (req, h) => provider.stream(req, h),
       execute: (block, sig) =>
-        parseExternalToolName(block.name)
+        parseExternalToolName(block.name) && access.decide(block.name) === "run"
           ? this.executeExternalMcp(block, sig)
           : executeTool(
               {
+                access,
+                unavailable: (name) => this.plugin.agentTools().unavailable(name),
                 ...(sig ? { signal: sig } : {}),
                 call: (name, args) => this.plugin.agentTools().call(name, args),
                 confirmWrite: (b) => this.confirmAgentWrite(b),
@@ -1202,13 +1123,11 @@ export class ChatView extends ItemView {
   private async turnRunnerFor(deps: AgentTurnDeps, request: CompletionRequest, signal?: AbortSignal, turnConversationId?: string): Promise<AgentTurnRunner> {
     const caps = this.plugin.router().chatCapabilities();
     if (!caps.cli) return providerTurnRunner(deps);
-    if (!this.agentCapable) request.tools = [];
     const conversationId = turnConversationId ?? this.currentTurn?.conversationId ?? this.plugin.activeConversationId();
     signal?.addEventListener("abort", () => this.plugin.interruptCliTurn(conversationId), { once: true });
     return this.plugin.cliTurnRunner({
       conversationId,
-      planMode: this.planMode,
-      agentMode: this.agentCapable,
+      run: this.mode.run,
       model: request.model,
       deps: { confirmWrite: async (b) => (await this.confirmAgentWrite(b)) && !signal?.aborted, proposeEdit: (b) => this.proposeAgentEdit(b, conversationId, signal) },
       transcript: this.resumeCliSessionId ? "" : transcriptText(this.messages.slice(0, -1)),
@@ -1319,49 +1238,6 @@ export class ChatView extends ItemView {
   /** Push the chatFontSize setting onto the view as --cc-chat-font (drives .cc-body). */
   private applyChatFontSize(): void {
     this.containerEl.style.setProperty("--cc-chat-font", `${this.plugin.settings.chatFontSize}px`);
-  }
-
-  /** Displayed mode: Plan wins over Act, otherwise Act iff writes are allowed. */
-  private currentMode(): ChatMode {
-    return this.planMode ? "plan" : this.plugin.settings.agentAllowWrites ? "act" : "ask";
-  }
-
-  /** Reflect the mode control: hidden when the session can't act, state from currentMode(). */
-  private updateModeControl(): void {
-    this.composer.modeControl?.setVisible(this.agentCapable);
-    this.composer.modeControl?.set(this.currentMode());
-  }
-
-  /** Apply an Ask / Plan / Act switch: writes setting + Plan Mode, the matching notice, then persist if writes changed. */
-  private async applyMode(mode: ChatMode): Promise<void> {
-    // Plan leaves the writes setting untouched — only Ask/Act set it.
-    const previousWrites = this.plugin.settings.agentAllowWrites;
-    const previousPlanMode = this.planMode;
-    let writesChanged = false;
-    if (mode !== "plan") {
-      const writesOn = mode === "act";
-      writesChanged = this.plugin.settings.agentAllowWrites !== writesOn;
-      this.plugin.settings.agentAllowWrites = writesOn;
-    }
-    this.planMode = mode === "plan";
-    this.updateModeControl();
-    quickNotice(
-      mode === "act"
-        ? "Act on vault: on — I'll create and edit notes (each change asks first)."
-        : mode === "plan"
-          ? "Plan Mode: on — I'll explore read-only and propose a plan, no writes."
-          : "Act on vault: off — chat only, I won't change your vault.",
-    );
-    if (writesChanged) {
-      try {
-        await this.plugin.saveSettings();
-      } catch (e) {
-        this.plugin.settings.agentAllowWrites = previousWrites;
-        this.planMode = previousPlanMode;
-        this.updateModeControl();
-        quickNotice(`Couldn't save the mode: ${e instanceof Error ? e.message : String(e)}`);
-      }
-    }
   }
 
   private async stopCurrentTurn(): Promise<void> {

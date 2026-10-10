@@ -1,7 +1,5 @@
 import { setIcon } from "obsidian";
-
-export type ChatMode = "ask" | "plan" | "act";
-export interface ModeControlOptions { initial: ChatMode; onChange(mode: ChatMode): void | Promise<void>; }
+import type { ChatMode, ChatModeState } from "./chat/chatMode";
 
 const SEGMENTS: Array<{ mode: ChatMode; icon: string; label: string; title: string }> = [
   { mode: "ask", icon: "message-circle", label: "Ask", title: "Ask — chat only, no vault changes" },
@@ -9,13 +7,13 @@ const SEGMENTS: Array<{ mode: ChatMode; icon: string; label: string; title: stri
   { mode: "act", icon: "pencil", label: "Act", title: "Act — creates and edits notes, each change asks first" },
 ];
 
+/** The Ask / Plan / Act switch for one chat: shows its mode, changes it, and hides while the backend can't run tools. */
 export class ModeControl {
   readonly el: HTMLElement;
   private buttons = new Map<ChatMode, HTMLButtonElement>();
-  private mode: ChatMode;
+  private readonly unsubscribe: () => void;
 
-  constructor(parent: HTMLElement, private opts: ModeControlOptions) {
-    this.mode = opts.initial;
+  constructor(parent: HTMLElement, private readonly state: ChatModeState) {
     this.el = parent.createDiv({ cls: "cc-mode-control", attr: { role: "radiogroup", "aria-label": "Chat mode" } });
     for (const seg of SEGMENTS) {
       const b = this.el.createEl("button", { cls: "cc-mode-segment", attr: { role: "radio", "aria-label": seg.title, title: seg.title } });
@@ -27,15 +25,22 @@ export class ModeControl {
     }
     this.el.addEventListener("keydown", (e: KeyboardEvent) => {
       const order = SEGMENTS.map((s) => s.mode);
-      const i = order.indexOf(this.mode);
+      const i = order.indexOf(this.state.mode);
       if (e.key === "ArrowRight" || e.key === "ArrowDown") { e.preventDefault(); this.choose(order[(i + 1) % order.length]!); }
       if (e.key === "ArrowLeft" || e.key === "ArrowUp") { e.preventDefault(); this.choose(order[(i + order.length - 1) % order.length]!); }
     });
-    this.set(this.mode);
+    this.unsubscribe = state.onChange(() => this.render());
+    this.render();
   }
 
-  set(mode: ChatMode): void {
-    this.mode = mode;
+  /** Stop following the chat's mode; call before replacing this switch. */
+  dispose(): void {
+    this.unsubscribe();
+  }
+
+  private render(): void {
+    const mode = this.state.mode;
+    this.el.toggleClass("is-hidden", !this.state.capable);
     for (const [m, b] of this.buttons) {
       b.setAttr("aria-checked", String(m === mode));
       b.toggleClass("is-active", m === mode);
@@ -43,12 +48,9 @@ export class ModeControl {
     }
   }
 
-  setVisible(visible: boolean): void { this.el.toggleClass("is-hidden", !visible); }
-
   private choose(mode: ChatMode): void {
-    if (mode === this.mode) return;
-    this.set(mode);
+    if (mode === this.state.mode) return;
     this.buttons.get(mode)?.focus();
-    void this.opts.onChange(mode);
+    void this.state.change(mode);
   }
 }

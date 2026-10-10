@@ -1,5 +1,5 @@
 import { type App, MarkdownView, Notice, setIcon } from "obsidian";
-import type ClaudeCompanionPlugin from "../../main";
+import type { TranscriptHost } from "./hosts";
 import type { ChatMessage, ToolTraceEntry } from "../../types";
 import type { AgentTurnResult } from "../../agent/loop";
 import type { ChatTurnService, TurnEvent } from "../../chat/turnService";
@@ -13,32 +13,23 @@ import { extractArtifact, saveArtifactNote, saveChatNote, savePlanNote } from ".
 import { extractTasks } from "../../build/spec";
 import { errorHint, type ErrorHintProvider } from "../../providers/errorHints";
 import { chipLabel } from "../toolChipLabel";
-import { addUsage, type SessionUsage } from "../../usage/tokens";
-import { mergeUsage, type TokenUsage } from "../../claude/sse";
+import { addUsage } from "../../usage/tokens";
+import { mergeUsage } from "../../claude/sse";
 import type { CompanionWorkspaceCard } from "../companionWorkspace";
 import { quickNotice } from "../../notice";
 import { removeInterruptedTurnRow, renderInterruptedTurnRow, renderRecoverableEditRow } from "./recoveryRows";
 import { renderResearchQuickActions } from "./researchQuickActions";
 import { ThinkingStatus } from "./thinkingStatus";
+import type { ChatSession, TurnState } from "./chatSession";
 
 /** Truncate a tool result for the expandable chip body. */
 function previewText(text: string): string {
   return text.length > 400 ? `${text.slice(0, 400)}…` : text;
 }
 
-/** The mutable slice of turn/session state shared between ChatView and Transcript. */
-export interface TurnState {
-  lastBuffer: string;
-  turnUsage: TokenUsage | null;
-  abort: AbortController | null;
-  currentTurn: { conversationId: string; turnId: string } | null;
-  session: SessionUsage;
-  turnRenderUnsubscribe: (() => void) | null;
-  unregisterCurrentTurn: (() => void) | null;
-}
-
 export interface TranscriptDeps {
-  autosizeInput(): void;
+  /** Put text in the composer, focused and sized, without sending it. */
+  setDraft(text: string): void;
   onSend(): Promise<void>;
   prepareWorkspaceQuestion(workspace: Pick<CompanionWorkspaceCard, "kind" | "title" | "contextPath">): void;
   regenerate(opts?: { maxTokens?: number }): Promise<void>;
@@ -53,11 +44,6 @@ export interface TranscriptDeps {
   setupRequired(): boolean;
   submitPrompt(text: string, display?: string): Promise<void>;
   updateUsageBar(): void;
-  controls(): ChatControls;
-  inputEl(): HTMLTextAreaElement;
-  lastUserText(): string;
-  messages(): ChatMessage[];
-  streaming(): boolean;
 }
 
 /** The message list: stored/live bubbles, turn rendering, tool chips, reply actions, empty-state and setup-card hosting. */
@@ -65,13 +51,13 @@ export class Transcript {
   messagesEl!: HTMLElement;
   /** Rotating "thinking" status word timer + per-turn start offset. */
   private readonly thinking = new ThinkingStatus();
-  constructor(private app: App, private plugin: ClaudeCompanionPlugin, private turn: TurnState, private deps: TranscriptDeps) {}
+  constructor(private app: App, private plugin: TranscriptHost, private chat: ChatSession, private deps: TranscriptDeps) {}
 
-  private get controls(): ChatControls { return this.deps.controls(); }
-  private get inputEl(): HTMLTextAreaElement { return this.deps.inputEl(); }
-  private get lastUserText(): string { return this.deps.lastUserText(); }
-  private get messages(): ChatMessage[] { return this.deps.messages(); }
-  private get streaming(): boolean { return this.deps.streaming(); }
+  private get turn(): TurnState { return this.chat.turn; }
+  private get controls(): ChatControls { return this.chat.controls; }
+  private get lastUserText(): string { return this.chat.lastUserText; }
+  private get messages(): ChatMessage[] { return this.chat.messages; }
+  private get streaming(): boolean { return this.chat.streaming; }
 
   /** Render one persisted message, including assistant action buttons. */
   renderStoredMessage(m: ChatMessage): void {
@@ -132,9 +118,7 @@ export class Transcript {
           new Notice("Open a note first, then try this one.");
           return;
         }
-        this.inputEl.value = ex.prompt;
-        this.inputEl.focus();
-        this.deps.autosizeInput();
+        this.deps.setDraft(ex.prompt);
         this.deps.updateUsageBar();
         // A trailing-space prompt (the vault-search one) waits for the user to type.
         if (!ex.prompt.endsWith(" ")) void this.deps.onSend();
@@ -160,9 +144,7 @@ export class Transcript {
       // The project's actual next steps as one-click chat turns.
       if (workspace.quickActions?.length) {
         renderResearchQuickActions(mount, workspace.quickActions, (prompt) => {
-          this.inputEl.value = prompt;
-          this.inputEl.focus();
-          this.deps.autosizeInput();
+          this.deps.setDraft(prompt);
           this.deps.updateUsageBar();
           void this.deps.onSend();
         });
@@ -494,11 +476,7 @@ export class Transcript {
   private addUserActions(bubble: HTMLElement, prompt: string): void {
     const bar = bubble.createDiv({ cls: "cc-actions" });
     this.actionBtn(bar, "Copy prompt", "copy", () => void navigator.clipboard.writeText(prompt));
-    this.actionBtn(bar, "Use again", "text-cursor-input", () => {
-      this.inputEl.value = prompt;
-      this.inputEl.focus();
-      this.deps.autosizeInput();
-    });
+    this.actionBtn(bar, "Use again", "text-cursor-input", () => this.deps.setDraft(prompt));
   }
 
   /** Add a hover "copy" button to each <pre><code> block in a rendered reply. */
@@ -541,8 +519,8 @@ export class Transcript {
       new Notice("Turn on agent mode (and use Claude or Claude Code) to implement in-app, or use Build to hand off to Claude Code.");
       return;
     }
-    if (!this.plugin.settings.agentAllowWrites) {
-      new Notice("Turn on “Act on vault” to let me make the changes, then hit Implement again.");
+    if (this.chat.mode.mode !== "act") {
+      new Notice("Switch to Act to let me make the changes, then hit Implement again.");
       return;
     }
     const tasks = extractTasks(full);

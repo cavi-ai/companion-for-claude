@@ -13,6 +13,13 @@ g.activeDocument ??= (globalThis as { document?: unknown }).document ?? {};
 // defines `navigator.clipboard` throws "called on non-object" there. Provision
 // a bare object when it is missing so clipboard-shape tests run on every Node.
 g.navigator ??= {};
+// Obsidian's window is an EventTarget; the node global is not.
+if (typeof g.addEventListener !== "function") {
+  const events = new EventTarget();
+  g.addEventListener = events.addEventListener.bind(events);
+  g.removeEventListener = events.removeEventListener.bind(events);
+  g.dispatchEvent = events.dispatchEvent.bind(events);
+}
 if (typeof (globalThis as { require?: unknown }).require !== "function") {
   g.require = createRequire(import.meta.url);
 }

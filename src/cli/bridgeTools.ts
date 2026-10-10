@@ -1,21 +1,15 @@
-// The chat-scoped bridge's interactive tools: the CLI's permission prompt and the diff-reviewed edit. Pure; modals are injected.
+// The chat-scoped bridge's registry: the run's tool access over the vault tools, the CLI's permission prompt, and the diff-reviewed edit. Pure; modals are injected.
 
-import { isWriteTool, PROPOSE_EDIT_TOOL } from "../agent/tools";
+import { PROPOSE_EDIT_DEF, toolAccess, type ToolAccess, type ToolRunKind } from "../agent/toolAccess";
 import type { McpToolDef } from "../mcp/protocol";
 import type { ToolRegistry } from "../mcp/server";
 import type { ToolUseBlock } from "../providers/types";
-import { CLI_PERMISSION_TOOL, CLI_PROPOSE_EDIT_TOOL, cliToolName, stripCliToolName } from "./argv";
+import { CLI_PERMISSION_TOOL, cliToolName, stripCliToolName } from "./argv";
 
 export interface InteractiveToolDeps {
   confirmWrite(block: ToolUseBlock): Promise<boolean>;
   proposeEdit(block: ToolUseBlock): Promise<string>;
 }
-
-export const PROPOSE_EDIT_MCP_DEF: McpToolDef = {
-  name: CLI_PROPOSE_EDIT_TOOL,
-  description: PROPOSE_EDIT_TOOL.description,
-  inputSchema: PROPOSE_EDIT_TOOL.input_schema,
-};
 
 /** Claude Code resolves --permission-prompt-tool against tools/list, so the permission tool is listed, not hidden. */
 export const CLI_HIDDEN_TOOLS: ReadonlySet<string> = new Set();
@@ -42,90 +36,51 @@ export function permissionPromptResult(allowed: boolean, input: Record<string, u
   return JSON.stringify(allowed ? { behavior: "allow", updatedInput: input } : { behavior: "deny", message: "User declined." });
 }
 
-/** Auto-approved bridge tools: reads, plus the diff-reviewed edit outside Plan Mode. Writes route to the permission tool. */
-export function cliAllowedTools(defs: McpToolDef[], readOnly: boolean): string[] {
-  const reads = defs.filter((d) => !isWriteTool(d.name)).map((d) => cliToolName(d.name));
-  return readOnly ? reads : [...reads, cliToolName(CLI_PROPOSE_EDIT_TOOL)];
+/** Auto-approved bridge tools: everything the run offers except calls that need confirmation, with the bridge prefix. */
+export function cliAllowedTools(defs: McpToolDef[], access: ToolAccess): string[] {
+  return access.offered([...defs, PROPOSE_EDIT_DEF]).filter((d) => access.decide(d.name) !== "confirm").map((d) => cliToolName(d.name));
 }
 
 /** The result returned to a backend without a permission-prompt tool when the user declines a write. */
 export const WRITE_DECLINED_RESULT = "Write declined by the user.";
 
-/**
- * For backends with no `--permission-prompt-tool` equivalent (codex, opencode): every write tool call
- * awaits `confirmWrite` itself before executing, since there is no separate permission-prompt callback
- * the CLI will invoke. Read tools and propose_note_edit pass through unchanged.
- */
-export function gatedWriteTools(base: ToolRegistry, deps: () => InteractiveToolDeps | null): ToolRegistry {
-  return {
-    definitions: () => base.definitions(),
-    call: async (name, args) => {
-      if (!isWriteTool(name)) return base.call(name, args);
-      const bound = deps();
-      const allowed = bound ? await bound.confirmWrite({ type: "tool_use", id: "cli", name, input: args }) : false;
-      if (!allowed) return WRITE_DECLINED_RESULT;
-      return base.call(name, args);
-    },
-  };
+export interface BridgeBinding {
+  run: ToolRunKind;
+  deps: InteractiveToolDeps;
+  /**
+   * True for Claude Code, which asks through the listed permission tool before calling a tool it was not
+   * pre-approved for. Without it (codex, opencode) the bridge itself confirms each write before it runs.
+   */
+  permissionPrompt: boolean;
+  /** Why a known tool is off right now, reported instead of the generic refusal. */
+  unavailable?: (name: string) => string | undefined;
 }
 
-/**
- * The chat-scoped bridge for a backend with no permission-prompt tool (codex, opencode): writes gate through
- * `gatedWriteTools` per call instead of a separate permission callback. `tools` false (agent mode off) hides every
- * tool; `readOnly` (Plan Mode) hides write tools from the list as well as gating their calls.
- */
-export function perTurnTools(base: ToolRegistry, deps: () => InteractiveToolDeps | null, readOnly: () => boolean, tools: () => boolean, proposeOnly: () => boolean = () => false): ToolRegistry {
-  const gated = gatedWriteTools(base, deps);
+/** The vault tools are read live, so a setting change reaches the next list or call. */
+export function bridgeTools(base: ToolRegistry, binding: BridgeBinding): ToolRegistry {
+  const { run, deps, permissionPrompt } = binding;
+  const current = (): { defs: McpToolDef[]; access: ToolAccess } => {
+    const defs = base.definitions();
+    return { defs, access: toolAccess(run, defs) };
+  };
   return {
     definitions: () => {
-      if (!tools()) return [];
-      const defs = gated.definitions();
-      if (proposeOnly()) return [...defs.filter((d) => !isWriteTool(d.name)), PROPOSE_EDIT_MCP_DEF];
-      return readOnly() ? defs.filter((d) => !isWriteTool(d.name)) : defs;
+      const { defs, access } = current();
+      const offered = access.offered([...defs, PROPOSE_EDIT_DEF]);
+      return permissionPrompt ? [...offered, PERMISSION_PROMPT_MCP_DEF] : offered;
     },
     call: async (name, args) => {
-      if (!tools()) throw new Error(`Tool unavailable: agent mode is off (${name}).`);
-      if (proposeOnly()) return proposeOnlyCall(base, deps, name, args);
-      return gated.call(name, args);
-    },
-  };
-}
-
-/** Propose-only (standing orders): write tools are unavailable and propose_note_edit routes to the review queue. */
-async function proposeOnlyCall(base: ToolRegistry, deps: () => InteractiveToolDeps | null, name: string, args: Record<string, unknown>): Promise<string> {
-  if (name === CLI_PROPOSE_EDIT_TOOL) {
-    const bound = deps();
-    if (!bound) throw new Error("propose_note_edit is unavailable: no run is bound to this bridge.");
-    return bound.proposeEdit({ type: "tool_use", id: "cli", name, input: args });
-  }
-  if (isWriteTool(name)) throw new Error(`Tool unavailable: this run is propose-only (${name}).`);
-  return base.call(name, args);
-}
-
-/** `tools` false (agent mode off) lists only the permission tool, which Claude Code validates at startup. */
-export function interactiveTools(base: ToolRegistry, deps: () => InteractiveToolDeps | null, readOnly: () => boolean, tools: () => boolean, proposeOnly: () => boolean = () => false): ToolRegistry {
-  return {
-    definitions: () => {
-      if (!tools()) return [PERMISSION_PROMPT_MCP_DEF];
-      const defs = base.definitions();
-      if (proposeOnly()) return [...defs.filter((d) => !isWriteTool(d.name)), PROPOSE_EDIT_MCP_DEF, PERMISSION_PROMPT_MCP_DEF];
-      if (readOnly()) return [...defs.filter((d) => !isWriteTool(d.name)), PERMISSION_PROMPT_MCP_DEF];
-      return [...defs, PROPOSE_EDIT_MCP_DEF, PERMISSION_PROMPT_MCP_DEF];
-    },
-    call: async (name, args) => {
-      if (name === CLI_PERMISSION_TOOL) {
+      if (permissionPrompt && name === CLI_PERMISSION_TOOL) {
         const block = parsePermissionPromptArgs(args);
-        const bound = deps();
-        const allowed = bound ? await bound.confirmWrite(block) : false;
-        return permissionPromptResult(allowed, block.input);
+        return permissionPromptResult(await deps.confirmWrite(block), block.input);
       }
-      if (name === CLI_PROPOSE_EDIT_TOOL) {
-        const bound = deps();
-        if (!bound) throw new Error("propose_note_edit is unavailable: no chat is bound to this bridge.");
-        return bound.proposeEdit({ type: "tool_use", id: "cli", name, input: args });
+      const decision = current().access.decide(name);
+      if (decision === "deny") throw new Error(binding.unavailable?.(name) ?? `Tool unavailable in this run: ${name}.`);
+      if (decision === "propose") return deps.proposeEdit({ type: "tool_use", id: "cli", name, input: args });
+      if (decision === "confirm" && !permissionPrompt) {
+        const allowed = await deps.confirmWrite({ type: "tool_use", id: "cli", name, input: args });
+        if (!allowed) return WRITE_DECLINED_RESULT;
       }
-      if (!tools()) throw new Error(`Tool unavailable: agent mode is off (${name}).`);
-      if (proposeOnly() && isWriteTool(name)) throw new Error(`Tool unavailable: this run is propose-only (${name}).`);
       return base.call(name, args);
     },
   };

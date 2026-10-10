@@ -62,13 +62,13 @@ describe("mobile chat interactions", () => {
     expect(choices.some((button) => button.getAttribute("aria-pressed") === "true")).toBe(true);
   });
 
-  it("turning Plan mode off from the overflow menu leaves the writes setting untouched", () => {
+  it("turning Plan mode off from the overflow menu leaves the writes setting untouched", async () => {
     const plugin = pluginStub();
     plugin.settings.agentAllowWrites = true;
     let saveCalled = false;
     (plugin as unknown as { saveSettings: () => Promise<void> }).saveSettings = async () => { saveCalled = true; };
     const view = new ChatView(new WorkspaceLeaf(new App()), plugin);
-    (view as unknown as { planMode: boolean }).planMode = true;
+    await view.mode.change("plan");
 
     (view as unknown as { openOverflowMenu(): void }).openOverflowMenu();
     const content = getLastOpenedModal()?.contentEl as unknown as FakeElement;
@@ -76,7 +76,7 @@ describe("mobile chat interactions", () => {
       ?.dispatchEvent({ type: "click" });
 
     expect(plugin.settings.agentAllowWrites).toBe(true);
-    expect((view as unknown as { planMode: boolean }).planMode).toBe(false);
+    expect(view.mode.mode).toBe("act");
     expect(saveCalled).toBe(false);
   });
 

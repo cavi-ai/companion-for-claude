@@ -1,21 +1,38 @@
 import { describe, it, expect } from "vitest";
-import { CLI_HIDDEN_TOOLS, cliAllowedTools, gatedWriteTools, interactiveTools, parsePermissionPromptArgs, perTurnTools, permissionPromptResult, PROPOSE_EDIT_MCP_DEF, WRITE_DECLINED_RESULT } from "../../src/cli/bridgeTools";
+import { bridgeTools, CLI_HIDDEN_TOOLS, cliAllowedTools, parsePermissionPromptArgs, permissionPromptResult, WRITE_DECLINED_RESULT } from "../../src/cli/bridgeTools";
+import { toolAccess, type ToolRunKind } from "../../src/agent/toolAccess";
 import type { McpToolDef } from "../../src/mcp/protocol";
-import { isWriteTool } from "../../src/agent/tools";
+import type { ToolUseBlock } from "../../src/providers/types";
 
 const defs: McpToolDef[] = [
-  { name: "vault_search", description: "search", inputSchema: { type: "object" } },
-  { name: "note_read", description: "read", inputSchema: { type: "object" } },
-  { name: "note_create", description: "create", inputSchema: { type: "object" } },
+  { name: "vault_search", description: "search", inputSchema: { type: "object" }, annotations: { readOnlyHint: true } },
+  { name: "note_read", description: "read", inputSchema: { type: "object" }, annotations: { readOnlyHint: true } },
+  { name: "note_create", description: "create", inputSchema: { type: "object" }, annotations: { readOnlyHint: false } },
 ];
-const base = { definitions: () => defs, call: async (name: string, args: Record<string, unknown>) => `${name}:${JSON.stringify(args)}` };
+
+function harness(run: ToolRunKind, permissionPrompt: boolean, allow = true) {
+  const seen: string[] = [];
+  const base = { definitions: () => defs, call: async (name: string, args: Record<string, unknown>) => { seen.push(`base:${name}`); return `${name}:${JSON.stringify(args)}`; } };
+  const deps = {
+    confirmWrite: async (b: ToolUseBlock) => { seen.push(`confirm:${b.name}`); return allow; },
+    proposeEdit: async (b: ToolUseBlock) => { seen.push(`propose:${String(b.input.path)}`); return `edited:${String(b.input.path)}`; },
+  };
+  const tools = bridgeTools(base, { run, deps, permissionPrompt });
+  return { tools, seen, names: () => tools.definitions().map((d) => d.name) };
+}
 
 describe("cliAllowedTools", () => {
-  it("lists read tools plus propose_note_edit with the bridge prefix, never writes", () => {
-    expect(cliAllowedTools(defs, false)).toEqual(["mcp__obsidian-vault__vault_search", "mcp__obsidian-vault__note_read", "mcp__obsidian-vault__propose_note_edit"]);
+  it("auto-approves reads and propose_note_edit in chat, never a write", () => {
+    expect(cliAllowedTools(defs, toolAccess("chat", defs))).toEqual(["mcp__obsidian-vault__vault_search", "mcp__obsidian-vault__note_read", "mcp__obsidian-vault__propose_note_edit"]);
   });
-  it("drops propose_note_edit in read-only (plan) mode", () => {
-    expect(cliAllowedTools(defs, true)).toEqual(["mcp__obsidian-vault__vault_search", "mcp__obsidian-vault__note_read"]);
+  it("auto-approves reads only in Plan Mode", () => {
+    expect(cliAllowedTools(defs, toolAccess("plan", defs))).toEqual(["mcp__obsidian-vault__vault_search", "mcp__obsidian-vault__note_read"]);
+  });
+  it("auto-approves reads and propose_note_edit for a propose-only run", () => {
+    expect(cliAllowedTools(defs, toolAccess("propose", defs))).toEqual(["mcp__obsidian-vault__vault_search", "mcp__obsidian-vault__note_read", "mcp__obsidian-vault__propose_note_edit"]);
+  });
+  it("auto-approves nothing when tools are off", () => {
+    expect(cliAllowedTools(defs, toolAccess("off", defs))).toEqual([]);
   });
 });
 
@@ -31,119 +48,75 @@ describe("permission prompt", () => {
   });
 });
 
-describe("interactiveTools", () => {
-  it("lists propose_note_edit unless read-only, and always lists the permission tool Claude Code validates at startup", () => {
-    const rw = interactiveTools(base, () => null, () => false, () => true);
-    expect(rw.definitions().map((d) => d.name)).toEqual(["vault_search", "note_read", "note_create", "propose_note_edit", "permission_prompt"]);
-    const ro = interactiveTools(base, () => null, () => true, () => true);
-    expect(ro.definitions().map((d) => d.name)).toEqual(["vault_search", "note_read", "permission_prompt"]);
-    expect(PROPOSE_EDIT_MCP_DEF.name).toBe("propose_note_edit");
+describe("bridgeTools with a permission prompt (Claude Code)", () => {
+  it("lists what the run offers plus the permission tool Claude Code validates at startup", () => {
+    expect(harness("chat", true).names()).toEqual(["vault_search", "note_read", "note_create", "propose_note_edit", "permission_prompt"]);
+    expect(harness("plan", true).names()).toEqual(["vault_search", "note_read", "permission_prompt"]);
+    expect(harness("propose", true).names()).toEqual(["vault_search", "note_read", "propose_note_edit", "permission_prompt"]);
+    expect(harness("off", true).names()).toEqual(["permission_prompt"]);
     expect(CLI_HIDDEN_TOOLS.size).toBe(0);
   });
-  it("routes permission_prompt to confirmWrite and propose_note_edit to proposeEdit, else to the base", async () => {
-    const seen: string[] = [];
-    const deps = { confirmWrite: async (b: { name: string }) => { seen.push(`confirm:${b.name}`); return false; }, proposeEdit: async (b: { input: Record<string, unknown> }) => `edited:${String(b.input.path)}` };
-    const t = interactiveTools(base, () => deps, () => false, () => true);
-    expect(JSON.parse(await t.call("permission_prompt", { tool_name: "mcp__obsidian-vault__note_create", input: {}, tool_use_id: "x" }))).toEqual({ behavior: "deny", message: "User declined." });
-    expect(await t.call("propose_note_edit", { path: "A.md", edits: [] })).toBe("edited:A.md");
-    expect(await t.call("vault_search", { query: "q" })).toBe('vault_search:{"query":"q"}');
-    expect(seen).toEqual(["confirm:note_create"]);
+
+  it("routes the permission prompt to confirmWrite, propose_note_edit to review, and a chat write to the vault", async () => {
+    const h = harness("chat", true, false);
+    expect(JSON.parse(await h.tools.call("permission_prompt", { tool_name: "mcp__obsidian-vault__note_create", input: {}, tool_use_id: "x" }))).toEqual({ behavior: "deny", message: "User declined." });
+    expect(await h.tools.call("propose_note_edit", { path: "A.md", edits: [] })).toBe("edited:A.md");
+    expect(await h.tools.call("vault_search", { query: "q" })).toBe('vault_search:{"query":"q"}');
+    expect(await h.tools.call("note_create", { title: "S" })).toBe('note_create:{"title":"S"}');
+    expect(h.seen).toEqual(["confirm:note_create", "propose:A.md", "base:vault_search", "base:note_create"]);
   });
-  it("lists only the permission tool and refuses vault calls when agent mode is off", async () => {
-    const off = interactiveTools(base, () => null, () => false, () => false);
-    expect(off.definitions().map((d) => d.name)).toEqual(["permission_prompt"]);
-    await expect(off.call("vault_search", { query: "q" })).rejects.toThrow(/agent mode is off/);
-  });
-  it("denies interactive tools when no chat is bound", async () => {
-    const t = interactiveTools(base, () => null, () => false, () => true);
-    expect(JSON.parse(await t.call("permission_prompt", { tool_name: "mcp__obsidian-vault__note_create", input: {}, tool_use_id: "x" }))).toEqual({ behavior: "deny", message: "User declined." });
-    await expect(t.call("propose_note_edit", { path: "A.md", edits: [] })).rejects.toThrow(/no chat/);
+
+  it("refuses writes in Plan Mode and propose-only runs, and every vault call when tools are off", async () => {
+    for (const run of ["plan", "propose"] as const) {
+      const h = harness(run, true);
+      await expect(h.tools.call("note_create", { title: "S" })).rejects.toThrow("Tool unavailable in this run: note_create.");
+      expect(h.seen).toEqual([]);
+    }
+    await expect(harness("plan", true).tools.call("propose_note_edit", { path: "A.md", edits: [] })).rejects.toThrow(/unavailable/);
+    await expect(harness("off", true).tools.call("vault_search", { query: "q" })).rejects.toThrow(/unavailable/);
   });
 });
 
-describe("gatedWriteTools (backends with no --permission-prompt-tool equivalent)", () => {
-  it("awaits confirmWrite for a write tool and executes once on allow", async () => {
-    const seen: string[] = [];
-    const deps = { confirmWrite: async (b: { name: string }) => { seen.push(b.name); return true; }, proposeEdit: async () => "" };
-    const t = gatedWriteTools(base, () => deps);
-    expect(await t.call("note_create", { title: "S" })).toBe('note_create:{"title":"S"}');
-    expect(seen).toEqual(["note_create"]);
-  });
-
-  it("returns the declined result and never calls base on deny", async () => {
-    const calls: string[] = [];
-    const denyingBase = { definitions: () => defs, call: async (name: string) => { calls.push(name); return "should not run"; } };
-    const deps = { confirmWrite: async () => false, proposeEdit: async () => "" };
-    const t = gatedWriteTools(denyingBase, () => deps);
-    expect(await t.call("note_create", { title: "S" })).toBe(WRITE_DECLINED_RESULT);
-    expect(calls).toEqual([]);
-  });
-
-  it("denies by default when no chat is bound", async () => {
-    const t = gatedWriteTools(base, () => null);
-    expect(await t.call("note_create", { title: "S" })).toBe(WRITE_DECLINED_RESULT);
-  });
-
-  it("passes read tools straight through without gating", async () => {
-    const seen: string[] = [];
-    const deps = { confirmWrite: async (b: { name: string }) => { seen.push(b.name); return true; }, proposeEdit: async () => "" };
-    const t = gatedWriteTools(base, () => deps);
-    expect(await t.call("vault_search", { query: "q" })).toBe('vault_search:{"query":"q"}');
-    expect(seen).toEqual([]);
+describe("bridgeTools refusals", () => {
+  it("report a switched-off tool's own reason, and the generic refusal otherwise", async () => {
+    const base = { definitions: () => defs, call: async () => "ran" };
+    const deps = { confirmWrite: async () => true, proposeEdit: async () => "" };
+    const unavailable = (name: string) => (name === "web_search" ? "Web search is disabled." : undefined);
+    const tools = bridgeTools(base, { run: "chat", deps, permissionPrompt: false, unavailable });
+    await expect(tools.call("web_search", { query: "q" })).rejects.toThrow("Web search is disabled.");
+    await expect(tools.call("nope", {})).rejects.toThrow("Tool unavailable in this run: nope.");
   });
 });
 
-describe("perTurnTools (codex, opencode)", () => {
-  it("lists every tool and gates writes through confirmWrite", async () => {
-    const seen: string[] = [];
-    const deps = { confirmWrite: async (b: { name: string }) => { seen.push(b.name); return true; }, proposeEdit: async () => "" };
-    const t = perTurnTools(base, () => deps, () => false, () => true);
-    expect(t.definitions().map((d) => d.name)).toEqual(["vault_search", "note_read", "note_create"]);
-    expect(await t.call("note_create", { title: "S" })).toBe('note_create:{"title":"S"}');
-    expect(seen).toEqual(["note_create"]);
-  });
-  it("hides write tools from the list in Plan Mode, as well as gating them", async () => {
-    const t = perTurnTools(base, () => ({ confirmWrite: async () => false, proposeEdit: async () => "" }), () => true, () => true);
-    expect(t.definitions().map((d) => d.name)).toEqual(["vault_search", "note_read"]);
-    expect(await t.call("note_create", { title: "S" })).toBe(WRITE_DECLINED_RESULT);
-  });
-  it("lists nothing and refuses every call when agent mode is off", async () => {
-    const t = perTurnTools(base, () => null, () => false, () => false);
-    expect(t.definitions()).toEqual([]);
-    await expect(t.call("vault_search", { query: "q" })).rejects.toThrow(/agent mode is off/);
-  });
-});
-
-describe("propose-only mode (standing orders)", () => {
-  const deps = { confirmWrite: async () => true, proposeEdit: async (b: { input: Record<string, unknown> }) => `edited:${String(b.input.path)}` };
-  const writeNames = (names: string[]) => names.filter((name) => isWriteTool(name));
-
-  it("never lists a write tool but keeps propose_note_edit (Claude Code bridge)", async () => {
-    const t = interactiveTools(base, () => deps, () => false, () => true, () => true);
-    const names = t.definitions().map((d) => d.name);
-    expect(names).toEqual(["vault_search", "note_read", "propose_note_edit", "permission_prompt"]);
-    expect(writeNames(names)).toEqual([]);
-    expect(await t.call("propose_note_edit", { path: "A.md", edits: [] })).toBe("edited:A.md");
-    await expect(t.call("note_create", { title: "S" })).rejects.toThrow(/propose-only/);
+describe("bridgeTools without a permission prompt (codex, opencode)", () => {
+  it("lists exactly what the run offers", () => {
+    expect(harness("chat", false).names()).toEqual(["vault_search", "note_read", "note_create", "propose_note_edit"]);
+    expect(harness("plan", false).names()).toEqual(["vault_search", "note_read"]);
+    expect(harness("propose", false).names()).toEqual(["vault_search", "note_read", "propose_note_edit"]);
+    expect(harness("off", false).names()).toEqual([]);
   });
 
-  it("never lists a write tool but keeps propose_note_edit (codex, opencode bridge)", async () => {
-    const t = perTurnTools(base, () => deps, () => false, () => true, () => true);
-    const names = t.definitions().map((d) => d.name);
-    expect(names).toEqual(["vault_search", "note_read", "propose_note_edit"]);
-    expect(writeNames(names)).toEqual([]);
-    expect(await t.call("propose_note_edit", { path: "A.md", edits: [] })).toBe("edited:A.md");
-    await expect(t.call("note_create", { title: "S" })).rejects.toThrow(/propose-only/);
+  it("confirms a chat write before it runs and passes reads straight through", async () => {
+    const h = harness("chat", false);
+    expect(await h.tools.call("note_create", { title: "S" })).toBe('note_create:{"title":"S"}');
+    expect(await h.tools.call("vault_search", { query: "q" })).toBe('vault_search:{"query":"q"}');
+    expect(h.seen).toEqual(["confirm:note_create", "base:note_create", "base:vault_search"]);
   });
 
-  it("allows only reads and propose_note_edit without auto-approving a write", () => {
-    const allowed = cliAllowedTools(defs, false);
-    expect(allowed.filter((name) => isWriteTool(name.replace("mcp__obsidian-vault__", "")))).toEqual([]);
-    expect(allowed).toContain("mcp__obsidian-vault__propose_note_edit");
+  it("returns the declined result and never runs the write when the user declines", async () => {
+    const h = harness("chat", false, false);
+    expect(await h.tools.call("note_create", { title: "S" })).toBe(WRITE_DECLINED_RESULT);
+    expect(h.seen).toEqual(["confirm:note_create"]);
   });
 
-  it("leaves chat Act mode unchanged when the flag is off", () => {
-    expect(interactiveTools(base, () => deps, () => false, () => true).definitions().map((d) => d.name)).toContain("note_create");
-    expect(perTurnTools(base, () => deps, () => false, () => true).definitions().map((d) => d.name)).toContain("note_create");
+  it("refuses writes in Plan Mode and propose-only runs without asking, and routes propose_note_edit to review", async () => {
+    for (const run of ["plan", "propose"] as const) {
+      const h = harness(run, false);
+      await expect(h.tools.call("note_create", { title: "S" })).rejects.toThrow("Tool unavailable in this run: note_create.");
+      expect(h.seen).toEqual([]);
+    }
+    const h = harness("propose", false);
+    expect(await h.tools.call("propose_note_edit", { path: "A.md", edits: [] })).toBe("edited:A.md");
+    await expect(harness("off", false).tools.call("vault_search", { query: "q" })).rejects.toThrow(/unavailable/);
   });
 });

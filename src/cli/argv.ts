@@ -2,7 +2,6 @@
 
 export const CLI_MCP_SERVER = "obsidian-vault";
 export const CLI_PERMISSION_TOOL = "permission_prompt";
-export const CLI_PROPOSE_EDIT_TOOL = "propose_note_edit";
 
 const PREFIX = `mcp__${CLI_MCP_SERVER}__`;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

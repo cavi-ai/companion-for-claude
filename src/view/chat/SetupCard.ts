@@ -1,12 +1,12 @@
 // First-run card: connect to Claude without leaving the chat panel.
 
-import type ClaudeCompanionPlugin from "../../main";
+import type { SetupCardHost } from "./hosts";
 import type { CliBackend, CliSignInProvider } from "../../cli/backends/types";
 import type { ProviderRouter } from "../../providers/router";
 import { quickNotice } from "../../notice";
 
 export interface SetupCardDeps {
-  plugin: ClaudeCompanionPlugin;
+  plugin: SetupCardHost;
   cliEntries(router: ProviderRouter): { backend: CliBackend; provider: CliSignInProvider }[];
   messagesEl(): HTMLElement;
   hasMessages(): boolean;

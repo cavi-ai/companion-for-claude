@@ -1,70 +1,27 @@
 // Adapter between the existing VaultTools (MCP shapes) and the Anthropic
-// tool-use loop: schema mapping, write gating, and result truncation.
+// tool-use loop: schema mapping, per-call routing by the run's tool access, and result truncation.
 // Pure — the actual vault access is injected as `call`.
 
 import type { McpToolDef } from "../mcp/protocol";
 import type { AnthropicToolDef, ToolResultBlock, ToolUseBlock } from "../providers/types";
-import { VAULT_WRITE_TOOLS } from "../mcp/writeTools";
-import { RESEARCH_WRITE_TOOLS } from "../research/tools";
+import { PROPOSE_EDIT_DEF, type ToolAccess } from "./toolAccess";
 
 /** Cap on a single tool result sent back to the model (spec §7, Franco-approved). */
 export const TOOL_RESULT_MAX_CHARS = 8000;
-
-/**
- * The vault tools that mutate the vault; everything else is read-only. Composed
- * from the two canonical registries so it can't drift from the MCP server's own
- * gating (mcp/vaultTools.ts uses the same sets).
- */
-export function isWriteTool(name: string): boolean {
-  return VAULT_WRITE_TOOLS.has(name) || RESEARCH_WRITE_TOOLS.has(name);
-}
 
 /** Map MCP tool definitions to the Anthropic Messages API shape. */
 export function toAnthropicTools(defs: McpToolDef[]): AnthropicToolDef[] {
   return defs.map((d) => ({ name: d.name, description: d.description, input_schema: d.inputSchema }));
 }
 
-/**
- * The Plan Mode tool set: vault reads only — write tools are excluded regardless
- * of the allow-writes setting, and propose_note_edit is not appended (the turn
- * should end in a plan, not an edit proposal).
- */
-export function readOnlyAnthropicTools(defs: McpToolDef[]): AnthropicToolDef[] {
-  return toAnthropicTools(defs).filter((t) => !isWriteTool(t.name));
-}
-
-/**
- * Chat-only edit-proposal tool (spec 2026-07-05 apply-to-note). Not a write
- * tool: the user reviews a per-hunk diff before anything touches the vault,
- * so it is offered even when autonomous writes are off.
- */
-export const PROPOSE_EDIT_TOOL: AnthropicToolDef = {
-  name: "propose_note_edit",
-  description:
-    "Propose targeted edits to an existing note. The user reviews a diff and accepts or rejects each change; the result reports what was actually applied. Each old_str must match the note exactly once — include surrounding lines to disambiguate. Prefer this over rewriting note content in chat.",
-  input_schema: {
-    type: "object",
-    properties: {
-      path: { type: "string", description: "Vault-relative path of the note to edit (e.g. 'Folder/Note.md')." },
-      edits: {
-        type: "array",
-        description: "Exact string replacements, each matching the note exactly once.",
-        items: {
-          type: "object",
-          properties: {
-            old_str: { type: "string", description: "Exact existing text to replace (unique in the note)." },
-            new_str: { type: "string", description: "Replacement text." },
-          },
-          required: ["old_str", "new_str"],
-        },
-      },
-      description: { type: "string", description: "One-line summary of the intent, shown to the user above the diff." },
-    },
-    required: ["path", "edits"],
-  },
-};
+/** propose_note_edit in the Messages API shape. */
+export const PROPOSE_EDIT_TOOL: AnthropicToolDef = toAnthropicTools([PROPOSE_EDIT_DEF])[0]!;
 
 export interface ToolExecutorDeps {
+  /** Decides, per call, whether the tool runs, needs confirmation, routes to edit review, or is refused. */
+  access: ToolAccess;
+  /** Why a known tool is off right now (e.g. web search disabled), reported instead of the generic refusal. */
+  unavailable?(name: string): string | undefined;
   signal?: AbortSignal;
   /** Runs the tool (VaultTools.call). Throws on failure. */
   call(name: string, args: Record<string, unknown>): Promise<string>;
@@ -95,7 +52,9 @@ export async function executeTool(deps: ToolExecutorDeps, block: ToolUseBlock): 
 
   if (block.parseError) return result(block.parseError, true);
   if (deps.signal?.aborted) return result("Turn stopped before this tool ran.", true);
-  if (block.name === PROPOSE_EDIT_TOOL.name) {
+  const decision = deps.access.decide(block.name);
+  if (decision === "deny") return result(deps.unavailable?.(block.name) ?? `Tool unavailable in this run: ${block.name}.`, true);
+  if (decision === "propose") {
     if (!deps.proposeEdit) return result("Edit proposals are unavailable in this chat.", true);
     try {
       return result(truncateResult(await deps.proposeEdit(block)));
@@ -103,7 +62,7 @@ export async function executeTool(deps: ToolExecutorDeps, block: ToolUseBlock): 
       return result(err instanceof Error ? err.message : String(err), true);
     }
   }
-  if (isWriteTool(block.name)) {
+  if (decision === "confirm") {
     if (!deps.confirmWrite) return result("Write tools are unavailable in this chat.", true);
     if (!(await deps.confirmWrite(block))) return result("User declined.", true);
     if (deps.signal?.aborted) return result("Turn stopped before this write ran.", true);

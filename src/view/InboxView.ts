@@ -21,6 +21,14 @@ interface InboxFeedback {
 
 type InboxEnrichOutcome = Awaited<ReturnType<ClaudeCompanionPlugin["enrichInboxItem"]>>;
 
+/** The plugin capabilities the Inbox uses. */
+export type InboxHost = Pick<
+  ClaudeCompanionPlugin,
+  | "activity" | "clipperSetupNeeded" | "companionChrome" | "discardQueuedEdit" | "enrichDiagnostics" | "enrichInboxItem" | "linkCandidates"
+  | "listQueuedEdits" | "openClipperSetup" | "organizeClippings" | "reviewInboxLinkSuggestions" | "reviewLinkSuggestions" | "reviewQueuedEdit"
+  | "settings" | "sourceEnrichmentBackendLabel" | "suspendReindex" | "triageClippingsWithPicker"
+>;
+
 function safeActivityDetail(value: string): string {
   return value
     .replace(/\bBearer\s+\S+/gi, "[redacted]")
@@ -60,7 +68,7 @@ export class InboxView extends ItemView {
   /** One concise inline summary for the current or most recent Inbox operation. */
   private operationFeedback: InboxFeedback = { state: "idle", message: "Ready to enrich Inbox notes." };
 
-  constructor(leaf: WorkspaceLeaf, private plugin: ClaudeCompanionPlugin) {
+  constructor(leaf: WorkspaceLeaf, private plugin: InboxHost) {
     super(leaf);
     this.refresh = createInboxRefreshController(
       () => void this.render(),

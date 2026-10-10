@@ -755,8 +755,9 @@ describe("memory_record", () => {
   });
 
   it("is a write tool, so Plan Mode, propose-only runs, and write confirmation gate it", async () => {
-    const { isWriteTool } = await import("../src/agent/tools");
-    expect(isWriteTool("memory_record")).toBe(true);
+    const { isWriteTool } = await import("../src/agent/toolAccess");
+    const { vt } = memTools(true);
+    expect(isWriteTool(vt.definitions().find(({ name }) => name === "memory_record")!)).toBe(true);
   });
 
   it("is absent and fails closed when the toggle is off", async () => {

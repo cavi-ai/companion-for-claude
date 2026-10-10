@@ -1,7 +1,9 @@
 // One order run: build the prompt, offer read tools plus propose_note_edit, collect proposals without applying them.
 // The model call is injected, so this is pure.
 
-import { isWriteTool, PROPOSE_EDIT_TOOL } from "../agent/tools";
+import { toAnthropicTools } from "../agent/tools";
+import { PROPOSE_EDIT_DEF, toolAccess, type ToolRunKind } from "../agent/toolAccess";
+import type { McpToolDef } from "../mcp/protocol";
 import { parseProposedEdits, planEdits, type ProposedEdit } from "../edit/diff";
 import type { AgentTurnResult } from "../agent/loop";
 import type { AnthropicToolDef, ToolUseBlock } from "../providers/types";
@@ -9,11 +11,13 @@ import type { StandingOrder } from "./order";
 
 export type OrderTrigger = { kind: "schedule" } | { kind: "note"; path: string; content: string };
 
-export interface OrderTurnRequest { prompt: string; tools: AnthropicToolDef[]; model?: string }
+/** `run` is the tool access the turn must enforce on every call: propose-only, or off without tool support. */
+export interface OrderTurnRequest { prompt: string; tools: AnthropicToolDef[]; run: ToolRunKind; model?: string }
 export interface OrderProposal { path: string; edits: ProposedEdit[]; description?: string }
 
 export interface OrderRunDeps {
-  readTools: AnthropicToolDef[];
+  /** Every vault tool; the run offers the ones propose-only access allows. */
+  vaultTools: McpToolDef[];
   toolsSupported: boolean;
   /** Throws when the note is missing. */
   readNote(path: string): Promise<string>;
@@ -36,7 +40,8 @@ export function buildOrderPrompt(order: StandingOrder, trigger: OrderTrigger, no
 
 export async function runOrder(order: StandingOrder, trigger: OrderTrigger, now: Date, deps: OrderRunDeps): Promise<OrderRunResult> {
   const proposals: OrderProposal[] = [];
-  const tools = deps.toolsSupported ? [...deps.readTools.filter((tool) => !isWriteTool(tool.name)), PROPOSE_EDIT_TOOL] : [];
+  const run: ToolRunKind = deps.toolsSupported ? "propose" : "off";
+  const tools = toAnthropicTools(toolAccess(run, deps.vaultTools).offered([...deps.vaultTools, PROPOSE_EDIT_DEF]));
 
   const proposeEdit = async (block: ToolUseBlock): Promise<string> => {
     const path = typeof block.input.path === "string" ? block.input.path : "";
@@ -48,7 +53,7 @@ export async function runOrder(order: StandingOrder, trigger: OrderTrigger, now:
     return "Queued for review.";
   };
 
-  const request: OrderTurnRequest = { prompt: buildOrderPrompt(order, trigger, now), tools, ...(order.model ? { model: order.model } : {}) };
+  const request: OrderTurnRequest = { prompt: buildOrderPrompt(order, trigger, now), tools, run, ...(order.model ? { model: order.model } : {}) };
   try {
     const turn = await deps.runTurn(request, proposeEdit);
     return { text: turn.text, proposals, ...(turn.error ? { error: turn.error } : {}) };

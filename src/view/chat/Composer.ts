@@ -6,7 +6,8 @@ import { type AtItem, type ClaimAtSource, type ProjectAtSource, buildAtItems, bu
 import type { ChatProject } from "../../projects/model";
 import { ComposerContextManager } from "../ComposerContextManager";
 import { type AutomaticContextKey, buildContextManagerModel } from "../contextManagerModel";
-import { ModeControl, type ChatMode } from "../ModeControl";
+import { ModeControl } from "../ModeControl";
+import type { ChatSession } from "./chatSession";
 import type { AttachedPath } from "../../context/vaultContext";
 import { type MediaAttachment, arrayBufferToBase64, maxBytesFor, mediaBlock, mediaKind, mediaMime, sniffMime } from "../../context/attachments";
 import { type AttachedPage, detectPageUrl, pageLabel } from "../../context/urlContext";
@@ -17,24 +18,19 @@ import { capabilitiesFor, effortLevels } from "../../claude/capabilities";
 import { type ChatControls, knobVisibility } from "../../claude/chatControls";
 import { mergeDetectedModels } from "../../providers/localModels";
 import { quickNotice } from "../../notice";
-import type ClaudeCompanionPlugin from "../../main";
+import type { ComposerHost } from "./hosts";
 import type { ContextToggles } from "../../types";
 import { applyMention, initialToggles } from "./contextScope";
 
 export interface ComposerDeps {
   applyChatFontSize(): void;
-  applyMode(mode: ChatMode): Promise<void>;
-  currentMode(): ChatMode;
   onModelSelect(value: string): Promise<void>;
   refreshCapabilityIndicators(): void;
   registerDomEvent(el: Document, type: "click", callback: (evt: MouseEvent) => void): void;
   resolveMarkdownContextView(): MarkdownView | null;
-  updateModeControl(): void;
   updateUsageBar(): void;
   cachedClaims(): ClaimAtSource[];
   cachedProjects(): ProjectAtSource[];
-  controls(): ChatControls;
-  streaming(): boolean;
   mountUsage(parent: HTMLElement): void;
   onSlashCommand(cmd: SlashCommand): void;
   pickAtItems(): AtItem[];
@@ -191,11 +187,9 @@ export class Composer {
     this.sendBtn.addEventListener("click", () => this.deps.onSend());
   }
 
-  destroy(): void {
-    this.contextManager?.destroy();
-  }
+  destroy(): void { this.modeControl?.dispose(); this.contextManager?.destroy(); }
 
-  constructor(private app: App, private plugin: ClaudeCompanionPlugin, private deps: ComposerDeps) {
+  constructor(private app: App, private plugin: ComposerHost, private chat: ChatSession, private deps: ComposerDeps) {
     this.contextToggles = initialToggles(plugin.settings.context);
   }
 
@@ -203,9 +197,15 @@ export class Composer {
     this.contextToggles = initialToggles(this.plugin.settings.context);
   }
 
-  private get cachedClaims(): ClaimAtSource[] { return this.deps.cachedClaims(); }
-  private get controls(): ChatControls { return this.deps.controls(); }
-  private get streaming(): boolean { return this.deps.streaming(); }
+  /** What other chat modules may do here: read the unsent text, replace it (focused, sized, unsent), show reasoning state. */
+  draft(): string { return this.inputEl?.value ?? ""; }
+  setDraft(text: string): void { this.inputEl.value = text; this.inputEl.focus(); this.autosizeInput(); }
+  showReasoning(active: boolean, label: string): void {
+    this.reasoningEl?.toggleClass("is-active", active);
+    for (const attr of ["aria-label", "title"]) this.reasoningEl?.setAttr(attr, label);
+  }
+
+  private get controls(): ChatControls { return this.chat.controls; }
 
   /** Candidate sources for the "@" menu: specials, recents, notes, folders, bases, claims, media. */
   atItems(): AtItem[] {
@@ -229,7 +229,7 @@ export class Composer {
       .getLastOpenFiles()
       .filter((p) => p.toLowerCase().endsWith(".md") && this.app.vault.getAbstractFileByPath(p) instanceof TFile)
       .slice(0, 5);
-    return buildAtItems(notes, [...folders].sort(), media, bases, this.cachedClaims, recents, this.deps.cachedProjects());
+    return buildAtItems(notes, [...folders].sort(), media, bases, this.deps.cachedClaims(), recents, this.deps.cachedProjects());
   }
 
   /** Show/hide/update the active chat project's pill; `null` hides it. */
@@ -252,7 +252,7 @@ export class Composer {
 
   /** Candidate sources for the "#" menu: research claims only. */
   hashItems(): AtItem[] {
-    return buildClaimItems(this.cachedClaims);
+    return buildClaimItems(this.deps.cachedClaims());
   }
 
   /** Load attached media into wire blocks; oversize/unreadable files are skipped with a notice. */
@@ -319,7 +319,7 @@ export class Composer {
   syncPageOffer(): void {
     if (!this.pageOfferEl) return;
     const hide = () => this.pageOfferEl.setCssStyles({ display: "none" });
-    if (this.streaming || !this.plugin.captureWebPage()) return hide();
+    if (this.chat.streaming || !this.plugin.captureWebPage()) return hide();
     const url = detectPageUrl(this.inputEl.value);
     if (!url || url === this.dismissedPageUrl || this.attachedPages.some((p) => p.url === url)) return hide();
 
@@ -526,8 +526,8 @@ export class Composer {
 
   /** Ask / Plan / Act: whether chat offers write tools (each write still asks); hidden while the backend can't run tools. */
   private mountModeControl(parent: HTMLElement): void {
-    this.modeControl = new ModeControl(parent, { initial: this.deps.currentMode(), onChange: (m) => this.deps.applyMode(m) });
-    this.deps.updateModeControl();
+    this.modeControl?.dispose();
+    this.modeControl = new ModeControl(parent, this.chat.mode);
   }
 
   /** Append a "Local (Ollama)" optgroup of detected models to the switcher. */

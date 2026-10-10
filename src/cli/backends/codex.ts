@@ -21,7 +21,7 @@ export function buildCodexArgv(input: CliArgvInput): string[] {
     "--ignore-user-config",
     "-c", `mcp_servers.${CLI_MCP_SERVER}.url="${url}"`,
     "-c", `mcp_servers.${CLI_MCP_SERVER}.bearer_token_env_var="${CODEX_MCP_TOKEN_ENV}"`,
-    // codex exec cancels any MCP call that needs approval; gatedWriteTools confirms writes on the bridge side.
+    // codex exec cancels any MCP call that needs approval; the bridge confirms writes itself (bridgeTools).
     "-c", `mcp_servers.${CLI_MCP_SERVER}.default_tools_approval_mode="approve"`,
   ];
   if (input.model) argv.push("-m", input.model);

@@ -154,6 +154,19 @@ describe("Desktop chat header polish", () => {
     expect((view.contentEl as unknown as FakeElement).querySelector(".cc-mcp-dot")).toBeNull();
   });
 
+  it("pins the chat above the keyboard on mobile only, and stops when the view closes", async () => {
+    const add = vi.spyOn(window, "addEventListener");
+    const remove = vi.spyOn(window, "removeEventListener");
+    const desktop = await openHeader();
+    expect(add).not.toHaveBeenCalledWith("scroll", expect.any(Function), true);
+    await desktop.onClose();
+    Platform.isMobile = true;
+    const view = await openHeader();
+    expect(add).toHaveBeenCalledWith("scroll", expect.any(Function), true);
+    await view.onClose();
+    expect(remove).toHaveBeenCalledWith("scroll", add.mock.calls.find((call) => call[0] === "scroll")![1], true);
+  });
+
   it("renders a user message inside .cc-msg.cc-user with the accessible .cc-role label present", () => {
     const plugin = { settings: structuredClone(DEFAULT_SETTINGS) } as unknown as ClaudeCompanionPlugin;
     const view = new ChatView(new WorkspaceLeaf(new App()), plugin);

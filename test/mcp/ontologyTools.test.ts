@@ -3,7 +3,7 @@ import { App, parseYaml } from "obsidian";
 import { VaultTools } from "../../src/mcp/vaultTools";
 import { OntologyRegistry } from "../../src/ontology/registry";
 import { SEED_TYPES, schemaNoteContent } from "../../src/ontology/seed";
-import { isWriteTool } from "../../src/agent/tools";
+import { isWriteTool } from "../../src/agent/toolAccess";
 
 let app: App;
 let registry: OntologyRegistry;
@@ -40,7 +40,7 @@ describe("ontology_get", () => {
     tools.setOptions({ allowWrites: false, defaultFolder: "Claude", ontology: () => registry, ontologyFolder: () => FOLDER });
     expect(tools.definitions().some((d) => d.name === "ontology_get")).toBe(true);
     expect(tools.definitions().some((d) => d.name === "ontology_propose")).toBe(false);
-    expect(isWriteTool("ontology_get")).toBe(false);
+    expect(isWriteTool(tools.definitions().find((d) => d.name === "ontology_get")!)).toBe(false);
   });
 
   it("returns the registry as JSON, and one lineage on request", async () => {
@@ -55,7 +55,7 @@ describe("ontology_get", () => {
 
 describe("ontology_propose", () => {
   it("is a write tool and writes a schema note the registry then resolves", async () => {
-    expect(isWriteTool("ontology_propose")).toBe(true);
+    expect(isWriteTool(tools.definitions().find((d) => d.name === "ontology_propose")!)).toBe(true);
     // "meeting" is already a seeded type (src/ontology/seed.ts) — use a name that isn't.
     const out = await tools.call("ontology_propose", { name: "workshop", parent: "project", properties: [{ key: "date", type: "date", required: true }] });
     expect(out).toContain(`Created ${FOLDER}/workshop.md`);

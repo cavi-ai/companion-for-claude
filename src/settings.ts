@@ -1,15 +1,15 @@
 import { chatBackendForRuntime, chatBackendOptions } from "./providers/runtimeBackend";
 import { DEVICE_MODELS, clearDeviceModel, deviceModelCached } from "./device/models";
 import { researchModelOptions } from "./research/researchModel";
-import { App, Notice, Platform, PluginSettingTab, Setting, type SettingDefinition, type SettingDefinitionItem, type SettingGroupItem } from "obsidian";
+import { App, Notice, Platform, PluginSettingTab, Setting, type Plugin, type SettingDefinition, type SettingDefinitionItem, type SettingGroupItem } from "obsidian";
 import type ClaudeCompanionPlugin from "./main";
 import { CLAUDE_MODELS } from "./claude/models";
 import type { ProviderStatus } from "./providers/types";
 import { readAnthropicEnv, hasAnthropicEnvCredential } from "./providers/env";
 import { generateToken, bridgeUrl, claudeCodeCommand, claudeDesktopConfig, maskToken, resolveMcpToken, mcpTokenEnvRef, MCP_TOKEN_ENV } from "./mcp/clientConfig";
 import { dispatchSetupSteps, repliesSetupSteps } from "./cloud/setup";
-import { semanticItems } from "./settingsItems/semantic";
-import { localModelsItems, type DetectedModels } from "./settingsItems/localModels";
+import { semanticItems, type SemanticItemsContext } from "./settingsItems/semantic";
+import { localModelsItems, type DetectedModels, type LocalModelsItemsContext } from "./settingsItems/localModels";
 import { ChoiceModal } from "./view/ChoiceModal";
 import { type McpServerConfig, type PluginSettings } from "./types";
 import { needsCredentialSetup } from "./providers/setupState";
@@ -289,6 +289,14 @@ function applyTiers(items: SettingDefinitionItem[], showAdvanced: () => boolean,
   });
 }
 
+/** The plugin capabilities the settings tab and its page builders use; Obsidian's base class needs the Plugin itself. */
+export type SettingsHost = Plugin & SemanticItemsContext["plugin"] & LocalModelsItemsContext["plugin"] & Pick<
+  ClaudeCompanionPlugin,
+  | "clearDiscoveryCache" | "clipperTemplatesStale" | "deviceChat" | "exportClipperTemplates" | "externalMcp" | "invalidateIndexer" | "loadOntologyOnStart"
+  | "mcpRunning" | "offerOntologySeed" | "ontology" | "openDesktopIntegrations" | "publishedItems" | "rebuildSemanticIndex" | "refreshViews" | "router"
+  | "runFirstRunPrompts" | "saveSettings" | "secrets" | "secretsWriteFailures" | "settings" | "testCloudReplies" | "testPublishToken" | "unpublishItem"
+>;
+
 export class ClaudeCompanionSettingTab extends PluginSettingTab {
   /** Models from the last Detect (Ollama; the OpenAI-compatible endpoint such as LM Studio, mlx-lm, vLLM, Jan), for the dropdowns. */
   private detectedModels: DetectedModels = { ollama: null, endpoint: null };
@@ -297,7 +305,7 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
 
   constructor(
     app: App,
-    private plugin: ClaudeCompanionPlugin,
+    private plugin: SettingsHost,
   ) {
     super(app, plugin);
   }

@@ -64,11 +64,11 @@ describe("ResearchTools", () => {
   });
 
   it("defines and gates the locate and claim review tools", async () => {
-    const { RESEARCH_WRITE_TOOLS } = await import("../../src/research/tools");
-    const names = new ResearchTools(repository() as never).definitions().map(({ name }) => name);
-    expect(names).toEqual(expect.arrayContaining(["research_evidence_locate", "research_claim_review"]));
-    expect(RESEARCH_WRITE_TOOLS.has("research_evidence_locate")).toBe(true);
-    expect(RESEARCH_WRITE_TOOLS.has("research_claim_review")).toBe(true);
+    const defs = new ResearchTools(repository() as never).definitions();
+    expect(defs.map(({ name }) => name)).toEqual(expect.arrayContaining(["research_evidence_locate", "research_claim_review"]));
+    for (const name of ["research_evidence_locate", "research_claim_review"]) {
+      expect(defs.find((def) => def.name === name)?.annotations?.readOnlyHint).toBe(false);
+    }
   });
 
   it("locates evidence, applying the locator before review, and validates enums", async () => {

@@ -1080,7 +1080,8 @@ describe("source enrichment wiring", () => {
     expect(closedOnUnload).toBe(true);
     expect(complete).not.toHaveBeenCalled();
     expect(await app.vault.cachedRead(file)).toBe(before);
-    expect((plugin as unknown as { mobileUtilityFallbackApproval?: unknown }).mobileUtilityFallbackApproval).toBeUndefined();
+    const consent = (plugin as unknown as { utilityConsent: { current(context: unknown): unknown } }).utilityConsent;
+    expect(consent.current(plugin.router().utilityFallbackConsentContext(true))).toBeUndefined();
   });
 
   it("cancels queued automatic enrichment timers on unload", async () => {

@@ -7,7 +7,7 @@ import { BUILTIN_EMBEDDING_MODELS, builtinModelById } from "../semantic/transfor
 import type { PluginSettings } from "../types";
 
 export interface SemanticItemsContext {
-  plugin: ClaudeCompanionPlugin;
+  plugin: Pick<ClaudeCompanionPlugin, "activity" | "builtinEmbedder" | "builtinModelCached" | "clearBuiltinModel" | "indexer" | "invalidateIndexer" | "rebuildSemanticIndex" | "router" | "saveSettings" | "settings">;
   /** Re-render the settings page. */
   update(): void;
   /** Offer to rebuild an index built with a different embedding model. */

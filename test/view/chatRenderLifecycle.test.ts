@@ -257,75 +257,6 @@ describe("Chat render lifecycle", () => {
     expect(assistantBubbles.length).toBe(1);
   });
 
-  it("streamTurn resolves an AgentTurnResult (never rejects) when the provider stream rejects", async () => {
-    const provider = {
-      id: "anthropic",
-      hasCredentials: () => true,
-      stream: async () => { throw new Error("transport crashed"); },
-    };
-    const plugin = {
-      settings: structuredClone(DEFAULT_SETTINGS),
-      router: () => ({ anthropic: provider }),
-      composeSystemPrompt: () => "system",
-    } as unknown as ClaudeCompanionPlugin;
-    const view = new ChatView(new WorkspaceLeaf(new App()), plugin);
-    const seam = view as unknown as {
-      controls: ReturnType<typeof defaultChatControls>;
-      streamTurn(target: "claude", messages: [], handlers: AgentTurnHandlers, signal: AbortSignal): Promise<{ text: string; trace: unknown[]; error?: Error }>;
-    };
-    seam.controls = defaultChatControls(DEFAULT_SETTINGS.model);
-    const handlers: AgentTurnHandlers = { onText: vi.fn() };
-
-    const result = await seam.streamTurn("claude", [], handlers, new AbortController().signal);
-
-    expect(result.text).toBe("");
-    expect(result.error?.message).toBe("transport crashed");
-  });
-
-  it("streamTurn resolves with the streamed text and no error when the provider succeeds", async () => {
-    const provider = {
-      id: "anthropic",
-      hasCredentials: () => true,
-      stream: async (_request: unknown, h: { onDone(text: string): void }) => { h.onDone("answer"); },
-    };
-    const plugin = {
-      settings: structuredClone(DEFAULT_SETTINGS),
-      router: () => ({ anthropic: provider }),
-      composeSystemPrompt: () => "system",
-    } as unknown as ClaudeCompanionPlugin;
-    const view = new ChatView(new WorkspaceLeaf(new App()), plugin);
-    const seam = view as unknown as {
-      controls: ReturnType<typeof defaultChatControls>;
-      streamTurn(target: "claude", messages: [], handlers: AgentTurnHandlers, signal: AbortSignal): Promise<{ text: string; trace: unknown[]; error?: Error }>;
-    };
-    seam.controls = defaultChatControls(DEFAULT_SETTINGS.model);
-    const handlers: AgentTurnHandlers = { onText: vi.fn() };
-
-    const result = await seam.streamTurn("claude", [], handlers, new AbortController().signal);
-
-    expect(result).toEqual({ text: "answer", trace: [] });
-  });
-
-  it("streamTurn settles with partial text when an unresponsive provider is stopped", async () => {
-    let handlers!: { onText(text: string): void };
-    const provider = { id: "anthropic", hasCredentials: () => true, stream: async (_request: unknown, h: typeof handlers) => {
-      handlers = h;
-      return new Promise<void>(() => undefined);
-    } };
-    const plugin = { settings: structuredClone(DEFAULT_SETTINGS), router: () => ({ anthropic: provider }), composeSystemPrompt: () => "system" } as unknown as ClaudeCompanionPlugin;
-    const view = new ChatView(new WorkspaceLeaf(new App()), plugin);
-    const seam = view as unknown as {
-      controls: ReturnType<typeof defaultChatControls>;
-      streamTurn(target: "claude", messages: [], handlers: AgentTurnHandlers, signal: AbortSignal): Promise<{ text: string; aborted?: boolean }>;
-    };
-    seam.controls = defaultChatControls(DEFAULT_SETTINGS.model);
-    const controller = new AbortController();
-    const turn = seam.streamTurn("claude", [], { onText: vi.fn() }, controller.signal);
-    handlers.onText("Partial");
-    controller.abort();
-    await expect(turn).resolves.toMatchObject({ text: "Partial", aborted: true });
-  });
-
   it("agentTurn resolves an AgentTurnResult error when building the turn runner throws", async () => {
     const provider = { id: "anthropic", stream: async () => undefined };
     const plugin = {
@@ -370,6 +301,7 @@ describe("Chat render lifecycle", () => {
       turnRunnerFor: ReturnType<typeof vi.fn>;
     };
     seam.controls = defaultChatControls(DEFAULT_SETTINGS.model);
+    view.mode.setCapable(true);
     seam.turnRunnerFor = vi.fn();
     const controller = new AbortController();
     const running = seam.agentTurn([], { onText: vi.fn() }, controller.signal, "c1");

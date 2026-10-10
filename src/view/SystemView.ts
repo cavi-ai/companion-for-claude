@@ -31,7 +31,7 @@ export class SystemView extends ItemView {
   private disposeChrome: ((remove?: boolean) => void) | null = null;
   private generation = 0;
 
-  constructor(leaf: WorkspaceLeaf, private plugin: ClaudeCompanionPlugin, private deps: SystemViewDeps) {
+  constructor(leaf: WorkspaceLeaf, private plugin: Pick<ClaudeCompanionPlugin, "companionChrome">, private deps: SystemViewDeps) {
     super(leaf);
   }
 

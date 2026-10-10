@@ -1,4 +1,5 @@
 import type { McpToolDef } from "../mcp/protocol";
+import { advertise, type ToolRecord } from "../mcp/toolRecord";
 import { auditProject } from "./audit";
 import type { ResearchRepository } from "./repository";
 import { documentSections } from "./sectionStatus";
@@ -10,20 +11,16 @@ import type { AdapterWork } from "../discovery/types";
 /** Resolve a Zotero item key into bibliographic metadata (undefined when unconfigured or missing). */
 export type ZoteroResolve = (itemKey: string) => Promise<AdapterWork | undefined>;
 
-export const RESEARCH_WRITE_TOOLS = new Set([
-  "research_project_create", "research_source_import",
-  "research_evidence_capture", "research_evidence_review", "research_evidence_locate", "research_claim_review",
-  "research_claim_create", "research_claim_link", "research_outline_generate",
-  "research_evidence_create", "research_outline_create",
-]);
+/** Legacy call names accepted by MCP dispatch, each running its canonical tool, but omitted from discovery. */
+export const RESEARCH_TOOL_ALIASES: Readonly<Record<string, string>> = {
+  research_evidence_create: "research_evidence_capture",
+  research_outline_create: "research_outline_generate",
+};
 
-/** Legacy call names accepted by MCP dispatch but intentionally omitted from discovery. */
-export const HIDDEN_RESEARCH_TOOL_ALIASES: ReadonlySet<string> = new Set([
-  "research_evidence_create",
-  "research_outline_create",
-]);
+export const HIDDEN_RESEARCH_TOOL_ALIASES: ReadonlySet<string> = new Set(Object.keys(RESEARCH_TOOL_ALIASES));
 
 type Repository = Pick<ResearchRepository, "loadProject" | "createProject" | "importSource" | "createEvidence" | "reviewEvidence" | "updateEvidenceLocator" | "reviewClaim" | "createClaim" | "linkClaimEvidence" | "createOutline" | "loadDraftSections">;
+type Args = Record<string, unknown>;
 
 const object = (properties: Record<string, unknown>, required: string[], extra: Record<string, unknown> = {}): McpToolDef["inputSchema"] => ({ type: "object", properties, required, ...extra });
 const text = (description: string) => ({ type: "string", description });
@@ -45,176 +42,200 @@ export class ResearchTools {
     private readonly enrichSource?: (path: string) => Promise<void>,
   ) {}
 
-  definitions(): McpToolDef[] {
+  /** Every research tool, in discovery order. */
+  records(): ToolRecord[] {
     const project = { project: text("Vault path to the research Project.md note.") };
     return [
-      { name: "research_project_create", description: "Create a canonical vault-native research project after user confirmation.", inputSchema: object({ title: text("Project title."), question: text("Research question."), folder: text("Vault-relative project folder."), audience: text("Optional audience.") }, ["title", "question", "folder"]) },
-      { name: "research_source_import", description: "Import a canonical text capture or metadata-only source into a research project. Web sources with a url and no captured_text are fetched and reduced to clean readable markdown automatically. Zotero sources with a zotero_key resolve the title and bibliographic metadata from the configured Zotero library when missing. Newly imported sources are enriched with a summary, key claims, and topic tags. Binary sources require an existing vault asset and an adapter-supported path.", inputSchema: object({ ...project, title: text("Source title (optional for zotero sources whose key resolves)."), source_kind: text("pdf, web, doi, arxiv, zotero, or vault."), canonical_id: text("Optional stable identifier."), url: text("Optional source URL."), asset: text("Optional existing vault asset path."), captured_text: text("Optional canonical captured text (omit for web sources to auto-capture the page)."), doi: text("Optional DOI."), arxiv_id: text("Optional arXiv id."), zotero_key: text("Optional Zotero item key."), authors: { type: "array", items: { type: "string" } }, published: text("Optional publication date."), publication: text("Optional publication title."), abstract: text("Optional abstract.") }, ["project", "source_kind"], SOURCE_IMPORT_TITLE_RULE) },
-      { name: "research_project_read", description: "Read a compact research project snapshot with sources, evidence, claims, issues, and health.", inputSchema: object(project, ["project"]) },
-      { name: "research_evidence_capture", description: "Create a provenance-linked evidence card inside a research project.", inputSchema: object({ ...project, source: text("Source record path in this project."), title: text("Evidence title."), excerpt: text("Exact source excerpt."), locator_kind: text("page, section, paragraph, timestamp, or quote."), locator_value: text("Exact locator text."), interpretation: text("Optional interpretation."), review_state: text("proposed, reviewed, or rejected.") }, ["project", "source", "title", "excerpt"]) },
-      { name: "research_evidence_review", description: "Mark an evidence card reviewed or rejected. Reviewing re-checks the passage against the current source, which clears a stale warning. Optionally set the locator first.", inputSchema: object({ evidence: text("Evidence record path."), review_state: text("reviewed or rejected."), locator_kind: text("Optional: page, section, paragraph, timestamp, or quote."), locator_value: text("Optional exact locator text; requires locator_kind.") }, ["evidence", "review_state"]) },
-      { name: "research_evidence_locate", description: "Record where in the source an evidence card's passage comes from, which clears a missing-locator finding.", inputSchema: object({ evidence: text("Evidence record path."), locator_kind: text("page, section, paragraph, timestamp, or quote."), locator_value: text("Exact locator text, e.g. a page number.") }, ["evidence", "locator_kind", "locator_value"]) },
-      { name: "research_claim_review", description: "Mark a claim reviewed or rejected; optionally record a limitation that answers challenging evidence.", inputSchema: object({ claim: text("Claim record path."), review_state: text("proposed, reviewed, or rejected."), limitation: text("Optional limitation to record on the claim.") }, ["claim", "review_state"]) },
-      { name: "research_claim_create", description: "Create a claim with separate supporting, challenging, and contextual evidence relations.", inputSchema: object({ ...project, title: text("Claim title."), proposition: text("Claim proposition."), confidence: text("low, moderate, or high."), review_state: text("proposed, reviewed, or rejected."), supports: { type: "array", items: { type: "string" } }, challenges: { type: "array", items: { type: "string" } }, contextualizes: { type: "array", items: { type: "string" } }, limitations: { type: "array", items: { type: "string" } } }, ["project", "title", "proposition"]) },
-      { name: "research_claim_link", description: "Link evidence to a claim as supporting, challenging, or contextualizing.", inputSchema: object({ ...project, claim: text("Claim path."), evidence: text("Evidence path."), relation: text("supports, challenges, or contextualizes.") }, ["project", "claim", "evidence", "relation"]) },
-      { name: "research_audit", description: "Audit a research project and return actionable JSON findings.", inputSchema: object(project, ["project"]) },
-      { name: "research_outline_generate", description: "Create an evidence-backed outline preserving supporting, challenging, and contextual evidence provenance.", inputSchema: object({ ...project, claims: { type: "array", items: { type: "string" } } }, ["project", "claims"]) },
+      { writes: true, run: (args) => this.projectCreate(args), def: { name: "research_project_create", description: "Create a canonical vault-native research project after user confirmation.", inputSchema: object({ title: text("Project title."), question: text("Research question."), folder: text("Vault-relative project folder."), audience: text("Optional audience.") }, ["title", "question", "folder"]) } },
+      { writes: true, run: (args) => this.sourceImport(args), def: { name: "research_source_import", description: "Import a canonical text capture or metadata-only source into a research project. Web sources with a url and no captured_text are fetched and reduced to clean readable markdown automatically. Zotero sources with a zotero_key resolve the title and bibliographic metadata from the configured Zotero library when missing. Newly imported sources are enriched with a summary, key claims, and topic tags. Binary sources require an existing vault asset and an adapter-supported path.", inputSchema: object({ ...project, title: text("Source title (optional for zotero sources whose key resolves)."), source_kind: text("pdf, web, doi, arxiv, zotero, or vault."), canonical_id: text("Optional stable identifier."), url: text("Optional source URL."), asset: text("Optional existing vault asset path."), captured_text: text("Optional canonical captured text (omit for web sources to auto-capture the page)."), doi: text("Optional DOI."), arxiv_id: text("Optional arXiv id."), zotero_key: text("Optional Zotero item key."), authors: { type: "array", items: { type: "string" } }, published: text("Optional publication date."), publication: text("Optional publication title."), abstract: text("Optional abstract.") }, ["project", "source_kind"], SOURCE_IMPORT_TITLE_RULE) } },
+      { writes: false, run: (args) => this.projectRead(args), def: { name: "research_project_read", description: "Read a compact research project snapshot with sources, evidence, claims, issues, and health.", inputSchema: object(project, ["project"]) } },
+      { writes: true, run: (args) => this.evidenceCapture(args), def: { name: "research_evidence_capture", description: "Create a provenance-linked evidence card inside a research project.", inputSchema: object({ ...project, source: text("Source record path in this project."), title: text("Evidence title."), excerpt: text("Exact source excerpt."), locator_kind: text("page, section, paragraph, timestamp, or quote."), locator_value: text("Exact locator text."), interpretation: text("Optional interpretation."), review_state: text("proposed, reviewed, or rejected.") }, ["project", "source", "title", "excerpt"]) } },
+      { writes: true, run: (args) => this.evidenceReview(args), def: { name: "research_evidence_review", description: "Mark an evidence card reviewed or rejected. Reviewing re-checks the passage against the current source, which clears a stale warning. Optionally set the locator first.", inputSchema: object({ evidence: text("Evidence record path."), review_state: text("reviewed or rejected."), locator_kind: text("Optional: page, section, paragraph, timestamp, or quote."), locator_value: text("Optional exact locator text; requires locator_kind.") }, ["evidence", "review_state"]) } },
+      { writes: true, run: (args) => this.evidenceLocate(args), def: { name: "research_evidence_locate", description: "Record where in the source an evidence card's passage comes from, which clears a missing-locator finding.", inputSchema: object({ evidence: text("Evidence record path."), locator_kind: text("page, section, paragraph, timestamp, or quote."), locator_value: text("Exact locator text, e.g. a page number.") }, ["evidence", "locator_kind", "locator_value"]) } },
+      { writes: true, run: (args) => this.claimReview(args), def: { name: "research_claim_review", description: "Mark a claim reviewed or rejected; optionally record a limitation that answers challenging evidence.", inputSchema: object({ claim: text("Claim record path."), review_state: text("proposed, reviewed, or rejected."), limitation: text("Optional limitation to record on the claim.") }, ["claim", "review_state"]) } },
+      { writes: true, run: (args) => this.claimCreate(args), def: { name: "research_claim_create", description: "Create a claim with separate supporting, challenging, and contextual evidence relations.", inputSchema: object({ ...project, title: text("Claim title."), proposition: text("Claim proposition."), confidence: text("low, moderate, or high."), review_state: text("proposed, reviewed, or rejected."), supports: { type: "array", items: { type: "string" } }, challenges: { type: "array", items: { type: "string" } }, contextualizes: { type: "array", items: { type: "string" } }, limitations: { type: "array", items: { type: "string" } } }, ["project", "title", "proposition"]) } },
+      { writes: true, run: (args) => this.claimLink(args), def: { name: "research_claim_link", description: "Link evidence to a claim as supporting, challenging, or contextualizing.", inputSchema: object({ ...project, claim: text("Claim path."), evidence: text("Evidence path."), relation: text("supports, challenges, or contextualizes.") }, ["project", "claim", "evidence", "relation"]) } },
+      { writes: false, run: (args) => this.audit(args), def: { name: "research_audit", description: "Audit a research project and return actionable JSON findings.", inputSchema: object(project, ["project"]) } },
+      { writes: true, run: (args) => this.outlineGenerate(args), def: { name: "research_outline_generate", description: "Create an evidence-backed outline preserving supporting, challenging, and contextual evidence provenance.", inputSchema: object({ ...project, claims: { type: "array", items: { type: "string" } } }, ["project", "claims"]) } },
     ];
   }
 
-  async call(name: string, args: Record<string, unknown>): Promise<string> {
-    switch (name) {
-      case "research_project_create": {
-        const audience = optionalString(args.audience);
-        const record = await this.repository.createProject({ title: requiredString(args.title), question: requiredString(args.question), folder: requiredString(args.folder), ...(audience ? { audience } : {}) });
-        return JSON.stringify({ path: record.path });
-      }
-      case "research_source_import": {
-        const sourceKind = requiredString(args.source_kind);
-        if (!["pdf", "web", "doi", "arxiv", "zotero", "vault"].includes(sourceKind)) throw new Error(`Unsupported source kind: ${sourceKind}`);
-        let capturedContent = optionalString(args.captured_text);
-        let authors = stringArray(args.authors, "authors");
-        let published = optionalString(args.published);
-        let publication = optionalString(args.publication);
-        let doi = optionalString(args.doi);
-        let url = optionalString(args.url);
-        let abstract = optionalString(args.abstract);
-        let title = optionalString(args.title);
-        const zoteroKey = optionalString(args.zotero_key);
-        // Zotero sources: resolve the item key against the configured library
-        // to fill any missing bibliographic metadata. Like web auto-capture, a
-        // failed lookup degrades to a key-only import rather than failing.
-        let zoteroResolved: boolean | undefined;
-        if (sourceKind === "zotero" && zoteroKey && this.resolveZotero) {
-          zoteroResolved = false;
-          try {
-            const work = await this.resolveZotero(zoteroKey);
-            if (work) {
-              zoteroResolved = true;
-              title ??= work.title;
-              if (!authors.length && work.authors.length) authors = work.authors;
-              published ??= work.published;
-              publication ??= work.publication;
-              doi ??= work.doi;
-              url ??= work.url;
-              abstract ??= work.abstract;
-            }
-          } catch {
-            // Key-only import still succeeds; the caller sees zotero_resolved: false.
-          }
+  definitions(): McpToolDef[] {
+    return this.records().map(advertise);
+  }
+
+  /** The record a call name runs, resolving legacy aliases; undefined for an unknown name. */
+  record(name: string): ToolRecord | undefined {
+    const canonical = RESEARCH_TOOL_ALIASES[name] ?? name;
+    return this.records().find((record) => record.def.name === canonical);
+  }
+
+  async call(name: string, args: Args): Promise<string> {
+    const record = this.record(name);
+    if (!record) throw new Error(`Unknown research tool: ${name}`);
+    return record.run(args);
+  }
+
+  private async projectCreate(args: Args): Promise<string> {
+    const audience = optionalString(args.audience);
+    const record = await this.repository.createProject({ title: requiredString(args.title), question: requiredString(args.question), folder: requiredString(args.folder), ...(audience ? { audience } : {}) });
+    return JSON.stringify({ path: record.path });
+  }
+
+  private async sourceImport(args: Args): Promise<string> {
+    const sourceKind = requiredString(args.source_kind);
+    if (!["pdf", "web", "doi", "arxiv", "zotero", "vault"].includes(sourceKind)) throw new Error(`Unsupported source kind: ${sourceKind}`);
+    let capturedContent = optionalString(args.captured_text);
+    let authors = stringArray(args.authors, "authors");
+    let published = optionalString(args.published);
+    let publication = optionalString(args.publication);
+    let doi = optionalString(args.doi);
+    let url = optionalString(args.url);
+    let abstract = optionalString(args.abstract);
+    let title = optionalString(args.title);
+    const zoteroKey = optionalString(args.zotero_key);
+    // Zotero sources: resolve the item key against the configured library
+    // to fill any missing bibliographic metadata. Like web auto-capture, a
+    // failed lookup degrades to a key-only import rather than failing.
+    let zoteroResolved: boolean | undefined;
+    if (sourceKind === "zotero" && zoteroKey && this.resolveZotero) {
+      zoteroResolved = false;
+      try {
+        const work = await this.resolveZotero(zoteroKey);
+        if (work) {
+          zoteroResolved = true;
+          title ??= work.title;
+          if (!authors.length && work.authors.length) authors = work.authors;
+          published ??= work.published;
+          publication ??= work.publication;
+          doi ??= work.doi;
+          url ??= work.url;
+          abstract ??= work.abstract;
         }
-        if (!title) throw new Error("research_source_import requires a title (or a zotero_key that resolves to one)");
-        // Auto-capture web sources: fetch + readable-markdown extraction, so
-        // the note holds trustworthy fingerprinted text, not just a link.
-        let autoCapture: boolean | undefined;
-        if (sourceKind === "web" && url && !capturedContent && this.captureWeb) {
-          autoCapture = false;
-          try {
-            const captured = await this.captureWeb(url);
-            if (captured) {
-              capturedContent = captured.markdown;
-              autoCapture = true;
-              if (!authors.length && captured.author) authors = [captured.author];
-              if (!published && captured.published) published = captured.published;
-            }
-          } catch {
-            // Metadata-only import still succeeds; the caller sees captured: false.
-          }
-        }
-        const result = await this.repository.importSource(requiredString(args.project), {
-          title, sourceKind: sourceKind as "pdf" | "web" | "doi" | "arxiv" | "zotero" | "vault",
-          ...optionalField("canonicalId", args.canonical_id), ...(url ? { url } : {}), ...optionalField("asset", args.asset),
-          ...(capturedContent ? { capturedContent } : {}), ...optionalField("doi", doi), ...optionalField("arxivId", args.arxiv_id),
-          ...optionalField("zoteroKey", zoteroKey), ...(authors.length ? { authors } : {}),
-          ...(published ? { published } : {}), ...(publication ? { publication } : {}), ...(abstract ? { abstract } : {}),
-        });
-        const extras: Record<string, unknown> = {};
-        if (autoCapture !== undefined) extras.captured = autoCapture;
-        if (zoteroResolved !== undefined) extras.zotero_resolved = zoteroResolved;
-        // Freshly created sources get the same summary/key-claims/topics pass a
-        // clipped source gets; a duplicate already carries (or skips) its own.
-        if (result.kind === "created" && this.enrichSource) {
-          try {
-            await this.enrichSource(result.path);
-            extras.enriched = true;
-          } catch {
-            extras.enriched = false;
-          }
-        }
-        return JSON.stringify({ ...result, ...extras });
+      } catch {
+        // Key-only import still succeeds; the caller sees zotero_resolved: false.
       }
-      case "research_project_read": {
-        const project = requiredString(args.project);
-        const snapshot = await this.repository.loadProject(project);
-        const document = await documentSections(snapshot, (path) => this.repository.loadDraftSections(path));
-        const stage = deriveResearchStage(snapshot, document?.sections.map(({ state }) => state));
-        return JSON.stringify({
-          project: { path: compactString(snapshot.project.path), title: compactString(snapshot.project.title), question: compactString(snapshot.project.question, 500), stage, status: snapshot.project.status },
-          health: snapshot.health,
-          counts: { sources: snapshot.sources.length, evidence: snapshot.evidence.length, claims: snapshot.claims.length, questions: snapshot.questions.length, documents: snapshot.documents.length, issues: snapshot.issues.length },
-          paths: {
-            sources: pathSummary(snapshot.sources), evidence: pathSummary(snapshot.evidence), claims: pathSummary(snapshot.claims),
-            questions: pathSummary(snapshot.questions), documents: pathSummary(snapshot.documents), issues: pathSummary(snapshot.issues),
-          },
-        });
-      }
-      case "research_audit": return JSON.stringify(auditProject(await this.repository.loadProject(requiredString(args.project), { refreshBinaryFingerprints: true })).map((finding) => ({ rule: finding.code, ...finding })));
-      case "research_evidence_capture":
-      case "research_evidence_create": {
-        const project = requiredString(args.project);
-        if (typeof args.excerpt !== "string" || !args.excerpt.trim()) throw new Error("Evidence excerpt must not be empty");
-        const excerpt = args.excerpt;
-        const reviewState = args.review_state === undefined ? "proposed" : requiredString(args.review_state);
-        if (!isReviewState(reviewState)) throw new Error(`Unsupported review state: ${reviewState}`);
-        const locatorKindValue = optionalString(args.locator_kind);
-        if (locatorKindValue && !["page", "section", "paragraph", "timestamp", "quote"].includes(locatorKindValue)) throw new Error(`Unsupported locator kind: ${locatorKindValue}`);
-        const locatorKind = locatorKindValue as SourceLocatorKind | undefined;
-        const locatorValue = optionalString(args.locator_value);
-        const interpretation = optionalString(args.interpretation);
-        if (reviewState === "reviewed" && (!locatorKind || !locatorValue?.trim())) throw new Error("Reviewed evidence requires an exact locator kind and value");
-        const record = await this.repository.createEvidence({ project, source: requiredString(args.source), title: requiredString(args.title), excerpt, reviewState, ...(locatorKind ? { locatorKind } : {}), ...(locatorValue ? { locatorValue } : {}), ...(interpretation ? { interpretation } : {}) });
-        return JSON.stringify({ path: record.path });
-      }
-      case "research_evidence_review": {
-        const state = requiredString(args.review_state);
-        if (state !== "reviewed" && state !== "rejected") throw new Error(`Unsupported evidence review state: ${state}`);
-        const evidence = requiredString(args.evidence);
-        const locatorKind = optionalString(args.locator_kind);
-        const locatorValue = optionalString(args.locator_value);
-        if (locatorKind || locatorValue) await this.repository.updateEvidenceLocator(evidence, locatorKindArg(locatorKind), requiredString(locatorValue));
-        const record = await this.repository.reviewEvidence(evidence, state);
-        return JSON.stringify({ path: record.path, review_state: record.reviewState });
-      }
-      case "research_evidence_locate": {
-        const record = await this.repository.updateEvidenceLocator(requiredString(args.evidence), locatorKindArg(optionalString(args.locator_kind)), requiredString(args.locator_value));
-        return JSON.stringify({ path: record.path, locator_kind: record.locatorKind, locator_value: record.locatorValue });
-      }
-      case "research_claim_review": {
-        const state = requiredString(args.review_state);
-        if (!isReviewState(state)) throw new Error(`Unsupported review state: ${state}`);
-        const record = await this.repository.reviewClaim(requiredString(args.claim), state, optionalString(args.limitation));
-        return JSON.stringify({ path: record.path, review_state: record.reviewState, limitations: record.limitations });
-      }
-      case "research_claim_create": {
-        const project = requiredString(args.project);
-        const reviewState = args.review_state === undefined ? "proposed" : requiredString(args.review_state);
-        if (!isReviewState(reviewState)) throw new Error(`Unsupported review state: ${reviewState}`);
-        const confidence = optionalString(args.confidence) ?? "moderate";
-        if (!["low", "moderate", "high"].includes(confidence)) throw new Error(`Unsupported confidence: ${confidence}`);
-        const record = await this.repository.createClaim({ project, title: requiredString(args.title), proposition: requiredString(args.proposition), reviewState, confidence: confidence as "low" | "moderate" | "high", supports: stringArray(args.supports, "supports"), challenges: stringArray(args.challenges, "challenges"), contextualizes: stringArray(args.contextualizes, "contextualizes"), limitations: stringArray(args.limitations, "limitations") });
-        return JSON.stringify({ path: record.path });
-      }
-      case "research_claim_link": {
-        const project = requiredString(args.project);
-        const relation = requiredString(args.relation) as EvidenceRelation;
-        if (!["supports", "challenges", "contextualizes"].includes(relation)) throw new Error(`Unsupported evidence relation: ${relation}`);
-        await this.repository.linkClaimEvidence(project, requiredString(args.claim), requiredString(args.evidence), relation);
-        return JSON.stringify({ linked: true });
-      }
-      case "research_outline_generate":
-      case "research_outline_create": return JSON.stringify(await this.repository.createOutline(requiredString(args.project), stringArray(args.claims, "claims", true)));
-      default: throw new Error(`Unknown research tool: ${name}`);
     }
+    if (!title) throw new Error("research_source_import requires a title (or a zotero_key that resolves to one)");
+    // Auto-capture web sources: fetch + readable-markdown extraction, so
+    // the note holds trustworthy fingerprinted text, not just a link.
+    let autoCapture: boolean | undefined;
+    if (sourceKind === "web" && url && !capturedContent && this.captureWeb) {
+      autoCapture = false;
+      try {
+        const captured = await this.captureWeb(url);
+        if (captured) {
+          capturedContent = captured.markdown;
+          autoCapture = true;
+          if (!authors.length && captured.author) authors = [captured.author];
+          if (!published && captured.published) published = captured.published;
+        }
+      } catch {
+        // Metadata-only import still succeeds; the caller sees captured: false.
+      }
+    }
+    const result = await this.repository.importSource(requiredString(args.project), {
+      title, sourceKind: sourceKind as "pdf" | "web" | "doi" | "arxiv" | "zotero" | "vault",
+      ...optionalField("canonicalId", args.canonical_id), ...(url ? { url } : {}), ...optionalField("asset", args.asset),
+      ...(capturedContent ? { capturedContent } : {}), ...optionalField("doi", doi), ...optionalField("arxivId", args.arxiv_id),
+      ...optionalField("zoteroKey", zoteroKey), ...(authors.length ? { authors } : {}),
+      ...(published ? { published } : {}), ...(publication ? { publication } : {}), ...(abstract ? { abstract } : {}),
+    });
+    const extras: Record<string, unknown> = {};
+    if (autoCapture !== undefined) extras.captured = autoCapture;
+    if (zoteroResolved !== undefined) extras.zotero_resolved = zoteroResolved;
+    // Freshly created sources get the same summary/key-claims/topics pass a
+    // clipped source gets; a duplicate already carries (or skips) its own.
+    if (result.kind === "created" && this.enrichSource) {
+      try {
+        await this.enrichSource(result.path);
+        extras.enriched = true;
+      } catch {
+        extras.enriched = false;
+      }
+    }
+    return JSON.stringify({ ...result, ...extras });
+  }
+
+  private async projectRead(args: Args): Promise<string> {
+    const project = requiredString(args.project);
+    const snapshot = await this.repository.loadProject(project);
+    const document = await documentSections(snapshot, (path) => this.repository.loadDraftSections(path));
+    const stage = deriveResearchStage(snapshot, document?.sections.map(({ state }) => state));
+    return JSON.stringify({
+      project: { path: compactString(snapshot.project.path), title: compactString(snapshot.project.title), question: compactString(snapshot.project.question, 500), stage, status: snapshot.project.status },
+      health: snapshot.health,
+      counts: { sources: snapshot.sources.length, evidence: snapshot.evidence.length, claims: snapshot.claims.length, questions: snapshot.questions.length, documents: snapshot.documents.length, issues: snapshot.issues.length },
+      paths: {
+        sources: pathSummary(snapshot.sources), evidence: pathSummary(snapshot.evidence), claims: pathSummary(snapshot.claims),
+        questions: pathSummary(snapshot.questions), documents: pathSummary(snapshot.documents), issues: pathSummary(snapshot.issues),
+      },
+    });
+  }
+
+  private async audit(args: Args): Promise<string> {
+    return JSON.stringify(auditProject(await this.repository.loadProject(requiredString(args.project), { refreshBinaryFingerprints: true })).map((finding) => ({ rule: finding.code, ...finding })));
+  }
+
+  private async evidenceCapture(args: Args): Promise<string> {
+    const project = requiredString(args.project);
+    if (typeof args.excerpt !== "string" || !args.excerpt.trim()) throw new Error("Evidence excerpt must not be empty");
+    const excerpt = args.excerpt;
+    const reviewState = args.review_state === undefined ? "proposed" : requiredString(args.review_state);
+    if (!isReviewState(reviewState)) throw new Error(`Unsupported review state: ${reviewState}`);
+    const locatorKindValue = optionalString(args.locator_kind);
+    if (locatorKindValue && !["page", "section", "paragraph", "timestamp", "quote"].includes(locatorKindValue)) throw new Error(`Unsupported locator kind: ${locatorKindValue}`);
+    const locatorKind = locatorKindValue as SourceLocatorKind | undefined;
+    const locatorValue = optionalString(args.locator_value);
+    const interpretation = optionalString(args.interpretation);
+    if (reviewState === "reviewed" && (!locatorKind || !locatorValue?.trim())) throw new Error("Reviewed evidence requires an exact locator kind and value");
+    const record = await this.repository.createEvidence({ project, source: requiredString(args.source), title: requiredString(args.title), excerpt, reviewState, ...(locatorKind ? { locatorKind } : {}), ...(locatorValue ? { locatorValue } : {}), ...(interpretation ? { interpretation } : {}) });
+    return JSON.stringify({ path: record.path });
+  }
+
+  private async evidenceReview(args: Args): Promise<string> {
+    const state = requiredString(args.review_state);
+    if (state !== "reviewed" && state !== "rejected") throw new Error(`Unsupported evidence review state: ${state}`);
+    const evidence = requiredString(args.evidence);
+    const locatorKind = optionalString(args.locator_kind);
+    const locatorValue = optionalString(args.locator_value);
+    if (locatorKind || locatorValue) await this.repository.updateEvidenceLocator(evidence, locatorKindArg(locatorKind), requiredString(locatorValue));
+    const record = await this.repository.reviewEvidence(evidence, state);
+    return JSON.stringify({ path: record.path, review_state: record.reviewState });
+  }
+
+  private async evidenceLocate(args: Args): Promise<string> {
+    const record = await this.repository.updateEvidenceLocator(requiredString(args.evidence), locatorKindArg(optionalString(args.locator_kind)), requiredString(args.locator_value));
+    return JSON.stringify({ path: record.path, locator_kind: record.locatorKind, locator_value: record.locatorValue });
+  }
+
+  private async claimReview(args: Args): Promise<string> {
+    const state = requiredString(args.review_state);
+    if (!isReviewState(state)) throw new Error(`Unsupported review state: ${state}`);
+    const record = await this.repository.reviewClaim(requiredString(args.claim), state, optionalString(args.limitation));
+    return JSON.stringify({ path: record.path, review_state: record.reviewState, limitations: record.limitations });
+  }
+
+  private async claimCreate(args: Args): Promise<string> {
+    const project = requiredString(args.project);
+    const reviewState = args.review_state === undefined ? "proposed" : requiredString(args.review_state);
+    if (!isReviewState(reviewState)) throw new Error(`Unsupported review state: ${reviewState}`);
+    const confidence = optionalString(args.confidence) ?? "moderate";
+    if (!["low", "moderate", "high"].includes(confidence)) throw new Error(`Unsupported confidence: ${confidence}`);
+    const record = await this.repository.createClaim({ project, title: requiredString(args.title), proposition: requiredString(args.proposition), reviewState, confidence: confidence as "low" | "moderate" | "high", supports: stringArray(args.supports, "supports"), challenges: stringArray(args.challenges, "challenges"), contextualizes: stringArray(args.contextualizes, "contextualizes"), limitations: stringArray(args.limitations, "limitations") });
+    return JSON.stringify({ path: record.path });
+  }
+
+  private async claimLink(args: Args): Promise<string> {
+    const project = requiredString(args.project);
+    const relation = requiredString(args.relation) as EvidenceRelation;
+    if (!["supports", "challenges", "contextualizes"].includes(relation)) throw new Error(`Unsupported evidence relation: ${relation}`);
+    await this.repository.linkClaimEvidence(project, requiredString(args.claim), requiredString(args.evidence), relation);
+    return JSON.stringify({ linked: true });
+  }
+
+  private async outlineGenerate(args: Args): Promise<string> {
+    return JSON.stringify(await this.repository.createOutline(requiredString(args.project), stringArray(args.claims, "claims", true)));
   }
 }
 
