@@ -20,6 +20,7 @@ import { quickNotice } from "../../notice";
 import { removeInterruptedTurnRow, renderInterruptedTurnRow, renderRecoverableEditRow } from "./recoveryRows";
 import { renderResearchQuickActions } from "./researchQuickActions";
 import { ThinkingStatus } from "./thinkingStatus";
+import { StickToBottom } from "./stickToBottom";
 import type { ChatSession, TurnState } from "./chatSession";
 
 /** Truncate a tool result for the expandable chip body. */
@@ -48,7 +49,16 @@ export interface TranscriptDeps {
 
 /** The message list: stored/live bubbles, turn rendering, tool chips, reply actions, empty-state and setup-card hosting. */
 export class Transcript {
-  messagesEl!: HTMLElement;
+  private list!: HTMLElement;
+  private stick: StickToBottom | null = null;
+
+  /** The transcript's scroller; it follows the latest message while the reader is at the bottom. */
+  get messagesEl(): HTMLElement { return this.list; }
+  set messagesEl(el: HTMLElement) {
+    this.stick?.destroy();
+    this.list = el;
+    this.stick = new StickToBottom(el, { ResizeObserver: window.ResizeObserver, MutationObserver: window.MutationObserver });
+  }
   /** Rotating "thinking" status word timer + per-turn start offset. */
   private readonly thinking = new ThinkingStatus();
   constructor(private app: App, private plugin: TranscriptHost, private chat: ChatSession, private deps: TranscriptDeps) {}
@@ -164,7 +174,7 @@ export class Transcript {
       return;
     }
     this.deps.renderSetupCard(this.messagesEl);
-    this.scrollToBottom();
+    this.jumpToBottom();
   }
 
   /** Adapt this view to the TurnRenderer host contract (one per turn). */
@@ -375,7 +385,8 @@ export class Transcript {
     if (opts?.command) {
       this.renderCommandChip(bubble, text);
       if (role === "user") this.addUserActions(bubble, opts.prompt ?? text);
-      this.scrollToBottom();
+      if (role === "user") this.jumpToBottom();
+      else this.scrollToBottom();
       return;
     }
     bubble.createDiv({ cls: "cc-role", text: role === "user" ? "You" : "Claude" });
@@ -383,7 +394,9 @@ export class Transcript {
     const body = bubble.createDiv({ cls: "cc-body" });
     void this.deps.renderMarkdownInto(body, text);
     if (role === "user") this.addUserActions(bubble, opts?.prompt ?? text);
-    this.scrollToBottom();
+    // Sending a message always shows it; a reply follows only a reader who is at the bottom.
+    if (role === "user") this.jumpToBottom();
+    else this.scrollToBottom();
   }
 
   /** A slash command / workflow invocation renders as a compact accent chip
@@ -503,8 +516,19 @@ export class Transcript {
     return btn;
   }
 
+  /** Keep the latest message in view unless the reader has scrolled up. */
   scrollToBottom(): void {
-    this.messagesEl.scrollTop = this.messagesEl.scrollHeight;
+    this.stick?.follow();
+  }
+
+  /** Show the latest message and resume following it. */
+  jumpToBottom(): void {
+    this.stick?.jump();
+  }
+
+  stopFollowing(): void {
+    this.stick?.destroy();
+    this.stick = null;
   }
 
   /**

@@ -1671,32 +1671,51 @@ pre.cc-has-copy:hover .cc-code-copy { opacity: 1; }
 }
 
 /* ----- source inbox (clip triage) — touch-first ----- */
+/* Inbox buttons are scoped as `.cc-inbox-view button.x` so their fills outrank
+   Obsidian's `button:not(.clickable-icon)` background and shadow. */
 .cc-inbox-view {
   padding: 8px 12px;
 }
 .cc-inbox-bar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: 4px 8px;
   margin: 4px 0 10px;
 }
 .cc-inbox-count {
   color: var(--text-muted);
   font-size: var(--cc-text-sm);
+  white-space: nowrap;
 }
-.cc-inbox-enrich-all {
+/* The utility backend is a caption on its own line under the count and Enrich all. */
+.cc-inbox-backend {
+  order: 3;
+  flex: 1 1 100%;
+  min-width: 0;
+  color: var(--text-faint);
+  font-size: var(--font-ui-smaller);
+  overflow-wrap: anywhere;
+}
+.cc-inbox-view button.cc-inbox-enrich-all {
+  flex: 0 0 auto;
   min-height: 36px;
   padding: 6px 16px;
   border-radius: 18px;
   border: none;
   background: var(--cc-clay);
+  box-shadow: none;
   color: var(--text-on-accent, #fff);
   font-weight: 600;
   cursor: pointer;
 }
-.cc-inbox-enrich-all:active {
+.cc-inbox-view button.cc-inbox-enrich-all:active {
   transform: scale(0.97);
+}
+.cc-inbox-view button.cc-inbox-enrich-all:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 .cc-inbox-list {
   display: flex;
@@ -1712,15 +1731,19 @@ pre.cc-has-copy:hover .cc-code-copy { opacity: 1; }
   border-radius: 14px;
   background: var(--background-secondary);
 }
-.cc-inbox-open {
+.cc-inbox-view button.cc-inbox-open {
   flex: 1;
   min-width: 0;
   display: flex;
   align-items: center;
+  justify-content: flex-start;
   gap: 8px;
+  height: auto;
   min-height: 44px;
   background: none;
+  box-shadow: none;
   border: none;
+  border-radius: 0;
   color: var(--text-normal);
   text-align: left;
   cursor: pointer;
@@ -1744,20 +1767,22 @@ pre.cc-has-copy:hover .cc-code-copy { opacity: 1; }
   background: color-mix(in srgb, var(--cc-clay) 14%, transparent);
   color: var(--cc-clay);
 }
-.cc-inbox-enrich {
+.cc-inbox-view button.cc-inbox-enrich {
   flex: 0 0 auto;
   width: 44px;
   height: 44px;
+  padding: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   border: none;
   border-radius: 50%;
   background: transparent;
+  box-shadow: none;
   color: var(--cc-clay);
   cursor: pointer;
 }
-.cc-inbox-enrich:active {
+.cc-inbox-view button.cc-inbox-enrich:active {
   background: color-mix(in srgb, var(--cc-clay) 16%, transparent);
 }
 .cc-inbox-enrich svg {
@@ -1765,9 +1790,19 @@ pre.cc-has-copy:hover .cc-code-copy { opacity: 1; }
   height: 20px;
   flex: 0 0 auto;
 }
-.cc-inbox-enrich:disabled {
+.cc-inbox-view button.cc-inbox-enrich:disabled {
   opacity: 0.5;
   cursor: default;
+}
+.cc-inbox-enrichment-status {
+  flex: 0 0 auto;
+  padding-inline-end: 8px;
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  white-space: nowrap;
+}
+.cc-inbox-enrichment-error {
+  color: var(--text-error);
 }
 .cc-inbox-typed {
   margin-top: 18px;
@@ -1785,18 +1820,19 @@ pre.cc-has-copy:hover .cc-code-copy { opacity: 1; }
   color: var(--text-muted);
   font-size: var(--font-ui-smaller);
 }
-.cc-inbox-organize {
+.cc-inbox-view button.cc-inbox-organize {
   margin-left: auto;
   min-height: 32px;
   padding: 4px 14px;
   border-radius: 16px;
   border: 1px solid var(--cc-clay);
   background: transparent;
+  box-shadow: none;
   color: var(--cc-clay);
   font-weight: 600;
   cursor: pointer;
 }
-.cc-inbox-organize:active {
+.cc-inbox-view button.cc-inbox-organize:active {
   transform: scale(0.97);
 }
 .cc-inbox-orders {
@@ -1826,7 +1862,7 @@ pre.cc-has-copy:hover .cc-code-copy { opacity: 1; }
   border-radius: 16px;
   cursor: pointer;
 }
-.cc-inbox-organize:disabled {
+.cc-inbox-view button.cc-inbox-organize:disabled {
   opacity: 0.5;
   cursor: default;
 }
@@ -1996,6 +2032,11 @@ pre.cc-has-copy:hover .cc-code-copy { opacity: 1; }
   height: 100%;
   overflow: hidden;
   padding: 0 0 max(0px, var(--view-bottom-spacing, var(--safe-area-inset-bottom, 0px)));
+}
+/* While the keyboard animates, Obsidian keeps the app full height until it settles. Reserve the
+   keyboard's height so the composer sits where it ends up and does not move when the app shrinks. */
+body.is-mobile.keyboard-animating .workspace-leaf-content .view-content.cc-chat-root {
+  padding-bottom: calc(var(--keyboard-height, 0px) + max(0px, var(--view-bottom-spacing, var(--safe-area-inset-bottom, 0px))));
 }
 
 /* Header: drop the eyebrow, slim the bar, hide the desktop icon row

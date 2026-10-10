@@ -14,6 +14,8 @@ import type { EnrichDiagnostics } from "../sources/enrichDiagnostics";
 
 /** Delete and rename events within this window share one index save. */
 const INDEX_SAVE_DELAY_MS = 2000;
+/** Largest index a phone reads or writes. */
+const MOBILE_INDEX_BUDGET_BYTES = 8 * 1024 * 1024;
 
 export interface SemanticControllerDeps {
   settings: () => PluginSettings;
@@ -93,8 +95,27 @@ export class SemanticController {
     this._indexer?.flushDeferredSave();
   }
 
+  /** A phone keeps its own index file, so an index another device syncs into the plugin folder is never overwritten. */
   private indexPath(): string {
-    return `${this.deps.manifestDir ?? `.obsidian/plugins/${this.deps.manifestId}`}/semantic-index.json`;
+    return `${this.indexDir()}/${this.deps.isMobile ? "semantic-index-mobile.json" : "semantic-index.json"}`;
+  }
+
+  private indexDir(): string {
+    return this.deps.manifestDir ?? `.obsidian/plugins/${this.deps.manifestId}`;
+  }
+
+  /**
+   * The index a phone reads: its own file, else a shared one from another device; either only within the
+   * mobile memory budget. Null starts an empty index that the next build fills and saves to the phone's file.
+   */
+  private async mobileIndexSource(own: string): Promise<string | null> {
+    const shared = `${this.indexDir()}/semantic-index.json`;
+    const source = (await this.deps.vault.adapterExists(own)) ? own : (await this.deps.vault.adapterExists(shared)) ? shared : null;
+    if (!source) return null;
+    const size = await this.deps.vault.adapterSize?.(source);
+    if (size !== undefined && size <= MOBILE_INDEX_BUDGET_BYTES) return source;
+    console.debug("Claude Companion: semantic index over the mobile memory budget; starting an empty index", source, size);
+    return null;
   }
 
   indexer(): SemanticIndexer | null {
@@ -156,15 +177,10 @@ export class SemanticController {
         ? { maxInputBytes: (p: string) => p.toLowerCase().endsWith(".pdf") ? this.deps.mobilePdfMaxBytes : this.deps.mobileSourceNoteMaxBytes }
         : {}),
       load: async () => {
-        if (this.deps.isMobile && await this.deps.vault.adapterExists(path)) {
-          const size = await this.deps.vault.adapterSize?.(path);
-          if (size === undefined || size > 8 * 1024 * 1024) {
-            throw new Error("Semantic index exceeds the mobile memory budget or its size is unavailable. Search stays keyword-only. Rebuild a smaller index on desktop or disable semantic search.");
-          }
-        }
+        const source = this.deps.isMobile ? await this.mobileIndexSource(path) : path;
         try {
-          if (await this.deps.vault.adapterExists(path)) {
-            return JSON.parse(await this.deps.vault.adapterRead(path)) as unknown;
+          if (source && await this.deps.vault.adapterExists(source)) {
+            return JSON.parse(await this.deps.vault.adapterRead(source)) as unknown;
           }
         } catch (e) {
           console.debug("Claude Companion: corrupt/missing semantic index, rebuilding", e);
@@ -181,7 +197,7 @@ export class SemanticController {
       save: async (data: PersistedIndex) => {
         this.deps.enrichDiagnostics().log("serialize-start", { notes: Object.keys(data.notes).length });
         const json = JSON.stringify(data);
-        if (this.deps.isMobile && utf8Size(json) > 8 * 1024 * 1024) {
+        if (this.deps.isMobile && utf8Size(json) > MOBILE_INDEX_BUDGET_BYTES) {
           // Avoid allocating another whole encoded blob just to measure it.
           throw new Error("Semantic index exceeds the mobile persistence budget. Existing saved index was retained.");
         }

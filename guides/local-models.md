@@ -186,13 +186,14 @@ or automatically download weights; keyword search remains available while the
 semantic index is unavailable.
 
 One pinned default on every platform means one index format, so a desktop-built
-index syncs to mobile and stays usable there within the mobile memory budget.
+index that syncs to mobile is usable there until the phone builds its own, as long
+as it fits the mobile memory budget.
 
 ### Building the index
 
 On mobile, each launch starts with embedding inference paused. Search remains keyword-only until you explicitly choose **Download** or **Rebuild index** in embedding settings. Cached weights do not trigger startup indexing. Disabling semantic search or unloading Companion stops the worker and cancels pending indexing. An engine failure pauses inference until an explicit retry.
 
-Mobile indexing caps the persisted index at 8 MiB and retained chunks at 400. It checks the saved file size before reading it and preserves oversized saved indexes. PDF extraction is limited to 200 pages and 256,000 characters, in addition to the input file limits. These are conservative allocation bounds, not a measured guarantee for every device. Use keyword search or desktop indexing when a limit is reached.
+Mobile indexing caps the persisted index at 8 MiB and retained chunks at 400. A phone saves its own index file (`semantic-index-mobile.json`) beside the desktop one (`semantic-index.json`), so neither overwrites the other through vault sync. It checks a file's size before reading it; an index over the budget is never read, and the phone starts an empty index that **Rebuild index** fills. PDF extraction is limited to 200 pages and 256,000 characters, in addition to the input file limits. These are conservative allocation bounds, not a measured guarantee for every device. Use keyword search or desktop indexing when a limit is reached.
 
 Indexing traverses the vault, chunks each note, embeds the chunks, and stores the
 vectors locally. Use **Rebuild index** after switching engines or models — vectors

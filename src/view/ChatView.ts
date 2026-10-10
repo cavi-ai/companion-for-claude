@@ -390,7 +390,7 @@ export class ChatView extends ItemView {
       this.transcript.renderRecoverableEdit(conversation);
     }
     this.updateUsageBar();
-    this.transcript.scrollToBottom();
+    this.transcript.jumpToBottom();
     this.refreshTabTitle();
   }
 
@@ -463,6 +463,7 @@ export class ChatView extends ItemView {
     // detach this view from its event stream (ChatTurnService).
     this.detachTurnRendering();
     this.transcript.clearThinkingStatus();
+    this.transcript.stopFollowing();
     if (this.contextStatusInterval !== null) {
       window.clearInterval(this.contextStatusInterval);
       this.contextStatusInterval = null;
