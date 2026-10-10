@@ -2112,35 +2112,38 @@ pre.cc-has-copy:hover .cc-code-copy { opacity: 1; }
 /* Long code lines scroll within their block instead of pushing the layout wide. */
 .is-mobile .cc-body pre { max-width: 100%; overflow-x: auto; }
 
-/* Composer: one card — the auto-growing field, then a toolbar row with the
-   context chip, Ask / Plan / Act, and [↑]. The field starts at one line and
-   grows to ~6 rows (autosizeInput caps it), then scrolls internally, so the
-   composer never owns the screen. 16px input font avoids iOS zoom-on-focus.
-   No env(safe-area-inset-bottom) — Obsidian's mobile .view-content already
-   reserves the home-indicator inset. */
+/* Composer: one floating card — the input row (auto-growing field · [↑]),
+   then a toolbar with the context chip and the Ask / Plan / Act switch. The
+   field starts at one line and grows to ~6 rows (autosizeInput caps it), then
+   scrolls internally, so the composer never owns the screen. 16px input font
+   avoids iOS zoom-on-focus. No ancestor of the field clips (no overflow), so
+   iOS focus reveal sees the plain input row. No env(safe-area-inset-bottom) —
+   Obsidian's mobile .view-content already reserves the home-indicator inset. */
 .is-mobile .cc-composer {
   position: relative;
-  border-top: none;
-  padding: 4px 10px 8px;
-  gap: 0;
-}
-.is-mobile .cc-composer-card {
-  position: relative;
-  display: flex;
-  flex-direction: column;
+  margin: 2px 10px 10px;
+  padding: 6px 6px 7px;
+  gap: 2px;
   border: 1px solid var(--background-modifier-border);
-  border-radius: 20px;
+  border-radius: 24px;
   background: var(--background-modifier-form-field);
-  /* Clips the usage strip to the card's corners; the context sheet is
-     position: fixed and escapes it. */
-  overflow: hidden;
+  box-shadow: var(--shadow-s);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
-.is-mobile .cc-composer-card:has(.cc-input:focus) {
-  border-color: var(--cc-clay);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--cc-clay) 16%, transparent);
+.is-mobile .cc-composer:focus-within {
+  border-color: color-mix(in srgb, var(--cc-clay) 60%, var(--background-modifier-border));
+  box-shadow: var(--shadow-s), 0 0 0 3px color-mix(in srgb, var(--cc-clay) 14%, transparent);
 }
-.is-mobile .cc-composer-card .cc-input {
-  width: 100%;
+.is-mobile .cc-composer-input-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  padding: 0 0 0 8px;
+}
+.is-mobile .cc-composer-input-row .cc-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  width: auto;
   /* Height belongs to autosizeInput (1 → ~6 rows) — no forced minimum. */
   min-height: 0;
   max-height: 132px;
@@ -2150,38 +2153,17 @@ pre.cc-has-copy:hover .cc-code-copy { opacity: 1; }
   border: none;
   background: transparent;
   border-radius: 0;
-  padding: 10px 14px 4px;
+  padding: 9px 2px;
   overflow-y: auto;
   scrollbar-width: none;
 }
-.is-mobile .cc-composer-card .cc-input:focus { border: none; box-shadow: none; }
-.is-mobile .cc-composer-card .cc-input::-webkit-scrollbar { display: none; }
-.is-mobile .cc-composer-toolbar {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  padding: 4px 6px 6px 8px;
-}
-.is-mobile .cc-composer-toolbar .cc-context-manager { flex: 0 1 auto; min-width: 0; margin-bottom: 0; }
-/* Every toolbar control is a 44px touch target. */
-.is-mobile .cc-composer-toolbar .cc-context-trigger {
-  padding: 4px 12px;
-  border: none;
-  border-radius: var(--cc-radius-pill);
-  background: var(--background-modifier-hover);
-  font-size: 13px;
-}
-.is-mobile .cc-composer-toolbar .cc-mode-control { flex: 0 0 auto; padding: 1px; }
-.is-mobile .cc-composer-toolbar .cc-mode-segment { height: 40px; padding: 0 10px; }
-.is-mobile .cc-composer-toolbar .cc-mode-segment-label { display: none; }
-.is-mobile .cc-composer-toolbar .cc-mode-segment-icon svg { width: 16px; height: 16px; }
-/* Circular send ends the toolbar. */
+.is-mobile .cc-composer-input-row .cc-input:focus { border: none; box-shadow: none; }
+.is-mobile .cc-composer-input-row .cc-input::-webkit-scrollbar { display: none; }
+/* Circular send ends the input row. */
 .is-mobile .cc-send.cc-send-icon {
   flex: 0 0 auto;
-  margin-left: auto;
-  width: 44px;
-  height: 44px;
+  width: 40px;
+  height: 40px;
   padding: 0;
   border-radius: 50%;
   font-size: 0;
@@ -2189,20 +2171,77 @@ pre.cc-has-copy:hover .cc-code-copy { opacity: 1; }
   align-items: center;
   justify-content: center;
 }
+/* Scoped past Obsidian's button fill so Send stays a clay circle (red while it stops a turn). */
+.is-mobile .cc-composer-input-row .cc-send.cc-send-icon {
+  background: var(--cc-clay);
+  color: #fff;
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--cc-clay) 35%, transparent);
+}
+.is-mobile .cc-composer-input-row .cc-send.cc-send-icon.is-stop { background: var(--cc-danger); }
 .is-mobile .cc-send.cc-send-icon svg {
   width: 18px;
   height: 18px;
   flex: 0 0 auto;
+  stroke-width: 2.5px;
+}
+/* Toolbar: context chip on the left, the mode switch on the right. */
+.is-mobile .cc-composer-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+  padding: 2px 0 0 2px;
+}
+.is-mobile .cc-composer-toolbar .cc-context-manager { flex: 0 1 auto; min-width: 0; margin-bottom: 0; }
+.is-mobile .cc-composer-toolbar .cc-context-trigger {
+  min-height: 36px;
+  height: 36px;
+  padding: 0 12px 0 10px;
+  gap: 6px;
+  border: none;
+  border-radius: var(--cc-radius-pill);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 500;
+}
+.is-mobile .cc-composer-toolbar .cc-context-trigger:active { background: var(--background-modifier-hover); }
+.is-mobile .cc-composer-toolbar .cc-context-trigger-icon svg { width: 15px; height: 15px; }
+/* Segmented switch: labelled pills on a sunken track; the active mode is a raised clay chip. */
+.is-mobile .cc-composer-toolbar .cc-mode-control {
+  flex: 0 0 auto;
+  gap: 2px;
+  padding: 3px;
+  border: none;
+  background: color-mix(in srgb, var(--text-normal) 7%, transparent);
+}
+.is-mobile .cc-composer-toolbar .cc-mode-segment {
+  height: 30px;
+  padding: 0 13px;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--text-muted);
+  background: transparent;
+  box-shadow: none;
+  transition: background 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+}
+.is-mobile .cc-composer-toolbar .cc-mode-segment-icon { display: none; }
+.is-mobile .cc-composer-toolbar .cc-mode-segment.is-active {
+  background: var(--background-primary);
+  color: var(--cc-clay);
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.25), 0 0 0 0.5px color-mix(in srgb, var(--cc-clay) 30%, transparent);
 }
 /* The inline desktop controls bar (model <select> + tune) is hidden on mobile;
    model + knobs move into the header menu (built in ChatView). */
 .is-mobile .cc-controls { display: none; }
-/* Usage is a 2px strip along the top edge of the composer card — not a second band. */
+/* Usage is a 2px strip on the straight part of the card's top edge — not a second band. */
 .is-mobile .cc-composer-bar {
   position: absolute;
   top: 0;
-  left: 0;
-  right: 0;
+  left: 24px;
+  right: 24px;
   height: 2px;
   margin: 0;
   padding: 0;

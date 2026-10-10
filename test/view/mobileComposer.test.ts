@@ -39,19 +39,22 @@ describe("Composer layout", () => {
     Platform.isMobile = false;
   });
 
-  it("puts the context chip, the mode switch, and Send in one toolbar under the input on mobile", () => {
+  it("keeps the mobile input and Send in one input row, with context and Ask / Plan / Act in a toolbar under it", () => {
     Platform.isMobile = true;
     const { root, composer, deps } = mountComposer();
 
-    const card = root.querySelector(".cc-composer-card")!;
-    expect(classesOf(card.children)).toEqual(["cc-input", "cc-composer-toolbar", "cc-composer-bar"]);
-    const toolbar = card.querySelector(".cc-composer-toolbar")!;
-    expect(classesOf(toolbar.children)).toEqual(["cc-context-manager", "cc-mode-control", "cc-send"]);
-    expect(toolbar.querySelector(".cc-send")).toBe(composer.sendBtn as unknown as FakeElement);
+    const composerEl = root.querySelector(".cc-composer")!;
+    const order = classesOf(composerEl.children);
+    expect(order.indexOf("cc-composer-input-row")).toBe(order.indexOf("cc-composer-toolbar") - 1);
+    const row = composerEl.querySelector(".cc-composer-input-row")!;
+    expect(row.children).toEqual([composer.inputEl, composer.sendBtn]);
+    expect([...composer.sendBtn.classList]).toContain("cc-send-icon");
+    const toolbar = composerEl.querySelector(".cc-composer-toolbar")!;
+    expect(classesOf(toolbar.children)).toEqual(["cc-context-manager", "cc-mode-control"]);
     expect(composer.modeControl?.el).toBe(toolbar.querySelector(".cc-mode-control") as unknown as HTMLElement);
     expect(root.querySelectorAll(".cc-mode-control")).toHaveLength(1);
-    expect(root.querySelector(".cc-controls")!.querySelector(".cc-mode-control")).toBeNull();
     expect(root.querySelectorAll(".cc-context-manager")).toHaveLength(1);
+    expect(root.querySelector(".cc-composer-card")).toBeNull();
     expect(deps.updateModeControl).toHaveBeenCalledOnce();
   });
 
@@ -60,7 +63,7 @@ describe("Composer layout", () => {
 
     const composerEl = root.querySelector(".cc-composer")!;
     expect(classesOf(composerEl.children)[0]).toBe("cc-context-manager");
-    expect(root.querySelector(".cc-composer-card")).toBeNull();
+    expect(root.querySelector(".cc-composer-input-row")).toBeNull();
     expect(root.querySelector(".cc-composer-toolbar")).toBeNull();
     expect(root.querySelector(".cc-controls")!.querySelector(".cc-mode-control")).toBe(composer.modeControl?.el as unknown as FakeElement);
     expect(root.querySelector(".cc-send-group")!.querySelector(".cc-send")).toBe(composer.sendBtn as unknown as FakeElement);

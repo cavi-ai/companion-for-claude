@@ -87,7 +87,7 @@ export class Composer {
     this.el = composer;
     const mobile = Platform.isMobile;
 
-    // Desktop: the context manager leads the composer; mobile mounts it in the card toolbar.
+    // Desktop: the context manager leads the composer; mobile mounts it in the toolbar under the input.
     if (!mobile) this.contextManager = new ComposerContextManager(composer, this.deps);
     // The active chat project's pill (same pill style as a folder attachment).
     this.projectPillEl = composer.createDiv({ cls: "cc-ctx-pill cc-ctx-project" });
@@ -103,8 +103,8 @@ export class Composer {
     this.slashMenu = new SlashMenu(composer, slashCommands, (cmd) => this.deps.onSlashCommand(cmd));
     this.atMenu = new AtMenu(composer, () => this.deps.pickAtItems(), (item) => this.deps.onAtChoose(item));
 
-    // Mobile: one card — the input, then a toolbar of context chip, Ask / Plan / Act, and Send.
-    const inputRow = mobile ? composer.createDiv({ cls: "cc-composer-card" }) : composer;
+    // Mobile: the input row ([input · ↑]), then a toolbar of context chip and Ask / Plan / Act.
+    const inputRow = mobile ? composer.createDiv({ cls: "cc-composer-input-row" }) : composer;
     this.inputEl = inputRow.createEl("textarea", {
       cls: "cc-input",
       // Start compact on mobile (1 row, grows via autosizeInput) so the composer
@@ -166,22 +166,22 @@ export class Composer {
       }
     });
 
-    const toolbar = mobile ? inputRow.createDiv({ cls: "cc-composer-toolbar" }) : null;
-    if (toolbar) {
+    if (mobile) {
+      const toolbar = composer.createDiv({ cls: "cc-composer-toolbar" });
       this.contextManager = new ComposerContextManager(toolbar, this.deps, { compact: true });
       this.mountModeControl(toolbar);
     }
 
     // ---- composer bar: model + tune (left group) · usage + Send (right) ----
-    // Desktop: one row under the input. Mobile: Send ends the card's toolbar;
-    // the bar keeps only the thin usage gauge on the card's top edge (see styles).
-    const bar = inputRow.createDiv({ cls: "cc-composer-bar" });
+    // Desktop: one row under the input. Mobile: Send ends the input row; the
+    // bar keeps only the thin usage gauge on the composer's top edge (see styles).
+    const bar = composer.createDiv({ cls: "cc-composer-bar" });
     this.controlsEl = bar.createDiv({ cls: "cc-controls" });
     this.renderControls();
 
     const sendGroup = bar.createDiv({ cls: "cc-send-group" });
     this.deps.mountUsage(sendGroup);
-    this.sendBtn = (toolbar ?? sendGroup).createEl("button", {
+    this.sendBtn = (mobile ? inputRow : sendGroup).createEl("button", {
       cls: mobile ? "cc-send cc-send-icon" : "cc-send",
       ...(mobile
         ? { attr: { "aria-label": "Send message" } }
