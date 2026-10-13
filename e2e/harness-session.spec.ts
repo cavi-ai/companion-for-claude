@@ -11,7 +11,7 @@ test("a reset starts a clean vault and stock settings, not the previous scenario
   await expect.poll(() => stat(join(first.paths.vault, "Transient.md")).then(() => true, () => false)).toBe(true);
   const firstSettings = await first.openSettings();
   const firstTab = firstSettings.locator(".vertical-tab-content-container .vertical-tab-content").last();
-  const firstCustomModel = firstTab.locator(".setting-item", { hasText: "Custom model id" }).locator("input");
+  const firstCustomModel = firstTab.locator(".setting-item", { has: firstSettings.getByText("Custom model id", { exact: true }) }).locator("input");
   await expect(firstCustomModel).toHaveValue("temporary-e2e-model");
 
   const second = await rig.reset();
@@ -19,6 +19,6 @@ test("a reset starts a clean vault and stock settings, not the previous scenario
   await expect.poll(() => stat(join(second.paths.vault, "Transient.md")).then(() => true, () => false)).toBe(false);
   const settingsPage = await second.openSettings();
   const tab = settingsPage.locator(".vertical-tab-content-container .vertical-tab-content").last();
-  const customModel = tab.locator(".setting-item", { hasText: "Custom model id" }).locator("input");
+  const customModel = tab.locator(".setting-item", { has: settingsPage.getByText("Custom model id", { exact: true }) }).locator("input");
   await expect(customModel).toHaveValue("");
 });

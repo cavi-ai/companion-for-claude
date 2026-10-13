@@ -34,7 +34,7 @@ async function buildRig(): Promise<Rig> {
   if (!state) throw new Error("no e2e rig is running — run `pnpm run e2e:rig start` first");
   const control = new ControlClient(state);
   const ports = await control.ports();
-  const { context, page } = await connectRig(state.cdpPort);
+  const { context, page } = await connectRig(state.cdpPort, state.vault);
   const bin = `${state.root}/bin`;
   // Mirrors the daemon's own launch env: HOME is never overridden (inherits the
   // real HOME), only PATH/SHELL stay hermetic. See rig/daemon.ts.

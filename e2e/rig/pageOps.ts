@@ -26,6 +26,22 @@ export async function waitForCdp(port: number, timeoutMs = 30_000): Promise<void
 
 export interface RigConnection { browser: Browser; context: BrowserContext; page: Page }
 
+/** Refuse to operate when the rig process has opened a vault belonging to the user. */
+export async function selectRigPage(pages: Page[], expectedVault: string): Promise<Page | undefined> {
+  let page: Page | undefined;
+  for (const candidate of pages) {
+    if (!candidate.url().startsWith("app://obsidian.md")) continue;
+    const vault = await candidate.evaluate(() => {
+      const app = (window as unknown as { app?: { vault?: { adapter?: { getBasePath?(): string } } } }).app;
+      return app?.vault?.adapter?.getBasePath?.();
+    });
+    if (!vault) continue;
+    if (vault !== expectedVault) throw new Error("Obsidian opened a vault outside the test vault; refusing to run the rig. Reopen the test vault in the rig profile.");
+    page ??= candidate;
+  }
+  return page;
+}
+
 /**
  * `open -a` never hands back the launched app's pid (LaunchServices spawns it,
  * not us), so find the real Electron main process by the --user-data-dir it was
@@ -51,15 +67,15 @@ export async function findObsidianPid(userDataDir: string, timeoutMs = 30_000): 
 }
 
 /** Connect to the running Obsidian instance and find its vault window. Never disconnects the app — just drop the reference when done. */
-export async function connectRig(cdpPort: number): Promise<RigConnection> {
+export async function connectRig(cdpPort: number, expectedVault: string): Promise<RigConnection> {
   const browser = await chromium.connectOverCDP(`http://127.0.0.1:${cdpPort}`);
   const context = browser.contexts()[0];
   if (!context) throw new Error("Obsidian browser context not found");
-  let page = context.pages().find((candidate) => candidate.url().startsWith("app://obsidian.md"));
+  let page = await selectRigPage(context.pages(), expectedVault);
   const deadline = Date.now() + 30_000;
   while (!page && Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, 250));
-    page = context.pages().find((candidate) => candidate.url().startsWith("app://obsidian.md"));
+    page = await selectRigPage(context.pages(), expectedVault);
   }
   if (!page) throw new Error("Obsidian page not found");
   return { browser, context, page };

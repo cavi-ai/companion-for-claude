@@ -3,11 +3,12 @@ import { FakeElement } from "../fakes/obsidian";
 import { SetupCard, type SetupCardDeps } from "../../src/view/chat/SetupCard";
 
 function card(test: () => Promise<{ ok: boolean; detail: string }>): { card: SetupCard; plugin: Record<string, unknown> } {
+  const onboarding = { continueOnboarding: vi.fn(async () => undefined) };
   const plugin: Record<string, unknown> = {
     settings: { authMode: "apiKey", apiKey: "" },
     secrets: () => ({ available: () => true }),
     saveSettings: vi.fn(async () => undefined),
-    continueOnboarding: vi.fn(async () => undefined),
+    onboarding: () => onboarding,
     router: () => ({ anthropic: { test } }),
   };
   const deps: SetupCardDeps = {
@@ -46,7 +47,7 @@ describe("SetupCard", () => {
     input(parent).value = "sk-ant-api-full";
     input(parent).dispatchEvent({ type: "input" });
     parent.querySelector(".cc-setup-save")!.dispatchEvent({ type: "click" });
-    await vi.waitFor(() => expect(plugin.continueOnboarding).toHaveBeenCalled());
+    await vi.waitFor(() => expect((plugin.onboarding as () => { continueOnboarding: unknown })().continueOnboarding).toHaveBeenCalled());
 
     expect((plugin.settings as { apiKey: string }).apiKey).toBe("sk-ant-api-full");
     expect(input(render(setup)).value).toBe("");

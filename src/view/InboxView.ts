@@ -8,6 +8,8 @@ import { createInboxRefreshController, type InboxRefreshController } from "./inb
 import { renderCompanionChrome } from "./companionChrome";
 import { relativeTime } from "../conversations/store";
 import type { QueuedEdit } from "../orders/editQueue";
+import type { SemanticController } from "../semantic/controller";
+import type { WorkspaceViews } from "./workspaceViews";
 
 export const INBOX_VIEW_TYPE = "claude-inbox-view";
 const INBOX_REFRESH_DEBOUNCE_MS = 100;
@@ -19,14 +21,14 @@ interface InboxFeedback {
   message: string;
 }
 
-type InboxEnrichOutcome = Awaited<ReturnType<ClaudeCompanionPlugin["enrichInboxItem"]>>;
+type InboxEnrichOutcome = Awaited<ReturnType<WorkspaceViews["enrichInboxItem"]>>;
 
 /** The plugin capabilities the Inbox uses. */
-export type InboxHost = Pick<
+export type InboxHost = { semantic: () => Pick<SemanticController, "suspendReindex"> } & Pick<
   ClaudeCompanionPlugin,
-  | "activity" | "clipperSetupNeeded" | "companionChrome" | "discardQueuedEdit" | "enrichDiagnostics" | "enrichInboxItem" | "linkCandidates"
-  | "listQueuedEdits" | "openClipperSetup" | "organizeClippings" | "reviewInboxLinkSuggestions" | "reviewLinkSuggestions" | "reviewQueuedEdit"
-  | "settings" | "sourceEnrichmentBackendLabel" | "suspendReindex" | "triageClippingsWithPicker"
+  | "activity" | "clipperSetup" | "enrichDiagnostics" | "noteFlows"
+  | "orders" | "organizeClippings" | "settings" | "shell"
+  | "triageClippingsWithPicker" | "utilityRouting" | "views"
 >;
 
 function safeActivityDetail(value: string): string {
@@ -150,7 +152,7 @@ export class InboxView extends ItemView {
     this.disposeChrome = null;
     root.empty();
     root.addClass("cc-inbox-view");
-    this.disposeChrome = renderCompanionChrome(root, "inbox", "Source Inbox", this.plugin.companionChrome());
+    this.disposeChrome = renderCompanionChrome(root, "inbox", "Source Inbox", this.plugin.shell().companionChrome());
     root.createDiv({ cls: "cc-eyebrow", text: "SOURCE INBOX" });
     this.renderProposedEdits(root);
 
@@ -173,9 +175,9 @@ export class InboxView extends ItemView {
           ? `Inbox zero — every clip in “${this.plugin.settings.sourceInboxFolder}” is typed already.`
           : `Inbox zero — nothing in “${this.plugin.settings.sourceInboxFolder}” needs typing. Clip something and it'll show up here.`,
       });
-      if (this.plugin.clipperSetupNeeded()) {
+      if (this.plugin.clipperSetup().setupNeeded()) {
         const clipper = root.createEl("button", { cls: "cc-inbox-clipper-setup", text: "Set up Web Clipper" });
-        clipper.addEventListener("click", () => this.plugin.openClipperSetup());
+        clipper.addEventListener("click", () => this.plugin.clipperSetup().openSetup());
       }
     } else {
       const bar = root.createDiv({ cls: "cc-inbox-bar" });
@@ -184,7 +186,7 @@ export class InboxView extends ItemView {
         text: `${items.length} to type`,
         attr: { role: "status", "aria-live": "polite" },
       });
-      bar.createSpan({ cls: "cc-inbox-backend", text: `Utility: ${this.plugin.sourceEnrichmentBackendLabel()}` });
+      bar.createSpan({ cls: "cc-inbox-backend", text: `Utility: ${this.plugin.utilityRouting().backendLabel()}` });
       const all = bar.createEl("button", { cls: "cc-inbox-enrich-all", text: "Enrich all" });
       all.disabled = this.batchOperation !== null;
       all.addEventListener("click", () => void this.enrichAll(items));
@@ -214,7 +216,7 @@ export class InboxView extends ItemView {
 
   /** Edits a standing order proposed; nothing is written until the user reviews them. */
   private renderProposedEdits(root: HTMLElement): void {
-    const queue = this.plugin.listQueuedEdits();
+    const queue = this.plugin.orders().listQueuedEdits();
     if (queue.length === 0) return;
     const section = root.createDiv({ cls: "cc-inbox-orders" });
     section.createDiv({ cls: "cc-eyebrow", text: "PROPOSED EDITS" });
@@ -236,12 +238,12 @@ export class InboxView extends ItemView {
     if (item.description) detail.createDiv({ cls: "cc-inbox-order-description", text: item.description });
     if (file) {
       const review = row.createEl("button", { cls: "cc-inbox-order-review mod-cta", text: "Review" });
-      review.addEventListener("click", () => void this.plugin.reviewQueuedEdit(item.id));
+      review.addEventListener("click", () => void this.plugin.orders().reviewQueuedEdit(item.id));
     } else {
       row.createSpan({ cls: "cc-inbox-order-missing", text: "Note missing" });
     }
     const discard = row.createEl("button", { cls: "cc-inbox-order-discard", text: "Discard" });
-    discard.addEventListener("click", () => void this.plugin.discardQueuedEdit(item.id));
+    discard.addEventListener("click", () => void this.plugin.orders().discardQueuedEdit(item.id));
   }
 
   /** Enriched clips still in the inbox, newest first; organizing files them into folders. */
@@ -397,7 +399,7 @@ export class InboxView extends ItemView {
         // batch result keeps its actionable error details visible below.
       }
     }
-    const items = wireUpItems(entries, this.plugin.linkCandidates(), inbox);
+    const items = wireUpItems(entries, this.plugin.noteFlows().linkCandidates(), inbox);
     if ((items.length === 0 && !this.linkSummary) || !this.refresh.isCurrent(generation)) return;
 
     const section = root.createDiv({ cls: "cc-inbox-wireup" });
@@ -446,7 +448,7 @@ export class InboxView extends ItemView {
     this.setOperationFeedback("running", `Reviewing links for ${basename}…`);
     try {
       await this.renderSafely();
-      await this.plugin.reviewLinkSuggestions(file);
+      await this.plugin.noteFlows().reviewLinkSuggestions(file);
       this.setOperationFeedback("success", `Reviewed links for ${basename}.`);
     } catch (error) {
       const detail = safeActivityDetail(error instanceof Error ? error.message : String(error));
@@ -468,7 +470,7 @@ export class InboxView extends ItemView {
     if (!fromBatch) this.setOperationFeedback("running", `Enriching ${item.basename}…`);
     try {
       if (!fromBatch) await this.renderSafely();
-      const outcome = await this.plugin.enrichInboxItem(f, { inline: true, refreshInboxViews: !fromBatch });
+      const outcome = await this.plugin.views().enrichInboxItem(f, { inline: true, refreshInboxViews: !fromBatch });
       if (outcome.status === "enriched") {
         this.enrichedOptimistically.add(item.path);
         this.enrichmentFeedback.delete(item.path);
@@ -493,7 +495,7 @@ export class InboxView extends ItemView {
   private async enrichAll(items: InboxItem[]): Promise<void> {
     if (this.batchOperation !== null) return;
     this.batchOperation = "enrich";
-    const releaseReindex = this.plugin.suspendReindex();
+    const releaseReindex = this.plugin.semantic().suspendReindex();
     this.setOperationFeedback("running", `Enriching ${items.length} note${items.length === 1 ? "" : "s"}…`);
     const activityId = this.plugin.activity.start({
       id: "source-enrichment:inbox-batch",
@@ -598,7 +600,7 @@ export class InboxView extends ItemView {
     this.setOperationFeedback("running", "Reviewing Inbox link suggestions…");
     try {
       await this.renderSafely();
-      const result = await this.plugin.reviewInboxLinkSuggestions(this.enrichedInboxFiles());
+      const result = await this.plugin.noteFlows().reviewInboxLinkSuggestions(this.enrichedInboxFiles());
       if (result) {
         this.linkSummary = this.describeLinkResult(result);
         this.linkResult = result;

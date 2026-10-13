@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { App, FakeElement, WorkspaceLeaf } from "obsidian";
-import ClaudeCompanionPlugin from "../../src/main";
 import { SystemView, type SystemViewDeps } from "../../src/view/SystemView";
+import { buildPlugin } from "../fakes/plugin";
 import type { HealthReport, HealthSection } from "../../src/health/scan";
 
 const settle = async (turns = 24): Promise<void> => {
@@ -14,8 +14,7 @@ const section = (over: Partial<HealthSection> & Pick<HealthSection, "id">): Heal
 
 function harness(sections: HealthSection[]): { view: SystemView; deps: SystemViewDeps; scan: ReturnType<typeof vi.fn> } {
   const app = new App();
-  const plugin = Object.create(ClaudeCompanionPlugin.prototype) as ClaudeCompanionPlugin;
-  Object.assign(plugin, { app, settings: {} });
+  const plugin = buildPlugin({ settings: {} }, app);
   const scan = vi.fn(async (): Promise<HealthReport> => ({ sections, scannedAt: "2026-10-01T00:00:00.000Z" }));
   const deps: SystemViewDeps = {
     scan,

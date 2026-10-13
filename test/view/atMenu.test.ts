@@ -23,11 +23,11 @@ function fixture() {
     listProjects: async () => [],
     loadProject: async () => ({ claims: [] }),
   }));
-  const plugin = { settings, saveSettings, researchRepository } as unknown as ClaudeCompanionPlugin;
+  const plugin = { settings, saveSettings, research: () => ({ researchRepository }) } as unknown as ClaudeCompanionPlugin;
   const view = new ChatView(new WorkspaceLeaf(app), plugin);
   const seam = view as unknown as {
     attachedPaths: AttachedPath[];
-    cachedClaims: ClaimAtSource[];
+    projects: { cachedClaims: ClaimAtSource[]; scheduleReloadClaims(): void; claimReloadTimer: number | null };
     activeMenuTrigger: "@" | "#";
     inputEl: FakeElement & { setSelectionRange(start: number, end: number): void };
     updateUsageBar(): void;
@@ -35,11 +35,9 @@ function fixture() {
     atItems(): AtItem[];
     hashItems(): AtItem[];
     onAtChoose(item: AtItem): void;
-    scheduleReloadClaims(): void;
-    claimReloadTimer: number | null;
   };
   seam.attachedPaths = [];
-  seam.cachedClaims = [{ path: "Research/Proj/Claims/C1.md", label: "Raft leader election avoids split votes", project: "Proj" }];
+  seam.projects.cachedClaims = [{ path: "Research/Proj/Claims/C1.md", label: "Raft leader election avoids split votes", project: "Proj" }];
   seam.activeMenuTrigger = "@";
   seam.inputEl = Object.assign(new FakeElement(), { setSelectionRange: () => undefined }) as unknown as typeof seam.inputEl;
   seam.inputEl.value = "";
@@ -59,7 +57,7 @@ describe("'@'/'#' picker: bases, claims, recents", () => {
 
   it("'#' shows nothing when there are no claims", () => {
     const { seam } = fixture();
-    seam.cachedClaims = [];
+    seam.projects.cachedClaims = [];
     expect(seam.hashItems()).toEqual([]);
   });
 
@@ -131,13 +129,13 @@ describe("claim reload coalescing", () => {
     try {
       const { seam, researchRepository } = fixture();
       researchRepository.mockClear();
-      seam.scheduleReloadClaims();
-      seam.scheduleReloadClaims();
-      seam.scheduleReloadClaims();
+      seam.projects.scheduleReloadClaims();
+      seam.projects.scheduleReloadClaims();
+      seam.projects.scheduleReloadClaims();
       expect(researchRepository).not.toHaveBeenCalled();
       await vi.advanceTimersByTimeAsync(500);
       expect(researchRepository).toHaveBeenCalledTimes(1);
-      expect(seam.claimReloadTimer).toBeNull();
+      expect(seam.projects.claimReloadTimer).toBeNull();
     } finally {
       vi.useRealTimers();
     }

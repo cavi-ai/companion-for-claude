@@ -1,36 +1,25 @@
-import { ItemView, MarkdownRenderer, MarkdownView, Notice, Platform, WorkspaceLeaf, setIcon, type ViewStateResult } from "obsidian";
+import { ItemView, MarkdownView, Notice, Platform, WorkspaceLeaf, setIcon, type ViewStateResult } from "obsidian";
 import type { ChatViewHost } from "./chat/hosts";
 import type { ChatMessage, ContextToggles } from "../types";
 import { effectiveToggles } from "./chat/contextScope";
-import { providerTurnRunner, type AgentTurnDeps, type AgentTurnHandlers, type AgentTurnResult, type AgentTurnRunner } from "../agent/loop";
+import type { AgentTurnHandlers, AgentTurnResult } from "../agent/loop";
 import { continuationFor, shouldAutoContinue } from "./chat/continuation";
-import { toAnthropicTools, executeTool, PROPOSE_EDIT_TOOL, truncateResult } from "../agent/tools";
-import { toolAccess } from "../agent/toolAccess";
-import { parseExternalToolName } from "../mcp/external";
-import { WriteConfirmModal } from "./WriteConfirmModal";
-import { planEdits, parseProposedEdits } from "../edit/diff";
-import { reviewAndApply } from "../edit/reviewAndApply";
-import type { ApiMessage, ToolResultBlock, ToolUseBlock, Provider } from "../providers/types";
-import { TFile } from "obsidian";
-import { compactArtifactsInHistory, compactMessages, toApiMessages, transcriptText, type Conversation } from "../conversations/store";
+import { preflightTurn, startTurn, turnPersistence } from "../chat/turnStart";
+import type { ApiMessage } from "../providers/types";
+import { compactArtifactsInHistory, compactMessages, toApiMessages, type Conversation } from "../conversations/store";
 import { resolveModelId } from "../claude/models";
-import { type ChatControls, defaultChatControls, shapeRequest } from "../claude/chatControls";
-import { routeTurn, streamAttempt } from "../providers/chatTurn";
-import type { CompletionRequest } from "../providers/types";
+import { type ChatControls, defaultChatControls } from "../claude/chatControls";
+import { routeTurn } from "../providers/chatTurn";
 import { SlashMenu } from "./SlashMenu";
 import type { ChatModeState } from "./chat/chatMode";
 import { ChatSession, type TurnState } from "./chat/chatSession";
-import { buildSlashCatalog, type SlashCommand, runNativeSlashCommand, WORKFLOW_ACTION_PREFIX, SKILL_ACTION_PREFIX } from "./slashCommands";
-import { substitutePlaceholders } from "../templates/promptTemplates";
 import { type AttachedPage } from "../context/urlContext";
-import { WORKFLOWS } from "../workflows/catalog";
 import { SKILLS } from "../workflows/skillRegistry.generated";
 import { composeSkillPrompt, parseSkillInvocation, skillDisplay } from "../skills/compose";
-import { splitStreamingArtifact } from "./streamRender";
 import { gatherContext, type AttachedPath } from "../context/vaultContext";
 import { type MediaAttachment } from "../context/attachments";
-import { type AtItem, type ClaimAtSource } from "../context/atMention";
-import { isProjectChange, projectSearchScope, type ChatProject } from "../projects/model";
+import { type AtItem } from "../context/atMention";
+import { projectSearchScope, type ChatProject } from "../projects/model";
 import { credentialSetupInputs, needsCredentialSetup } from "../providers/setupState";
 import { claudeBackend } from "../cli/backends/claude";
 import { codexBackend } from "../cli/backends/codex";
@@ -47,16 +36,13 @@ import { HeaderControls } from "./chat/HeaderControls";
 import { Composer } from "./chat/Composer";
 import { pinChatAboveKeyboard } from "./chat/keyboardPin";
 import { Transcript } from "./chat/Transcript";
+import { TurnRunners } from "./chat/turnRunners";
+import { ChatProjectBinding } from "./chat/projectBinding";
 import { SetupCard } from "./chat/SetupCard";
+import { SlashRunner } from "./chat/slashRunner";
+import { VersionedMarkdownRenderer } from "./chat/markdownRender";
 
 export const CHAT_VIEW_TYPE = "claude-companion-chat";
-
-/** The message list a turn should persist as: `base` plus the assistant reply, when one was produced. */
-function appendAssistantMessage(base: ChatMessage[], result: AgentTurnResult): ChatMessage[] {
-  const full = result.text.trim();
-  if (!full) return base;
-  return [...base, { role: "assistant", content: result.text, ...(result.trace.length > 0 ? { toolTrace: result.trace } : {}) }];
-}
 
 interface ObsidianAppWithSettings {
   setting?: {
@@ -77,6 +63,10 @@ export class ChatView extends ItemView {
   private get messages(): ChatMessage[] { return this.chat.messages; }
   private set messages(v: ChatMessage[]) { this.chat.messages = v; }
   private transcript: Transcript;
+  private runners: TurnRunners;
+  private projects: ChatProjectBinding;
+  private slash: SlashRunner;
+  private renderer: VersionedMarkdownRenderer;
   private setupCard: SetupCard;
   private get messagesEl(): HTMLElement { return this.transcript.messagesEl; }
   private set messagesEl(v: HTMLElement) { this.transcript.messagesEl = v; }
@@ -140,20 +130,9 @@ export class ChatView extends ItemView {
   private lastDisplay: string | undefined = undefined;
   private get slashMenu(): SlashMenu { return this.composer.slashMenu; }
   private set slashMenu(v: SlashMenu) { this.composer.slashMenu = v; }
-  /** User-defined prompt templates (notes in the templates folder). */
-  private templateCommands: SlashCommand[] = [];
-  private templateReloadGeneration = 0;
-  /** Research claims offered by the "@"/"#" pickers, refreshed when a research note changes. */
-  private cachedClaims: ClaimAtSource[] = [];
-  private claimReloadGeneration = 0;
-  private claimReloadTimer: number | null = null;
-  /** Chat projects offered by the "@" picker, refreshed alongside claims. */
-  private cachedProjects: ChatProject[] = [];
   /** The chat project this.conversationId is scoped to (null = none), kept in sync with the conversation. */
   private get currentChatProject(): ChatProject | null { return this.chat.project; }
   private set currentChatProject(v: ChatProject | null) { this.chat.project = v; }
-  /** A project chosen before the first send (no conversation yet); applied once `run()` creates one. */
-  private pendingProjectId: string | null = null;
   /** Which trigger ("@" or "#") the open at-menu is currently showing matches for. */
   private get activeMenuTrigger(): "@" | "#" { return this.composer.activeMenuTrigger; }
   private set activeMenuTrigger(v: "@" | "#") { this.composer.activeMenuTrigger = v; }
@@ -166,11 +145,8 @@ export class ChatView extends ItemView {
   /** Latest streamed text of the in-flight turn (for clean abort handling). */
   private get _lastBuffer(): string { return this.turn.lastBuffer; }
   private set _lastBuffer(v: string) { this.turn.lastBuffer = v; }
-  private get agentWriteAlways(): boolean { return this.chat.writeGrant; }
-  private set agentWriteAlways(v: boolean) { this.chat.writeGrant = v; }
   /** Guards the setup card's background sign-in probe against stacking on re-render, per CLI backend id. */
 
-  private renderVersions = new WeakMap<HTMLElement, number>();
   /** The conversation this leaf shows; null for an unstarted "New chat tab". Persisted via getState/setState. */
   private conversationId: string | null = null;
 
@@ -194,17 +170,43 @@ export class ChatView extends ItemView {
       refreshModelLabel: () => this.refreshModelLabel(),
       openSettings: () => this.openSettings(),
     });
+    this.renderer = new VersionedMarkdownRenderer(this.app, this);
+    this.slash = new SlashRunner(this.app, plugin, {
+      clearInput: () => {
+        this.inputEl.value = "";
+        this.composer.autosizeInput();
+      },
+      setDraft: (text) => this.composer.setDraft(text),
+      updateUsageBar: () => this.updateUsageBar(),
+      submitPrompt: (...args) => this.submitPrompt(...args),
+      setCommands: (commands) => {
+        this.slashMenu.setCommands(commands);
+        this.composer.syncSlashMenu();
+      },
+      view: {
+        newChat: () => this.clearChat(),
+        openHistory: () => this.openHistory(),
+        save: () => this.distillThisChat(),
+        askVault: () => {
+          this.enableVaultSearchForChat();
+          this.inputEl.value = "";
+          this.inputEl.setAttr("placeholder", "Vault search on — ask your question…");
+          this.inputEl.focus();
+          quickNotice("Vault search on for this chat.");
+        },
+      },
+    });
     this.transcript = new Transcript(this.app, plugin, this.chat, {
       setDraft: (text) => this.composer.setDraft(text),
       onSend: (...args) => this.onSend(...args),
       prepareWorkspaceQuestion: (...args) => this.prepareWorkspaceQuestion(...args),
       regenerate: (...args) => this.regenerate(...args),
-      renderMarkdownInto: (...args) => this.renderMarkdownInto(...args),
+      renderMarkdownInto: (...args) => this.renderer.renderInto(...args),
       renderSetupCard: (parent) => this.setupCard.render(parent),
-      renderStreamingArtifactInto: (...args) => this.renderStreamingArtifactInto(...args),
+      renderStreamingArtifactInto: (...args) => this.renderer.renderStreamingArtifactInto(...args),
       resumeInterruptedTurn: (...args) => this.resumeInterruptedTurn(...args),
-      reviewLastProposedEdit: (...args) => this.reviewLastProposedEdit(...args),
-      discardLastProposedEdit: (...args) => this.discardLastProposedEdit(...args),
+      reviewLastProposedEdit: (...args) => this.runners.reviewLastProposedEdit(...args),
+      discardLastProposedEdit: (...args) => this.runners.discardLastProposedEdit(...args),
       restoreMediaAfterFailure: (...args) => this.restoreMediaAfterFailure(...args),
       setSending: (...args) => this.setSending(...args),
       setupRequired: (...args) => this.setupRequired(...args),
@@ -224,6 +226,22 @@ export class ChatView extends ItemView {
       draft: () => this.composer.draft(),
       showReasoning: (active, label) => this.composer.showReasoning(active, label),
     });
+    this.projects = new ChatProjectBinding(this.app, plugin, this.chat, {
+      conversationId: () => this.conversationId,
+      showProject: (project) => {
+        this.composer.setProjectPill(project);
+        this.header.setProjectLabel(project?.name ?? null);
+      },
+      updateUsageBar: () => this.updateUsageBar(),
+    });
+    this.runners = new TurnRunners(this.app, plugin, this.chat, {
+      turnOverrides: () => ({ model: this.turnModelOverride, maxTokens: this.maxTokensOverride }),
+      resumeCliSessionId: () => this.resumeCliSessionId,
+      conversationId: () => this.conversationId,
+      onWriteGrant: () => this.header.updateWriteGrantPill(),
+      renderRecoverableEdit: (conversation) => this.transcript.renderRecoverableEdit(conversation),
+      removeEditRecovery: () => this.messagesEl.querySelector(".cc-edit-recovery")?.remove(),
+    });
     this.composer = new Composer(this.app, plugin, this.chat, {
       applyChatFontSize: (...args) => this.applyChatFontSize(...args),
       onModelSelect: (...args) => this.header.onModelSelect(...args),
@@ -231,10 +249,10 @@ export class ChatView extends ItemView {
       registerDomEvent: (el, type, callback) => this.registerDomEvent(el, type, callback),
       resolveMarkdownContextView: (...args) => this.resolveMarkdownContextView(...args),
       updateUsageBar: (...args) => this.updateUsageBar(...args),
-      cachedClaims: () => this.cachedClaims,
-      cachedProjects: () => this.cachedProjects.map((p) => ({ id: p.id, name: p.name })),
+      cachedClaims: () => this.projects.claims(),
+      cachedProjects: () => this.projects.projectOptions(),
       mountUsage: (parent) => this.header.mountUsage(parent),
-      onSlashCommand: (cmd) => void this.runSlashCommand(cmd),
+      onSlashCommand: (cmd) => void this.slash.run(cmd),
       pickAtItems: () => (this.activeMenuTrigger === "#" ? this.hashItems() : this.atItems()),
       onAtChoose: (item) => this.onAtChoose(item),
       toggleAutomatic: (key, enabled) => this.toggleAutomaticContext(key, enabled),
@@ -242,8 +260,8 @@ export class ChatView extends ItemView {
       retrySource: (id) => this.retryContextSource(id),
       addContext: () => this.openContextPicker(),
       onSend: () => void this.onSend(),
-      syncSlashMenu: () => this.syncSlashMenu(),
-      chooseProject: (id) => this.chooseProjectById(id),
+      syncSlashMenu: () => this.composer.syncSlashMenu(),
+      chooseProject: (id) => this.projects.chooseById(id),
     });
   }
 
@@ -251,7 +269,7 @@ export class ChatView extends ItemView {
     return CHAT_VIEW_TYPE;
   }
   override getDisplayText(): string {
-    const conversation = this.conversationId ? this.plugin.listConversations().find((c) => c.id === this.conversationId) : undefined;
+    const conversation = this.conversationId ? this.plugin.conversations().list().find((c) => c.id === this.conversationId) : undefined;
     return conversation?.title ?? "Companion for Claude";
   }
   override getIcon(): string {
@@ -270,7 +288,7 @@ export class ChatView extends ItemView {
       this.conversationId = null;
       this.resetToEmpty();
     } else if (typeof raw === "string") {
-      const conversation = this.plugin.listConversations().find((c) => c.id === raw);
+      const conversation = this.plugin.conversations().list().find((c) => c.id === raw);
       if (conversation) {
         this.conversationId = raw;
         this.loadConversation(conversation);
@@ -297,7 +315,7 @@ export class ChatView extends ItemView {
       onModelClick: () => this.openModelMenu(),
       onMcpClick: (evt) => this.openMcpMenu(evt),
       onWriteGrantRevoke: () => {
-        this.agentWriteAlways = false;
+        this.chat.writeGrant = false;
         this.header.updateWriteGrantPill();
         quickNotice("Session write grant revoked — writes will ask again.");
       },
@@ -315,35 +333,16 @@ export class ChatView extends ItemView {
     // ---- composer ----
     this.composer.mount(
       root,
-      buildSlashCatalog(WORKFLOWS, SKILLS, []),
+      this.slash.initialCatalog(),
     );
     this.unpinKeyboard?.();
     this.unpinKeyboard = Platform.isMobile ? pinChatAboveKeyboard(root, window) : null;
     this.renderContextManager();
 
     // User templates: load now, refresh when a note in the folder changes.
-    void this.reloadTemplates();
-    const templateTouched = (file: { path: string }): boolean =>
-      file.path.startsWith(`${this.plugin.settings.templatesFolder.replace(/\/+$/, "")}/`);
-    const scheduleTemplateReload = (file: { path: string }) => {
-      if (templateTouched(file)) void this.reloadTemplates();
-    };
-    this.registerEvent(this.app.vault.on("create", scheduleTemplateReload));
-    this.registerEvent(this.app.vault.on("modify", scheduleTemplateReload));
-    this.registerEvent(this.app.vault.on("delete", scheduleTemplateReload));
-    this.registerEvent(this.app.vault.on("rename", (file, oldPath) => {
-      if (templateTouched(file) || templateTouched({ path: oldPath })) void this.reloadTemplates();
-    }));
+    this.slash.watch((ref) => this.registerEvent(ref));
 
-    // Research claims for the "@"/"#" pickers: load now, refresh on the same
-    // signal the research views use to know a research note changed. Chat
-    // projects reload alongside, but only for a chat-project note or a research Project.md.
-    void this.reloadClaims();
-    void this.reloadProjects();
-    this.registerEvent(this.app.metadataCache.on("changed", (file) => { this.scheduleReloadClaims(); if (isProjectChange(file.path, this.app.metadataCache.getFileCache(file)?.frontmatter)) void this.reloadProjects(); }));
-    this.registerEvent(this.app.vault.on("create", (file) => { if (file.path.endsWith(".md")) this.scheduleReloadClaims(); if (isProjectChange(file.path)) void this.reloadProjects(); }));
-    this.registerEvent(this.app.vault.on("delete", (file) => { if (file.path.endsWith(".md")) this.scheduleReloadClaims(); if (isProjectChange(file.path)) void this.reloadProjects(); }));
-    this.registerEvent(this.app.vault.on("rename", (file, oldPath) => { if (file.path.endsWith(".md") || oldPath.endsWith(".md")) this.scheduleReloadClaims(); if (isProjectChange(file.path) || isProjectChange(oldPath)) void this.reloadProjects(); }));
+    this.projects.watch((ref) => this.registerEvent(ref));
 
     this.applyChatFontSize();
     this.refreshModelLabel();
@@ -359,7 +358,7 @@ export class ChatView extends ItemView {
       if (tick % 5 === 0) void this.refreshBackendPill();
     }, 2000);
     // Resume the last active conversation if one was persisted; else empty state.
-    const active = this.plugin.getActiveConversation();
+    const active = this.plugin.conversations().getActive();
     if (active && active.messages.length > 0) {
       this.loadConversation(active);
     } else {
@@ -372,8 +371,8 @@ export class ChatView extends ItemView {
   loadConversation(conversation: Conversation): void {
     this.detachTurnRendering();
     this.conversationId = conversation.id;
-    this.pendingProjectId = null;
-    void this.refreshCurrentProject();
+    this.projects.forget();
+    void this.projects.refreshCurrent();
     this.session = { ...EMPTY_SESSION };
     this.messages = compactMessages(conversation.messages);
     const lastUser = [...this.messages].reverse().find((message) => message.role === "user");
@@ -426,7 +425,7 @@ export class ChatView extends ItemView {
   resetToEmpty(): void {
     this.detachTurnRendering();
     this.conversationId = null;
-    this.pendingProjectId = null;
+    this.projects.forget();
     this.messages = [];
     this.session = { ...EMPTY_SESSION };
     this.messagesEl.empty();
@@ -443,21 +442,17 @@ export class ChatView extends ItemView {
       new Notice("Nothing to distill yet.");
       return;
     }
-    const path = await this.plugin.distillConversation(this.conversationId);
+    const path = await this.plugin.sessionActions().distill(this.conversationId);
     if (path !== null && this.plugin.settings.memoryEnabled && this.plugin.settings.memoryIngestOnSave) {
-      await this.plugin.captureConversation(this.messages);
+      await this.plugin.memory().captureConversation(this.messages);
     }
   }
 
   private updateUsageBar(): void { return this.header.updateUsageBar(); }
 
   override async onClose(): Promise<void> {
-    this.templateReloadGeneration++;
-    this.claimReloadGeneration++;
-    if (this.claimReloadTimer !== null) {
-      window.clearTimeout(this.claimReloadTimer);
-      this.claimReloadTimer = null;
-    }
+    this.slash.dispose();
+    this.projects.dispose();
     this.header.teardown(false);
     // A live turn keeps running (and persisting) after the pane closes — only
     // detach this view from its event stream (ChatTurnService).
@@ -489,88 +484,8 @@ export class ChatView extends ItemView {
 
   private hashItems(): AtItem[] { return this.composer.hashItems(); }
 
-  /** Coalesces rapid vault/metadata events into one reloadClaims() after the last one. */
-  private scheduleReloadClaims(): void {
-    if (this.claimReloadTimer !== null) window.clearTimeout(this.claimReloadTimer);
-    this.claimReloadTimer = window.setTimeout(() => {
-      this.claimReloadTimer = null;
-      void this.reloadClaims();
-    }, 500);
-  }
-
-  /** Re-read every active research project's claims for the "@"/"#" pickers. */
-  private async reloadClaims(): Promise<void> {
-    const generation = ++this.claimReloadGeneration;
-    const claims: ClaimAtSource[] = [];
-    try {
-      const repo = this.plugin.researchRepository();
-      const projects = (await repo.listProjects()).filter((p) => p.status === "active");
-      for (const project of projects) {
-        const snapshot = await repo.loadProject(project.path);
-        for (const claim of snapshot.claims) claims.push({ path: claim.path, label: claim.proposition, project: claim.project });
-      }
-    } catch {
-      // Research repository unavailable — claims stay empty.
-    }
-    if (generation !== this.claimReloadGeneration) return;
-    this.cachedClaims = claims;
-  }
-
-  /** Re-read every available chat project (notes + Research Desk) for the "@" picker. */
-  private async reloadProjects(): Promise<void> {
-    try {
-      this.cachedProjects = await this.plugin.listChatProjects();
-    } catch {
-      // Registry unavailable — projects list stays as it was.
-    }
-  }
-
-  /** Set `currentChatProject` and its pill/header label, without touching persisted storage. */
-  private setLocalProject(project: ChatProject | null): void {
-    this.currentChatProject = project;
-    this.composer.setProjectPill(project);
-    this.header.setProjectLabel(project?.name ?? null);
-  }
-
-  /** Sync `currentChatProject` (and the pill/header label) to `this.conversationId`'s persisted projectId. */
-  private async refreshCurrentProject(): Promise<void> {
-    let project: ChatProject | null = null;
-    try {
-      project = await this.plugin.chatProjectFor(this.conversationId);
-    } catch {
-      // Conversation/registry lookup unavailable — no project for this turn.
-    }
-    this.setLocalProject(project);
-  }
-
   /** Apply a project chosen from the "@" menu or the "Chat: choose project" command. */
-  async applyChosenProject(project: ChatProject): Promise<void> {
-    if (this.conversationId === null) {
-      // No conversation yet — hold the choice until run() creates one.
-      this.pendingProjectId = project.id;
-      this.setLocalProject(project);
-      return;
-    }
-    await this.plugin.setChatProject(this.conversationId, project.id);
-    await this.refreshCurrentProject();
-    this.updateUsageBar();
-  }
-
-  /** "@" project item / pill remove-×: `id` null clears the project. */
-  private chooseProjectById(id: string | null): void {
-    if (id === null) {
-      void (async () => {
-        if (this.conversationId) {
-          await this.plugin.setChatProject(this.conversationId, null);
-          await this.refreshCurrentProject();
-        } else { this.pendingProjectId = null; this.setLocalProject(null); }
-        this.updateUsageBar();
-      })();
-      return;
-    }
-    const project = this.cachedProjects.find((p) => p.id === id);
-    if (project) void this.applyChosenProject(project);
-  }
+  applyChosenProject(project: ChatProject): Promise<void> { return this.projects.applyChosen(project); }
 
   private onAtChoose(item: AtItem): void { this.composer.onAtChoose(item); }
 
@@ -630,8 +545,7 @@ export class ChatView extends ItemView {
     // The previous conversation is already auto-saved; detach so the next turn
     // begins a fresh one instead of continuing it.
     this.conversationId = null;
-    this.pendingProjectId = null;
-    this.setLocalProject(null);
+    this.projects.clear();
     this.attachedPaths = [];
     this.attachedPages = [];
     this.composer.resetContextToggles();
@@ -690,122 +604,6 @@ export class ChatView extends ItemView {
     await this.run(text);
   }
 
-  private syncSlashMenu(): void { return this.composer.syncSlashMenu(); }
-
-  /** Re-read the templates folder and rebuild the slash catalog (templates last). */
-  private async reloadTemplates(): Promise<void> {
-    const generation = ++this.templateReloadGeneration;
-    const templates = await this.plugin.promptTemplates();
-    if (generation !== this.templateReloadGeneration) return;
-    const commands = buildSlashCatalog(WORKFLOWS, SKILLS, templates);
-    this.templateCommands = commands.filter((command) => command.template);
-    this.slashMenu.setCommands(commands);
-    this.syncSlashMenu();
-  }
-
-  /** Execute a chosen slash command — either send a prompt or run an action. */
-  private async runSlashCommand(cmd: SlashCommand): Promise<void> {
-    if (await runNativeSlashCommand({
-      command: cmd,
-      backend: this.plugin.router().chatBackend,
-      clearComposer: () => {
-        this.inputEl.value = "";
-        this.composer.autosizeInput();
-      },
-      activateResearchDesk: () => this.plugin.activateResearchDesk(),
-      requestCompletion: async (prompt, display) => { await this.submitPrompt(prompt, display); },
-    })) return;
-
-    this.inputEl.value = "";
-    this.composer.autosizeInput();
-
-    // User template: substitute placeholders against the live editor state,
-    // then send with the note's optional model/context overrides for this turn.
-    if (cmd.template) {
-      const view = this.app.workspace.getActiveViewOfType(MarkdownView);
-      const selection = view?.editor.getSelection() ?? "";
-      const activeNote = view?.file ? await this.app.vault.cachedRead(view.file) : "";
-      const prompt = substitutePlaceholders(cmd.template.prompt, { selection, activeNote });
-      await this.submitPrompt(prompt, `/${cmd.name}`, undefined, {
-        ...(cmd.template.model ? { model: cmd.template.model } : {}),
-        ...(cmd.template.context ? { context: cmd.template.context } : {}),
-      });
-      return;
-    }
-
-    if (cmd.kind === "prompt" && cmd.prompt) {
-      if (cmd.awaitsInput) {
-        // Insert the template and let the user finish typing (e.g. "/explain ").
-        this.composer.setDraft(cmd.prompt);
-        this.updateUsageBar();
-        return;
-      }
-      // Hide the verbose template behind the command name; the model still gets cmd.prompt.
-      await this.submitPrompt(cmd.prompt, `/${cmd.name}`);
-      return;
-    }
-
-    // A skill takes arguments: insert its token and let the user finish typing; Enter sends through onSend.
-    if (cmd.action?.startsWith(SKILL_ACTION_PREFIX)) {
-      this.composer.setDraft(`/${cmd.action.slice(SKILL_ACTION_PREFIX.length)} `);
-      this.updateUsageBar();
-      return;
-    }
-
-    // A workflow slash command ("/manifest-pm", "/frontmatter-audit", …) runs the
-    // matching catalog workflow directly.
-    if (cmd.action?.startsWith(WORKFLOW_ACTION_PREFIX)) {
-      const id = cmd.action.slice(WORKFLOW_ACTION_PREFIX.length);
-      const wf = WORKFLOWS.find((w) => w.id === id);
-      if (wf) await this.plugin.runWorkflow(wf);
-      else new Notice(`Unknown workflow: ${id}`);
-      return;
-    }
-
-    // kind: "action" — dispatch to the matching behavior.
-    switch (cmd.action) {
-      case "new-chat":
-        this.clearChat();
-        break;
-      case "workflows":
-        await this.plugin.openWorkflowPicker();
-        break;
-      case "frontmatter":
-        await this.plugin.suggestFrontmatterForActiveNote();
-        break;
-      case "capture-memory":
-        await this.plugin.openSessionPicker();
-        break;
-      case "history":
-        this.openHistory();
-        break;
-      case "save":
-        await this.distillThisChat();
-        break;
-      case "delete-active":
-        await this.plugin.deleteActiveConversation();
-        break;
-      case "ask-vault":
-        this.enableVaultSearchForChat();
-        this.inputEl.value = "";
-        this.inputEl.setAttr("placeholder", "Vault search on — ask your question…");
-        this.inputEl.focus();
-        quickNotice("Vault search on for this chat.");
-        break;
-      case "artifact":
-        await this.plugin.generateArtifactFromContext();
-        break;
-      case "plan":
-        await this.plugin.generatePlanFromNote();
-        break;
-      case "build":
-        await this.plugin.handoffToBuild();
-        break;
-      default:
-        new Notice(`Unknown command: /${cmd.name}`);
-    }
-  }
-
   private setSending(sending: boolean): void {
     this.streaming = sending;
     this.sendBtn.toggleClass("is-stop", sending);
@@ -826,72 +624,53 @@ export class ChatView extends ItemView {
     this.transcript.clearInterruptedTurnRow();
     void this.refreshBackendPill();
     const router = this.plugin.router();
-    let { provider, model } = router.chatProvider();
     const backend = router.chatBackend;
-    let caps = router.chatCapabilities();
-    if ((backend === "claude-cli" || backend === "codex-cli" || backend === "opencode-cli") && !caps.cli && !router.anthropic.hasCredentials()) {
-      const entry = this.cliEntries(router).find((e) => e.backend.id === backend);
-      const label = entry?.backend.label ?? "This backend";
-      // The cached sign-in probe can be stale (user just ran the sign-in command); re-probe once before blocking.
-      if (entry?.provider.available()) {
-        await entry.provider.refresh();
-        caps = router.chatCapabilities();
-        if (caps.cli) {
-          ({ provider, model } = router.chatProvider());
-          void this.refreshBackendPill();
-        }
-      }
-      if (!caps.cli) {
-        new Notice(entry?.provider.available() ? `${label} is not signed in — ${entry.backend.signInHint}, or add an API key in Companion settings.` : `${label} runs on desktop only. Add an API key to chat here.`);
-        return false;
-      }
-    }
-    if (!provider.hasCredentials() && backend !== "auto") {
-      const where =
-        provider.id === "ollama"
-          ? "Start Ollama (`ollama serve`) or set the host in settings."
-          : provider.id === "openai-compat"
-            ? "Set the endpoint host and model in Companion settings → Local models."
-            : "Add your Anthropic credential in Claude Companion settings first.";
-      new Notice(where);
+    const preflight = await preflightTurn({
+      backend,
+      chatProvider: () => router.chatProvider(),
+      chatCapabilities: () => router.chatCapabilities(),
+      anthropicHasCredentials: () => router.anthropic.hasCredentials(),
+      cliSignIn: () => {
+        const entry = this.cliEntries(router).find((e) => e.backend.id === backend);
+        return entry ? { label: entry.backend.label, signInHint: entry.backend.signInHint, available: () => entry.provider.available(), refresh: () => entry.provider.refresh() } : null;
+      },
+    });
+    if (!preflight.ok) {
+      new Notice(preflight.notice);
       return false;
     }
+    const { provider, model, caps } = preflight;
+    if (preflight.reprobed) void this.refreshBackendPill();
 
-    const previousTurn = this.conversationId ? this.plugin.listConversations().find((entry) => entry.id === this.conversationId)?.activeTurn : undefined;
-    // A capped turn's partial work stays in context — the continuation needs to
-    // see what was already done. Interrupted/failed turns are excluded as before.
-    if (previousTurn && previousTurn.state !== "running" && previousTurn.state !== "capped") {
-      this.messages = this.messages.map((message, index) => index >= previousTurn.userMessageIndex ? { ...message, contextExcluded: true } : message);
-    }
-    this.messages.push({ role: "user", content: userText, ...(display !== undefined ? { display } : {}) });
-    // Snapshot now (not read from `this.messages` at completion) — the view may
-    // switch conversations while this turn is still in flight.
-    const turnMessages = [...this.messages];
-    let turn: { conversationId: string; turnId: string };
-    try {
-      turn = await this.plugin.beginActiveConversationTurn(this.conversationId, this.messages, {
-        backend,
-        model: this.turnModelOverride ?? model,
-        mode: this.mode.mode,
-        ...(this.continuationDepth > 0 ? { continuationDepth: this.continuationDepth } : {}),
-      });
-    } catch (error) {
-      this.messages.pop();
+    const previousTurn = this.conversationId ? this.plugin.conversations().list().find((entry) => entry.id === this.conversationId)?.activeTurn : undefined;
+    const started = await startTurn((conversationId, messages, input) => this.plugin.conversations().beginTurn(conversationId, messages, input), {
+      conversationId: this.conversationId,
+      messages: this.messages,
+      previousTurn,
+      user: { content: userText, ...(display !== undefined ? { display } : {}) },
+      backend,
+      model: this.turnModelOverride ?? model,
+      mode: this.mode.mode,
+      continuationDepth: this.continuationDepth,
+    });
+    if (!started.ok) {
       if (this.inputEl) {
         this.inputEl.value = userText;
         this.composer.autosizeInput();
       }
-      new Notice(`Couldn't save this request, so it was not started: ${error instanceof Error ? error.message : String(error)}`);
+      new Notice(started.notice);
       return false;
     }
+    const { turn, turnMessages } = started;
+    this.messages = started.messages;
     this.conversationId = turn.conversationId;
     this.refreshTabTitle();
-    if (this.pendingProjectId !== null) { await this.plugin.setChatProject(turn.conversationId, this.pendingProjectId); this.pendingProjectId = null; }
-    await this.refreshCurrentProject(); // memoized for the rest of this turn
+    await this.projects.bindPending(turn.conversationId);
+    await this.projects.refreshCurrent(); // memoized for the rest of this turn
     this.currentTurn = turn;
     this.abort = new AbortController();
     const controller = this.abort;
-    this.unregisterCurrentTurn = this.plugin.registerActiveChatTurn(turn.conversationId, turn.turnId, () => {
+    this.unregisterCurrentTurn = this.plugin.conversations().registerTurn(turn.conversationId, turn.turnId, () => {
       controller.abort();
       if (this.currentTurn?.turnId === turn.turnId) {
         this.currentTurn = null;
@@ -929,7 +708,7 @@ export class ChatView extends ItemView {
       this.plugin.settings,
       toggles,
       userText,
-      (q, k) => this.plugin.semanticSearch(q, k, searchScope),
+      (q, k) => this.plugin.semantic().semanticSearch(q, k, searchScope),
       [...this.attachedPaths, ...pinnedPaths],
       this.attachedPages,
       searchScope,
@@ -976,10 +755,10 @@ export class ChatView extends ItemView {
       { backend, agent: agentRoute, providerId: provider.id },
       {
         primary: () => agentRoute
-          ? this.agentTurn(apiMessages, handlers, signal, turn.conversationId)
-          : this.streamTurn(startedOnLocal ? "local" : "claude", apiMessages, handlers, signal),
+          ? this.runners.agentTurn(apiMessages, handlers, signal, turn.conversationId)
+          : this.runners.streamTurn(startedOnLocal ? "local" : "claude", apiMessages, handlers, signal),
         localFallback: () => router.localFallback(),
-        local: (fallback) => this.streamTurn("local", apiMessages, handlers, signal, fallback),
+        local: (fallback) => this.runners.streamTurn("local", apiMessages, handlers, signal, fallback),
       },
       handlers,
     );
@@ -994,10 +773,8 @@ export class ChatView extends ItemView {
       turnId: turn.turnId,
       title: display ?? userText,
       run: coreRun,
-      completeTurn: (result) => this.plugin.completeActiveConversationTurn(turn.conversationId, turn.turnId, appendAssistantMessage(turnMessages, result)),
-      capTurn: (result) => this.plugin.capActiveConversationTurn(turn.conversationId, turn.turnId, appendAssistantMessage(turnMessages, result), result.handoff),
-      interruptTurn: (result, error) => this.plugin.interruptActiveConversationTurn(turn.conversationId, turn.turnId, appendAssistantMessage(turnMessages, result), error?.message ?? "Interrupted"),
-      registerTurn: (stop) => this.plugin.registerActiveChatTurn(turn.conversationId, turn.turnId, () => {
+      ...turnPersistence(this.plugin.conversations(), turn, turnMessages),
+      registerTurn: (stop) => this.plugin.conversations().registerTurn(turn.conversationId, turn.turnId, () => {
         controller.abort();
         stop();
         if (this.currentTurn?.turnId === turn.turnId) {
@@ -1012,228 +789,11 @@ export class ChatView extends ItemView {
     // next turn when auto-continue is on — only while this view shows the
     // conversation; a backgrounded turn waits for the user.
     if (!outcome?.capped || this.conversationId !== turn.conversationId) return true;
-    const conversation = this.plugin.listConversations().find((entry) => entry.id === turn.conversationId);
+    const conversation = this.plugin.conversations().list().find((entry) => entry.id === turn.conversationId);
     if (!conversation || conversation.activeTurn?.state !== "capped") return true;
     this.transcript.renderInterruptedTurn(conversation);
     if (shouldAutoContinue(this.plugin.settings.agentAutoContinue, conversation.activeTurn)) await this.resumeInterruptedTurn(conversation);
     return true;
-  }
-
-  /**
-   * Build one streaming attempt on a backend; it emits through `handlers`, never
-   * the DOM, so the view (attached or not) renders from the ChatTurnService
-   * event stream.
-   */
-  private streamTurn(
-    target: "claude" | "local",
-    apiMessages: ApiMessage[],
-    handlers: AgentTurnHandlers,
-    signal: AbortSignal,
-    localOverride?: { provider: Provider; model: string },
-  ): Promise<AgentTurnResult> {
-    const router = this.plugin.router();
-    const onClaude = target === "claude";
-    // "local" = the configured non-Claude chat backend (Ollama, or the custom
-    // OpenAI-compatible endpoint when that's the chat backend) — or, for a
-    // fallback attempt, whichever local backend the router found reachable.
-    const local = onClaude ? undefined : localOverride ?? router.chatProvider();
-    const provider = onClaude ? router.anthropic : local!.provider;
-    const model = onClaude
-      ? (this.turnModelOverride ?? this.controls.model)
-      : local!.model;
-    const shape = shapeRequest({ ...this.controls, model: onClaude ? model : this.controls.model }, this.maxTokensOverride ?? this.plugin.settings.maxTokens);
-
-    const request: CompletionRequest = {
-      system: this.plugin.composeSystemPrompt({ project: this.currentChatProject, compact: provider.id === "device" }),
-      messages: apiMessages,
-      model,
-      maxTokens: shape.maxTokens,
-      signal,
-    };
-    if (onClaude && shape.temperature !== undefined) request.temperature = shape.temperature;
-    if (onClaude && shape.thinking !== undefined) request.thinking = shape.thinking;
-    if (onClaude && shape.thinkingDisplay !== undefined) request.thinkingDisplay = shape.thinkingDisplay;
-    if (onClaude && shape.outputConfig !== undefined) request.outputConfig = shape.outputConfig;
-    return streamAttempt(provider, request, handlers, signal);
-  }
-
-  /**
-   * Run one agent-mode turn: Claude may call vault tools between streaming
-   * passes (spec 2026-07-05). Always resolves; the caller (coreRun in run())
-   * decides whether an error means fallback, a completed-with-notice answer,
-   * or a hard failure.
-   */
-  private async agentTurn(
-    apiMessages: ApiMessage[],
-    handlers: AgentTurnHandlers,
-    signal: AbortSignal,
-    conversationId?: string,
-  ): Promise<AgentTurnResult> {
-    const { provider, model: providerModel } = this.plugin.router().chatProvider();
-    const shape = shapeRequest(this.controls, this.maxTokensOverride ?? this.plugin.settings.maxTokens);
-    const run = this.mode.run;
-    const externalTools = run === "chat" ? await this.plugin.externalMcpTools().catch(() => []) : [];
-    if (signal.aborted) return { text: "", trace: [], aborted: true };
-    const vaultDefs = this.plugin.agentTools().definitions();
-    const access = toolAccess(run, vaultDefs);
-
-    const request: CompletionRequest = {
-      system: this.plugin.composeSystemPrompt({ agent: true, plan: run === "plan", project: this.currentChatProject }),
-      messages: apiMessages,
-      model: this.turnModelOverride ?? providerModel,
-      maxTokens: shape.maxTokens,
-      signal,
-      tools: access.offered([...toAnthropicTools(vaultDefs), PROPOSE_EDIT_TOOL, ...externalTools]),
-    };
-    if (shape.temperature !== undefined) request.temperature = shape.temperature;
-    if (shape.thinking !== undefined) request.thinking = shape.thinking;
-    if (shape.thinkingDisplay !== undefined) request.thinkingDisplay = shape.thinkingDisplay;
-    if (shape.outputConfig !== undefined) request.outputConfig = shape.outputConfig;
-
-    const deps: AgentTurnDeps = {
-      stream: (req, h) => provider.stream(req, h),
-      execute: (block, sig) =>
-        parseExternalToolName(block.name) && access.decide(block.name) === "run"
-          ? this.executeExternalMcp(block, sig)
-          : executeTool(
-              {
-                access,
-                unavailable: (name) => this.plugin.agentTools().unavailable(name),
-                ...(sig ? { signal: sig } : {}),
-                call: (name, args) => this.plugin.agentTools().call(name, args),
-                confirmWrite: (b) => this.confirmAgentWrite(b),
-                proposeEdit: (b) => this.proposeAgentEdit(b, conversationId, signal),
-              },
-              block,
-            ),
-      maxIterations: this.plugin.settings.agentMaxIterations,
-      signal,
-    };
-
-    let runner: AgentTurnRunner;
-    try {
-      runner = await this.turnRunnerFor(deps, request, signal, conversationId);
-    } catch (error) {
-      return { text: "", trace: [], error: error instanceof Error ? error : new Error(String(error)) };
-    }
-    if (signal.aborted) return { text: "", trace: [], aborted: true };
-    return runner.run(request, handlers);
-  }
-
-  /** The CLI runs the turn when the backend is Claude Code; otherwise today's provider loop does. */
-  private async turnRunnerFor(deps: AgentTurnDeps, request: CompletionRequest, signal?: AbortSignal, turnConversationId?: string): Promise<AgentTurnRunner> {
-    const caps = this.plugin.router().chatCapabilities();
-    if (!caps.cli) return providerTurnRunner(deps);
-    const conversationId = turnConversationId ?? this.currentTurn?.conversationId ?? this.plugin.activeConversationId();
-    signal?.addEventListener("abort", () => this.plugin.interruptCliTurn(conversationId), { once: true });
-    return this.plugin.cliTurnRunner({
-      conversationId,
-      run: this.mode.run,
-      model: request.model,
-      deps: { confirmWrite: async (b) => (await this.confirmAgentWrite(b)) && !signal?.aborted, proposeEdit: (b) => this.proposeAgentEdit(b, conversationId, signal) },
-      transcript: this.resumeCliSessionId ? "" : transcriptText(this.messages.slice(0, -1)),
-      ...(this.resumeCliSessionId ? { resumeSessionId: this.resumeCliSessionId } : {}),
-    });
-  }
-
-  /**
-   * Handle a propose_note_edit call: plan against the current note, let the
-   * user review per hunk inline or in the DiffModal, apply the accepted subset
-   * atomically, and report the true outcome back to the model. Throws are
-   * mapped to is_error tool_results by the executor (model self-corrects).
-   */
-  private async proposeAgentEdit(block: ToolUseBlock, conversationId?: string, signal?: AbortSignal): Promise<string> {
-    const input = block.input;
-    const path = typeof input.path === "string" ? input.path : "";
-    if (!path) throw new Error("propose_note_edit requires a 'path'.");
-    const file = this.app.vault.getAbstractFileByPath(path);
-    if (!(file instanceof TFile)) throw new Error(`Note not found: ${path}`);
-    const edits = parseProposedEdits(input.edits);
-    const description = typeof input.description === "string" ? input.description : undefined;
-
-    const content = await this.app.vault.cachedRead(file);
-    const plan = planEdits(content, edits);
-    if (signal?.aborted) return "Turn stopped before the edit review opened.";
-    const id = conversationId ?? this.currentTurn?.conversationId ?? this.conversationId;
-    if (!id) throw new Error("Conversation not found for edit recovery.");
-    await this.plugin.saveChatEditProposal(id, { path, edits, ...(description ? { description } : {}) });
-    return this.applyReviewedEdit(id, file, plan, description, signal);
-  }
-
-  private async applyReviewedEdit(conversationId: string, file: TFile, plan: ReturnType<typeof planEdits>, description?: string, signal?: AbortSignal): Promise<string> {
-    const result = await reviewAndApply(this.app, file, plan, description, { inlineEnabled: this.plugin.settings.inlineDiffEnabled, ...(signal ? { signal } : {}) });
-    if (signal?.aborted) return "Turn stopped. The proposed edit is saved for later review.";
-    if (result.cancelled) {
-      const conversation = this.plugin.listConversations().find((entry) => entry.id === conversationId);
-      if (conversation && this.conversationId === conversationId) this.transcript.renderRecoverableEdit(conversation);
-      return "User rejected the proposed edit. It is saved for later review.";
-    }
-
-    const { applied, total } = result;
-    if (applied === total) {
-      await this.plugin.clearChatEditProposal(conversationId).catch((error: unknown) => console.error("[Claude Companion] could not clear applied edit recovery record", error));
-      if (this.conversationId === conversationId) this.messagesEl.querySelector(".cc-edit-recovery")?.remove();
-    } else {
-      await this.plugin.saveChatEditProposal(conversationId, { path: file.path, edits: result.remaining, ...(description ? { description } : {}) }).catch((error: unknown) => console.error("[Claude Companion] could not retain rejected edit recovery record", error));
-    }
-    return applied === total
-      ? `Applied all ${applied} edit${applied === 1 ? "" : "s"} to ${file.path}.`
-      : `Applied ${applied} of ${total} edits to ${file.path} (the user rejected the rest).`;
-  }
-
-  private async discardLastProposedEdit(conversation: Conversation): Promise<void> {
-    await this.plugin.clearChatEditProposal(conversation.id).catch((error: unknown) => console.error("[Claude Companion] could not discard edit recovery record", error));
-  }
-
-  private async reviewLastProposedEdit(conversation: Conversation): Promise<void> {
-    const proposal = this.plugin.listConversations().find((entry) => entry.id === conversation.id)?.lastEditProposal;
-    if (!proposal) return;
-    try {
-      const file = this.app.vault.getAbstractFileByPath(proposal.path);
-      if (!(file instanceof TFile)) throw new Error(`Note not found: ${proposal.path}`);
-      const plan = planEdits(await this.app.vault.cachedRead(file), proposal.edits);
-      new Notice(await this.applyReviewedEdit(conversation.id, file, plan, proposal.description));
-    } catch (error) {
-      new Notice(`Could not reopen the proposed edit: ${error instanceof Error ? error.message : String(error)}`);
-    }
-  }
-
-  /**
-   * Route an external MCP tool call: every call confirms first (external
-   * servers can do anything), then dispatch; errors become is_error results
-   * so the model adapts instead of the turn dying.
-   */
-  private async executeExternalMcp(block: ToolUseBlock, signal?: AbortSignal): Promise<ToolResultBlock> {
-    const result = (content: string, isError?: boolean): ToolResultBlock => ({
-      type: "tool_result",
-      tool_use_id: block.id,
-      content,
-      ...(isError ? { is_error: true } : {}),
-    });
-    if (block.parseError) return result(block.parseError, true);
-    // Stop was pressed while a prior tool was running — don't fire another call.
-    if (signal?.aborted) return result("Turn stopped before this tool ran.", true);
-    if (!(await this.confirmAgentWrite(block))) return result("User declined.", true);
-    if (signal?.aborted) return result("Turn stopped before this tool ran.", true);
-    try {
-      return result(truncateResult(await this.plugin.callExternalMcp(block.name, block.input)));
-    } catch (err) {
-      return result(err instanceof Error ? err.message : String(err), true);
-    }
-  }
-
-  /** Ask the user before an agent write tool runs; honors "allow for this session". */
-  private confirmAgentWrite(block: ToolUseBlock): Promise<boolean> {
-    if (this.agentWriteAlways) return Promise.resolve(true);
-    return new Promise((resolve) => {
-      new WriteConfirmModal(this.app, block, (choice) => {
-        if (choice === "always") {
-          this.agentWriteAlways = true;
-          this.header.updateWriteGrantPill();
-        }
-        resolve(choice !== "deny");
-      }).open();
-    });
   }
 
   /** Push the chatFontSize setting onto the view as --cc-chat-font (drives .cc-body). */
@@ -1247,7 +807,7 @@ export class ChatView extends ItemView {
       this.abort?.abort();
       return;
     }
-    await this.plugin.stopActiveChatTurn(turn.conversationId, turn.turnId);
+    await this.plugin.conversations().stopTurn(turn.conversationId, turn.turnId);
   }
 
   async resumeInterruptedTurn(conversation: Conversation): Promise<void> {
@@ -1305,45 +865,6 @@ export class ChatView extends ItemView {
   private openOverflowMenu(): void { return this.header.openOverflowMenu(); }
 
   private openModelMenu(): void { return this.header.openModelMenu(); }
-
-  private async renderMarkdownInto(el: HTMLElement, markdown: string): Promise<void> {
-    const version = this.bumpRenderVersion(el);
-    const rendered = createDiv();
-    await MarkdownRenderer.render(this.app, markdown, rendered, this.app.workspace.getActiveFile()?.path ?? "", this);
-    if (this.renderVersions.get(el) !== version) return;
-    el.replaceChildren(...Array.from(rendered.childNodes));
-  }
-
-  /**
-   * While a `claude-html` artifact is streaming, don't dump its raw HTML source
-   * into the bubble. Render whatever prose preceded the fence as markdown and put
-   * a compact "building" chip in the artifact's place; the final `renderMarkdownInto`
-   * on `onDone` swaps in the sandboxed iframe. Painted once per artifact (flush
-   * guards re-entry) so the chip and lead-in prose stay stable, not re-rendered
-   * every frame.
-   */
-  private renderStreamingArtifactInto(el: HTMLElement, buffer: string): void {
-    const { before } = splitStreamingArtifact(buffer);
-    const version = this.bumpRenderVersion(el);
-    const rendered = createDiv();
-    const paint = (): void => {
-      if (this.renderVersions.get(el) !== version) return;
-      const chip = rendered.createDiv({ cls: "cc-artifact-building" });
-      chip.createSpan({ cls: "cc-artifact-building-label", text: "Building artifact…" });
-      el.replaceChildren(...Array.from(rendered.childNodes));
-    };
-    if (before.trim().length > 0) {
-      void MarkdownRenderer.render(this.app, before, rendered, this.app.workspace.getActiveFile()?.path ?? "", this).then(paint);
-    } else {
-      paint();
-    }
-  }
-
-  private bumpRenderVersion(el: HTMLElement): number {
-    const version = (this.renderVersions.get(el) ?? 0) + 1;
-    this.renderVersions.set(el, version);
-    return version;
-  }
 
   /** Drop the last assistant reply and re-run the previous user turn. */
   private async regenerate(opts?: { maxTokens?: number }): Promise<void> {

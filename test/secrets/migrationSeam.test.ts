@@ -3,9 +3,10 @@
 // This is the seam a future reorder would silently break.
 
 import { beforeEach, describe, expect, it } from "vitest";
-import { App, clearNotices, getNoticeMessages, setApiVersion } from "obsidian";
-import ClaudeCompanionPlugin from "../../src/main";
+import { clearNotices, getNoticeMessages, setApiVersion } from "obsidian";
+import type ClaudeCompanionPlugin from "../../src/main";
 import { secretIdFor } from "../../src/secrets/store";
+import { buildPlugin } from "../fakes/plugin";
 
 interface Harness {
   plugin: ClaudeCompanionPlugin;
@@ -14,9 +15,7 @@ interface Harness {
 
 function harness(initialSettings: Record<string, unknown>): Harness {
   let stored: unknown = { settings: initialSettings, conversations: [], activeConversationId: null };
-  const plugin = Object.create(ClaudeCompanionPlugin.prototype) as ClaudeCompanionPlugin;
-  Object.assign(plugin as unknown as Record<string, unknown>, {
-    app: new App(),
+  const plugin = buildPlugin({
     mcpSyncChain: Promise.resolve(),
     loadData: async () => structuredClone(stored),
     saveData: async (data: unknown) => { stored = structuredClone(data); },
@@ -125,7 +124,7 @@ describe("loadSettings migration seam", () => {
       loadData: async () => structuredClone({ settings: { apiKey: "SENTINEL-KEY" }, conversations: [], published: [item, { key: "bad" }] }),
     });
     await plugin.loadSettings();
-    expect(plugin.publishedItems()).toEqual([item]);
+    expect(plugin.publishing().publishedItems()).toEqual([item]);
     expect((JSON.parse(onDisk()) as { published?: unknown }).published).toEqual([item]);
   });
 

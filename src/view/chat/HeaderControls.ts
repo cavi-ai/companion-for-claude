@@ -15,6 +15,7 @@ import { contextGauge, estimateTokens, estimateTokensForChars, formatCost, forma
 import { ActionModal, type ActionModalItem } from "../ActionModal";
 import { QuickOptionsModal } from "../QuickOptionsModal";
 import { quickNotice } from "../../notice";
+import { CliModelPicker } from "../CliModelPicker";
 
 export interface HeaderControlsCallbacks {
   onModelClick: () => void;
@@ -93,7 +94,7 @@ export class HeaderControls {
       more.addEventListener("click", () => cb.onOverflow());
       // Quick options reaches mobile through that one ⋯ menu; a second control on
       // a phone-width header is the crowding this row exists to avoid.
-      this.disposeChrome = renderCompanionChrome(root, "chat", "Chat", this.plugin.companionChrome(), {
+      this.disposeChrome = renderCompanionChrome(root, "chat", "Chat", this.plugin.shell().companionChrome(), {
         host: actions,
         compact: true,
         omitOptionsButton: true,
@@ -118,7 +119,7 @@ export class HeaderControls {
       this.iconButton(primary, "more-horizontal", "More actions", () => cb.onOverflow());
       // Quick options joins this row rather than owning a header of its own, and
       // replaces the gear: its own sheet already offers "Open all settings".
-      this.disposeChrome = renderCompanionChrome(root, "chat", "Chat", this.plugin.companionChrome(), {
+      this.disposeChrome = renderCompanionChrome(root, "chat", "Chat", this.plugin.shell().companionChrome(), {
         host: primary,
         compact: true,
       });
@@ -201,11 +202,13 @@ export class HeaderControls {
   }
 
   refreshModelLabel(): void {
-    const { model: resolvedModel } = this.plugin.router().chatProvider();
-    const caps = this.plugin.router().chatCapabilities();
+    const router = this.plugin.router();
+    const { model: resolvedModel, provider } = router.chatProvider();
+    const caps = router.chatCapabilities();
     const chosen = modelLabel(this.controls?.model ?? this.plugin.settings.model);
     const deviceName = DEVICE_MODELS.find((model) => model.id === resolvedModel)?.name ?? resolvedModel;
-    const label = this.plugin.settings.chatBackend === "device" ? `${deviceName} · on-device` : caps.local ? `${modelLabel(resolvedModel)} · local` : chosen;
+    const cliLabel = provider.id === "codex-cli" ? router.codexCli.modelLabel(resolvedModel) : provider.id === "opencode-cli" ? router.opencodeCli.modelLabel(resolvedModel) : null;
+    const label = cliLabel ?? (this.plugin.settings.chatBackend === "device" ? `${deviceName} · on-device` : caps.local ? `${modelLabel(resolvedModel)} · local` : chosen);
     // Desktop nests the dot + chevron inside cc-model, so the name text goes into
     // its own child span; mobile has no such child and keeps setting cc-model directly.
     (this.modelTextEl ?? this.modelLabelEl).setText(label);
@@ -312,23 +315,23 @@ export class HeaderControls {
   /** The single ⋯ menu: on mobile it replaces the header icon row entirely; on desktop it carries the actions the 3-icon row + model chip don't. */
   openOverflowMenu(): void {
     const items: ActionModalItem[] = [
-      { title: "Source inbox", icon: "inbox", run: () => void this.plugin.activateInboxView() },
-      { title: "Related notes", icon: "link", run: () => void this.plugin.activateRelatedView() },
-      { title: "Research Desk", icon: "flask-conical", run: () => void this.plugin.activateResearchDesk() },
+      { title: "Source inbox", icon: "inbox", run: () => void this.plugin.views().activateInboxView() },
+      { title: "Related notes", icon: "link", run: () => void this.plugin.views().activateRelatedView() },
+      { title: "Research Desk", icon: "flask-conical", run: () => void this.plugin.research().activateResearchDesk() },
       { title: "New chat", icon: "plus", run: () => this.deps.clearChat() },
-      { title: "New chat tab", icon: "plus", run: () => void this.plugin.openNewChatTab() },
+      { title: "New chat tab", icon: "plus", run: () => void this.plugin.views().openNewChatTab() },
       { title: "History", icon: "history", run: () => this.openHistory() },
       { title: "Distill this chat", icon: "sparkles", run: () => void this.deps.distillChat() },
     ];
     if (!Platform.isMobile) {
       if (this.plugin.settings.memoryEnabled) {
-        items.push({ title: "Capture a Claude Code session…", icon: "import", run: () => void this.plugin.openSessionPicker() });
+        items.push({ title: "Capture a Claude Code session…", icon: "import", run: () => void this.plugin.memory().openSessionPicker() });
       }
       items.push({ title: "MCP bridge…", icon: "plug-zap", run: () => this.openMcpMenu(this.mcpStatusEl) });
     }
     items.push(
       { title: "Model controls…", icon: "sliders-horizontal", run: () => this.openTuneModal() },
-      { title: "Options…", icon: "settings-2", run: () => new QuickOptionsModal(this.app, "chat", this.plugin.companionChrome()).open() },
+      { title: "Options…", icon: "settings-2", run: () => new QuickOptionsModal(this.app, "chat", this.plugin.shell().companionChrome()).open() },
     );
     // Session toggles from the desktop controls bar. Phones set Ask / Plan / Act
     // from the composer toolbar, so the mode items are desktop-only here.
@@ -353,14 +356,22 @@ export class HeaderControls {
     // bounces a "feature is off" notice is noise.
     const cloudDispatch = this.plugin.settings.cloudDispatchEnabled;
     const cloudReplies = this.plugin.settings.cloudReplyRepo.trim().length > 0;
-    if (cloudDispatch) items.push({ title: "Send to cloud session", icon: "cloud", separatorBefore: true, run: () => void this.plugin.dispatchCloudSession() });
-    if (cloudReplies) items.push({ title: "Pull cloud replies", icon: "cloud-download", separatorBefore: !cloudDispatch, run: () => void this.plugin.pullCloudReplies() });
+    if (cloudDispatch) items.push({ title: "Send to cloud session", icon: "cloud", separatorBefore: true, run: () => void this.plugin.publishing().dispatchCloudSession() });
+    if (cloudReplies) items.push({ title: "Pull cloud replies", icon: "cloud-download", separatorBefore: !cloudDispatch, run: () => void this.plugin.publishing().pullCloudReplies() });
     items.push({ title: "Settings", icon: "settings", separatorBefore: true, run: () => this.deps.openSettings() });
     new ActionModal(this.app, "Companion actions", items).open();
   }
 
   /** Model picker opened by tapping the model name in the header. */
   openModelMenu(): void {
+    const backend = this.plugin.settings.chatBackend;
+    if (!Platform.isMobile && (backend === "codex-cli" || backend === "opencode-cli")) {
+      const router = this.plugin.router();
+      const provider = backend === "codex-cli" ? router.codexCli : router.opencodeCli;
+      const current = backend === "codex-cli" ? this.plugin.settings.codexModel : this.plugin.settings.opencodeModel;
+      new CliModelPicker(this.app, provider.label, current, () => provider.listModels(), (id) => void this.onModelSelect(`${backend}:${id}`), () => this.deps.openSettings()).open();
+      return;
+    }
     const resolved = this.plugin.router().chatProvider();
     const activeModel = resolved.provider.id === "anthropic" ? this.controls.model : resolved.model;
     const deviceItems: ActionModalItem[] = DEVICE_MODELS.map((model) => ({
@@ -393,7 +404,13 @@ export class HeaderControls {
    * back to Claude (backend → auto, so it still falls back to local when needed).
    */
   async onModelSelect(value: string): Promise<void> {
-    if (value.startsWith("device:")) {
+    if (!Platform.isMobile && value.startsWith("codex-cli:")) {
+      this.plugin.settings.codexModel = value.slice("codex-cli:".length);
+      this.plugin.settings.chatBackend = "codex-cli";
+    } else if (!Platform.isMobile && value.startsWith("opencode-cli:")) {
+      this.plugin.settings.opencodeModel = value.slice("opencode-cli:".length);
+      this.plugin.settings.chatBackend = "opencode-cli";
+    } else if (value.startsWith("device:")) {
       const model = DEVICE_MODELS.find((m) => m.id === value.slice("device:".length));
       if (!model) return;
       this.plugin.settings.deviceChatModel = model.id;
@@ -408,7 +425,7 @@ export class HeaderControls {
       this.plugin.settings.chatBackend = "custom";
     } else {
       this.controls.model = value;
-      if (this.plugin.settings.chatBackend === "local" || this.plugin.settings.chatBackend === "custom" || this.plugin.settings.chatBackend === "device") this.plugin.settings.chatBackend = "auto";
+      if (this.plugin.settings.chatBackend === "local" || this.plugin.settings.chatBackend === "custom" || this.plugin.settings.chatBackend === "device" || this.plugin.settings.chatBackend === "codex-cli" || this.plugin.settings.chatBackend === "opencode-cli") this.plugin.settings.chatBackend = "auto";
     }
     await this.plugin.saveSettings();
     this.deps.renderKnobs(); // capabilities/provider changed → rebuild dependent knobs
@@ -441,7 +458,7 @@ export class HeaderControls {
       this.sessionDropdown.close();
       return;
     }
-    if (this.plugin.listConversations().length === 0) {
+    if (this.plugin.conversations().list().length === 0) {
       new Notice("No saved conversations yet.");
       return;
     }
@@ -450,24 +467,24 @@ export class HeaderControls {
     this.sessionDropdown = new SessionDropdown({
       app: this.app,
       anchor,
-      conversations: () => this.plugin.listConversations(),
-      activeId: () => this.plugin.getActiveConversation()?.id ?? null,
+      conversations: () => this.plugin.conversations().list(),
+      activeId: () => this.plugin.conversations().getActive()?.id ?? null,
       actions: {
         resume: async (chosen) => {
-          const conversation = await this.plugin.setActiveConversation(chosen.id);
+          const conversation = await this.plugin.conversations().setActive(chosen.id);
           if (conversation) this.deps.loadConversation(conversation);
         },
-        rename: (conversation, title) => this.plugin.renameConversation(conversation.id, title),
-        fork: (conversation) => this.plugin.forkConversation(conversation.id),
-        forkFromSummary: (conversation) => this.plugin.forkFromSummary(conversation.id),
-        distill: async (conversation) => { await this.plugin.distillConversation(conversation.id); },
-        archive: (conversation) => this.plugin.archiveConversation(conversation.id),
-        unarchive: (conversation) => this.plugin.unarchiveConversation(conversation.id),
+        rename: (conversation, title) => this.plugin.conversations().rename(conversation.id, title),
+        fork: (conversation) => this.plugin.sessionActions().fork(conversation.id),
+        forkFromSummary: (conversation) => this.plugin.sessionActions().forkFromSummary(conversation.id),
+        distill: async (conversation) => { await this.plugin.sessionActions().distill(conversation.id); },
+        archive: (conversation) => this.plugin.sessionActions().archive(conversation.id),
+        unarchive: (conversation) => this.plugin.conversations().unarchive(conversation.id),
         remove: async (doomed) => {
-          if (this.plugin.getActiveConversation()?.id === doomed.id) {
+          if (this.plugin.conversations().getActive()?.id === doomed.id) {
             await this.plugin.deleteActiveConversation(); // resets the view + notices
           } else {
-            await this.plugin.deleteConversation(doomed.id);
+            await this.plugin.conversations().delete(doomed.id);
             quickNotice(`Deleted “${doomed.title}”.`);
           }
         },

@@ -79,10 +79,11 @@ export const opencodeBackend: CliBackend = {
   supportsMcp: true,
   signInHint: "run `opencode auth login`",
   async probe(run) {
-    const { stdout, code } = await run(["providers", "list"]);
+    const { stdout, stderr = "", code } = await run(["auth", "list", "--standalone"]);
     if (code !== 0) return { loggedIn: false, method: "" };
-    const match = CREDENTIAL_COUNT.exec(stdout);
-    const count = match ? Number(match[1]) : 0;
+    const output = `${stdout}\n${stderr}`.replace(new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, "g"), "");
+    const match = CREDENTIAL_COUNT.exec(output);
+    const count = match ? Number(match[1]) : output.split(/\r?\n/).filter((line) => /^\S.*\s{2,}(?:stored|environment)\s*$/i.test(line)).length;
     return { loggedIn: count > 0, method: count > 0 ? `${count} credential${count === 1 ? "" : "s"}` : "" };
   },
   buildArgv: buildOpencodeArgv,

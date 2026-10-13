@@ -6,6 +6,7 @@ import type { CliRuntime } from "../cli/runtime";
 import type { CliBackend } from "../cli/backends/types";
 import type { CliChild } from "../cli/session";
 import { runCliCompletion } from "../cli/completion";
+import type { CliModel } from "../cli/modelDiscovery";
 
 export interface CliProbe {
   executable: string;
@@ -23,6 +24,8 @@ export class CliProvider implements Provider {
   readonly label: string;
   readonly supportsTools = true;
   private cached: CliProbe | null = null;
+  private modelCache: { models: CliModel[]; at: number } | null = null;
+  private modelDiscovery: Promise<CliModel[]> | null = null;
 
   private readonly active = new Set<CliChild>();
 
@@ -74,6 +77,26 @@ export class CliProvider implements Provider {
 
   test(): Promise<ProviderStatus> {
     return this.refresh();
+  }
+
+  /** Shared by settings and chat pickers; concurrent renders share one discovery process. */
+  listModels(refresh = false): Promise<CliModel[]> {
+    if (!this.runtime?.listModels) return Promise.resolve([]);
+    if (this.modelDiscovery) return this.modelDiscovery;
+    if (!refresh && this.modelCache && Date.now() - this.modelCache.at < 60_000) return Promise.resolve(this.modelCache.models);
+    const runtime = this.runtime;
+    this.modelDiscovery = (async () => {
+      const found = await runtime.find(this.backend);
+      if (!found) throw new Error(this.notFoundMessage());
+      const models = await runtime.listModels!(this.backend, found.executable);
+      this.modelCache = { models, at: Date.now() };
+      return models;
+    })().finally(() => { this.modelDiscovery = null; });
+    return this.modelDiscovery;
+  }
+
+  modelLabel(id: string): string {
+    return this.modelCache?.models.find((model) => model.id === id)?.label ?? (id || `${this.label} default`);
   }
 
   cancelAll(): void {

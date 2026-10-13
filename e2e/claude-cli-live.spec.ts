@@ -150,8 +150,8 @@ test.describe("Claude Code backend, live", () => {
       const onDisk = (await Promise.all(dirs.map((d) => exists(join(projects, d, `${sessionId}.jsonl`))))).some(Boolean);
       expect(onDisk, `${sessionId}.jsonl under ~/.claude/projects`).toBe(true);
       const listed = await page.evaluate(async (id) => {
-        const plugin = (window as unknown as { app: { plugins: { plugins: Record<string, { listVaultSessions(): Promise<{ sessionId?: string }[]> }> } } }).app.plugins.plugins["claude-companion"];
-        const sessions = await plugin.listVaultSessions();
+        const plugin = (window as unknown as { app: { plugins: { plugins: Record<string, { memory(): { listVaultSessions(): Promise<{ sessionId?: string }[]> } }> } } }).app.plugins.plugins["claude-companion"];
+        const sessions = await plugin.memory().listVaultSessions();
         return sessions.some((s) => s.sessionId === id);
       }, sessionId);
       expect(listed, "memory import excludes the chat's own session").toBe(false);

@@ -1,14 +1,23 @@
 import { App } from "obsidian";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import ClaudeCompanionPlugin from "../../src/main";
+import type ClaudeCompanionPlugin from "../../src/main";
 import { DEFAULT_SETTINGS } from "../../src/types";
-
-interface ClipperVerificationHarness {
-  queueClipperVerification(file: ReturnType<App["vault"]["seed"]>): void;
-  clipperVerificationTimers: Map<string, number>;
-}
+import { buildPlugin } from "../fakes/plugin";
 
 afterEach(() => vi.useRealTimers());
+
+function harnessPlugin(app: App, mutate: (settings: typeof DEFAULT_SETTINGS) => void, withPersist = true): ClaudeCompanionPlugin {
+  const settings = structuredClone(DEFAULT_SETTINGS);
+  mutate(settings);
+  return buildPlugin({
+    settings,
+    ...(withPersist ? { persist: async () => undefined } : {}),
+    enrichTimers: new Map<string, number>(),
+    enrichRecentlyWritten: new Set<string>(),
+    enrichRecentlyWrittenExpiryTimers: new Map<string, number>(),
+    reindexTimer: null,
+  }, app);
+}
 
 describe("Clipper first-note verification wiring", () => {
   it("verifies an arriving note and stores only bounded proof metadata", async () => {
@@ -17,31 +26,18 @@ describe("Clipper first-note verification wiring", () => {
     const file = app.vault.seed("Clippings/Test.md", "A large clipped body that must not be persisted in settings.", {
       frontmatter: { type: "article", schema_version: 1, source: "https://example.com", tags: ["source"] },
     });
-    const plugin = Object.create(ClaudeCompanionPlugin.prototype) as ClaudeCompanionPlugin;
-    const settings = structuredClone(DEFAULT_SETTINGS);
-    settings.sourceBaseTags = ["source"];
-    settings.clipperVerification.article = {
-      fingerprint: "fingerprint",
-      state: "waiting",
-      startedAt: 10,
-      mismatches: [],
-    };
-    Object.assign(plugin as unknown as Record<string, unknown>, {
-      app,
-      settings,
-      persist: async () => undefined,
-      clipperVerificationTimers: new Map<string, number>(),
-      enrichTimers: new Map<string, number>(),
-      enrichRecentlyWritten: new Set<string>(),
-      enrichRecentlyWrittenExpiryTimers: new Map<string, number>(),
-      reindexTimer: null,
-      _ontologyReloadTimer: null,
-      researchRefreshTimer: null,
-      inboxBadgeTimer: null,
+    const plugin = harnessPlugin(app, (settings) => {
+      settings.sourceBaseTags = ["source"];
+      settings.clipperVerification.article = {
+        fingerprint: "fingerprint",
+        state: "waiting",
+        startedAt: 10,
+        mismatches: [],
+      };
     });
-    const harness = plugin as unknown as ClipperVerificationHarness;
 
-    harness.queueClipperVerification(file);
+    plugin.clipperSetup().queueVerification(file);
+    expect(vi.getTimerCount()).toBe(1);
     await vi.advanceTimersByTimeAsync(600);
 
     expect(plugin.settings.clipperVerification.article).toMatchObject({
@@ -49,25 +45,17 @@ describe("Clipper first-note verification wiring", () => {
     });
     expect(JSON.stringify(plugin.settings.clipperVerification)).not.toContain("large clipped body");
     expect(plugin.activity.snapshot().records[0]).toMatchObject({ state: "succeeded", percent: 100 });
-    expect(harness.clipperVerificationTimers.size).toBe(0);
   });
 
   it("reports a frontmatter-less inbox clip instead of waiting forever", async () => {
     vi.useFakeTimers();
     const app = new App();
     const file = app.vault.seed("Clippings/Raw.md", "{\n\t\"schemaVersion\": \"0.1.0\"\n}\n");
-    const plugin = Object.create(ClaudeCompanionPlugin.prototype) as ClaudeCompanionPlugin;
-    const settings = structuredClone(DEFAULT_SETTINGS);
-    settings.clipperVerification.article = { fingerprint: "fingerprint", state: "waiting", startedAt: 10, mismatches: [] };
-    Object.assign(plugin as unknown as Record<string, unknown>, {
-      app, settings,
-      persist: async () => undefined,
-      clipperVerificationTimers: new Map<string, number>(),
-      enrichTimers: new Map<string, number>(), enrichRecentlyWritten: new Set<string>(), enrichRecentlyWrittenExpiryTimers: new Map<string, number>(),
-      reindexTimer: null, _ontologyReloadTimer: null, researchRefreshTimer: null, inboxBadgeTimer: null,
+    const plugin = harnessPlugin(app, (settings) => {
+      settings.clipperVerification.article = { fingerprint: "fingerprint", state: "waiting", startedAt: 10, mismatches: [] };
     });
 
-    (plugin as unknown as ClipperVerificationHarness).queueClipperVerification(file);
+    plugin.clipperSetup().queueVerification(file);
     await vi.advanceTimersByTimeAsync(3000);
 
     expect(plugin.settings.clipperVerification.article).toMatchObject({
@@ -82,18 +70,11 @@ describe("Clipper first-note verification wiring", () => {
     vi.useFakeTimers();
     const app = new App();
     const file = app.vault.seed("Notes/Scratch.md", "Unrelated note written while waiting.");
-    const plugin = Object.create(ClaudeCompanionPlugin.prototype) as ClaudeCompanionPlugin;
-    const settings = structuredClone(DEFAULT_SETTINGS);
-    settings.clipperVerification.article = { fingerprint: "fingerprint", state: "waiting", startedAt: 10, mismatches: [] };
-    Object.assign(plugin as unknown as Record<string, unknown>, {
-      app, settings,
-      persist: async () => undefined,
-      clipperVerificationTimers: new Map<string, number>(),
-      enrichTimers: new Map<string, number>(), enrichRecentlyWritten: new Set<string>(), enrichRecentlyWrittenExpiryTimers: new Map<string, number>(),
-      reindexTimer: null, _ontologyReloadTimer: null, researchRefreshTimer: null, inboxBadgeTimer: null,
+    const plugin = harnessPlugin(app, (settings) => {
+      settings.clipperVerification.article = { fingerprint: "fingerprint", state: "waiting", startedAt: 10, mismatches: [] };
     });
 
-    (plugin as unknown as ClipperVerificationHarness).queueClipperVerification(file);
+    plugin.clipperSetup().queueVerification(file);
     await vi.advanceTimersByTimeAsync(3000);
 
     expect(plugin.settings.clipperVerification.article).toMatchObject({ state: "waiting" });
@@ -103,37 +84,21 @@ describe("Clipper first-note verification wiring", () => {
     vi.useFakeTimers();
     const app = new App();
     const file = app.vault.seed("Clippings/Later.md", "Later");
-    const plugin = Object.create(ClaudeCompanionPlugin.prototype) as ClaudeCompanionPlugin;
-    const settings = structuredClone(DEFAULT_SETTINGS);
-    settings.clipperVerification.article = { fingerprint: "x", state: "waiting", startedAt: 1, mismatches: [] };
-    Object.assign(plugin as unknown as Record<string, unknown>, {
-      app, settings,
-      clipperVerificationTimers: new Map<string, number>(),
-      enrichTimers: new Map<string, number>(), enrichRecentlyWritten: new Set<string>(), enrichRecentlyWrittenExpiryTimers: new Map<string, number>(),
-      reindexTimer: null, _ontologyReloadTimer: null, researchRefreshTimer: null, inboxBadgeTimer: null,
-    });
-    const harness = plugin as unknown as ClipperVerificationHarness;
-    harness.queueClipperVerification(file);
-    expect(harness.clipperVerificationTimers.size).toBe(1);
+    const plugin = harnessPlugin(app, (settings) => {
+      settings.clipperVerification.article = { fingerprint: "x", state: "waiting", startedAt: 1, mismatches: [] };
+    }, false);
+    plugin.clipperSetup().queueVerification(file);
+    expect(vi.getTimerCount()).toBe(1);
 
     plugin.onunload();
 
-    expect(harness.clipperVerificationTimers.size).toBe(0);
     expect(vi.getTimerCount()).toBe(0);
   });
 
   function passivePlugin(app: App): ClaudeCompanionPlugin {
-    const plugin = Object.create(ClaudeCompanionPlugin.prototype) as ClaudeCompanionPlugin;
-    const settings = structuredClone(DEFAULT_SETTINGS);
-    settings.sourceBaseTags = ["source"];
-    Object.assign(plugin as unknown as Record<string, unknown>, {
-      app, settings,
-      persist: async () => undefined,
-      clipperVerificationTimers: new Map<string, number>(),
-      enrichTimers: new Map<string, number>(), enrichRecentlyWritten: new Set<string>(), enrichRecentlyWrittenExpiryTimers: new Map<string, number>(),
-      reindexTimer: null, _ontologyReloadTimer: null, researchRefreshTimer: null, inboxBadgeTimer: null,
+    return harnessPlugin(app, (settings) => {
+      settings.sourceBaseTags = ["source"];
     });
-    return plugin;
   }
 
   it("verifies a stamped clip even when setup was done outside Companion (nothing waiting)", async () => {
@@ -143,13 +108,13 @@ describe("Clipper first-note verification wiring", () => {
       frontmatter: { type: "article", schema_version: 1, source: "https://example.com", tags: ["source"] },
     });
     const plugin = passivePlugin(app);
-    expect(plugin.clipperSetupNeeded()).toBe(true);
+    expect(plugin.clipperSetup().setupNeeded()).toBe(true);
 
-    (plugin as unknown as ClipperVerificationHarness).queueClipperVerification(file);
+    plugin.clipperSetup().queueVerification(file);
     await vi.advanceTimersByTimeAsync(600);
 
     expect(plugin.settings.clipperVerification.article).toMatchObject({ state: "verified", path: "Clippings/Stamped.md" });
-    expect(plugin.clipperSetupNeeded()).toBe(false);
+    expect(plugin.clipperSetup().setupNeeded()).toBe(false);
   });
 
   it("records nothing for an unstamped or mismatched note when nothing is waiting", async () => {
@@ -160,8 +125,8 @@ describe("Clipper first-note verification wiring", () => {
       frontmatter: { type: "article", schema_version: 99, source: "https://example.com", tags: ["source"] },
     });
     const plugin = passivePlugin(app);
-    (plugin as unknown as ClipperVerificationHarness).queueClipperVerification(plain);
-    (plugin as unknown as ClipperVerificationHarness).queueClipperVerification(wrongVersion);
+    plugin.clipperSetup().queueVerification(plain);
+    plugin.clipperSetup().queueVerification(wrongVersion);
     await vi.advanceTimersByTimeAsync(3000);
     expect(plugin.settings.clipperVerification.article).toBeUndefined();
     expect(plugin.activity.snapshot().records).toHaveLength(0);

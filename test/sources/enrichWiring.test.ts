@@ -5,8 +5,9 @@ vi.mock("obsidian", async (importOriginal) => ({
   PluginSettingTab: class {},
 }));
 
-import ClaudeCompanionPlugin from "../../src/main";
+import type ClaudeCompanionPlugin from "../../src/main";
 import { DEFAULT_SETTINGS } from "../../src/types";
+import { buildPlugin } from "../fakes/plugin";
 import type { EnrichDeps } from "../../src/sources/enrich";
 import { App, clearNotices, FakeElement, getLastOpenedModal, getNoticeMessages, getNotices, Platform, TFile, TFolder, WorkspaceLeaf } from "obsidian";
 import { ChoiceModal } from "../../src/view/ChoiceModal";
@@ -16,13 +17,14 @@ import { InboxView, INBOX_VIEW_TYPE } from "../../src/view/InboxView";
 import { summarizeAndTag } from "../../src/indexing/autoTagger";
 import { OrganizeReviewModal } from "../../src/view/OrganizeReviewModal";
 import { SourceEnrichmentController } from "../../src/sources/controller";
-import { OptimizeFeature } from "../../src/optimize/feature";
+import { optimizeFeature } from "../fakes/view";
 
 interface PrivateEnrich {
-  sourceEnrichmentErrorHint(message: string): string | null;
   triageClippings(): Promise<void>;
+}
+
+interface PrivateNoteFlows {
   buildEnrichProposal(file: TFile, options: { rename: boolean; frontmatter: boolean; links: boolean; lint: boolean }): Promise<unknown>;
-  organizeFolderFlow(folder: TFolder): Promise<void>;
 }
 
 function controllerHarness(
@@ -81,22 +83,19 @@ function mobilePlugin(overrides: Partial<typeof DEFAULT_SETTINGS> = {}): {
     getLeaf: () => ({ openFile: async () => undefined }),
     getLeavesOfType: () => [],
   } as never;
-  const plugin = Object.create(ClaudeCompanionPlugin.prototype) as ClaudeCompanionPlugin;
-  plugin.settings = {
-    ...DEFAULT_SETTINGS,
-    apiKey: "sk-ant-api-test",
-    sourceCaptureConsent: "allow",
-    utilityBackend: "ollama",
-    ollamaHost: "http://localhost:11434",
-    ...overrides,
-  };
-  Object.assign(plugin, {
-    listQueuedEdits: () => [],
-    app,
+  const plugin = buildPlugin({
+    settings: {
+      ...DEFAULT_SETTINGS,
+      apiKey: "sk-ant-api-test",
+      sourceCaptureConsent: "allow",
+      utilityBackend: "ollama",
+      ollamaHost: "http://localhost:11434",
+      ...overrides,
+    },
     enrichTimers: new Map<string, number>(),
     enrichRecentlyWritten: new Set<string>(),
     enrichRecentlyWrittenExpiryTimers: new Map<string, number>(),
-  });
+  }, app);
   const router = plugin.router();
   return { app, file, plugin, router };
 }
@@ -119,7 +118,6 @@ async function saveHarnessSettings(plugin: ClaudeCompanionPlugin): Promise<void>
     persist: async () => undefined,
     refreshViews: () => undefined,
     syncMcpServer: async () => undefined,
-    invalidateIndexer: () => undefined,
   });
   await plugin.saveSettings();
 }
@@ -203,11 +201,11 @@ describe("source enrichment wiring", () => {
       summary: "Private content.",
     }));
 
-    await plugin.enrichInboxItem(file, { inline: true });
+    await plugin.views().enrichInboxItem(file, { inline: true });
     expect(getNotices()).toEqual([]);
 
     const manual = app.vault.seed("Clippings/manual.md", "Manual clip");
-    await plugin.enrichInboxItem(manual);
+    await plugin.views().enrichInboxItem(manual);
     expect(getNotices()).toEqual([]);
     expect(plugin.activity.snapshot().records[0]).toMatchObject({
       id: "source-enrichment:Clippings/manual.md",
@@ -231,7 +229,7 @@ describe("source enrichment wiring", () => {
     const read = vi.spyOn(app.vault, "cachedRead");
     const complete = vi.spyOn(router.openaiCompat, "complete");
 
-    const outcome = await plugin.enrichInboxItem(file, { inline: true, refreshInboxViews: false });
+    const outcome = await plugin.views().enrichInboxItem(file, { inline: true, refreshInboxViews: false });
 
     expect(outcome.status).toBe("failed");
     if (outcome.status === "failed") expect(outcome.error.message).toMatch(/5 MiB.*reduce|reduce.*5 MiB/i);
@@ -254,7 +252,7 @@ describe("source enrichment wiring", () => {
     }));
     const read = vi.spyOn(app.vault, "cachedRead");
 
-    await expect(plugin.enrichInboxItem(file, { inline: true, refreshInboxViews: false }))
+    await expect(plugin.views().enrichInboxItem(file, { inline: true, refreshInboxViews: false }))
       .resolves.toEqual({ status: "enriched" });
 
     expect(read).toHaveBeenCalledTimes(1);
@@ -277,7 +275,7 @@ describe("source enrichment wiring", () => {
       topics: ["LLMs", "brand-new"],
     }));
 
-    await expect(plugin.enrichInboxItem(file, { inline: true, refreshInboxViews: false }))
+    await expect(plugin.views().enrichInboxItem(file, { inline: true, refreshInboxViews: false }))
       .resolves.toEqual({ status: "enriched" });
 
     const written = await app.vault.read(file);
@@ -345,7 +343,7 @@ describe("source enrichment wiring", () => {
     app.workspace = { getActiveFile: () => active, getLeavesOfType: () => [] } as never;
     vi.spyOn(router.openaiCompat, "complete").mockResolvedValue("TYPE: -\nTAGS: LLMs, brand-new\nSUMMARY: s");
 
-    await plugin.suggestFrontmatterForActiveNote();
+    await plugin.noteFlows().suggestFrontmatterForActiveNote();
 
     const modal = getLastOpenedModal() as unknown as { contentEl: FakeElement };
     const collect = (e: FakeElement): string => [e.textContent, ...e.children.map(collect)].join("\n");
@@ -358,7 +356,7 @@ describe("source enrichment wiring", () => {
     const note = app.vault.seed("Notes/Active.md", "Some content about models.");
     vi.spyOn(router.openaiCompat, "complete").mockResolvedValue("TITLE: T\nTAGS: LLMs, brand-new\nSUMMARY: s");
 
-    const proposal = (await (plugin as unknown as PrivateEnrich).buildEnrichProposal(note, { rename: false, frontmatter: true, links: false, lint: false })) as {
+    const proposal = (await (plugin.noteFlows() as unknown as PrivateNoteFlows).buildEnrichProposal(note, { rename: false, frontmatter: true, links: false, lint: false })) as {
       frontmatter: { tags: string[]; addedTags: string[]; newTags: string[] };
     };
 
@@ -381,7 +379,7 @@ describe("source enrichment wiring", () => {
     }));
     const read = vi.spyOn(app.vault, "cachedRead");
 
-    await expect(plugin.enrichInboxItem(csv, { inline: true, refreshInboxViews: false }))
+    await expect(plugin.views().enrichInboxItem(csv, { inline: true, refreshInboxViews: false }))
       .resolves.toEqual({ status: "enriched" });
 
     expect(read).toHaveBeenCalledTimes(1);
@@ -411,7 +409,7 @@ describe("source enrichment wiring", () => {
       summary: "Private content.",
     }));
 
-    await expect(plugin.enrichInboxItem(file, { inline: true, refreshInboxViews: false }))
+    await expect(plugin.views().enrichInboxItem(file, { inline: true, refreshInboxViews: false }))
       .resolves.toEqual({ status: "enriched" });
 
     expect(complete).toHaveBeenCalledTimes(1);
@@ -448,7 +446,7 @@ describe("source enrichment wiring", () => {
         : [],
     } as never;
 
-    await expect(plugin.enrichInboxItem(file, { inline: true })).resolves.toEqual({ status: "enriched" });
+    await expect(plugin.views().enrichInboxItem(file, { inline: true })).resolves.toEqual({ status: "enriched" });
 
     expect(await app.vault.cachedRead(file)).toMatch(/source_enriched:\s*true/);
     expect((healthy.contentEl as unknown as FakeElement).querySelector(".cc-inbox-operation-status")?.textContent).toContain("Ready to enrich");
@@ -463,7 +461,7 @@ describe("source enrichment wiring", () => {
     const complete = vi.spyOn(router, "completeResolved");
     const opened = vi.spyOn(ChoiceModal.prototype, "open");
 
-    const pending = plugin.enrichInboxItem(file);
+    const pending = plugin.views().enrichInboxItem(file);
     await settle();
     choose("Don't send");
     await pending;
@@ -517,7 +515,7 @@ describe("source enrichment wiring", () => {
       openaiCompatModel: "remote-model",
     });
 
-    expect((plugin as unknown as PrivateEnrich).sourceEnrichmentErrorHint("failed to fetch")).toContain(
+    expect(plugin.utilityRouting().enrichmentErrorHint("failed to fetch")).toContain(
       "OpenAI-compatible endpoint at https://models.example.com",
     );
   });
@@ -574,7 +572,7 @@ describe("source enrichment wiring", () => {
     const before = await app.vault.cachedRead(file);
     const complete = vi.spyOn(router.anthropic, "complete").mockResolvedValue("unsafe");
 
-    await plugin.enrichInboxItem(file);
+    await plugin.views().enrichInboxItem(file);
 
     expect(complete).not.toHaveBeenCalled();
     expect(await app.vault.cachedRead(file)).toBe(before);
@@ -596,7 +594,7 @@ describe("source enrichment wiring", () => {
     const response = new Promise<string>((_resolve, reject) => { fail = reject; });
     vi.spyOn(router.openaiCompat, "complete").mockReturnValue(response);
 
-    const pending = plugin.enrichInboxItem((plugin.app.vault.getAbstractFileByPath("Clippings/private.md") as TFile));
+    const pending = plugin.views().enrichInboxItem((plugin.app.vault.getAbstractFileByPath("Clippings/private.md") as TFile));
     await settle();
     plugin.settings.openaiCompatHost = "https://changed.example.com/v1";
     fail(new Error("failed to fetch"));
@@ -617,7 +615,7 @@ describe("source enrichment wiring", () => {
     });
     const complete = vi.spyOn(router.openaiCompat, "complete").mockResolvedValue("unsafe");
 
-    await plugin.enrichInboxItem(file);
+    await plugin.views().enrichInboxItem(file);
 
     expect(complete).not.toHaveBeenCalled();
     expect(getNotices()).toEqual([]);
@@ -691,7 +689,7 @@ describe("source enrichment wiring", () => {
     const before = await app.vault.cachedRead(file);
     const claudeComplete = vi.spyOn(router.anthropic, "complete").mockResolvedValue("unsafe");
 
-    const pending = (plugin as unknown as PrivateEnrich).buildEnrichProposal(file, {
+    const pending = (plugin.noteFlows() as unknown as PrivateNoteFlows).buildEnrichProposal(file, {
       rename: true,
       frontmatter: true,
       links: true,
@@ -713,7 +711,7 @@ describe("source enrichment wiring", () => {
     const review = vi.spyOn(OrganizeReviewModal.prototype, "open");
     const claudeComplete = vi.spyOn(router.anthropic, "complete").mockResolvedValue("unsafe");
 
-    const pending = (plugin as unknown as PrivateEnrich).organizeFolderFlow(folder);
+    const pending = plugin.clippings().organizeFolder(folder);
     await settle();
     choose("Don't send");
     await pending;
@@ -776,7 +774,7 @@ describe("source enrichment wiring", () => {
       summary: "Private content.",
     }));
 
-    const pending = plugin.enrichInboxItem(file);
+    const pending = plugin.views().enrichInboxItem(file);
     await settle();
     plugin.settings.apiKey = "";
     plugin.settings.oauthToken = "";
@@ -804,7 +802,7 @@ describe("source enrichment wiring", () => {
       summary: "Private content.",
     }));
 
-    const pending = plugin.enrichInboxItem(file);
+    const pending = plugin.views().enrichInboxItem(file);
     await settle();
     plugin.settings.utilityBackend = "custom";
     plugin.settings.openaiCompatHost = "https://current.example.com/v1";
@@ -844,7 +842,7 @@ describe("source enrichment wiring", () => {
       summary: "Private content.",
     }));
 
-    const pending = plugin.enrichInboxItem(file);
+    const pending = plugin.views().enrichInboxItem(file);
     await settle();
     vi.stubEnv("ANTHROPIC_API_KEY", "sk-ant-api-gateway-b");
     vi.stubEnv("ANTHROPIC_BASE_URL", "https://gateway-b.example.com/v1");
@@ -875,7 +873,7 @@ describe("source enrichment wiring", () => {
     vi.stubEnv("ANTHROPIC_BASE_URL", "https://gateway-b.example.com/v1");
     const complete = vi.spyOn(AnthropicProvider.prototype, "complete").mockResolvedValue("unsafe");
 
-    const pending = plugin.enrichInboxItem(file);
+    const pending = plugin.views().enrichInboxItem(file);
     await settle();
     expect(opened).toHaveBeenCalledTimes(2);
     expect(complete).not.toHaveBeenCalled();
@@ -909,7 +907,7 @@ describe("source enrichment wiring", () => {
       site: "Vault",
       summary: "Private content.",
     }));
-    const pending = plugin.enrichInboxItem(file);
+    const pending = plugin.views().enrichInboxItem(file);
     await settle();
 
     expect(opened).toHaveBeenCalledTimes(2);
@@ -936,7 +934,7 @@ describe("source enrichment wiring", () => {
       summary: "Private content.",
     }));
 
-    const pending = plugin.enrichInboxItem(file);
+    const pending = plugin.views().enrichInboxItem(file);
     await settle();
     plugin.settings.oauthToken = "sk-ant-oat-settings-b";
     await saveHarnessSettings(plugin);
@@ -969,7 +967,7 @@ describe("source enrichment wiring", () => {
       site: "Vault",
       summary: "Private content.",
     }));
-    const pending = plugin.enrichInboxItem(file);
+    const pending = plugin.views().enrichInboxItem(file);
     await settle();
 
     expect(opened).toHaveBeenCalledTimes(2);
@@ -995,7 +993,7 @@ describe("source enrichment wiring", () => {
       summary: "Private content.",
     }));
 
-    const pending = plugin.enrichInboxItem(file);
+    const pending = plugin.views().enrichInboxItem(file);
     await settle();
     vi.stubEnv("ANTHROPIC_AUTH_TOKEN", "gateway-token-b");
     choose("Use Claude this session");
@@ -1066,7 +1064,7 @@ describe("source enrichment wiring", () => {
       summary: "Private content.",
     }));
 
-    const pending = plugin.enrichInboxItem(file);
+    const pending = plugin.views().enrichInboxItem(file);
     await settle();
     const modal = getLastOpenedModal() as (ReturnType<typeof getLastOpenedModal> & { closed?: boolean });
     const allow = (modal.contentEl as unknown as FakeElement)
@@ -1080,7 +1078,7 @@ describe("source enrichment wiring", () => {
     expect(closedOnUnload).toBe(true);
     expect(complete).not.toHaveBeenCalled();
     expect(await app.vault.cachedRead(file)).toBe(before);
-    const consent = (plugin as unknown as { utilityConsent: { current(context: unknown): unknown } }).utilityConsent;
+    const consent = (plugin.utilityRouting() as unknown as { consent: { current(context: unknown): unknown } }).consent;
     expect(consent.current(plugin.router().utilityFallbackConsentContext(true))).toBeUndefined();
   });
 
@@ -1118,7 +1116,7 @@ describe("source enrichment wiring", () => {
       summary: "Private content.",
     }));
 
-    await plugin.enrichInboxItem(file);
+    await plugin.views().enrichInboxItem(file);
     expect(vi.getTimerCount()).toBeGreaterThan(0);
     plugin.onunload();
 
@@ -1140,13 +1138,11 @@ describe("source enrichment wiring", () => {
     const complete = vi.spyOn(router.openaiCompat, "complete").mockReturnValue(completion);
     const write = vi.spyOn(app.vault, "process");
 
-    const pending = plugin.enrichInboxItem(file);
+    const pending = plugin.views().enrichInboxItem(file);
     await settle();
     expect(complete).toHaveBeenCalledTimes(1);
     plugin.onunload();
-    const lifecycle = plugin as unknown as { utilityLifecycleEnded: boolean; utilityLifecycleGeneration: number };
-    lifecycle.utilityLifecycleEnded = false;
-    lifecycle.utilityLifecycleGeneration += 1;
+    plugin.utilityRouting().start();
     finish(JSON.stringify({ title: "Private note", site: "Vault", summary: "Private content." }));
     await pending;
 
@@ -1166,7 +1162,7 @@ describe("source enrichment wiring", () => {
 describe("background tag check wiring", () => {
   const idleHook = (classify: ReturnType<typeof vi.fn>) => {
     const { plugin } = mobilePlugin();
-    Object.assign(plugin, { _optimize: Object.assign(Object.create(OptimizeFeature.prototype) as OptimizeFeature, { _tags: { classify } }) });
+    Object.assign(plugin, { _optimize: optimizeFeature({}, { _tags: { classify } }) });
     const controller = enrichmentController(plugin) as unknown as { deps: { onEnrichQueueIdle(): void } };
     return controller.deps.onEnrichQueueIdle;
   };

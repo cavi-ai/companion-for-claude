@@ -7,7 +7,7 @@ const ACTION_NAMES = [
   "enrichNote", "enableVaultSearch", "rebuildSemanticIndex", "openRelatedNotes", "openResearchDesk",
   "triageClippings", "startResearchFromActiveNote", "showSemanticIndexStatus",
   "browseConversations", "deleteActiveConversation", "handoffToBuild", "markNoteAsPlan", "organizeClippings",
-  "dispatchCloudSession", "pullCloudReplies", "reviewLinkSuggestions", "openWorkflowPicker",
+  "dispatchCloudSession", "pullCloudReplies", "reviewLinkSuggestions", "openWorkflowPicker", "suggestFrontmatterForActiveNote",
   "createPromptTemplate", "createStandingOrder", "runStandingOrder", "openSessionPicker", "openMemoryView", "consolidateMemory", "enrichNoteAsSource",
   "openSourceInbox", "openSystem", "exportClipperTemplates", "seedOntology", "optimizeBrain", "optimizeLinks", "optimizeTypes",
   "publishNote", "copyPublishedLink", "unpublishNote",

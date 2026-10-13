@@ -65,9 +65,9 @@ test.describe("obsidian-agent connection-finder over Companion's bridge, live", 
     try {
       // Start the bridge and build the embedding index the stub backs, like substrate-bridge.spec.ts.
       await harness.page.evaluate(async () => {
-        const plugin = (window as unknown as { app: { plugins: { plugins: Record<string, { syncMcpServer(): Promise<void>; rebuildSemanticIndex(): Promise<void> }> } } }).app.plugins.plugins["claude-companion"];
+        const plugin = (window as unknown as { app: { plugins: { plugins: Record<string, { syncMcpServer(): Promise<void>; semantic(): { rebuildSemanticIndex(): Promise<void> } }> } } }).app.plugins.plugins["claude-companion"];
         await plugin.syncMcpServer();
-        await plugin.rebuildSemanticIndex();
+        await plugin.semantic().rebuildSemanticIndex();
       });
 
       const mcpConfig = JSON.stringify({

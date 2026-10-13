@@ -7,7 +7,7 @@ export interface ToolRecord {
   /** Changes the vault. Required, so every tool states it; advertised as `annotations.readOnlyHint`. */
   writes: boolean;
   /** Why the tool is not offered right now (a setting is off); absent while it is offered. */
-  unavailable?: string;
+  unavailable?: string | undefined;
   run(args: Record<string, unknown>): Promise<string>;
 }
 

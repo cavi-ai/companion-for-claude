@@ -54,7 +54,7 @@ export class SetupCard {
         useCli.addEventListener("click", () => void (async () => {
           this.deps.plugin.settings.chatBackend = backend.id;
           await this.deps.plugin.saveSettings();
-          await this.deps.plugin.continueOnboarding();
+          await this.deps.plugin.onboarding().continueOnboarding();
           this.deps.renderEmptyState();
           this.deps.refreshModelLabel();
         })());
@@ -110,7 +110,7 @@ export class SetupCard {
         card.remove();
       }
       // Setup held back while there was no credential can run now.
-      await this.deps.plugin.continueOnboarding();
+      await this.deps.plugin.onboarding().continueOnboarding();
     })());
     const settingsBtn = card.createEl("button", { cls: "cc-setup-settings", text: "Other options (OAuth, environment)…" });
     settingsBtn.addEventListener("click", () => this.deps.openSettings());

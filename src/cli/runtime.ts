@@ -4,6 +4,7 @@ import type { CliChild } from "./session";
 import type { CliBackend } from "./backends/types";
 import { claudeExecutableCandidates } from "../integrations/desktopRuntime";
 import type { DesktopPlatform } from "../integrations/desktop";
+import { listCodexModels, parseOpenCodeModels, type CliModel } from "./modelDiscovery";
 
 export interface CliAuthStatus {
   loggedIn: boolean;
@@ -15,6 +16,8 @@ export interface CliRuntime {
   find(backend: CliBackend): Promise<{ executable: string; version: string } | null>;
   /** Runs the backend's own auth probe against the found executable. */
   probe(backend: CliBackend, executable: string): Promise<CliAuthStatus>;
+  /** Optional for hosts that only implement chat; desktop detects the CLI's own model catalog. */
+  listModels?(backend: CliBackend, executable: string): Promise<CliModel[]>;
   /** 0600 file in the OS temp dir; removed by removeFile. Never inside the vault. Persistent backends only. */
   writeSystemPromptFile(text: string): Promise<string>;
   removeFile(path: string): Promise<void>;
@@ -137,6 +140,17 @@ export function createNodeCliRuntime(): CliRuntime {
         console.debug("Claude Companion: CLI auth probe failed", e);
         return { loggedIn: false, method: "" };
       }
+    },
+    async listModels(backend, executable) {
+      if (backend.id === "codex-cli") return listCodexModels(() => spawn(executable, ["app-server"], { stdio: ["pipe", "pipe", "pipe"], windowsHide: true, env: childEnv() }) as unknown as CliChild);
+      if (backend.id !== "opencode-cli") return [];
+      const stdout = await new Promise<string>((resolve, reject) => {
+        execFile(executable, ["models", "--standalone"], { timeout: 15_000, maxBuffer: 1_000_000, windowsHide: true, env: childEnv() }, (error, output) => {
+          if (error) reject(new Error(error.message, { cause: error }));
+          else resolve(output);
+        });
+      });
+      return parseOpenCodeModels(stdout);
     },
     async writeSystemPromptFile(text) {
       const file = path.join(os.tmpdir(), `claude-companion-${crypto.randomUUID()}.md`);

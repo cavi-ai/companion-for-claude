@@ -137,7 +137,7 @@ export class Transcript {
   }
 
   private async renderContextualWorkspace(mount: HTMLElement): Promise<void> {
-    const workspace = await this.plugin.companionWorkspaceContext();
+    const workspace = await this.plugin.views().companionWorkspaceContext();
     if (!mount.isConnected || this.messages.length > 0 || !workspace) return;
     mount.empty();
     const card = mount.createEl("section", { cls: `cc-context-workspace is-${workspace.kind}`, attr: { "aria-label": "Current Companion workspace" } });
@@ -149,7 +149,7 @@ export class Transcript {
     const primary = actions.createEl("button", { cls: "mod-cta", text: workspace.primaryAction });
     const secondary = actions.createEl("button", { text: workspace.secondaryAction });
     if (workspace.kind === "research") {
-      primary.addEventListener("click", () => void this.plugin.activateResearchDesk(workspace.contextPath));
+      primary.addEventListener("click", () => void this.plugin.research().activateResearchDesk(workspace.contextPath));
       secondary.addEventListener("click", () => void this.deps.prepareWorkspaceQuestion(workspace));
       // The project's actual next steps as one-click chat turns.
       if (workspace.quickActions?.length) {
@@ -161,7 +161,7 @@ export class Transcript {
       }
     } else {
       primary.addEventListener("click", () => void this.deps.prepareWorkspaceQuestion(workspace));
-      secondary.addEventListener("click", () => void this.plugin.activateRelatedView());
+      secondary.addEventListener("click", () => void this.plugin.views().activateRelatedView());
     }
   }
 
@@ -566,7 +566,7 @@ export class Transcript {
       extraTags: tags,
       ...(summary !== undefined ? { summary } : {}),
     });
-    await this.plugin.handoffToBuild(file);
+    await this.plugin.research().handoffToBuild(file);
   }
 
   /**

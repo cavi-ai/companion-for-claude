@@ -5,9 +5,10 @@ import type ClaudeCompanionPlugin from "../../src/main";
 import { DEFAULT_SETTINGS } from "../../src/types";
 import { ChatView } from "../../src/view/ChatView";
 import type { CompanionChromeDependencies } from "../../src/view/companionChrome";
+import { conversationFakes } from "../fakes/conversations";
 
 /** Same shape as chatRenderLifecycle.test.ts's desktop-header plugin stub, reused for onOpen()-driven header tests. */
-function headerPlugin(): ClaudeCompanionPlugin {
+function headerPlugin(fakes = conversationFakes()): ClaudeCompanionPlugin {
   const app = new App();
   (app.workspace as unknown as { getActiveViewOfType(): null; getActiveFile(): null }).getActiveViewOfType = () => null;
   (app.workspace as unknown as { getActiveFile(): null }).getActiveFile = () => null;
@@ -29,7 +30,7 @@ function headerPlugin(): ClaudeCompanionPlugin {
   };
   return {
     app,
-    settings: structuredClone(DEFAULT_SETTINGS),
+    settings: fakes.settings,
     router: () => ({
       chatBackend: "claude",
       anthropic: { hasCredentials: () => true },
@@ -40,17 +41,17 @@ function headerPlugin(): ClaudeCompanionPlugin {
       chatProvider: () => ({ provider: { id: "anthropic" }, model: DEFAULT_SETTINGS.model }),
     }),
     mcpStats: () => ({ running: false, port: null, activeRequests: 0, handledRequests: 0 }),
-    companionChrome: () => chromeDeps,
+    shell: () => ({ companionChrome: () => chromeDeps }),
     promptTemplates: async () => [],
-    getActiveConversation: () => null,
+    ...fakes.host,
     secrets: () => ({ available: () => false }),
     composeSystemPrompt: () => "system",
-    companionWorkspaceContext: async () => null,
+    views: () => ({ companionWorkspaceContext: async () => null }),
   } as unknown as ClaudeCompanionPlugin;
 }
 
-async function openHeader(): Promise<ChatView> {
-  const plugin = headerPlugin();
+async function openHeader(fakes = conversationFakes()): Promise<ChatView> {
+  const plugin = headerPlugin(fakes);
   const view = new ChatView(new WorkspaceLeaf(plugin.app as unknown as App), plugin);
   (view as unknown as { containerEl: { style: { setProperty(name: string, value: string): void } } }).containerEl = {
     style: { setProperty: () => undefined },
@@ -87,9 +88,7 @@ describe("Desktop chat header polish", () => {
     g.activeDocument = Object.assign(new FakeElement("document"), { body });
     g.activeWindow = { innerWidth: 1000 };
     try {
-      const view = await openHeader();
-      const plugin = (view as unknown as { plugin: { listConversations(): unknown[] } }).plugin;
-      plugin.listConversations = () => [{ id: "a", title: "Alpha", createdAt: 1, updatedAt: Date.now(), messages: [] }];
+      const view = await openHeader(conversationFakes({ conversations: [{ id: "a", title: "Alpha", createdAt: 1, updatedAt: Date.now(), messages: [] }] }));
       const history = (view.contentEl as unknown as FakeElement).querySelector(".cc-header-actions")!.querySelectorAll("button")
         .find((b) => b.getAttribute("aria-label") === "Resume a past conversation")!;
       history.rect = { left: 100, right: 130, top: 10, bottom: 34, width: 30, height: 24 };

@@ -4,8 +4,10 @@ import { ClaudeCompanionSettingTab } from "../src/settings";
 import { DEFAULT_SETTINGS } from "../src/types";
 import { unavailableStore } from "../src/secrets/store";
 import type ClaudeCompanionPlugin from "../src/main";
+import { fakeSemantic } from "./fakes/semantic";
 
 function stubPlugin(): ClaudeCompanionPlugin & { settings: Record<string, unknown> } {
+  const semantic = fakeSemantic();
   const plugin = {
     settings: structuredClone(DEFAULT_SETTINGS),
     saveSettings: async () => {},
@@ -22,19 +24,18 @@ function stubPlugin(): ClaudeCompanionPlugin & { settings: Record<string, unknow
     secretsWriteFailures: () => [],
     externalMcp: () => ({ errorFor: () => null, test: async () => ({ ok: true }) }),
     mcpRunning: () => false,
-    builtinModelCached: async () => true,
-    builtinEmbedder: () => ({ backend: () => "wasm", download: async () => {} }),
-    indexer: () => undefined,
+    semantic: () => semantic,
     activity: { snapshot: () => ({ records: [{ kind: "semantic-index", title: "Building semantic index", state: "succeeded" }] }) },
     ontology: () => undefined,
-    clipperTemplatesStale: () => false,
+    clipperSetup: () => ({ templatesStale: () => false }),
     refreshViews: () => {},
-    invalidateIndexer: () => {},
-    loadOntologyOnStart: async () => {},
-    openDesktopIntegrations: () => {},
-    publishedItems: () => [],
-    unpublishItem: async () => {},
-    testPublishToken: async () => ({ ok: true, message: "" }),
+    onboarding: () => ({ loadOntologyOnStart: async () => {} }),
+    desktopIntegrations: () => ({ open: () => {} }),
+    publishing: () => ({
+      publishedItems: () => [],
+      unpublishItem: async () => {},
+      testPublishToken: async () => ({ ok: true, message: "" }),
+    }),
   };
   return plugin as unknown as ClaudeCompanionPlugin & { settings: Record<string, unknown> };
 }
@@ -256,8 +257,8 @@ describe("semantic settings action feedback", () => {
       plugin.settings.semanticEnabled = true;
       plugin.settings.embeddingEngine = engine;
       let finish!: () => void;
-      plugin.rebuildSemanticIndex = vi.fn(() => new Promise<void>((resolve) => { finish = resolve; }));
-      plugin.indexer = () => ({ stats: async () => ({ notes: 2, chunks: 4 }) }) as never;
+      plugin.semantic().rebuildSemanticIndex = vi.fn(() => new Promise<void>((resolve) => { finish = resolve; }));
+      plugin.semantic().indexer = () => ({ stats: async () => ({ notes: 2, chunks: 4 }) }) as never;
       const row = flatten(definitionsOf(plugin)).find((item) => item.name === "Rebuild index")!;
       const setting = new Setting(new FakeElement() as unknown as HTMLElement);
       row.render!(setting, undefined);
@@ -266,7 +267,7 @@ describe("semantic settings action feedback", () => {
 
       button.simulateClick();
       button.simulateClick();
-      expect(plugin.rebuildSemanticIndex).toHaveBeenCalledTimes(1);
+      expect(plugin.semantic().rebuildSemanticIndex).toHaveBeenCalledTimes(1);
       expect(button.buttonEl.textContent).toBe("Rebuilding…");
       expect(button.buttonEl.getAttribute("aria-busy")).toBe("true");
       expect(button.buttonEl.disabled).toBe(true);
@@ -287,8 +288,8 @@ describe("semantic settings action feedback", () => {
     let finish!: () => void;
     let loaded = false;
     const download = vi.fn(() => new Promise<void>((resolve) => { finish = () => { loaded = true; resolve(); }; }));
-    plugin.builtinModelCached = async () => false;
-    plugin.builtinEmbedder = () => ({
+    plugin.semantic().builtinModelCached = async () => false;
+    plugin.semantic().builtinEmbedder = () => ({
       backend: () => loaded ? "wasm" : null,
       download,
     }) as never;
@@ -318,7 +319,7 @@ describe("semantic settings action feedback", () => {
     plugin.settings.semanticEnabled = true;
     plugin.settings.embeddingEngine = "builtin";
     let fail!: (error: Error) => void;
-    plugin.clearBuiltinModel = vi.fn(() => new Promise<number>((_resolve, reject) => { fail = reject; }));
+    plugin.semantic().clearBuiltinModel = vi.fn(() => new Promise<number>((_resolve, reject) => { fail = reject; }));
     const row = flatten(definitionsOf(plugin)).find((item) => item.name === "Embedding model")!;
     const setting = new Setting(new FakeElement() as unknown as HTMLElement);
     row.render!(setting, undefined);
@@ -328,7 +329,7 @@ describe("semantic settings action feedback", () => {
 
     clear.simulateClick();
     clear.simulateClick();
-    expect(plugin.clearBuiltinModel).toHaveBeenCalledTimes(1);
+    expect(plugin.semantic().clearBuiltinModel).toHaveBeenCalledTimes(1);
     expect(clear.buttonEl.textContent).toBe("Clearing…");
     expect(clear.buttonEl.getAttribute("aria-busy")).toBe("true");
     expect(clear.buttonEl.disabled).toBe(true);
@@ -345,8 +346,8 @@ describe("semantic settings action feedback", () => {
     const plugin = stubPlugin();
     plugin.settings.semanticEnabled = true;
     plugin.settings.embeddingEngine = "ollama";
-    plugin.rebuildSemanticIndex = async () => {};
-    plugin.indexer = () => ({ stats: async () => ({ notes: 0, chunks: 0 }) }) as never;
+    plugin.semantic().rebuildSemanticIndex = async () => {};
+    plugin.semantic().indexer = () => ({ stats: async () => ({ notes: 0, chunks: 0 }) }) as never;
     Object.assign(plugin, {
       activity: { snapshot: () => ({ records: [{ kind: "semantic-index", title: "Building semantic index", state: "needs-attention" }] }) },
     });

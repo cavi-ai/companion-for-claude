@@ -20,7 +20,7 @@ const PROPOSE = JSON.stringify({
 });
 
 type OrdersSeam = { pending: Map<string, number>; tick(): Promise<void> };
-type PluginSeam = { ordersState: Record<string, unknown>; standingOrders(): OrdersSeam };
+type PluginSeam = { orders(): { state(): Record<string, unknown> }; standingOrders(): OrdersSeam };
 type AppSeam = { app: { plugins: { plugins: Record<string, PluginSeam> }; vault: { createFolder(path: string): Promise<unknown>; create(path: string, content: string): Promise<unknown>; getFiles(): Array<{ path: string }>; getAbstractFileByPath(path: string): unknown; cachedRead(file: unknown): Promise<string> }; commands: { executeCommandById(id: string): Promise<void> } } };
 
 test("a standing order runs on a new note and its proposed edit is reviewed in the Inbox", async ({ rig }) => {
@@ -30,7 +30,7 @@ test("a standing order runs on a new note and its proposed edit is reviewed in t
   });
   const { page } = harness;
   try {
-    await expect.poll(() => page.evaluate(() => Object.keys((window as unknown as AppSeam).app.plugins.plugins["claude-companion"]?.ordersState ?? {}).length), { timeout: 20_000 }).toBe(1);
+    await expect.poll(() => page.evaluate(() => Object.keys((window as unknown as AppSeam).app.plugins.plugins["claude-companion"]?.orders().state() ?? {}).length), { timeout: 20_000 }).toBe(1);
     await page.evaluate(async () => {
       const { vault } = (window as unknown as AppSeam).app;
       await vault.createFolder("Meetings");

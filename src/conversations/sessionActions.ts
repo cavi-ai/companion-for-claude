@@ -26,6 +26,11 @@ export class SessionActions {
     void this.deps.distill(id);
   }
 
+  /** Resolves the summary note path, or null when nothing was written. */
+  distill(id: string): Promise<string | null> {
+    return this.deps.distill(id);
+  }
+
   async fork(id: string): Promise<void> {
     if (!this.deps.find(id)) return;
     const fork = await this.deps.fork(id);

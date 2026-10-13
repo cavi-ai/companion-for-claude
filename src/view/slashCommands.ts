@@ -1,10 +1,23 @@
 // Pure (Obsidian-free) slash-command registry + filtering. The ChatView owns the
-// menu UI and the actual command handlers; this owns the catalog and the
-// query→matches logic so it can be unit-tested.
+// menu UI; this owns the catalog, the query→matches logic, and the action
+// dispatch so they can be unit-tested.
 
+import type { CommandActions } from "../commands/definitions";
 import type { Workflow } from "../workflows/catalog";
 import type { SkillEntry } from "../workflows/skillRegistry.generated";
 import type { PromptTemplate } from "../templates/promptTemplates";
+
+/** Slash actions that run the command-palette action of the same name. */
+export const PLUGIN_SLASH_ACTIONS = [
+  "openWorkflowPicker", "openSessionPicker", "deleteActiveConversation", "generateArtifactFromContext",
+  "generatePlanFromNote", "handoffToBuild", "openResearchDesk", "suggestFrontmatterForActiveNote",
+] as const satisfies readonly (keyof CommandActions)[];
+export type PluginSlashAction = (typeof PLUGIN_SLASH_ACTIONS)[number];
+
+const PLUGIN_SLASH_ACTION_IDS: ReadonlySet<string> = new Set<string>(PLUGIN_SLASH_ACTIONS);
+
+/** Slash actions that only the chat view can run. */
+export type ViewSlashAction = "new-chat" | "history" | "save" | "ask-vault";
 
 export interface SlashCommand {
   /** The token after "/", e.g. "summarize". Lowercase, no spaces. */
@@ -26,8 +39,8 @@ export interface SlashCommand {
    * typing (e.g. "/ask "), so we insert it and wait rather than auto-send.
    */
   awaitsInput?: boolean;
-  /** For kind:"action" — the handler id the ChatView dispatches on. */
-  action?: string;
+  /** For kind:"action" — a plugin or view action id, or a workflow:/skill: prefixed id. */
+  action?: PluginSlashAction | ViewSlashAction | `${typeof WORKFLOW_ACTION_PREFIX}${string}` | `${typeof SKILL_ACTION_PREFIX}${string}`;
   /** For user-defined templates: the backing note, substituted at run time. */
   template?: PromptTemplate;
   /** Keep the unfiltered menu focused; extended commands remain searchable. */
@@ -88,34 +101,34 @@ export function filterCommands(commands: SlashCommand[], query: string): SlashCo
 /** Action-id prefix for a slash command that runs a vault workflow. */
 export const WORKFLOW_ACTION_PREFIX = "workflow:";
 
-export interface NativeSlashActionHandlers {
-  openResearchDesk(): Promise<void>;
+export interface SlashActionDeps {
+  actions: Pick<CommandActions, PluginSlashAction>;
+  view: { newChat(): void; openHistory(): void; save(): Promise<void>; askVault(): void };
 }
 
-export async function dispatchNativeSlashAction(
-  action: string | undefined,
-  handlers: NativeSlashActionHandlers,
-): Promise<boolean> {
-  if (action === "open-research-desk") await handlers.openResearchDesk();
-  else return false;
-  return true;
-}
-
-export interface NativeSlashCommandContext {
-  command: SlashCommand;
-  backend: "claude" | "auto" | "local" | "custom" | "device" | "claude-cli" | "codex-cli" | "opencode-cli";
-  clearComposer: () => void;
-  activateResearchDesk: () => Promise<void>;
-  requestCompletion: (prompt: string, display?: string) => Promise<void>;
-}
-
-/** Orchestrate native slash actions that bypass every chat completion backend. */
-export async function runNativeSlashCommand(context: NativeSlashCommandContext): Promise<boolean> {
-  const { command, clearComposer, activateResearchDesk } = context;
-  if (command.action !== "open-research-desk") return false;
-  clearComposer();
-  await activateResearchDesk();
-  return true;
+/** Runs a bare slash action id; "unknown" for an id neither the plugin nor the view owns. */
+export async function dispatchSlashAction(action: string | undefined, deps: SlashActionDeps): Promise<"handled" | "unknown"> {
+  if (action === undefined) return "unknown";
+  if (PLUGIN_SLASH_ACTION_IDS.has(action)) {
+    await deps.actions[action as PluginSlashAction]();
+    return "handled";
+  }
+  switch (action as ViewSlashAction) {
+    case "new-chat":
+      deps.view.newChat();
+      return "handled";
+    case "history":
+      deps.view.openHistory();
+      return "handled";
+    case "save":
+      await deps.view.save();
+      return "handled";
+    case "ask-vault":
+      deps.view.askVault();
+      return "handled";
+    default:
+      return "unknown";
+  }
 }
 
 /**
@@ -218,13 +231,13 @@ export const SLASH_COMMANDS: SlashCommand[] = [
     aliases: ["dashboard", "viz"],
     description: "Turn the note/selection into a beautiful HTML artifact",
     kind: "action",
-    action: "artifact",
+    action: "generateArtifactFromContext",
   },
   {
     name: "plan",
     description: "Generate an implementation plan from the active note",
     kind: "action",
-    action: "plan",
+    action: "generatePlanFromNote",
   },
   {
     name: "table",
@@ -245,7 +258,7 @@ export const SLASH_COMMANDS: SlashCommand[] = [
     aliases: ["paper", "evidence", "literature"],
     description: "Open Research Desk and continue the active evidence-backed project",
     kind: "action",
-    action: "open-research-desk",
+    action: "openResearchDesk",
   },
   {
     name: "diagram",
@@ -276,7 +289,7 @@ export const SLASH_COMMANDS: SlashCommand[] = [
     aliases: ["fm", "meta", "tags", "properties"],
     description: "Propose and apply frontmatter (type, tags, summary) for the active note",
     kind: "action",
-    action: "frontmatter",
+    action: "suggestFrontmatterForActiveNote",
   },
   {
     name: "dailynote",
@@ -318,21 +331,21 @@ export const SLASH_COMMANDS: SlashCommand[] = [
     name: "build",
     description: "Hand off the current plan note to Claude Code",
     kind: "action",
-    action: "build",
+    action: "handoffToBuild",
   },
   {
     name: "workflows",
     aliases: ["manifest", "manifests", "roadmap", "skills"],
     description: "Browse vault workflows; type to search commands and skills",
     kind: "action",
-    action: "workflows",
+    action: "openWorkflowPicker",
   },
   {
     name: "capture",
     aliases: ["memory", "session"],
     description: "Capture a Claude Code session for this vault into memory",
     kind: "action",
-    action: "capture-memory",
+    action: "openSessionPicker",
   },
   {
     name: "new",
@@ -359,6 +372,6 @@ export const SLASH_COMMANDS: SlashCommand[] = [
     aliases: ["delete-chat", "remove"],
     description: "Delete the current conversation",
     kind: "action",
-    action: "delete-active",
+    action: "deleteActiveConversation",
   },
 ];

@@ -19,30 +19,31 @@ export interface CommandActions {
   openChat(): void;
   newChat(): void;
   newChatTab(): void;
-  generatePlanFromNote(): void;
-  generateArtifactFromContext(): void;
+  generatePlanFromNote(): void | Promise<void>;
+  generateArtifactFromContext(): void | Promise<void>;
   editWithClaude(editor: Editor, view: MarkdownView): void;
   enrichNote(file: TFile): void;
   enableVaultSearch(): void;
   rebuildSemanticIndex(): void;
   openRelatedNotes(): void;
-  openResearchDesk(): void;
+  openResearchDesk(): void | Promise<void>;
   triageClippings(): void;
   startResearchFromActiveNote(): void;
   showSemanticIndexStatus(): void;
   browseConversations(): void;
-  deleteActiveConversation(): void;
-  handoffToBuild(): void;
+  deleteActiveConversation(): void | Promise<void>;
+  handoffToBuild(): void | Promise<void>;
   markNoteAsPlan(file: TFile): void;
   organizeClippings(): void;
   dispatchCloudSession(): void;
   pullCloudReplies(): void;
   reviewLinkSuggestions(): void;
-  openWorkflowPicker(): void;
+  openWorkflowPicker(): void | Promise<void>;
+  suggestFrontmatterForActiveNote(): void | Promise<void>;
   createPromptTemplate(): void;
   createStandingOrder(): void;
   runStandingOrder(): void;
-  openSessionPicker(): void;
+  openSessionPicker(): void | Promise<void>;
   openMemoryView(): void;
   consolidateMemory(): void;
   enrichNoteAsSource(file: TFile): void;
@@ -108,7 +109,7 @@ export function companionCommands(actions: CommandActions): Command[] {
     { id: "open-chat", name: "Open chat panel", callback: () => actions.openChat() },
     { id: "new-chat", name: "New chat", callback: () => actions.newChat() },
     { id: "new-chat-tab", name: "New chat tab", callback: () => actions.newChatTab() },
-    onActiveFile("plan-from-note", "Generate implementation plan from current note", actions, () => actions.generatePlanFromNote()),
+    onActiveFile("plan-from-note", "Generate implementation plan from current note", actions, () => void actions.generatePlanFromNote()),
     { id: "artifact-from-selection", name: "Turn selection / note into a beautiful artifact", callback: () => actions.generateArtifactFromContext() },
     {
       id: "rewrite-selection",
@@ -139,8 +140,8 @@ export function companionCommands(actions: CommandActions): Command[] {
     },
     { id: "semantic-index-status", name: "Semantic index status", callback: () => actions.showSemanticIndexStatus() },
     { id: "browse-conversations", name: "Resume a past conversation", callback: () => actions.browseConversations() },
-    whenEnabled("delete-active-conversation", "Delete the current conversation", () => actions.hasActiveConversation(), () => actions.deleteActiveConversation()),
-    onActiveFile("build-from-plan", "Build current plan with Claude", actions, () => actions.handoffToBuild()),
+    whenEnabled("delete-active-conversation", "Delete the current conversation", () => actions.hasActiveConversation(), () => void actions.deleteActiveConversation()),
+    onActiveFile("build-from-plan", "Build current plan with Claude", actions, () => void actions.handoffToBuild()),
     onActiveFile("mark-note-as-plan", "Mark current note as a plan (adds type: plan + Build icon)", actions, (file) => actions.markNoteAsPlan(file)),
     { id: "organize-clippings", name: "Organize clippings (rename, tag, sort into folders)", callback: () => actions.organizeClippings() },
     { id: "dispatch-cloud-session", name: "Send to cloud Claude session (mobile-friendly)", callback: () => actions.dispatchCloudSession() },

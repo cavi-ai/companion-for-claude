@@ -1,65 +1,88 @@
-import { describe, it, expect } from "vitest";
-import { buildSlashCatalog, dispatchNativeSlashAction, parseSlashQuery, filterCommands, moveSelection, REGISTERED_ACTION_COMMANDS, runNativeSlashCommand, SLASH_COMMANDS, workflowSlashCommands, WORKFLOW_ACTION_PREFIX, skillSlashCommands, SKILL_ACTION_PREFIX } from "../src/view/slashCommands";
+import { describe, it, expect, vi } from "vitest";
+import { buildSlashCatalog, dispatchSlashAction, parseSlashQuery, filterCommands, moveSelection, PLUGIN_SLASH_ACTIONS, REGISTERED_ACTION_COMMANDS, SLASH_COMMANDS, workflowSlashCommands, WORKFLOW_ACTION_PREFIX, skillSlashCommands, SKILL_ACTION_PREFIX, type PluginSlashAction, type SlashActionDeps, type ViewSlashAction } from "../src/view/slashCommands";
 import { WORKFLOWS } from "../src/workflows/catalog";
 import { SKILLS } from "../src/workflows/skillRegistry.generated";
 
-describe("native research desk command", () => {
+const VIEW_ACTIONS: Array<[ViewSlashAction, keyof SlashActionDeps["view"]]> = [
+  ["new-chat", "newChat"],
+  ["history", "openHistory"],
+  ["save", "save"],
+  ["ask-vault", "askVault"],
+];
+
+function slashDeps() {
+  const actions = Object.fromEntries(PLUGIN_SLASH_ACTIONS.map((name) => [name, vi.fn()])) as Record<PluginSlashAction, ReturnType<typeof vi.fn>>;
+  const view = { newChat: vi.fn(), openHistory: vi.fn(), save: vi.fn(async () => undefined), askVault: vi.fn() };
+  const deps: SlashActionDeps = { actions, view };
+  return { actions, view, deps };
+}
+
+describe("dispatchSlashAction", () => {
   it("registers /research as a native desk action", () => {
     expect(SLASH_COMMANDS.find(({ name }) => name === "research")).toMatchObject({
       kind: "action",
-      action: "open-research-desk",
+      action: "openResearchDesk",
     });
     expect(filterCommands(SLASH_COMMANDS, "paper").map(({ name }) => name)).toContain("research");
   });
 
-  it("dispatches the desk action without a prompt", async () => {
-    const opened: string[] = [];
-    const handled = await dispatchNativeSlashAction("open-research-desk", {
-      openResearchDesk: async () => { opened.push("opened"); },
-    });
-    expect(handled).toBe(true);
-    expect(opened).toEqual(["opened"]);
+  it("opens the research desk without any view callback", async () => {
+    const { actions, view, deps } = slashDeps();
+    expect(await dispatchSlashAction("openResearchDesk", deps)).toBe("handled");
+    expect(actions.openResearchDesk).toHaveBeenCalledTimes(1);
+    for (const fn of Object.values(view)) expect(fn).not.toHaveBeenCalled();
   });
 
-  it("does not consume unrelated actions or retain the internal tool prompt", async () => {
-    const opened: string[] = [];
-    expect(await dispatchNativeSlashAction("history", {
-      openResearchDesk: async () => { opened.push("opened"); },
-    })).toBe(false);
-    expect(opened).toEqual([]);
+  it.each(PLUGIN_SLASH_ACTIONS)("runs only %s for its plugin id", async (id) => {
+    const { actions, view, deps } = slashDeps();
+    expect(await dispatchSlashAction(id, deps)).toBe("handled");
+    for (const name of PLUGIN_SLASH_ACTIONS) expect(actions[name]).toHaveBeenCalledTimes(name === id ? 1 : 0);
+    for (const fn of Object.values(view)) expect(fn).not.toHaveBeenCalled();
+  });
+
+  it("awaits a plugin action that returns a promise", async () => {
+    const { actions, deps } = slashDeps();
+    let resolve!: () => void;
+    const pending = new Promise<void>((r) => { resolve = r; });
+    actions.generatePlanFromNote = vi.fn(() => pending);
+    const result = dispatchSlashAction("generatePlanFromNote", deps);
+    let settled = false;
+    void result.then(() => { settled = true; });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(settled).toBe(false);
+    resolve();
+    await result;
+    expect(settled).toBe(true);
+  });
+
+  it("dispatches every catalog action that is neither a workflow nor a skill", async () => {
+    const ids = SLASH_COMMANDS.flatMap(({ kind, action }) =>
+      kind === "action" && action !== undefined && !action.startsWith(WORKFLOW_ACTION_PREFIX) && !action.startsWith(SKILL_ACTION_PREFIX) ? [action] : []);
+    expect(ids.length).toBeGreaterThan(0);
+    for (const id of ids) {
+      const { deps } = slashDeps();
+      expect(await dispatchSlashAction(id, deps), id).toBe("handled");
+    }
+  });
+
+  it.each(VIEW_ACTIONS)("runs the view callback for %s", async (id, callback) => {
+    const { actions, view, deps } = slashDeps();
+    expect(await dispatchSlashAction(id, deps)).toBe("handled");
+    for (const name of Object.keys(view) as Array<keyof typeof view>) expect(view[name]).toHaveBeenCalledTimes(name === callback ? 1 : 0);
+    for (const fn of Object.values(actions)) expect(fn).not.toHaveBeenCalled();
+  });
+
+  it.each(["open-research-desk", "open-research-workbench", "constructor", "", undefined])("reports %j as unknown and calls nothing", async (id) => {
+    const { actions, view, deps } = slashDeps();
+    expect(await dispatchSlashAction(id, deps)).toBe("unknown");
+    for (const fn of [...Object.values(actions), ...Object.values(view)]) expect(fn).not.toHaveBeenCalled();
+  });
+
+  it("has no workbench command or retained internal tool prompt", () => {
+    expect(SLASH_COMMANDS.find(({ name }) => name === "workbench")).toBeUndefined();
     expect(JSON.stringify(SLASH_COMMANDS)).not.toContain("research_project_create");
     expect(JSON.stringify(SLASH_COMMANDS)).not.toContain("Use the Research Workbench tools");
   });
-
-  it("has no workbench command", async () => {
-    expect(SLASH_COMMANDS.find(({ name }) => name === "workbench")).toBeUndefined();
-    expect(await dispatchNativeSlashAction("open-research-workbench", { openResearchDesk: async () => undefined })).toBe(false);
-  });
-
-  it.each(["claude", "auto", "local"] as const)(
-    "opens research without a completion or conversation mutation on the %s backend",
-    async (backend) => {
-      const conversation = [{ role: "user", content: "Keep this turn" }];
-      const before = structuredClone(conversation);
-      let composer = "/research";
-      let activations = 0;
-      let completions = 0;
-
-      const handled = await runNativeSlashCommand({
-        command: SLASH_COMMANDS.find(({ name }) => name === "research")!,
-        backend,
-        clearComposer: () => { composer = ""; },
-        activateResearchDesk: async () => { activations += 1; },
-        requestCompletion: async () => { completions += 1; },
-      });
-
-      expect(handled).toBe(true);
-      expect(activations).toBe(1);
-      expect(completions).toBe(0);
-      expect(composer).toBe("");
-      expect(conversation).toEqual(before);
-    },
-  );
 });
 
 describe("workflowSlashCommands", () => {
@@ -120,7 +143,7 @@ describe("composed slash catalog", () => {
     expect(names).toContain("template-paper");
     expect(names).toContain("template-ask-2");
     expect(filterCommands(catalog, "ask")[0].action).toBe("ask-vault");
-    expect(filterCommands(catalog, "paper")[0].action).toBe("open-research-desk");
+    expect(filterCommands(catalog, "paper")[0].action).toBe("openResearchDesk");
   });
 });
 

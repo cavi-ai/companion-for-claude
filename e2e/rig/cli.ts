@@ -49,7 +49,7 @@ async function reload(): Promise<void> {
   const live = await liveState();
   if (!live) { await start(); return; }
   await installPluginBuild(live.vault, PLUGIN_ROOT);
-  const connection = await connectRig(live.cdpPort);
+  const connection = await connectRig(live.cdpPort, live.vault);
   await cyclePlugin(connection.page);
   console.log(`rig reloaded: obsidian pid ${live.obsidianPid}`);
 }

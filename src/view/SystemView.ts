@@ -31,7 +31,7 @@ export class SystemView extends ItemView {
   private disposeChrome: ((remove?: boolean) => void) | null = null;
   private generation = 0;
 
-  constructor(leaf: WorkspaceLeaf, private plugin: Pick<ClaudeCompanionPlugin, "companionChrome">, private deps: SystemViewDeps) {
+  constructor(leaf: WorkspaceLeaf, private plugin: Pick<ClaudeCompanionPlugin, "shell">, private deps: SystemViewDeps) {
     super(leaf);
   }
 
@@ -62,7 +62,7 @@ export class SystemView extends ItemView {
     this.disposeChrome = null;
     root.empty();
     root.addClass("cc-system-view");
-    this.disposeChrome = renderCompanionChrome(root, "system", "System", this.plugin.companionChrome());
+    this.disposeChrome = renderCompanionChrome(root, "system", "System", this.plugin.shell().companionChrome());
     root.createDiv({ cls: "cc-eyebrow", text: "SYSTEM" });
     const bar = root.createDiv({ cls: "cc-system-bar" });
     const refresh = bar.createEl("button", { cls: "cc-system-refresh", text: "Refresh" });

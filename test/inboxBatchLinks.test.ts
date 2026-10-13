@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { App, FakeElement, getLastOpenedModal, TFile, WorkspaceLeaf } from "obsidian";
-import ClaudeCompanionPlugin from "../src/main";
+import type ClaudeCompanionPlugin from "../src/main";
 import { reviewInboxBatchLinks } from "../src/links/inboxBatchReview";
 import { BatchDiffModal } from "../src/view/BatchDiffModal";
 import { InboxView } from "../src/view/InboxView";
+import { buildPlugin } from "./fakes/plugin";
 
 const settle = async (turns = 24): Promise<void> => {
   for (let turn = 0; turn < turns; turn++) await Promise.resolve();
@@ -26,13 +27,10 @@ function createHarness(): InboxHarness {
   app.vault.seed("Notes/Project Atlas.md", "", {});
   app.vault.seed("Notes/Ada Lovelace.md", "", {});
 
-  const plugin = Object.create(ClaudeCompanionPlugin.prototype) as ClaudeCompanionPlugin;
-  Object.assign(plugin, {
-    app,
+  const plugin = buildPlugin({
     settings: { sourceCaptureEnabled: true, sourceInboxFolder: "Clippings", clipOrganizedFolder: "Library" },
-    clipperSetupNeeded: () => true,
-    listQueuedEdits: () => [],
-  });
+    clipperSetup: () => ({ setupNeeded: () => true }),
+  }, app);
   return { app, plugin, view: new InboxView(new WorkspaceLeaf(app), plugin), alpha, beta };
 }
 
@@ -54,7 +52,7 @@ afterEach(() => vi.useRealTimers());
 describe("Inbox batch link review", () => {
   it("catches a regression that hides dynamic Inbox feedback and counts from assistive technology", async () => {
     const { app, plugin, view } = createHarness();
-    Object.assign(plugin, { sourceEnrichmentBackendLabel: () => "Ollama · utility-model" });
+    Object.assign(plugin, { utilityRouting: () => ({ backendLabel: () => "Ollama · utility-model" }) });
     app.vault.seed("Clippings/pending.md", "Pending private clip.");
 
     await view.render();
@@ -154,7 +152,7 @@ describe("Inbox batch link review", () => {
       return read(file);
     };
 
-    const result = plugin.reviewInboxLinkSuggestions([alpha, beta]);
+    const result = plugin.noteFlows().reviewInboxLinkSuggestions([alpha, beta]);
     await settle();
     expect(getLastOpenedModal()).toBeInstanceOf(BatchDiffModal);
     applyButton(getLastOpenedModal() as BatchDiffModal).dispatchEvent({ type: "click" });
@@ -291,9 +289,7 @@ describe("Inbox batch link review", () => {
 
   it("catches a regression that leaves an individual link-review failure unhandled and unactionable", async () => {
     const { plugin, view } = createHarness();
-    Object.assign(plugin, {
-      reviewLinkSuggestions: async () => { throw new Error("model unavailable"); },
-    });
+    vi.spyOn(plugin.noteFlows(), "reviewLinkSuggestions").mockImplementation(async () => { throw new Error("model unavailable"); });
     await view.render();
     await settle();
     const unhandled: unknown[] = [];

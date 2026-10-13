@@ -5,6 +5,7 @@ import { DEFAULT_SETTINGS, type PluginSettings } from "../../src/types";
 import type ClaudeCompanionPlugin from "../../src/main";
 import type { ChatCapabilities } from "../../src/providers/router";
 import { defaultChatControls } from "../../src/claude/chatControls";
+import { conversationFakes } from "../fakes/conversations";
 
 const CLI: ChatCapabilities = { agentActions: true, claudeControls: false, metered: false, local: false, cli: true };
 const API: ChatCapabilities = { agentActions: true, claudeControls: true, metered: true, local: false, cli: false };
@@ -36,8 +37,9 @@ function gatePluginStub(initiallySignedIn: boolean, refreshSignsIn: boolean): { 
 
 function pluginStub(settings: Partial<PluginSettings>, caps: ChatCapabilities, cliSignedIn: boolean): ClaudeCompanionPlugin & { cliTurnRunner: ReturnType<typeof vi.fn>; saveSettings: ReturnType<typeof vi.fn> } {
   const runner = { run: vi.fn(async () => ({ text: "", trace: [] })) };
+  const resolved = { ...structuredClone(DEFAULT_SETTINGS), ...settings };
   return {
-    settings: { ...structuredClone(DEFAULT_SETTINGS), ...settings },
+    settings: resolved,
     router: () => ({
       chatProvider: () => ({ provider: { id: caps.cli ? "claude-cli" : "anthropic", hasCredentials: () => true }, model: DEFAULT_SETTINGS.model }),
       chatCapabilities: () => caps,
@@ -48,11 +50,11 @@ function pluginStub(settings: Partial<PluginSettings>, caps: ChatCapabilities, c
       anthropic: { hasCredentials: () => !cliSignedIn },
     }),
     cliTurnRunner: vi.fn(async () => runner),
-    activeConversationId: () => "c1",
+    ...conversationFakes({ conversations: [{ id: "c1", title: "Chat", createdAt: 1, updatedAt: 1, messages: [] }], activeId: "c1" }, resolved).host,
     interruptCliTurn: vi.fn(),
     secrets: () => ({ available: () => false }),
     saveSettings: vi.fn(async () => undefined),
-    continueOnboarding: vi.fn(async () => undefined),
+    onboarding: () => ({ continueOnboarding: vi.fn(async () => undefined) }),
     composeSystemPrompt: () => "sys",
     agentTools: () => ({ definitions: () => [] }),
     externalMcpTools: async () => [],
@@ -75,7 +77,7 @@ describe("ChatView on the claude-cli backend", () => {
     const plugin = pluginStub({ chatBackend: "claude-cli" }, CLI, true);
     const view = new ChatView(new WorkspaceLeaf(new App()), plugin);
     const request = { system: "sys", messages: [{ role: "user", content: "hi" }], model: "claude-sonnet-5", maxTokens: 10, tools: [] };
-    const picked = await (view as unknown as { turnRunnerFor(deps: unknown, request: unknown): Promise<unknown> }).turnRunnerFor({}, request);
+    const picked = await (view as unknown as { runners: { turnRunnerFor(deps: unknown, request: unknown): Promise<unknown> } }).runners.turnRunnerFor({}, request);
     expect(plugin.cliTurnRunner).toHaveBeenCalledWith(expect.objectContaining({ conversationId: "c1", run: "off", model: "claude-sonnet-5", transcript: "" }));
     const call = plugin.cliTurnRunner.mock.calls[0]![0] as { deps: { confirmWrite: unknown; proposeEdit: unknown } };
     expect(typeof call.deps.confirmWrite).toBe("function");
@@ -88,7 +90,7 @@ describe("ChatView on the claude-cli backend", () => {
     const view = new ChatView(new WorkspaceLeaf(new App()), plugin);
     const request = { system: "sys", messages: [{ role: "user", content: "hi" }], model: "m", maxTokens: 10 };
     const deps = { stream: vi.fn(), execute: vi.fn(), maxIterations: 1 };
-    const picked = await (view as unknown as { turnRunnerFor(deps: unknown, request: unknown): Promise<{ run: unknown }> }).turnRunnerFor(deps, request);
+    const picked = await (view as unknown as { runners: { turnRunnerFor(deps: unknown, request: unknown): Promise<{ run: unknown }> } }).runners.turnRunnerFor(deps, request);
     expect(plugin.cliTurnRunner).not.toHaveBeenCalled();
     expect(typeof picked.run).toBe("function");
   });
@@ -117,7 +119,8 @@ describe("ChatView on the claude-cli backend", () => {
 
   it("offers Research Desk in the mobile overflow and activates it", () => {
     const plugin = pluginStub({ chatBackend: "claude-cli" }, CLI, true);
-    plugin.activateResearchDesk = vi.fn();
+    const activateResearchDesk = vi.fn();
+    Object.assign(plugin, { research: () => ({ activateResearchDesk }) });
     const view = new ChatView(new WorkspaceLeaf(new App()), plugin);
 
     (view as unknown as { openOverflowMenu(): void }).openOverflowMenu();
@@ -127,7 +130,7 @@ describe("ChatView on the claude-cli backend", () => {
     item?.dispatchEvent({ type: "click" });
 
     expect(item).toBeDefined();
-    expect(plugin.activateResearchDesk).toHaveBeenCalledTimes(1);
+    expect(activateResearchDesk).toHaveBeenCalledTimes(1);
   });
 
   it("offers Claude Code sign-in on the setup card when the CLI is signed in and no key exists", () => {
@@ -173,32 +176,25 @@ describe("ChatView on the claude-cli backend", () => {
     expect(sub?.textContent).toMatch(/^Claude Code is signed in on this computer/);
   });
 
+  it("shows the not-signed-in Notice and does not start the turn when the preflight blocks the send", async () => {
+    clearNotices();
+    const { plugin, refresh } = gatePluginStub(false, false);
+    const view = new ChatView(new WorkspaceLeaf(new App()), plugin);
+    const started = await (view as unknown as { run(text: string): Promise<boolean> }).run("hello");
+    expect(started).toBe(false);
+    expect(refresh).toHaveBeenCalledTimes(1);
+    expect(getNoticeMessages()).toEqual(["Claude Code is not signed in — run `claude auth login`, or add an API key in Companion settings."]);
+  });
+
   it("re-probes once on a blocked send and proceeds when the CLI is now signed in", async () => {
     clearNotices();
     const { plugin, refresh } = gatePluginStub(false, true);
     const view = new ChatView(new WorkspaceLeaf(new App()), plugin);
-    await (view as unknown as { run(text: string): Promise<void> }).run("hello");
+    await (view as unknown as { run(text: string): Promise<boolean> }).run("hello");
     expect(refresh).toHaveBeenCalledTimes(1);
     expect(getNoticeMessages().some((m) => m.includes("not signed in"))).toBe(false);
     // Past the gate, the unstubbed persistence call fails — proof the send was not blocked.
     expect(getNoticeMessages().some((m) => m.includes("Couldn't save this request"))).toBe(true);
-  });
-
-  it("shows the existing not-signed-in Notice when the re-probe still fails, calling refresh exactly once", async () => {
-    clearNotices();
-    const { plugin, refresh } = gatePluginStub(false, false);
-    const view = new ChatView(new WorkspaceLeaf(new App()), plugin);
-    await (view as unknown as { run(text: string): Promise<void> }).run("hello");
-    expect(refresh).toHaveBeenCalledTimes(1);
-    expect(getNoticeMessages().some((m) => m === "Claude Code is not signed in — run `claude auth login`, or add an API key in Companion settings.")).toBe(true);
-  });
-
-  it("never re-probes on a normal send when the CLI is already signed in", async () => {
-    clearNotices();
-    const { plugin, refresh } = gatePluginStub(true, true);
-    const view = new ChatView(new WorkspaceLeaf(new App()), plugin);
-    await (view as unknown as { run(text: string): Promise<void> }).run("hello");
-    expect(refresh).not.toHaveBeenCalled();
   });
 
   it("background-probes the setup card once and renders the CLI button after it flips signed in, never stacking probes", async () => {

@@ -1,6 +1,6 @@
 import { App, FakeElement, Platform, TFile, clearNotices, getLastOpenedModal, getNoticeMessages } from "obsidian";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import ClaudeCompanionPlugin from "../../src/main";
+import { buildPlugin } from "../fakes/plugin";
 import { DEFAULT_SETTINGS } from "../../src/types";
 import { CLOUD_ROUTINE_BETA_HEADER } from "../../src/cloud/routines";
 import type { BuildRun } from "../../src/build/run";
@@ -9,15 +9,13 @@ const flush = async (): Promise<void> => { await Promise.resolve(); await Promis
 
 function pluginHarness() {
   const app = new App();
-  const plugin = Object.create(ClaudeCompanionPlugin.prototype) as ClaudeCompanionPlugin;
   const activateBuildView = vi.fn(async () => null);
-  Object.assign(plugin as unknown as Record<string, unknown>, {
-    app,
+  const plugin = buildPlugin({
     settings: { ...structuredClone(DEFAULT_SETTINGS), mcpWriteFolder: "Claude/Builds" },
     convState: { conversations: [], activeId: null },
     persist: vi.fn(async () => undefined),
-    activateBuildView,
-  });
+  }, app);
+  Object.assign(plugin.research() as unknown as Record<string, unknown>, { activateBuildView });
   return { app, plugin, activateBuildView };
 }
 
@@ -38,10 +36,10 @@ describe("managed Build handoff", () => {
     const writeText = vi.fn(async () => undefined);
     Object.defineProperty(globalThis.navigator, "clipboard", { configurable: true, value: { writeText } });
 
-    const pending = plugin.handoffToBuild(plan);
+    const pending = plugin.research().handoffToBuild(plan);
     await acceptBuild(pending);
 
-    const run = plugin.activeBuildRun();
+    const run = plugin.research().activeBuildRun();
     expect(run).toMatchObject({ title: "Feature", transport: "desktop", status: "ready" });
     expect(run?.tasks.map((task) => task.title)).toEqual(["Parser", "UI"]);
     expect(app.vault.getAbstractFileByPath("Claude/Builds/Feature — spec.md")).toBeInstanceOf(TFile);
@@ -58,8 +56,8 @@ describe("managed Build handoff", () => {
     Platform.isDesktop = false;
     const { app, plugin } = pluginHarness();
     const plan = app.vault.seed("Plans/Mobile.md", "- [ ] Cloud task");
-    await acceptBuild(plugin.handoffToBuild(plan));
-    expect(plugin.activeBuildRun()).toMatchObject({ transport: "cloud", status: "ready" });
+    await acceptBuild(plugin.research().handoffToBuild(plan));
+    expect(plugin.research().activeBuildRun()).toMatchObject({ transport: "cloud", status: "ready" });
   });
 
   it("starts and completes a mobile task through the real coordinator and cloud executor wiring", async () => {
@@ -82,7 +80,7 @@ describe("managed Build handoff", () => {
       if (getCount === 1) return { status: 404, text: "{}" };
       return { status: 200, text: JSON.stringify({ path: "marker.md", sha: "sha", encoding: "base64", content: btoa("Cloud task done") }) };
     });
-    Object.assign(plugin as unknown as Record<string, unknown>, {
+    Object.assign(plugin.publishing() as unknown as Record<string, unknown>, {
       _cloud: {
         dispatchConfig: () => ({
           fireUrl: plugin.settings.cloudRoutineFireUrl,
@@ -98,12 +96,12 @@ describe("managed Build handoff", () => {
         httpRequest: request,
       },
     });
-    await acceptBuild(plugin.handoffToBuild(app.vault.seed("Plans/Cloud.md", "- [ ] Cloud task")));
+    await acceptBuild(plugin.research().handoffToBuild(app.vault.seed("Plans/Cloud.md", "- [ ] Cloud task")));
 
     const build = (plugin as unknown as { _build: { viewDependencies(): { start(): Promise<void> } } })._build;
     await build.viewDependencies().start();
 
-    expect(plugin.activeBuildRun()).toMatchObject({ status: "completed", sessionUrl: "https://claude.ai/code/s1" });
+    expect(plugin.research().activeBuildRun()).toMatchObject({ status: "completed", sessionUrl: "https://claude.ai/code/s1" });
     expect(request.mock.calls.filter(([requestSpec]) => requestSpec.method === "POST")).toHaveLength(1);
     const tracker = app.vault.getAbstractFileByPath("Claude/Builds/Cloud — tracker.md") as TFile;
     expect(tracker._content).toContain("**Status:** Complete");
@@ -120,7 +118,7 @@ describe("managed Build handoff", () => {
       loadData: async () => ({ settings: {}, buildRuns: [running], activeBuildRunId: "saved" }),
     });
     await plugin.loadSettings();
-    expect(plugin.activeBuildRun()).toMatchObject({ status: "interrupted", activeTaskIndex: null });
-    expect(plugin.activeBuildRun()?.tasks[0]?.status).toBe("pending");
+    expect(plugin.research().activeBuildRun()).toMatchObject({ status: "interrupted", activeTaskIndex: null });
+    expect(plugin.research().activeBuildRun()?.tasks[0]?.status).toBe("pending");
   });
 });

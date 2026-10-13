@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { App, FakeElement, WorkspaceLeaf } from "obsidian";
-import ClaudeCompanionPlugin from "../../src/main";
 import { InboxView } from "../../src/view/InboxView";
+import { buildPlugin } from "../fakes/plugin";
 
 const settle = async (turns = 24): Promise<void> => {
   for (let turn = 0; turn < turns; turn++) await Promise.resolve();
@@ -9,19 +9,16 @@ const settle = async (turns = 24): Promise<void> => {
 
 function harness(clipperSetupNeeded = true): { app: App; view: InboxView; organizeClippings: ReturnType<typeof vi.fn>; triageClippingsWithPicker: ReturnType<typeof vi.fn> } {
   const app = new App();
-  const plugin = Object.create(ClaudeCompanionPlugin.prototype) as ClaudeCompanionPlugin;
   const organizeClippings = vi.fn(async () => undefined);
   const triageClippingsWithPicker = vi.fn(async () => undefined);
-  Object.assign(plugin, {
-    app,
+  const plugin = buildPlugin({
     settings: { sourceCaptureEnabled: true, sourceInboxFolder: "Clippings", clipOrganizedFolder: "Library" },
-    sourceEnrichmentBackendLabel: () => "Claude",
-    linkCandidates: () => [],
+    utilityRouting: () => ({ backendLabel: () => "Claude" }),
+    noteFlows: () => ({ linkCandidates: () => [] }),
     organizeClippings,
     triageClippingsWithPicker,
-    clipperSetupNeeded: () => clipperSetupNeeded,
-    listQueuedEdits: () => [],
-  });
+    clipperSetup: () => ({ setupNeeded: () => clipperSetupNeeded }),
+  }, app);
   return { app, view: new InboxView(new WorkspaceLeaf(app), plugin), organizeClippings, triageClippingsWithPicker };
 }
 

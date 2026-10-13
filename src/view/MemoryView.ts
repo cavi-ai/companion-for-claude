@@ -7,7 +7,7 @@ export const MEMORY_VIEW_TYPE = "claude-memory-view";
 /** Sidebar list of captured session digest notes, with open / re-ingest. */
 export class MemoryView extends ItemView {
   private disposeChrome: ((remove?: boolean) => void) | null = null;
-  constructor(leaf: WorkspaceLeaf, private plugin: Pick<ClaudeCompanionPlugin, "companionChrome" | "openSessionPicker" | "reingestSession" | "settings">) {
+  constructor(leaf: WorkspaceLeaf, private plugin: Pick<ClaudeCompanionPlugin, "memory" | "settings" | "shell">) {
     super(leaf);
   }
 
@@ -56,7 +56,7 @@ export class MemoryView extends ItemView {
     this.disposeChrome = null;
     root.empty();
     root.addClass("cc-memory-view");
-    this.disposeChrome = renderCompanionChrome(root, "memory", "Session Memory", this.plugin.companionChrome());
+    this.disposeChrome = renderCompanionChrome(root, "memory", "Session Memory", this.plugin.shell().companionChrome());
     root.createDiv({ cls: "cc-eyebrow", text: "SESSION MEMORY" });
 
     const notes = this.capturedNotes();
@@ -73,7 +73,7 @@ export class MemoryView extends ItemView {
       });
       if (!Platform.isMobile) {
         const capture = empty.createEl("button", { text: "Capture a session" });
-        capture.addEventListener("click", () => void this.plugin.openSessionPicker());
+        capture.addEventListener("click", () => void this.plugin.memory().openSessionPicker());
       }
       return;
     }
@@ -90,7 +90,7 @@ export class MemoryView extends ItemView {
         const sessionId = String(fm?.["session_id"] ?? fm?.["claude-session"] ?? "");
         const reBtn = row.createEl("button", { cls: "cc-action", attr: { "aria-label": "Re-ingest", title: "Re-ingest" } });
         setIcon(reBtn, "refresh-cw");
-        reBtn.addEventListener("click", () => void this.plugin.reingestSession(sessionId));
+        reBtn.addEventListener("click", () => void this.plugin.memory().reingestSession(sessionId));
       }
     }
   }

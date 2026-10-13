@@ -6,7 +6,7 @@ const NOTE = "---\ntitle: Hidden title\nprivate: yes\n---\n# Public heading\n\nV
 type PublishedSeam = { key: string; gistId: string; url: string; kind: string };
 type AppSeam = {
   app: {
-    plugins: { plugins: Record<string, { publishedItems(): PublishedSeam[] }> };
+    plugins: { plugins: Record<string, { publishing(): { publishedItems(): PublishedSeam[] } }> };
     vault: { getAbstractFileByPath(path: string): unknown; modify(file: unknown, data: string): Promise<void> };
     workspace: { openLinkText(link: string, source: string, newLeaf: boolean): Promise<void> };
     commands: { executeCommandById(id: string): Promise<void> };
@@ -17,7 +17,7 @@ const runCommand = (page: Page, id: string): Promise<void> =>
   page.evaluate((commandId) => (window as unknown as AppSeam).app.commands.executeCommandById(`claude-companion:${commandId}`), id);
 
 const published = (page: Page): Promise<PublishedSeam[]> =>
-  page.evaluate(() => (window as unknown as AppSeam).app.plugins.plugins["claude-companion"]!.publishedItems());
+  page.evaluate(() => (window as unknown as AppSeam).app.plugins.plugins["claude-companion"]!.publishing().publishedItems());
 
 test("a note publishes as a secret gist without frontmatter or comments, republishes in place, and unpublishes", async ({ rig }) => {
   const { githubPort } = await rig.control.ports();

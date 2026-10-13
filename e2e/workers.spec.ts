@@ -23,8 +23,10 @@ function textPdf(word: string): Buffer {
 }
 
 type PluginHandle = {
-  indexer(): { build(opts: { force: boolean }): Promise<unknown> } | null;
-  builtinEmbedder(): { createWorker(): Worker };
+  semantic(): {
+    indexer(): { build(opts: { force: boolean }): Promise<unknown> } | null;
+    builtinEmbedder(): { createWorker(): Worker };
+  };
 };
 type AppHandle = {
   plugins: { plugins: Record<string, PluginHandle> };
@@ -38,7 +40,7 @@ test("the bundled pdf.js worker extracts text from a vault PDF through the seman
     const app = (window as unknown as { app: AppHandle }).app;
     const bytes = Uint8Array.from(atob(data), (c) => c.charCodeAt(0));
     await app.vault.createBinary("zebracorn.pdf", bytes.buffer);
-    await app.plugins.plugins["claude-companion"]!.indexer()!.build({ force: true });
+    await app.plugins.plugins["claude-companion"]!.semantic().indexer()!.build({ force: true });
   }, base64);
   const index = JSON.parse(await page.evaluate((dir) => (window as unknown as { app: AppHandle }).app.vault.adapter.read(`${dir}/semantic-index.json`), PLUGIN_DIR)) as { notes: Record<string, { chunks: { text: string }[] }> };
   expect(index.notes["zebracorn.pdf"]?.chunks.map((chunk) => chunk.text).join(" ")).toContain("zebracorn");
@@ -48,7 +50,7 @@ test("the bundled embedding worker boots and answers without a model download", 
   const { page } = await rig.reset({ embedStub: true });
   const outcome = await page.evaluate(async () => {
     const plugin = (window as unknown as { app: AppHandle }).app.plugins.plugins["claude-companion"]!;
-    const worker = plugin.builtinEmbedder().createWorker();
+    const worker = plugin.semantic().builtinEmbedder().createWorker();
     const errors: string[] = [];
     worker.addEventListener("error", (event) => errors.push(event.message));
     const reply = await new Promise<{ id: number; type: string; message?: string }>((resolve, reject) => {

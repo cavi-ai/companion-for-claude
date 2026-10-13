@@ -16,7 +16,7 @@ type PageApp = {
   };
   metadataCache: { resolvedLinks: Record<string, Record<string, number>> };
   commands: { executeCommandById(id: string): Promise<void> };
-  plugins: { plugins: Record<string, { indexer(): { build(opts: { force: boolean }): Promise<unknown> } | null }> };
+  plugins: { plugins: Record<string, { semantic(): { indexer(): { build(opts: { force: boolean }): Promise<unknown> } | null } }> };
 };
 
 test("connect an orphan note: the mention becomes a link and the related row adds a frontmatter link", async ({ rig }) => {
@@ -28,7 +28,7 @@ test("connect an orphan note: the mention becomes a link and the related row add
       if (dir && !app.vault.getAbstractFileByPath(dir)) await app.vault.createFolder(dir);
       await app.vault.create(path, content);
     }
-    await app.plugins.plugins["claude-companion"]!.indexer()!.build({ force: true });
+    await app.plugins.plugins["claude-companion"]!.semantic().indexer()!.build({ force: true });
   }, NOTES);
 
   await expect.poll(() => page.evaluate(() => {

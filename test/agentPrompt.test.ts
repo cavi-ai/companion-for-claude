@@ -5,14 +5,13 @@ vi.mock("obsidian", async (importOriginal) => ({
   PluginSettingTab: class {},
 }));
 
-import ClaudeCompanionPlugin from "../../src/main";
-import { DEFAULT_SETTINGS } from "../../src/types";
-import { AGENT_INSTRUCTION, PLAN_MODE_INSTRUCTION } from "../../src/agent/prompt";
-import { PLANNING_INSTRUCTION } from "../../src/artifacts/designSystem";
+import type ClaudeCompanionPlugin from "../src/main";
+import { buildPlugin } from "./fakes/plugin";
+import { AGENT_INSTRUCTION, PLAN_MODE_INSTRUCTION } from "../src/agent/prompt";
+import { PLANNING_INSTRUCTION } from "../src/artifacts/designSystem";
 
 function pluginHarness(): ClaudeCompanionPlugin {
-  const plugin = Object.create(ClaudeCompanionPlugin.prototype) as ClaudeCompanionPlugin;
-  plugin.settings = { ...DEFAULT_SETTINGS };
+  const plugin = buildPlugin();
   Object.defineProperty(plugin, "ontology", { value: () => null });
   return plugin;
 }

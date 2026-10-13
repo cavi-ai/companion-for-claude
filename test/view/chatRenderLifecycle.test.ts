@@ -9,6 +9,7 @@ import type ClaudeCompanionPlugin from "../../src/main";
 import { DEFAULT_SETTINGS } from "../../src/types";
 import { ChatView } from "../../src/view/ChatView";
 import type { CompanionChromeDependencies } from "../../src/view/companionChrome";
+import { conversationFakes } from "../fakes/conversations";
 
 const fakeElement = (): HTMLElement => new FakeElement() as unknown as HTMLElement;
 
@@ -48,16 +49,19 @@ describe("Chat render lifecycle", () => {
     const persisted = new Promise<void>((resolve) => { releasePersist = resolve; });
     const stream = vi.fn(async (_request: unknown, handlers: { onDone(text: string): void }) => { handlers.onDone("answer"); });
     const provider = { id: "anthropic", hasCredentials: () => true, stream };
-    const beginActiveConversationTurn = vi.fn(async () => {
+    const settings = {
+      ...structuredClone(DEFAULT_SETTINGS),
+      agentModeEnabled: false,
+      context: { activeNote: false, selection: false, linkedNotes: false, searchVault: false },
+    };
+    const fakes = conversationFakes({}, settings);
+    const turns = fakes.stubTurns();
+    turns.begin.mockImplementation(async () => {
       await persisted;
       return { conversationId: "conversation-1", turnId: "turn-1" };
     });
     const plugin = {
-      settings: {
-        ...structuredClone(DEFAULT_SETTINGS),
-        agentModeEnabled: false,
-        context: { activeNote: false, selection: false, linkedNotes: false, searchVault: false },
-      },
+      settings,
       router: () => ({
         chatProvider: () => ({ provider, model: DEFAULT_SETTINGS.model }),
         chatBackend: "claude",
@@ -67,12 +71,9 @@ describe("Chat render lifecycle", () => {
         claudeCli: { hasCredentials: () => false, available: () => false },
         localFallback: async () => null,
       }),
-      beginActiveConversationTurn,
-      registerActiveChatTurn: vi.fn(() => () => undefined),
-      completeActiveConversationTurn: vi.fn(async () => undefined),
-      interruptActiveConversationTurn: vi.fn(async () => undefined),
+      ...fakes.host,
       composeSystemPrompt: () => "system",
-      semanticSearch: async () => [],
+      semantic: () => ({ semanticSearch: async () => [] }),
       loadedOntology: vi.fn(async () => null),
       turnService: () => new ChatTurnService(),
     } as unknown as ClaudeCompanionPlugin;
@@ -84,7 +85,7 @@ describe("Chat render lifecycle", () => {
       sendBtn: HTMLButtonElement;
       usageEl: HTMLElement;
       gaugeFillEl: HTMLElement;
-      renderMarkdownInto(el: HTMLElement, markdown: string): Promise<void>;
+      renderer: { renderInto(el: HTMLElement, markdown: string): Promise<void> };
       run(userText: string): Promise<void>;
     };
     seam.controls = defaultChatControls(DEFAULT_SETTINGS.model);
@@ -94,12 +95,12 @@ describe("Chat render lifecycle", () => {
     seam.gaugeFillEl = fakeElement();
     seam.app.workspace.getActiveViewOfType = () => null;
     seam.app.workspace.getActiveFile = () => null;
-    seam.renderMarkdownInto = async () => undefined;
+    seam.renderer.renderInto =async () => undefined;
 
     const running = seam.run("Research this");
     await Promise.resolve();
 
-    expect(beginActiveConversationTurn).toHaveBeenCalledOnce();
+    expect(turns.begin).toHaveBeenCalledOnce();
     expect(stream).not.toHaveBeenCalled();
 
     releasePersist();
@@ -114,12 +115,15 @@ describe("Chat render lifecycle", () => {
   ])("loads the ontology for a turn only when linked notes or vault search is on (%o)", async (toggles, calls) => {
     const stream = vi.fn(async (_request: unknown, handlers: { onDone(text: string): void }) => { handlers.onDone("answer"); });
     const provider = { id: "anthropic", hasCredentials: () => true, stream };
+    const settings = {
+      ...structuredClone(DEFAULT_SETTINGS),
+      agentModeEnabled: false,
+      context: { activeNote: false, selection: false, ...toggles },
+    };
+    const fakes = conversationFakes({}, settings);
+    fakes.stubTurns();
     const plugin = {
-      settings: {
-        ...structuredClone(DEFAULT_SETTINGS),
-        agentModeEnabled: false,
-        context: { activeNote: false, selection: false, ...toggles },
-      },
+      settings,
       router: () => ({
         chatProvider: () => ({ provider, model: DEFAULT_SETTINGS.model }),
         chatBackend: "claude",
@@ -129,12 +133,9 @@ describe("Chat render lifecycle", () => {
         claudeCli: { hasCredentials: () => false, available: () => false },
         localFallback: async () => null,
       }),
-      beginActiveConversationTurn: vi.fn(async () => ({ conversationId: "conversation-1", turnId: "turn-1" })),
-      registerActiveChatTurn: vi.fn(() => () => undefined),
-      completeActiveConversationTurn: vi.fn(async () => undefined),
-      interruptActiveConversationTurn: vi.fn(async () => undefined),
+      ...fakes.host,
       composeSystemPrompt: () => "system",
-      semanticSearch: async () => [],
+      semantic: () => ({ semanticSearch: async () => [] }),
       loadedOntology: vi.fn(async () => null),
       turnService: () => new ChatTurnService(),
     } as unknown as ClaudeCompanionPlugin;
@@ -146,7 +147,7 @@ describe("Chat render lifecycle", () => {
       sendBtn: HTMLButtonElement;
       usageEl: HTMLElement;
       gaugeFillEl: HTMLElement;
-      renderMarkdownInto(el: HTMLElement, markdown: string): Promise<void>;
+      renderer: { renderInto(el: HTMLElement, markdown: string): Promise<void> };
       run(userText: string): Promise<void>;
     };
     seam.controls = defaultChatControls(DEFAULT_SETTINGS.model);
@@ -156,7 +157,7 @@ describe("Chat render lifecycle", () => {
     seam.gaugeFillEl = fakeElement();
     seam.app.workspace.getActiveViewOfType = () => null;
     seam.app.workspace.getActiveFile = () => null;
-    seam.renderMarkdownInto = async () => undefined;
+    seam.renderer.renderInto =async () => undefined;
 
     await seam.run("Research this");
     expect(stream).toHaveBeenCalledOnce();
@@ -176,13 +177,15 @@ describe("Chat render lifecycle", () => {
     });
     const provider = { id: "anthropic", hasCredentials: () => true, stream };
     const turnService = new ChatTurnService();
-    const completeActiveConversationTurn = vi.fn(async () => undefined);
+    const settings = {
+      ...structuredClone(DEFAULT_SETTINGS),
+      agentModeEnabled: false,
+      context: { activeNote: false, selection: false, linkedNotes: false, searchVault: false },
+    };
+    const fakes = conversationFakes({}, settings);
+    const turns = fakes.stubTurns();
     const plugin = {
-      settings: {
-        ...structuredClone(DEFAULT_SETTINGS),
-        agentModeEnabled: false,
-        context: { activeNote: false, selection: false, linkedNotes: false, searchVault: false },
-      },
+      settings,
       router: () => ({
         chatProvider: () => ({ provider, model: DEFAULT_SETTINGS.model }),
         chatBackend: "claude",
@@ -192,12 +195,9 @@ describe("Chat render lifecycle", () => {
         claudeCli: { hasCredentials: () => false, available: () => false },
         localFallback: async () => null,
       }),
-      beginActiveConversationTurn: vi.fn(async () => ({ conversationId: "conversation-1", turnId: "turn-1" })),
-      registerActiveChatTurn: vi.fn(() => () => undefined),
-      completeActiveConversationTurn,
-      interruptActiveConversationTurn: vi.fn(async () => undefined),
+      ...fakes.host,
       composeSystemPrompt: () => "system",
-      semanticSearch: async () => [],
+      semantic: () => ({ semanticSearch: async () => [] }),
       loadedOntology: vi.fn(async () => null),
       turnService: () => turnService,
     } as unknown as ClaudeCompanionPlugin;
@@ -209,7 +209,7 @@ describe("Chat render lifecycle", () => {
       sendBtn: HTMLButtonElement;
       usageEl: HTMLElement;
       gaugeFillEl: HTMLElement;
-      renderMarkdownInto(el: HTMLElement, markdown: string): Promise<void>;
+      renderer: { renderInto(el: HTMLElement, markdown: string): Promise<void> };
       run(userText: string): Promise<void>;
       onClose(): Promise<void>;
       loadConversation(conversation: Conversation): void;
@@ -221,7 +221,7 @@ describe("Chat render lifecycle", () => {
     seam.gaugeFillEl = fakeElement();
     seam.app.workspace.getActiveViewOfType = () => null;
     seam.app.workspace.getActiveFile = () => null;
-    seam.renderMarkdownInto = async () => undefined;
+    seam.renderer.renderInto =async () => undefined;
 
     const running = seam.run("Hello");
     await started;
@@ -229,7 +229,7 @@ describe("Chat render lifecycle", () => {
 
     // Close mid-turn: unsubscribes, does not stop the turn.
     await seam.onClose();
-    expect(completeActiveConversationTurn).not.toHaveBeenCalled();
+    expect(turns.complete).not.toHaveBeenCalled();
     expect(turnService.live("conversation-1")).not.toBeNull();
 
     // Reopen on the same conversation: replay the buffered text, then stream live.
@@ -248,8 +248,8 @@ describe("Chat render lifecycle", () => {
     await Promise.resolve();
     await Promise.resolve();
 
-    expect(completeActiveConversationTurn).toHaveBeenCalledOnce();
-    expect(completeActiveConversationTurn.mock.calls[0]?.[2]).toEqual([
+    expect(turns.complete).toHaveBeenCalledOnce();
+    expect(turns.complete.mock.calls[0]?.[2]).toEqual([
       { role: "user", content: "Hello" },
       { role: "assistant", content: "Hello" },
     ]);
@@ -272,12 +272,12 @@ describe("Chat render lifecycle", () => {
     const view = new ChatView(new WorkspaceLeaf(new App()), plugin);
     const seam = view as unknown as {
       controls: ReturnType<typeof defaultChatControls>;
-      agentTurn(messages: [], handlers: AgentTurnHandlers, signal: AbortSignal): Promise<{ text: string; trace: unknown[]; error?: Error }>;
+      runners: { agentTurn(messages: [], handlers: AgentTurnHandlers, signal: AbortSignal): Promise<{ text: string; trace: unknown[]; error?: Error }> };
     };
     seam.controls = defaultChatControls(DEFAULT_SETTINGS.model);
     const handlers: AgentTurnHandlers = { onText: vi.fn() };
 
-    const result = await seam.agentTurn([], handlers, new AbortController().signal);
+    const result = await seam.runners.agentTurn([], handlers, new AbortController().signal);
 
     expect(result.text).toBe("");
     expect(result.error?.message).toBe("router unavailable");
@@ -297,18 +297,20 @@ describe("Chat render lifecycle", () => {
     const view = new ChatView(new WorkspaceLeaf(new App()), plugin);
     const seam = view as unknown as {
       controls: ReturnType<typeof defaultChatControls>;
-      agentTurn(messages: [], handlers: AgentTurnHandlers, signal: AbortSignal, conversationId: string): Promise<{ aborted?: boolean }>;
-      turnRunnerFor: ReturnType<typeof vi.fn>;
+      runners: {
+        agentTurn(messages: [], handlers: AgentTurnHandlers, signal: AbortSignal, conversationId: string): Promise<{ aborted?: boolean }>;
+        turnRunnerFor: ReturnType<typeof vi.fn>;
+      };
     };
     seam.controls = defaultChatControls(DEFAULT_SETTINGS.model);
     view.mode.setCapable(true);
-    seam.turnRunnerFor = vi.fn();
+    seam.runners.turnRunnerFor = vi.fn();
     const controller = new AbortController();
-    const running = seam.agentTurn([], { onText: vi.fn() }, controller.signal, "c1");
+    const running = seam.runners.agentTurn([], { onText: vi.fn() }, controller.signal, "c1");
     controller.abort();
     finishDiscovery();
     await expect(running).resolves.toMatchObject({ aborted: true });
-    expect(seam.turnRunnerFor).not.toHaveBeenCalled();
+    expect(seam.runners.turnRunnerFor).not.toHaveBeenCalled();
   });
 
   it("falls back to readable text when one stored message cannot render as markdown", async () => {
@@ -317,11 +319,11 @@ describe("Chat render lifecycle", () => {
     const messagesEl = fakeElement();
     const seam = view as unknown as {
       messagesEl: HTMLElement;
-      renderMarkdownInto(element: HTMLElement, markdown: string): Promise<void>;
+      renderer: { renderInto(element: HTMLElement, markdown: string): Promise<void> };
       renderStoredMessage(message: { role: "assistant"; content: string }): void;
     };
     seam.messagesEl = messagesEl;
-    seam.renderMarkdownInto = async () => { throw new Error("renderer unavailable"); };
+    seam.renderer.renderInto =async () => { throw new Error("renderer unavailable"); };
 
     seam.renderStoredMessage({ role: "assistant", content: "Still readable" });
     await Promise.resolve();
@@ -333,9 +335,9 @@ describe("Chat render lifecycle", () => {
   it("lets the user copy an earlier prompt after reopening a chat", () => {
     const plugin = { settings: structuredClone(DEFAULT_SETTINGS) } as unknown as ClaudeCompanionPlugin;
     const view = new ChatView(new WorkspaceLeaf(new App()), plugin);
-    const seam = view as unknown as { messagesEl: HTMLElement; renderMarkdownInto(el: HTMLElement, text: string): Promise<void>; renderStoredMessage(message: { role: "user"; content: string }): void };
+    const seam = view as unknown as { messagesEl: HTMLElement; renderer: { renderInto(el: HTMLElement, text: string): Promise<void> }; renderStoredMessage(message: { role: "user"; content: string }): void };
     seam.messagesEl = fakeElement();
-    seam.renderMarkdownInto = async () => undefined;
+    seam.renderer.renderInto =async () => undefined;
     seam.renderStoredMessage({ role: "user", content: "Please revise the note" });
     expect(seam.messagesEl.querySelector(".cc-actions")?.querySelector("button")?.getAttribute("aria-label")).toBe("Copy prompt");
   });
@@ -343,13 +345,13 @@ describe("Chat render lifecycle", () => {
   it("offers to review the saved edit proposal when a conversation is reopened", () => {
     const plugin = { settings: structuredClone(DEFAULT_SETTINGS), turnService: () => new ChatTurnService(), chatProjectFor: async () => null } as unknown as ClaudeCompanionPlugin;
     const view = new ChatView(new WorkspaceLeaf(new App()), plugin);
-    const seam = view as unknown as { messagesEl: HTMLElement; sendBtn: HTMLButtonElement; usageEl: HTMLElement; gaugeFillEl: HTMLElement; controls: ReturnType<typeof defaultChatControls>; renderMarkdownInto(el: HTMLElement, text: string): Promise<void>; updateUsageBar(): void; loadConversation(conversation: Conversation): void };
+    const seam = view as unknown as { messagesEl: HTMLElement; sendBtn: HTMLButtonElement; usageEl: HTMLElement; gaugeFillEl: HTMLElement; controls: ReturnType<typeof defaultChatControls>; renderer: { renderInto(el: HTMLElement, text: string): Promise<void> }; updateUsageBar(): void; loadConversation(conversation: Conversation): void };
     seam.messagesEl = fakeElement();
     seam.sendBtn = fakeElement() as unknown as HTMLButtonElement;
     seam.usageEl = fakeElement();
     seam.gaugeFillEl = fakeElement();
     seam.controls = defaultChatControls(DEFAULT_SETTINGS.model);
-    seam.renderMarkdownInto = async () => undefined;
+    seam.renderer.renderInto =async () => undefined;
     seam.updateUsageBar = () => undefined;
     seam.loadConversation({
       id: "c1", title: "Revise", createdAt: 1, updatedAt: 2,
@@ -361,8 +363,10 @@ describe("Chat render lifecycle", () => {
   });
 
   it("discards a saved edit proposal from its recovery row", async () => {
-    const clearChatEditProposal = vi.fn(async () => undefined);
-    const plugin = { settings: structuredClone(DEFAULT_SETTINGS), clearChatEditProposal } as unknown as ClaudeCompanionPlugin;
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    const fakes = conversationFakes({}, settings);
+    const clearProposal = vi.spyOn(fakes.conversations, "clearEditProposal").mockResolvedValue(undefined);
+    const plugin = { settings, ...fakes.host } as unknown as ClaudeCompanionPlugin;
     const view = new ChatView(new WorkspaceLeaf(new App()), plugin);
     const seam = view as unknown as { messagesEl: HTMLElement; transcript: { renderRecoverableEdit(conversation: Conversation): void } };
     seam.messagesEl = fakeElement();
@@ -373,7 +377,7 @@ describe("Chat render lifecycle", () => {
     const buttons = [...seam.messagesEl.querySelector(".cc-edit-recovery")!.querySelectorAll("button")];
     expect(buttons.map((button) => button.textContent)).toEqual(["Review proposed edit", "Discard"]);
     (buttons[1] as unknown as FakeElement).dispatchEvent({ type: "click" });
-    await vi.waitFor(() => expect(clearChatEditProposal).toHaveBeenCalledWith("c1"));
+    await vi.waitFor(() => expect(clearProposal).toHaveBeenCalledWith("c1"));
     expect(seam.messagesEl.querySelector(".cc-edit-recovery")).toBeNull();
   });
 
@@ -384,20 +388,22 @@ describe("Chat render lifecycle", () => {
       id: "c1", title: "Revise", createdAt: 1, updatedAt: 2, messages: [],
       lastEditProposal: { path: "A.md", edits: [{ old_str: "beta", new_str: "gamma" }], proposedAt: 2 },
     } satisfies Conversation;
-    const clearChatEditProposal = vi.fn(async () => undefined);
+    const settings = { ...structuredClone(DEFAULT_SETTINGS), inlineDiffEnabled: false };
+    const fakes = conversationFakes({ conversations: [conversation] }, settings);
+    const clearProposal = vi.spyOn(fakes.conversations, "clearEditProposal").mockResolvedValue(undefined);
     const plugin = {
-      settings: { ...structuredClone(DEFAULT_SETTINGS), inlineDiffEnabled: false },
-      listConversations: () => [conversation], clearChatEditProposal,
+      settings,
+      ...fakes.host,
     } as unknown as ClaudeCompanionPlugin;
     const view = new ChatView(new WorkspaceLeaf(app), plugin);
-    const seam = view as unknown as { reviewLastProposedEdit(conversation: Conversation): Promise<void> };
-    const reviewing = seam.reviewLastProposedEdit(conversation);
+    const seam = view as unknown as { runners: { reviewLastProposedEdit(conversation: Conversation): Promise<void> } };
+    const reviewing = seam.runners.reviewLastProposedEdit(conversation);
     await vi.waitFor(() => expect(getLastOpenedModal()?.titleEl.textContent).toContain("A.md"));
     expect(file._content).toBe("alpha beta\n");
     (getLastOpenedModal()!.contentEl.querySelector(".cc-diff-buttons")!.querySelector("button") as unknown as FakeElement).dispatchEvent({ type: "click" });
     await reviewing;
     expect(file._content).toBe("alpha gamma\n");
-    expect(clearChatEditProposal).toHaveBeenCalledWith("c1");
+    expect(clearProposal).toHaveBeenCalledWith("c1");
   });
 
   it("names the local provider that actually failed, not always Ollama, in the fallback error hint", async () => {
@@ -409,6 +415,8 @@ describe("Chat render lifecycle", () => {
     const claudeProvider = { id: "anthropic", hasCredentials: () => true, stream: failing("fetch failed") };
     const endpointProvider = { id: "openai-compat", hasCredentials: () => true, stream: failing("fetch failed") };
     const settings = { ...structuredClone(DEFAULT_SETTINGS), chatBackend: "auto" as const, agentModeEnabled: false, context: { activeNote: false, selection: false, linkedNotes: false, searchVault: false } };
+    const fakes = conversationFakes({}, settings);
+    fakes.stubTurns();
     const plugin = {
       settings,
       router: () => ({
@@ -421,12 +429,9 @@ describe("Chat render lifecycle", () => {
         localFallback: async () => ({ provider: endpointProvider, model: "local-model" }),
       }),
       composeSystemPrompt: () => "system",
-      semanticSearch: async () => [],
+      semantic: () => ({ semanticSearch: async () => [] }),
       loadedOntology: vi.fn(async () => null),
-      beginActiveConversationTurn: vi.fn(async () => ({ conversationId: "conversation-1", turnId: "turn-1" })),
-      registerActiveChatTurn: vi.fn(() => () => undefined),
-      completeActiveConversationTurn: vi.fn(async () => undefined),
-      interruptActiveConversationTurn: vi.fn(async () => undefined),
+      ...fakes.host,
       turnService: () => new ChatTurnService(),
     } as unknown as ClaudeCompanionPlugin;
     const view = new ChatView(new WorkspaceLeaf(new App()), plugin);
@@ -437,7 +442,7 @@ describe("Chat render lifecycle", () => {
       sendBtn: HTMLButtonElement;
       usageEl: HTMLElement;
       gaugeFillEl: HTMLElement;
-      renderMarkdownInto(el: HTMLElement, markdown: string): Promise<void>;
+      renderer: { renderInto(el: HTMLElement, markdown: string): Promise<void> };
       run(userText: string): Promise<void>;
     };
     seam.controls = defaultChatControls(DEFAULT_SETTINGS.model);
@@ -450,7 +455,7 @@ describe("Chat render lifecycle", () => {
     seam.app.workspace.getActiveViewOfType = () => null;
     seam.app.workspace.getActiveFile = () => null;
     // Bypass Obsidian's real MarkdownRenderer (unavailable in this fake env).
-    seam.renderMarkdownInto = async () => undefined;
+    seam.renderer.renderInto =async () => undefined;
 
     await seam.run("Summarize my vault in one line.");
 
@@ -481,8 +486,9 @@ describe("Chat render lifecycle", () => {
       openAllSettings: vi.fn(),
       openDesktopIntegrations: vi.fn(),
     };
+    const settings = structuredClone(DEFAULT_SETTINGS);
     const plugin = {
-      settings: structuredClone(DEFAULT_SETTINGS),
+      settings,
       router: () => ({
         chatBackend: "claude",
         anthropic: { hasCredentials: () => true },
@@ -493,12 +499,12 @@ describe("Chat render lifecycle", () => {
         chatProvider: () => ({ provider: { id: "anthropic" }, model: DEFAULT_SETTINGS.model }),
       }),
       mcpStats: () => ({ running: false, port: null, activeRequests: 0, handledRequests: 0 }),
-      companionChrome: () => chromeDeps,
+      shell: () => ({ companionChrome: () => chromeDeps }),
       promptTemplates: async () => [],
-      getActiveConversation: () => null,
+      ...conversationFakes({}, settings).host,
       secrets: () => ({ available: () => false }),
       composeSystemPrompt: () => "system",
-      companionWorkspaceContext: async () => null,
+      views: () => ({ companionWorkspaceContext: async () => null }),
     } as unknown as ClaudeCompanionPlugin;
     const view = new ChatView(new WorkspaceLeaf(app), plugin);
     (view as unknown as { containerEl: { style: { setProperty(name: string, value: string): void } } }).containerEl = {

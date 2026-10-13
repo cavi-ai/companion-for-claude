@@ -22,7 +22,7 @@ esac
     await writeFile(join(bin, "opencode"), `#!/bin/sh
 case "$*" in
   *--version*) printf '8.8.8\\n' ;;
-  *"providers list"*) printf '2 credentials\\n' ;;
+  *"auth list"*) printf '2 credentials\\n' ;;
 esac
 `);
     await chmod(join(bin, "codex"), 0o755);

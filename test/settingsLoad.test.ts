@@ -5,6 +5,7 @@ import { DEFAULT_SETTINGS } from "../src/types";
 import { ClaudeCompanionSettingTab } from "../src/settings";
 import { unavailableStore } from "../src/secrets/store";
 import type ClaudeCompanionPlugin from "../src/main";
+import { fakeSemantic } from "./fakes/semantic";
 
 // The initial-release flat shape: data.json *was* the settings object, with
 // keys that have since been renamed (localUtilityEnabled) or removed.
@@ -129,15 +130,15 @@ describe("resolveSettings with legacy configs", () => {
       }),
       externalMcp: () => ({ errorFor: () => null, test: async () => ({ ok: true }) }),
       mcpRunning: () => false,
-      builtinModelCached: async () => false,
-      builtinEmbedder: () => ({ backend: () => null, download: async () => {} }),
-      indexer: () => undefined,
+      semantic: () => fakeSemantic({
+        builtinModelCached: async () => false,
+        builtinEmbedder: () => ({ backend: () => null, download: async () => {} }),
+      }),
       ontology: () => undefined,
-      clipperTemplatesStale: () => false,
-      publishedItems: () => [],
+      clipperSetup: () => ({ templatesStale: () => false }),
+      publishing: () => ({ publishedItems: () => [] }),
       refreshViews: () => {},
-      invalidateIndexer: () => {},
-      loadOntologyOnStart: async () => {},
+      onboarding: () => ({ loadOntologyOnStart: async () => {} }),
     } as unknown as ClaudeCompanionPlugin;
     const tab = new ClaudeCompanionSettingTab(new App() as never, plugin);
     expect(() => openSettingTab(tab)).not.toThrow();

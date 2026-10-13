@@ -3,11 +3,15 @@
 
 import { Platform, type ButtonComponent, type SettingGroupItem } from "obsidian";
 import type ClaudeCompanionPlugin from "../main";
+import type { SemanticController } from "../semantic/controller";
 import { BUILTIN_EMBEDDING_MODELS, builtinModelById } from "../semantic/transformers/model";
 import type { PluginSettings } from "../types";
+import { cachedModelHint, selectEmbedding, showCachedModelHint } from "./actions";
 
 export interface SemanticItemsContext {
-  plugin: Pick<ClaudeCompanionPlugin, "activity" | "builtinEmbedder" | "builtinModelCached" | "clearBuiltinModel" | "indexer" | "invalidateIndexer" | "rebuildSemanticIndex" | "router" | "saveSettings" | "settings">;
+  plugin: Pick<ClaudeCompanionPlugin, "activity" | "router" | "saveSettings" | "settings"> & {
+    semantic: () => Pick<SemanticController, "builtinEmbedder" | "builtinModelCached" | "clearBuiltinModel" | "indexer" | "invalidateIndexer" | "rebuildSemanticIndex">;
+  };
   /** Re-render the settings page. */
   update(): void;
   /** Offer to rebuild an index built with a different embedding model. */
@@ -36,12 +40,13 @@ export function semanticItems(ctx: SemanticItemsContext): SettingGroupItem[] {
           dd.addOption("custom", "OpenAI-compatible endpoint");
           dd.setValue(plugin.settings.embeddingEngine).onChange(async (v) => {
             if (v === plugin.settings.embeddingEngine) return;
-            const hadNotes = ((await plugin.indexer()?.stats().catch(() => null))?.notes ?? 0) > 0;
-            plugin.settings.embeddingEngine = v as PluginSettings["embeddingEngine"];
+            const notes = (await plugin.semantic().indexer()?.stats().catch(() => null))?.notes ?? 0;
+            const r = selectEmbedding(plugin.settings, { key: "embeddingEngine", value: v as PluginSettings["embeddingEngine"] }, notes);
+            if (!r.changed) return;
             await plugin.saveSettings();
-            plugin.invalidateIndexer();
+            plugin.semantic().invalidateIndexer();
             ctx.update();
-            if (hadNotes) ctx.offerIndexRebuild(v === "builtin" ? "the built-in model" : v);
+            if (r.rebuildLabel !== null) ctx.offerIndexRebuild(r.rebuildLabel);
           });
         });
       },
@@ -58,13 +63,13 @@ export function semanticItems(ctx: SemanticItemsContext): SettingGroupItem[] {
           }
           dd.setValue(builtinModelById(plugin.settings.builtinEmbeddingModel).id).onChange(async (v) => {
             if (v === plugin.settings.builtinEmbeddingModel) return;
-            const hadNotes = ((await plugin.indexer()?.stats().catch(() => null))?.notes ?? 0) > 0;
-            const label = v.replace(/^builtin:/, "");
-            plugin.settings.builtinEmbeddingModel = v;
+            const notes = (await plugin.semantic().indexer()?.stats().catch(() => null))?.notes ?? 0;
+            const r = selectEmbedding(plugin.settings, { key: "builtinEmbeddingModel", value: v }, notes);
+            if (!r.changed) return;
             await plugin.saveSettings();
-            plugin.invalidateIndexer();
+            plugin.semantic().invalidateIndexer();
             ctx.update();
-            if (hadNotes) ctx.offerIndexRebuild(label);
+            if (r.rebuildLabel !== null) ctx.offerIndexRebuild(r.rebuildLabel);
           });
         });
       },
@@ -74,7 +79,7 @@ export function semanticItems(ctx: SemanticItemsContext): SettingGroupItem[] {
       visible: () => enabled() && plugin.settings.embeddingEngine === "builtin",
       render: (setting) => {
         const model = builtinModelById(plugin.settings.builtinEmbeddingModel);
-        const backend = plugin.builtinEmbedder().backend();
+        const backend = plugin.semantic().builtinEmbedder().backend();
         setting.setDesc(`${model.hfRepo} (~${model.approxDownloadMB} MB from huggingface.co + ~23 MB ONNX runtime from cdn.jsdelivr.net; cached and on-device afterwards). Updated model assets require an explicit download and index rebuild.`);
         const status = setting.settingEl.createDiv({ cls: "cc-conn-status setting-item-description" });
         status.setText(backend ? `Model ready · ${backend === "webgpu" ? "WebGPU" : "WASM"}` : "Model not downloaded yet.");
@@ -94,7 +99,7 @@ export function semanticItems(ctx: SemanticItemsContext): SettingGroupItem[] {
             setSemanticActionBusy(btn, true, "Clearing…");
             mainBtn?.setDisabled(true);
             try {
-              await plugin.clearBuiltinModel();
+              await plugin.semantic().clearBuiltinModel();
               ctx.update(); // status returns to "Model not downloaded yet."
             } catch (e) {
               status.setText(`Clear failed: ${e instanceof Error ? e.message : String(e)}`);
@@ -122,8 +127,8 @@ export function semanticItems(ctx: SemanticItemsContext): SettingGroupItem[] {
               status.removeClass("is-err");
               status.setText(backend ? "Checking built-in model…" : "Downloading built-in model…");
               try {
-                await plugin.builtinEmbedder().download((p) => status.setText(`Downloading… ${p.percent}% (${p.file})`));
-                const b = plugin.builtinEmbedder().backend();
+                await plugin.semantic().builtinEmbedder().download((p) => status.setText(`Downloading… ${p.percent}% (${p.file})`));
+                const b = plugin.semantic().builtinEmbedder().backend();
                 if (!b) throw new Error("model did not load");
                 status.setText(`Model ready · ${b === "webgpu" ? "WebGPU" : "WASM"}`);
                 status.addClass("is-ok");
@@ -143,9 +148,9 @@ export function semanticItems(ctx: SemanticItemsContext): SettingGroupItem[] {
         if (!backend) {
           // Distinguish "downloaded earlier, not loaded this session" (offline
           // load) from "never downloaded" (network download needing consent).
-          void plugin.builtinModelCached().then((cached) => {
-            if (!cached || running || plugin.builtinEmbedder().backend()) return;
-            status.setText(Platform.isMobile ? "Model cached — choose Load or Rebuild index to start this session." : "Model cached — loads on first use.");
+          void plugin.semantic().builtinModelCached().then((cached) => {
+            if (!showCachedModelHint({ cached, running, backendLoaded: !!plugin.semantic().builtinEmbedder().backend() })) return;
+            status.setText(cachedModelHint(Platform.isMobile));
             mainBtn?.setButtonText("Load");
             clearBtn?.buttonEl.show();
           });
@@ -192,7 +197,7 @@ export function semanticItems(ctx: SemanticItemsContext): SettingGroupItem[] {
           dd.setValue(cur).onChange(async (v) => {
             plugin.settings.openaiCompatEmbeddingModel = v.trim();
             await plugin.saveSettings();
-            plugin.invalidateIndexer();
+            plugin.semantic().invalidateIndexer();
           });
           void plugin
             .router()
@@ -224,6 +229,7 @@ export function semanticItems(ctx: SemanticItemsContext): SettingGroupItem[] {
         for (const duplicate of previousStatuses.slice(1)) duplicate.remove();
         let running = false;
         void plugin
+          .semantic()
           .indexer()
           ?.stats()
           .then((s) => { if (!running) status.setText(`Index: ${s.notes} note(s), ${s.chunks} chunk(s).`); })
@@ -241,8 +247,8 @@ export function semanticItems(ctx: SemanticItemsContext): SettingGroupItem[] {
               status.removeClass("is-err");
               status.setText("Rebuilding index…");
               try {
-                await plugin.rebuildSemanticIndex();
-                const s = await plugin.indexer()?.stats();
+                await plugin.semantic().rebuildSemanticIndex();
+                const s = await plugin.semantic().indexer()?.stats();
                 const outcome = plugin.activity.snapshot().records.find((record) =>
                   record.kind === "semantic-index" && record.title === "Building semantic index",
                 );

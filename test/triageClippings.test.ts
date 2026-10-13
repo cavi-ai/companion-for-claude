@@ -1,8 +1,8 @@
 import { App, clearNotices, getNoticeMessages, getNotices } from "obsidian";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import ClaudeCompanionPlugin from "../src/main";
 import { DEFAULT_SETTINGS } from "../src/types";
 import type { EnrichOutcomeLike } from "../src/research/triage";
+import { buildPlugin } from "./fakes/plugin";
 
 function harness(outcomes: Record<string, EnrichOutcomeLike>) {
   const app = new App();
@@ -12,13 +12,11 @@ function harness(outcomes: Record<string, EnrichOutcomeLike>) {
   const complete = vi.fn(async (_role: string, _req: { user: string }) => ({
     text: JSON.stringify({ groups: [{ theme: "Alpha theme", summary: "", researchIdea: "", paths: ["Clippings/a.md"] }] }),
   }));
-  const plugin = Object.create(ClaudeCompanionPlugin.prototype) as ClaudeCompanionPlugin;
-  Object.assign(plugin as unknown as Record<string, unknown>, {
-    app,
+  const plugin = buildPlugin({
     settings: { ...DEFAULT_SETTINGS, sourceInboxFolder: "Clippings", clipOrganizedFolder: "Library" },
     enrichment: () => ({ runEnrich, markEnrichRecentlyWritten: vi.fn() }),
     router: () => ({ complete, resolve: () => ({ provider: { id: "anthropic" } }) }),
-  });
+  }, app);
   const triage = () => (plugin as unknown as { triageClippings(folder?: string): Promise<void> }).triageClippings("Clippings");
   return { plugin, triage, runEnrich, complete };
 }

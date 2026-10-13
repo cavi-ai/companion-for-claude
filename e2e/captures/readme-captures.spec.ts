@@ -225,7 +225,7 @@ async function resetScene(theme: "dark" | "light", settings: Record<string, unkn
     document.body.classList.add(nextTheme === "dark" ? "theme-dark" : "theme-light");
     const app = (window as unknown as {
       app: {
-        plugins: { plugins: Record<string, { settings: Record<string, unknown>; saveSettings(): Promise<void>; startNewConversation(): Promise<void> }> };
+        plugins: { plugins: Record<string, { settings: Record<string, unknown>; saveSettings(): Promise<void>; conversations(): { startNew(): Promise<void> } }> };
         workspace: { getLeavesOfType(type: string): Array<{ detach(): void }>; leftSplit: { expand(): void }; rightSplit: { expand(): void; containerEl: HTMLElement } };
         vault: { getAbstractFileByPath(path: string): unknown; modify(file: unknown, data: string): Promise<void> };
       };
@@ -233,7 +233,7 @@ async function resetScene(theme: "dark" | "light", settings: Record<string, unkn
     const plugin = app.plugins.plugins["claude-companion"];
     Object.assign(plugin.settings, defaults, nextSettings);
     await plugin.saveSettings();
-    await plugin.startNewConversation();
+    await plugin.conversations().startNew();
     for (const type of ["claude-companion-chat", "claude-research-desk", "claude-system", "markdown"]) {
       for (const leaf of app.workspace.getLeavesOfType(type)) leaf.detach();
     }
@@ -281,14 +281,16 @@ interface SeedMessage {
 async function seedConversation(page: Page, messages: SeedMessage[], proposal?: { path: string; description: string; edits: Array<{ old_str: string; new_str: string }> }): Promise<void> {
   await page.evaluate(async ({ seed, edit }) => {
     const app = (window as unknown as { app: { plugins: { plugins: Record<string, {
-      beginActiveConversationTurn(id: string | null, messages: unknown[], input: { backend: string; model: string; mode: string }): Promise<{ conversationId: string; turnId: string }>;
-      completeActiveConversationTurn(id: string, turnId: string, messages: unknown[]): Promise<void>;
-      saveChatEditProposal(id: string, proposal: unknown): Promise<void>;
+      conversations(): {
+        beginTurn(id: string | null, messages: unknown[], input: { backend: string; model: string; mode: string }): Promise<{ conversationId: string; turnId: string }>;
+        completeTurn(id: string, turnId: string, messages: unknown[]): Promise<void>;
+        saveEditProposal(id: string, proposal: unknown): Promise<void>;
+      };
     }> } } }).app;
     const plugin = app.plugins.plugins["claude-companion"]!;
-    const turn = await plugin.beginActiveConversationTurn(null, seed.slice(0, 1), { backend: "anthropic", model: "claude-sonnet-5-5", mode: "act" });
-    await plugin.completeActiveConversationTurn(turn.conversationId, turn.turnId, seed);
-    if (edit) await plugin.saveChatEditProposal(turn.conversationId, edit);
+    const turn = await plugin.conversations().beginTurn(null, seed.slice(0, 1), { backend: "anthropic", model: "claude-sonnet-5-5", mode: "act" });
+    await plugin.conversations().completeTurn(turn.conversationId, turn.turnId, seed);
+    if (edit) await plugin.conversations().saveEditProposal(turn.conversationId, edit);
   }, { seed: messages, edit: proposal ?? null });
 }
 
@@ -388,13 +390,13 @@ test.describe("README captures", () => {
           const w = window as unknown as {
             app: {
               vault: { getAbstractFileByPath(path: string): unknown };
-              plugins: { plugins: Record<string, { enrichNoteFlow(file: unknown, options: { rename: boolean; frontmatter: boolean; links: boolean; lint: boolean }): Promise<void> }> };
+              plugins: { plugins: Record<string, { noteFlows(): { enrichNoteFlow(file: unknown, options: { rename: boolean; frontmatter: boolean; links: boolean; lint: boolean }): Promise<void> } }> };
             };
           };
           const file = w.app.vault.getAbstractFileByPath("Build plan.md");
           // Fire and forget: enrichNoteFlow() only resolves once the review
           // modal it opens is closed, which this test never does.
-          void w.app.plugins.plugins["claude-companion"]!.enrichNoteFlow(file, { rename: false, frontmatter: false, links: false, lint: true });
+          void w.app.plugins.plugins["claude-companion"]!.noteFlows().enrichNoteFlow(file, { rename: false, frontmatter: false, links: false, lint: true });
         });
         const modal = page.locator(".modal", { has: page.locator(".cc-diff-hunk") });
         await expect(modal.locator(".cc-diff-hunk")).toHaveCount(2, { timeout: 15_000 });

@@ -52,6 +52,31 @@ function runtime(overrides: Partial<CliRuntime>): CliRuntime {
   };
 }
 
+describe("CLI model discovery cache", () => {
+  it("shares discovery between pickers, keeps labels, and refreshes on request", async () => {
+    let calls = 0;
+    const p = new CliProvider(codexBackend, runtime({ listModels: async () => [{ id: `m-${++calls}`, label: `Model ${calls}` }] }));
+    const [first, second] = await Promise.all([p.listModels(), p.listModels()]);
+    expect(first).toEqual([{ id: "m-1", label: "Model 1" }]);
+    expect(second).toEqual(first);
+    expect(await p.listModels()).toEqual(first);
+    expect(calls).toBe(1);
+    expect(p.modelLabel("m-1")).toBe("Model 1");
+    expect(p.modelLabel("")).toBe("Codex default");
+    expect(await p.listModels(true)).toEqual([{ id: "m-2", label: "Model 2" }]);
+  });
+
+  it("allows a failed discovery to be retried", async () => {
+    let calls = 0;
+    const p = new CliProvider(codexBackend, runtime({ listModels: async () => {
+      if (++calls === 1) throw new Error("CLI offline");
+      return [{ id: "m", label: "Model" }];
+    } }));
+    await expect(p.listModels()).rejects.toThrow("CLI offline");
+    await expect(p.listModels()).resolves.toEqual([{ id: "m", label: "Model" }]);
+  });
+});
+
 describe.each([
   ["Claude Code", claudeBackend],
   ["Codex", codexBackend],

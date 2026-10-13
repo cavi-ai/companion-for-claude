@@ -20,12 +20,14 @@ interface SeedMessage {
 async function seedConversation(page: Page, messages: SeedMessage[]): Promise<void> {
   await page.evaluate(async (seed) => {
     const app = (window as unknown as { app: { plugins: { plugins: Record<string, {
-      beginActiveConversationTurn(id: string | null, messages: unknown[], input: { backend: string; model: string; mode: string }): Promise<{ conversationId: string; turnId: string }>;
-      completeActiveConversationTurn(id: string, turnId: string, messages: unknown[]): Promise<void>;
+      conversations(): {
+        beginTurn(id: string | null, messages: unknown[], input: { backend: string; model: string; mode: string }): Promise<{ conversationId: string; turnId: string }>;
+        completeTurn(id: string, turnId: string, messages: unknown[]): Promise<void>;
+      };
     }> } } }).app;
     const plugin = app.plugins.plugins["claude-companion"]!;
-    const turn = await plugin.beginActiveConversationTurn(null, seed.slice(0, 1), { backend: "anthropic", model: "stub", mode: "ask" });
-    await plugin.completeActiveConversationTurn(turn.conversationId, turn.turnId, seed);
+    const turn = await plugin.conversations().beginTurn(null, seed.slice(0, 1), { backend: "anthropic", model: "stub", mode: "ask" });
+    await plugin.conversations().completeTurn(turn.conversationId, turn.turnId, seed);
   }, messages);
 }
 

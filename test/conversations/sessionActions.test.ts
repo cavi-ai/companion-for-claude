@@ -57,6 +57,12 @@ describe("SessionActions", () => {
     expect(h.deps.openInNewTab).not.toHaveBeenCalled();
   });
 
+  it("distill resolves the dep's note path", async () => {
+    const h = harness(source, {}, "n.md");
+    await expect(h.actions.distill("a")).resolves.toBe("n.md");
+    expect(h.deps.distill).toHaveBeenCalledWith("a");
+  });
+
   it("unknown conversations are a no-op", async () => {
     const h = harness(undefined);
     await h.actions.fork("x");

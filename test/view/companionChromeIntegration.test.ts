@@ -9,6 +9,7 @@ import { RelatedView } from "../../src/view/RelatedView";
 import { ResearchView } from "../../src/view/ResearchView";
 import type { CompanionChromeDependencies } from "../../src/view/companionChrome";
 import type { QuickOptionsState } from "../../src/view/quickOptions";
+import { buildPlugin } from "../fakes/plugin";
 
 const state = (): QuickOptionsState => ({
   chatBackend: "auto", chatModel: "Claude Sonnet 5", agentModeEnabled: false, vaultContextEnabled: true,
@@ -37,19 +38,16 @@ const optionLabel = (root: HTMLElement): string | null => {
 
 describe("Companion chrome view integration", () => {
   it("routes a quick embedding change through real saveSettings invalidation", async () => {
-    const plugin = Object.create((await import("../../src/main")).default.prototype) as ClaudeCompanionPlugin;
     const onSettingsChanged = vi.fn();
-    Object.assign(plugin as unknown as Record<string, unknown>, {
-      app: new App(),
-      settings: structuredClone(DEFAULT_SETTINGS),
+    const plugin = buildPlugin({
       persist: async () => undefined,
       refreshViews: () => undefined,
       syncMcpServer: async () => undefined,
-      _semantic: { onSettingsChanged },
+      _semantic: { onSettingsChanged, indexer: () => null },
       _mcpServersSnapshot: "[]",
     });
 
-    await plugin.companionChrome().save({ id: "embedding-engine", value: "ollama" });
+    await plugin.shell().companionChrome().save({ id: "embedding-engine", value: "ollama" });
 
     expect(plugin.settings.embeddingEngine).toBe("ollama");
     expect(onSettingsChanged).toHaveBeenCalledTimes(1);
@@ -61,8 +59,8 @@ describe("Companion chrome view integration", () => {
     const deps = chrome(app);
     const plugin = {
       settings: structuredClone(DEFAULT_SETTINGS),
-      companionChrome: () => deps,
-      listQueuedEdits: () => [],
+      shell: () => ({ companionChrome: () => deps }),
+      orders: () => ({ listQueuedEdits: () => [] }),
     } as unknown as ClaudeCompanionPlugin;
     plugin.settings.sourceCaptureEnabled = false;
 
@@ -85,8 +83,8 @@ describe("Companion chrome view integration", () => {
     const openSessionPicker = vi.fn().mockResolvedValue(undefined);
     const plugin = {
       settings: structuredClone(DEFAULT_SETTINGS),
-      companionChrome: () => deps,
-      openSessionPicker,
+      shell: () => ({ companionChrome: () => deps }),
+      memory: () => ({ openSessionPicker }),
     } as unknown as ClaudeCompanionPlugin;
 
     const related = new RelatedView(new WorkspaceLeaf(app), plugin);

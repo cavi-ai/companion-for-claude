@@ -1,17 +1,17 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { App, setApiVersion } from "obsidian";
-import ClaudeCompanionPlugin from "../src/main";
+import { setApiVersion } from "obsidian";
+import type ClaudeCompanionPlugin from "../src/main";
 import { SECRET_FIELDS } from "../src/secrets/store";
 import { DEFAULT_SETTINGS } from "../src/types";
+import { buildPlugin } from "./fakes/plugin";
 
 const delay = (ms: number): Promise<void> => new Promise((resolve) => window.setTimeout(resolve, ms));
 
 describe("plugin persistence lifecycle", () => {
   it("cannot let an older settings and conversation snapshot overwrite a newer one", async () => {
-    const plugin = Object.create(ClaudeCompanionPlugin.prototype) as ClaudeCompanionPlugin;
     let persisted: unknown = null;
     let saveNumber = 0;
-    Object.assign(plugin as unknown as Record<string, unknown>, {
+    const plugin = buildPlugin({
       settings: { ...structuredClone(DEFAULT_SETTINGS), model: "older-model" },
       convState: { conversations: [{ id: "old" }], activeId: "old" },
       saveData: async (data: unknown) => {
@@ -49,9 +49,7 @@ describe("credentials never reach data.json", () => {
     const settings = structuredClone(DEFAULT_SETTINGS);
     for (const field of SECRET_FIELDS) settings[field] = `SENTINEL-${field}`;
     let raw = "";
-    const plugin = Object.create(ClaudeCompanionPlugin.prototype) as ClaudeCompanionPlugin;
-    Object.assign(plugin as unknown as Record<string, unknown>, {
-      app: new App(),
+    const plugin = buildPlugin({
       settings,
       convState: { conversations: [], activeId: null },
       mcpSyncChain: Promise.resolve(),
@@ -107,9 +105,7 @@ describe("credentials never reach data.json", () => {
 describe("optimize dismissals", () => {
   it("are written by persist() and survive a reload through loadSettings", async () => {
     let raw = "";
-    const plugin = Object.create(ClaudeCompanionPlugin.prototype) as ClaudeCompanionPlugin;
-    Object.assign(plugin as unknown as Record<string, unknown>, {
-      settings: structuredClone(DEFAULT_SETTINGS),
+    const plugin = buildPlugin({
       convState: { conversations: [], activeId: null },
       optimizeState: { dismissed: ["a|b"], verdicts: { "a|b": { verdict: "keep", a: "a", b: "b", model: "m", at: "t" } } },
       saveData: async (data: unknown) => { raw = JSON.stringify(data); },
@@ -117,9 +113,7 @@ describe("optimize dismissals", () => {
     await (plugin as unknown as { persist(): Promise<void> }).persist();
     expect((JSON.parse(raw) as { optimize?: unknown }).optimize).toEqual({ dismissed: ["a|b"], verdicts: { "a|b": { verdict: "keep", a: "a", b: "b", model: "m", at: "t" } } });
 
-    const reloaded = Object.create(ClaudeCompanionPlugin.prototype) as ClaudeCompanionPlugin;
-    Object.assign(reloaded as unknown as Record<string, unknown>, {
-      app: new App(),
+    const reloaded = buildPlugin({
       mcpSyncChain: Promise.resolve(),
       loadData: async () => JSON.parse(raw),
       saveData: async () => {},
@@ -133,9 +127,7 @@ describe("optimize link dismissals", () => {
   it("are written by persist() and survive a reload alongside tag state", async () => {
     let raw = "";
     const optimizeState = { dismissed: ["a|b"], verdicts: {}, dismissedLinks: ["a.md\u0000b.md"], lastBackgroundRun: "2026-10-05T00:00:00.000Z" };
-    const plugin = Object.create(ClaudeCompanionPlugin.prototype) as ClaudeCompanionPlugin;
-    Object.assign(plugin as unknown as Record<string, unknown>, {
-      settings: structuredClone(DEFAULT_SETTINGS),
+    const plugin = buildPlugin({
       convState: { conversations: [], activeId: null },
       optimizeState,
       saveData: async (data: unknown) => { raw = JSON.stringify(data); },
@@ -143,9 +135,7 @@ describe("optimize link dismissals", () => {
     await (plugin as unknown as { persist(): Promise<void> }).persist();
     expect((JSON.parse(raw) as { optimize?: unknown }).optimize).toEqual(optimizeState);
 
-    const reloaded = Object.create(ClaudeCompanionPlugin.prototype) as ClaudeCompanionPlugin;
-    Object.assign(reloaded as unknown as Record<string, unknown>, {
-      app: new App(),
+    const reloaded = buildPlugin({
       mcpSyncChain: Promise.resolve(),
       loadData: async () => JSON.parse(raw),
       saveData: async () => {},
@@ -166,9 +156,7 @@ describe("optimize type weave state", () => {
       dismissedTypes: ["x.md"],
       lastBackgroundRun: "2026-10-05T00:00:00.000Z",
     };
-    const plugin = Object.create(ClaudeCompanionPlugin.prototype) as ClaudeCompanionPlugin;
-    Object.assign(plugin as unknown as Record<string, unknown>, {
-      settings: structuredClone(DEFAULT_SETTINGS),
+    const plugin = buildPlugin({
       convState: { conversations: [], activeId: null },
       optimizeState,
       saveData: async (data: unknown) => { raw = JSON.stringify(data); },
@@ -176,9 +164,7 @@ describe("optimize type weave state", () => {
     await (plugin as unknown as { persist(): Promise<void> }).persist();
     expect((JSON.parse(raw) as { optimize?: unknown }).optimize).toEqual(optimizeState);
 
-    const reloaded = Object.create(ClaudeCompanionPlugin.prototype) as ClaudeCompanionPlugin;
-    Object.assign(reloaded as unknown as Record<string, unknown>, {
-      app: new App(),
+    const reloaded = buildPlugin({
       mcpSyncChain: Promise.resolve(),
       loadData: async () => JSON.parse(raw),
       saveData: async () => {},
@@ -188,13 +174,27 @@ describe("optimize type weave state", () => {
   });
 });
 
+describe("data.json layout", () => {
+  it("writes the top-level keys in a fixed order", async () => {
+    let raw = "";
+    const plugin = buildPlugin({
+      convState: { conversations: [], activeId: null },
+      optimizeState: { dismissed: [], verdicts: {}, dismissedLinks: [], typeVerdicts: {}, dismissedTypes: [], lastBackgroundRun: null },
+      saveData: async (data: unknown) => { raw = JSON.stringify(data); },
+    });
+    await (plugin as unknown as { persist(): Promise<void> }).persist();
+    expect(Object.keys(JSON.parse(raw) as object)).toEqual([
+      "settings", "conversations", "activeConversationId", "standingOrders", "orderEditQueue",
+      "published", "optimize", "buildRuns", "activeBuildRunId",
+    ]);
+  });
+});
+
 describe("retired desk preferences", () => {
   it("drops researchDeskPreferences from persisted data on the next write", async () => {
     setApiVersion("1.11.5");
     let stored: unknown = { settings: { apiKey: "SENTINEL-KEY" }, conversations: [], activeConversationId: null, researchDeskPreferences: { "Research/A/Project.md": { dismissedActionIds: ["x"] } } };
-    const plugin = Object.create(ClaudeCompanionPlugin.prototype) as ClaudeCompanionPlugin;
-    Object.assign(plugin as unknown as Record<string, unknown>, {
-      app: new App(),
+    const plugin = buildPlugin({
       mcpSyncChain: Promise.resolve(),
       loadData: async () => structuredClone(stored),
       saveData: async (data: unknown) => { stored = structuredClone(data); },

@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { opencodeBackend, buildOpencodeArgv, opencodeEnv, parseOpencodeLine } from "../../../src/cli/backends/opencode";
@@ -64,9 +64,15 @@ describe("parseOpencodeLine against the real opencode run --format json fixtures
 });
 
 describe("opencodeBackend.probe", () => {
-  it("parses `opencode providers list` credential count (verified live against 4 real credentials)", async () => {
-    const run = async () => ({ stdout: "└  4 credentials\n", code: 0 });
+  it("uses the auth command and parses a credential-count summary", async () => {
+    const run = vi.fn(async () => ({ stdout: "└  4 credentials\n", code: 0 }));
     expect(await opencodeBackend.probe(run)).toEqual({ loggedIn: true, method: "4 credentials" });
+    expect(run).toHaveBeenCalledWith(["auth", "list", "--standalone"]);
+  });
+
+  it("detects stored and environment credentials in tabular auth output", async () => {
+    const stdout = "Provider                 Credential              Source\nProvider A               API key                 stored\nProvider B               PROVIDER_API_KEY        environment\n";
+    expect(await opencodeBackend.probe(async () => ({ stdout, code: 0 }))).toEqual({ loggedIn: true, method: "2 credentials" });
   });
 
   it("reports signed out with zero credentials or a non-zero exit", async () => {

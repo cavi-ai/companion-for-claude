@@ -124,7 +124,7 @@ async function main(): Promise<void> {
     const log = await readFile(launchLog, "utf8").catch(() => "");
     throw new Error(`${(error as Error).message}. ${log.slice(-1000)}`);
   }
-  const connection = await connectRig(cdpPort);
+  const connection = await connectRig(cdpPort, vault);
   await settleObsidianPage(connection.context, connection.page, false, hidden, obsidianPid);
 
   const token = randomBytes(24).toString("hex");

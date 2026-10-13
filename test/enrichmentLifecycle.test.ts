@@ -6,14 +6,16 @@ vi.mock("obsidian", async (importOriginal) => ({
 }));
 
 import { App, FakeElement, getLastOpenedModal, Platform, TFile, WorkspaceLeaf } from "obsidian";
-import ClaudeCompanionPlugin from "../src/main";
+import type ClaudeCompanionPlugin from "../src/main";
 import { DEFAULT_SETTINGS, type PluginSettings } from "../src/types";
+import { buildPlugin } from "./fakes/plugin";
 import { ExtractError } from "../src/sources/extract";
 import { InboxView, INBOX_VIEW_TYPE } from "../src/view/InboxView";
 import { ChoiceModal } from "../src/view/ChoiceModal";
+import type { WorkspaceViews } from "../src/view/workspaceViews";
 import { SourceEnrichmentController, type SourceEnrichmentControllerDeps } from "../src/sources/controller";
 
-type EnrichRunOutcome = Awaited<ReturnType<ClaudeCompanionPlugin["enrichInboxItem"]>>;
+type EnrichRunOutcome = Awaited<ReturnType<WorkspaceViews["enrichInboxItem"]>>;
 
 interface ControllerPrivates {
   enrichTimers: Map<string, number>;
@@ -55,16 +57,12 @@ function inboxPlugin(
   app: App,
   enrichInboxItem: (file: TFile, options?: { inline?: boolean }) => Promise<EnrichRunOutcome>,
 ): ClaudeCompanionPlugin {
-  const plugin = Object.create(ClaudeCompanionPlugin.prototype) as ClaudeCompanionPlugin;
-  Object.assign(plugin, {
-    app,
+  return buildPlugin({
     settings: { ...DEFAULT_SETTINGS, sourceCaptureEnabled: true, sourceInboxFolder: "Clippings" },
-    enrichInboxItem,
-    sourceEnrichmentBackendLabel: () => "Ollama · utility-model",
-    listQueuedEdits: () => [],
+    views: () => ({ enrichInboxItem }),
+    utilityRouting: () => ({ backendLabel: () => "Ollama · utility-model" }),
     suspendReindex: () => () => {},
-  });
-  return plugin;
+  }, app);
 }
 
 function deferred<T>(): { promise: Promise<T>; resolve(value: T): void } {
@@ -99,13 +97,12 @@ describe("enrichment lifecycle", () => {
       active--;
       return { status: "enriched" };
     });
-    const plugin = Object.create(ClaudeCompanionPlugin.prototype) as ClaudeCompanionPlugin;
-    Object.assign(plugin, { app, settings: { ...DEFAULT_SETTINGS }, _enrichment: controller });
+    const plugin = buildPlugin({ _enrichment: controller }, app);
 
     controller.queueEnrich(file);
     await vi.advanceTimersByTimeAsync(1500);
     await settle();
-    const inbox = plugin.enrichInboxItem(file, { inline: true, refreshInboxViews: false });
+    const inbox = plugin.views().enrichInboxItem(file, { inline: true, refreshInboxViews: false });
     await settle();
 
     expect(started).toEqual([file.path]);
@@ -138,13 +135,12 @@ describe("enrichment lifecycle", () => {
       active--;
       return { status: "enriched" };
     });
-    const plugin = Object.create(ClaudeCompanionPlugin.prototype) as ClaudeCompanionPlugin;
-    Object.assign(plugin, { app, settings: { ...DEFAULT_SETTINGS }, _enrichment: controller });
+    const plugin = buildPlugin({ _enrichment: controller }, app);
 
     controller.queueEnrich(automatic);
     await vi.advanceTimersByTimeAsync(1500);
     await settle();
-    const inboxResult = plugin.enrichInboxItem(inbox, { inline: true, refreshInboxViews: false });
+    const inboxResult = plugin.views().enrichInboxItem(inbox, { inline: true, refreshInboxViews: false });
     await settle();
 
     expect(started).toEqual([automatic.path]);
@@ -448,9 +444,7 @@ describe("enrichment lifecycle", () => {
       });
     }
 
-    const plugin = Object.create(ClaudeCompanionPlugin.prototype) as ClaudeCompanionPlugin;
-    Object.assign(plugin, {
-      app,
+    const plugin = buildPlugin({
       settings: {
         ...DEFAULT_SETTINGS,
         sourceCaptureEnabled: true,
@@ -461,8 +455,7 @@ describe("enrichment lifecycle", () => {
         openaiCompatModel: "remote-model",
       },
       suspendReindex: () => () => {},
-      listQueuedEdits: () => [],
-    });
+    }, app);
     vi.spyOn(plugin.router().openaiCompat, "complete").mockImplementation(async () => {
       await new Promise<void>((resolve) => window.setTimeout(resolve, 150));
       return JSON.stringify({
@@ -515,13 +508,7 @@ describe("enrichment lifecycle", () => {
       isUtilityLifecycleActive: () => !ended,
     }));
     const file = new TFile("Clippings/later.md", "Later", 0);
-    const plugin = Object.create(ClaudeCompanionPlugin.prototype) as ClaudeCompanionPlugin;
-    Object.assign(plugin, {
-      _enrichment: controller,
-      _ontologyReloadTimer: null,
-      researchRefreshTimer: null,
-      inboxBadgeTimer: null,
-    });
+    const plugin = buildPlugin({ _enrichment: controller });
 
     controller.queueEnrich(file);
     controller.markEnrichRecentlyWritten(file.path);
@@ -614,8 +601,10 @@ describe("enrichment lifecycle", () => {
     app.vault.seed("Notes/Project Atlas.md", "");
     const plugin = inboxPlugin(app, async () => ({ status: "enriched" }));
     Object.assign(plugin, {
-      linkCandidates: () => [{ path: "Notes/Project Atlas.md", basename: "Project Atlas", aliases: [] }],
-      reviewInboxLinkSuggestions: async () => ({ appliedFiles: 0, appliedHunks: 0, conflicts: [], failures: [] }),
+      noteFlows: () => ({
+        linkCandidates: () => [{ path: "Notes/Project Atlas.md", basename: "Project Atlas", aliases: [] }],
+        reviewInboxLinkSuggestions: async () => ({ appliedFiles: 0, appliedHunks: 0, conflicts: [], failures: [] }),
+      }),
     });
     const view = new InboxView(new WorkspaceLeaf(app), plugin);
     await view.render();

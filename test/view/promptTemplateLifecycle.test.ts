@@ -29,21 +29,22 @@ describe("Chat template reload lifecycle", () => {
     const view = new ChatView(new WorkspaceLeaf(new App()), plugin);
     const setCommands = vi.fn();
     const seam = view as unknown as {
-      templateCommands: Array<{ name: string }>;
       slashMenu: { setCommands(commands: unknown[]): void };
-      syncSlashMenu(): void;
-      reloadTemplates(): Promise<void>;
+      composer: { syncSlashMenu(): void };
+      slash: { reload(): Promise<void> };
     };
     seam.slashMenu = { setCommands };
-    seam.syncSlashMenu = () => undefined;
+    seam.composer.syncSlashMenu = () => undefined;
 
-    const first = seam.reloadTemplates();
-    const second = seam.reloadTemplates();
+    const first = seam.slash.reload();
+    const second = seam.slash.reload();
     newer.resolve([template("newer")]);
     await second;
     older.resolve([template("older")]);
     await first;
 
-    expect(seam.templateCommands.map(({ name }) => name)).toEqual(["newer"]);
+    expect(setCommands).toHaveBeenCalledOnce();
+    const catalog = setCommands.mock.calls[0]![0] as Array<{ name: string; template?: unknown }>;
+    expect(catalog.filter((command) => command.template).map(({ name }) => name)).toEqual(["newer"]);
   });
 });

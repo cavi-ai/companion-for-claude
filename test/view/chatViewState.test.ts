@@ -7,6 +7,7 @@ import type { ChatProject } from "../../src/projects/model";
 import type ClaudeCompanionPlugin from "../../src/main";
 import { DEFAULT_SETTINGS } from "../../src/types";
 import { ChatView } from "../../src/view/ChatView";
+import { conversationFakes } from "../fakes/conversations";
 
 const fakeElement = (): HTMLElement => new FakeElement() as unknown as HTMLElement;
 
@@ -39,19 +40,18 @@ afterEach(() => {
 
 /** A minimal plugin stub, shaped like chatRenderLifecycle.test.ts's, plus the
  * conversation-store surface getState/setState/clearChat touch. */
-function statePlugin(overrides: Partial<Record<string, unknown>> = {}): ClaudeCompanionPlugin {
+function statePlugin(overrides: Partial<Record<string, unknown>> = {}, fakes = conversationFakes()): ClaudeCompanionPlugin {
   const provider = { id: "anthropic", hasCredentials: () => true };
   return {
-    settings: structuredClone(DEFAULT_SETTINGS),
+    settings: fakes.settings,
     router: () => ({
       chatProvider: () => ({ provider, model: DEFAULT_SETTINGS.model }),
       chatBackend: "claude",
       chatCapabilities: () => ({ agentActions: false, claudeControls: true, metered: true, local: false, cli: false }),
     }),
     composeSystemPrompt: () => "system",
-    listConversations: () => [],
+    ...fakes.host,
     turnService: () => ({ live: () => null }),
-    startNewConversation: vi.fn(async () => undefined),
     ...overrides,
   } as unknown as ClaudeCompanionPlugin;
 }
@@ -66,7 +66,7 @@ interface Seam {
   usageEl: HTMLElement;
   gaugeFillEl: HTMLElement;
   conversationId: string | null;
-  renderMarkdownInto(el: HTMLElement, markdown: string): Promise<void>;
+  renderer: { renderInto(el: HTMLElement, markdown: string): Promise<void> };
   renderEmptyState(): void;
   getState(): Record<string, unknown>;
   setState(state: unknown, result: unknown): Promise<void>;
@@ -91,7 +91,7 @@ function buildView(plugin: ClaudeCompanionPlugin): Seam {
   seam.gaugeFillEl = fakeElement();
   seam.app.workspace.getActiveViewOfType = () => null;
   seam.app.workspace.getActiveFile = () => null;
-  seam.renderMarkdownInto = async () => undefined;
+  seam.renderer.renderInto =async () => undefined;
   // clearChat's empty-state render pulls in the setup-card/credential chain;
   // that path isn't what this file is about, so it's stubbed to a no-op.
   seam.renderEmptyState = () => undefined;
@@ -101,7 +101,7 @@ function buildView(plugin: ClaudeCompanionPlugin): Seam {
 describe("ChatView per-leaf conversation state", () => {
   it("getState/setState round trip: a known id loads that conversation and is reflected back", async () => {
     const conversation: Conversation = { id: "b", title: "Release notes", createdAt: 1, updatedAt: 2, messages: [{ role: "user", content: "hi" }] };
-    const seam = buildView(statePlugin({ listConversations: () => [conversation] }));
+    const seam = buildView(statePlugin({}, conversationFakes({ conversations: [conversation] })));
 
     await seam.setState({ conversationId: "b" }, {});
 
@@ -111,7 +111,7 @@ describe("ChatView per-leaf conversation state", () => {
 
   it("setState with an unknown id keeps the current state", async () => {
     const known: Conversation = { id: "known", title: "T", createdAt: 1, updatedAt: 1, messages: [{ role: "user", content: "hi" }] };
-    const seam = buildView(statePlugin({ listConversations: () => [known] }));
+    const seam = buildView(statePlugin({}, conversationFakes({ conversations: [known] })));
     seam.conversationId = "known";
 
     await seam.setState({ conversationId: "ghost-id" }, {});
@@ -121,19 +121,20 @@ describe("ChatView per-leaf conversation state", () => {
   });
 
   it("clearChat nulls the conversation id without touching the store's active id", () => {
-    const startNewConversation = vi.fn(async () => undefined);
-    const seam = buildView(statePlugin({ startNewConversation }));
+    const fakes = conversationFakes();
+    const startNew = vi.spyOn(fakes.conversations, "startNew").mockResolvedValue(undefined);
+    const seam = buildView(statePlugin({}, fakes));
     seam.conversationId = "existing";
 
     seam.clearChat();
 
     expect(seam.conversationId).toBeNull();
-    expect(startNewConversation).not.toHaveBeenCalled();
+    expect(startNew).not.toHaveBeenCalled();
   });
 
   it("loadConversation calls the leaf's updateHeader when present, so the tab title follows the active conversation", () => {
     const conversation: Conversation = { id: "b", title: "Release notes", createdAt: 1, updatedAt: 2, messages: [{ role: "user", content: "hi" }] };
-    const seam = buildView(statePlugin({ listConversations: () => [conversation] }));
+    const seam = buildView(statePlugin({}, conversationFakes({ conversations: [conversation] })));
     const updateHeader = vi.fn();
     (seam as unknown as { leaf: { updateHeader: () => void } }).leaf.updateHeader = updateHeader;
 
@@ -146,8 +147,9 @@ describe("ChatView per-leaf conversation state", () => {
     const project: ChatProject = { id: "Claude/Projects/Launch.md", name: "Launch", folder: null, pinned: [], instructions: "Ship it.", source: "note" };
     const stream = vi.fn(async (_request: unknown, handlers: { onDone(text: string): void }) => { handlers.onDone("answer"); });
     const provider = { id: "anthropic", hasCredentials: () => true, stream };
-    const setChatProject = vi.fn(async () => undefined);
-    const beginActiveConversationTurn = vi.fn(async () => ({ conversationId: "conversation-1", turnId: "turn-1" }));
+    const fakes = conversationFakes();
+    const turns = fakes.stubTurns();
+    const setProject = vi.spyOn(fakes.conversations, "setProject").mockResolvedValue(undefined);
     const plugin = statePlugin({
       settings: {
         ...structuredClone(DEFAULT_SETTINGS),
@@ -163,34 +165,29 @@ describe("ChatView per-leaf conversation state", () => {
         claudeCli: { hasCredentials: () => false, available: () => false },
         localFallback: async () => null,
       }),
-      beginActiveConversationTurn,
-      registerActiveChatTurn: vi.fn(() => () => undefined),
-      completeActiveConversationTurn: vi.fn(async () => undefined),
-      interruptActiveConversationTurn: vi.fn(async () => undefined),
-      semanticSearch: async () => [],
+      semantic: () => ({ semanticSearch: async () => [] }),
       loadedOntology: async () => null,
       turnService: () => new ChatTurnService(),
-      setChatProject,
       chatProjectFor: async () => project,
-    });
+    }, fakes);
     const seam = buildView(plugin) as unknown as Seam & {
       applyChosenProject(p: ChatProject): Promise<void>;
       run(userText: string): Promise<void>;
-      pendingProjectId: string | null;
+      projects: { pendingProjectId: string | null };
     };
 
     await seam.applyChosenProject(project);
 
-    expect(setChatProject).not.toHaveBeenCalled();
-    expect(seam.pendingProjectId).toBe(project.id);
+    expect(setProject).not.toHaveBeenCalled();
+    expect(seam.projects.pendingProjectId).toBe(project.id);
     expect(seam.conversationId).toBeNull();
 
     await seam.run("Hello");
 
-    expect(beginActiveConversationTurn).toHaveBeenCalledOnce();
-    expect(setChatProject).toHaveBeenCalledOnce();
-    expect(setChatProject).toHaveBeenCalledWith("conversation-1", project.id);
-    expect(seam.pendingProjectId).toBeNull();
+    expect(turns.begin).toHaveBeenCalledOnce();
+    expect(setProject).toHaveBeenCalledOnce();
+    expect(setProject).toHaveBeenCalledWith("conversation-1", project.id);
+    expect(seam.projects.pendingProjectId).toBeNull();
   });
 });
 
@@ -237,7 +234,7 @@ describe("ChatView chat-scoped context toggles", () => {
 
   it("loadConversation keeps the tab's toggles", () => {
     const conversation: Conversation = { id: "b", title: "T", createdAt: 1, updatedAt: 2, messages: [{ role: "user", content: "hi" }] };
-    const plugin = statePlugin({ listConversations: () => [conversation] });
+    const plugin = statePlugin({}, conversationFakes({ conversations: [conversation] }));
     plugin.settings.context = { ...OFF };
     const seam = viewWith(plugin);
     seam.toggleAutomaticContext("searchVault", true);

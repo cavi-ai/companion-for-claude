@@ -3,6 +3,7 @@ import { App, type SettingDefinitionItem } from "../fakes/obsidian";
 import { ClaudeCompanionSettingTab } from "../../src/settings";
 import { DEFAULT_SETTINGS } from "../../src/types";
 import { unavailableStore } from "../../src/secrets/store";
+import { fakeSemantic } from "../fakes/semantic";
 import type ClaudeCompanionPlugin from "../../src/main";
 
 type Tiered = SettingDefinitionItem & { tier?: "basic" | "advanced" };
@@ -22,14 +23,11 @@ function stubPlugin(showAdvanced = false, overrides: Record<string, unknown> = {
     secretsWriteFailures: () => [],
     externalMcp: () => ({ errorFor: () => null, test: async () => ({ ok: true }) }),
     mcpRunning: () => false,
-    builtinModelCached: async () => true,
-    builtinEmbedder: () => ({ backend: () => "wasm", download: async () => {} }),
-    indexer: () => undefined,
+    semantic: () => fakeSemantic(),
     ontology: () => undefined,
-    clipperTemplatesStale: () => false,
+    clipperSetup: () => ({ templatesStale: () => false }),
     refreshViews: () => {},
-    invalidateIndexer: () => {},
-    loadOntologyOnStart: async () => {},
+    onboarding: () => ({ loadOntologyOnStart: async () => {} }),
     openDesktopIntegrations: () => {},
     publishedItems: () => [],
     unpublishItem: async () => {},

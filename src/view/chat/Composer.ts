@@ -21,6 +21,7 @@ import { quickNotice } from "../../notice";
 import type { ComposerHost } from "./hosts";
 import type { ContextToggles } from "../../types";
 import { applyMention, initialToggles } from "./contextScope";
+import { appendCliModelOptions, syncModelSelection } from "./cliModelOptions";
 
 export interface ComposerDeps {
   applyChatFontSize(): void;
@@ -476,15 +477,15 @@ export class Composer {
     const ids = new Set(CLAUDE_MODELS.map((m) => m.id));
     for (const m of CLAUDE_MODELS) claudeGroup.createEl("option", { value: m.id, text: m.label });
     if (!ids.has(this.controls.model)) claudeGroup.createEl("option", { value: this.controls.model, text: this.controls.model });
-    select.value = this.controls.model;
     const deviceGroup = select.createEl("optgroup", { attr: { label: "On-device GPU" } });
     for (const model of DEVICE_MODELS) deviceGroup.createEl("option", { value: `device:${model.id}`, text: model.name });
-    if (this.plugin.settings.chatBackend === "device") select.value = `device:${this.plugin.settings.deviceChatModel}`;
+    syncModelSelection(this.controlsEl, this.plugin.settings, this.controls.model);
     select.addEventListener("change", () => void this.deps.onModelSelect(select.value));
     // Pull in detected Ollama models so a local model can be picked here without
     // opening settings. Async — appended once the local server answers.
     void this.appendLocalModelOptions(select);
     void this.appendCustomModelOptions(select);
+    if (!Platform.isMobile) void appendCliModelOptions(select, this.plugin);
 
     // Reasoning indicator: lit when the current backend thinks before
     // answering (Claude thinking on, or a local model with thinking metadata).
@@ -572,6 +573,7 @@ export class Composer {
 
   /** Rebuild only the capability-dependent knobs into the given container. */
   renderKnobsInto(parent: HTMLElement): void {
+    syncModelSelection(this.controlsEl, this.plugin.settings, this.controls.model);
     parent.empty();
 
     // Chat text size — provider-independent, so it sits above the model knobs

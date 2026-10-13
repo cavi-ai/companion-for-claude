@@ -455,9 +455,6 @@ export abstract class BasesView extends Component {
 }
 
 export class Plugin {}
-// Obsidian always hands a plugin its manifest; tests that build the plugin with
-// Object.create(…prototype) read this one.
-(Plugin.prototype as unknown as { manifest: unknown }).manifest = { id: "claude-companion", name: "Companion for Claude", version: "0.0.0-test" };
 export class MarkdownView {
   getState(): Record<string, unknown> { return {}; }
 }
@@ -493,6 +490,8 @@ export class Modal {
   onClose(): void {}
 }
 export abstract class FuzzySuggestModal<T> extends Modal {
+  inputEl = new FakeElement("input") as unknown as HTMLInputElement;
+  setPlaceholder(text: string): this { this.inputEl.placeholder = text; return this; }
   abstract getItems(): T[];
   abstract getItemText(item: T): string;
   abstract onChooseItem(item: T): void;
@@ -518,6 +517,7 @@ export class TextAreaComponent extends TextComponent {
   override inputEl = new FakeElement("textarea");
 }
 export class DropdownComponent extends BaseComponent {
+  selectEl = this.inputEl;
   options = new Map<string, string>();
   private changeCb: ((value: string) => void) | null = null;
   addOption(value: string, display: string): this { this.options.set(value, display); return this; }

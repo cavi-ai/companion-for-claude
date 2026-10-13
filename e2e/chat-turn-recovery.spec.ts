@@ -65,11 +65,13 @@ test("a saved edit can be reviewed and applied after plugin reload", async ({ ri
 
   await page.evaluate(async () => {
     const app = (window as unknown as { app: { plugins: { plugins: Record<string, {
-      getActiveConversation(): { id: string } | null;
-      saveChatEditProposal(id: string, proposal: { path: string; edits: { old_str: string; new_str: string }[] }): Promise<void>;
+      conversations(): {
+        getActive(): { id: string } | null;
+        saveEditProposal(id: string, proposal: { path: string; edits: { old_str: string; new_str: string }[] }): Promise<void>;
+      };
     }> } } }).app;
     const plugin = app.plugins.plugins["claude-companion"]!;
-    await plugin.saveChatEditProposal(plugin.getActiveConversation()!.id, {
+    await plugin.conversations().saveEditProposal(plugin.conversations().getActive()!.id, {
       path: "Research/Alpha/Documents/Draft.md",
       edits: [{ old_str: "Draft fixture.", new_str: "Revised fixture." }],
     });
@@ -109,11 +111,13 @@ test("a saved edit inside a table is reviewed in the modal, not inline, in Live 
 
   await page.evaluate(async () => {
     const app = (window as unknown as { app: { plugins: { plugins: Record<string, {
-      getActiveConversation(): { id: string } | null;
-      saveChatEditProposal(id: string, proposal: { path: string; edits: { old_str: string; new_str: string }[] }): Promise<void>;
+      conversations(): {
+        getActive(): { id: string } | null;
+        saveEditProposal(id: string, proposal: { path: string; edits: { old_str: string; new_str: string }[] }): Promise<void>;
+      };
     }> } } }).app;
     const plugin = app.plugins.plugins["claude-companion"]!;
-    await plugin.saveChatEditProposal(plugin.getActiveConversation()!.id, {
+    await plugin.conversations().saveEditProposal(plugin.conversations().getActive()!.id, {
       path: "Notes/Table.md",
       edits: [{ old_str: "| a | b |", new_str: "| a | c |" }],
     });
@@ -146,11 +150,13 @@ test("a saved edit can be discarded without touching the note", async ({ rig }) 
 
   await page.evaluate(async () => {
     const app = (window as unknown as { app: { plugins: { plugins: Record<string, {
-      getActiveConversation(): { id: string } | null;
-      saveChatEditProposal(id: string, proposal: { path: string; edits: { old_str: string; new_str: string }[] }): Promise<void>;
+      conversations(): {
+        getActive(): { id: string } | null;
+        saveEditProposal(id: string, proposal: { path: string; edits: { old_str: string; new_str: string }[] }): Promise<void>;
+      };
     }> } } }).app;
     const plugin = app.plugins.plugins["claude-companion"]!;
-    await plugin.saveChatEditProposal(plugin.getActiveConversation()!.id, {
+    await plugin.conversations().saveEditProposal(plugin.conversations().getActive()!.id, {
       path: "Research/Alpha/Documents/Draft.md",
       edits: [{ old_str: "Draft fixture.", new_str: "Revised fixture." }],
     });

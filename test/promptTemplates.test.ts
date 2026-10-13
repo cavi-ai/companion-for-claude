@@ -1,8 +1,8 @@
 import { App } from "obsidian";
 import { describe, it, expect } from "vitest";
-import ClaudeCompanionPlugin from "../src/main";
 import { parseTemplateNote, slugifyTemplateName, substitutePlaceholders } from "../src/templates/promptTemplates";
 import { DEFAULT_SETTINGS } from "../src/types";
+import { buildPlugin } from "./fakes/plugin";
 
 describe("slugifyTemplateName", () => {
   it("lowercases, dashes, and strips punctuation", () => {
@@ -94,11 +94,9 @@ describe("prompt template vault loading", () => {
       if (file.path === broken.path) throw new Error("permission denied");
       return read(file);
     };
-    const plugin = Object.create(ClaudeCompanionPlugin.prototype) as ClaudeCompanionPlugin;
-    Object.assign(plugin as unknown as Record<string, unknown>, {
-      app,
+    const plugin = buildPlugin({
       settings: { ...structuredClone(DEFAULT_SETTINGS), templatesFolder: "Claude/Templates" },
-    });
+    }, app);
 
     await expect(plugin.promptTemplates()).resolves.toEqual([
       expect.objectContaining({ name: "weekly-review", prompt: "Summarize the week." }),

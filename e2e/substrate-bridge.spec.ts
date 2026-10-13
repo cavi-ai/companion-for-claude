@@ -31,9 +31,9 @@ test.afterAll(async () => { await harness?.close(); });
 
 async function token(): Promise<string> {
   return harness.page.evaluate(async () => {
-    const plugin = (window as unknown as { app: { plugins: { plugins: Record<string, { syncMcpServer(): Promise<void>; rebuildSemanticIndex(): Promise<void>; resolvedMcpToken(): string }> } } }).app.plugins.plugins["claude-companion"];
+    const plugin = (window as unknown as { app: { plugins: { plugins: Record<string, { syncMcpServer(): Promise<void>; semantic(): { rebuildSemanticIndex(): Promise<void> }; resolvedMcpToken(): string }> } } }).app.plugins.plugins["claude-companion"];
     await plugin.syncMcpServer();
-    await plugin.rebuildSemanticIndex();
+    await plugin.semantic().rebuildSemanticIndex();
     return plugin.resolvedMcpToken();
   });
 }

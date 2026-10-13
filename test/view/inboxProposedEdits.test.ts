@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import { App, FakeElement, WorkspaceLeaf } from "obsidian";
-import ClaudeCompanionPlugin from "../../src/main";
 import type { QueuedEdit } from "../../src/orders/editQueue";
 import { InboxView } from "../../src/view/InboxView";
+import { buildPlugin } from "../fakes/plugin";
 
 const settle = async (turns = 24): Promise<void> => {
   for (let turn = 0; turn < turns; turn++) await Promise.resolve();
@@ -15,19 +15,15 @@ const item = (id: string, over: Partial<QueuedEdit> = {}): QueuedEdit => ({
 
 function harness(queue: QueuedEdit[]) {
   const app = new App();
-  const plugin = Object.create(ClaudeCompanionPlugin.prototype) as ClaudeCompanionPlugin;
   const reviewQueuedEdit = vi.fn(async () => undefined);
   const discardQueuedEdit = vi.fn(async () => undefined);
-  Object.assign(plugin, {
-    app,
+  const plugin = buildPlugin({
     settings: { sourceCaptureEnabled: true, sourceInboxFolder: "Clippings", clipOrganizedFolder: "Library" },
-    sourceEnrichmentBackendLabel: () => "Claude",
-    linkCandidates: () => [],
-    clipperSetupNeeded: () => false,
-    listQueuedEdits: () => queue,
-    reviewQueuedEdit,
-    discardQueuedEdit,
-  });
+    utilityRouting: () => ({ backendLabel: () => "Claude" }),
+    noteFlows: () => ({ linkCandidates: () => [] }),
+    clipperSetup: () => ({ setupNeeded: () => false }),
+    orders: () => ({ listQueuedEdits: () => queue, reviewQueuedEdit, discardQueuedEdit }),
+  }, app);
   return { app, view: new InboxView(new WorkspaceLeaf(app), plugin), reviewQueuedEdit, discardQueuedEdit };
 }
 
