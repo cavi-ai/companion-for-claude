@@ -9,6 +9,8 @@ export function fakeSemantic(overrides: Record<string, unknown> = {}): SemanticC
     indexer: () => undefined,
     invalidateIndexer: () => {},
     rebuildSemanticIndex: async () => {},
+    buildProgress: () => null,
+    subscribeBuildProgress: () => () => {},
     ...overrides,
   } as unknown as SemanticController;
 }

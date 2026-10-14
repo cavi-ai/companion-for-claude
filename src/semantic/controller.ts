@@ -11,6 +11,7 @@ import type { PluginSettings } from "../types";
 import type { ProviderRouter } from "../providers/router";
 import type { ActivityStore } from "../activity/store";
 import type { EnrichDiagnostics } from "../sources/enrichDiagnostics";
+import type { SemanticIndexProgress } from "./progress";
 
 /** Delete and rename events within this window share one index save. */
 const INDEX_SAVE_DELAY_MS = 2000;
@@ -76,6 +77,9 @@ export class SemanticController {
   private destroyed = false;
   private mobileInferenceEnabled = false;
   private inferencePaused = false;
+  private rebuildRun: { modelId: string; promise: Promise<void> } | null = null;
+  private rebuildProgress: SemanticIndexProgress | null = null;
+  private progressListeners = new Set<(progress: SemanticIndexProgress | null) => void>();
 
   constructor(private deps: SemanticControllerDeps) {}
 
@@ -86,6 +90,10 @@ export class SemanticController {
     this._builtinEmbedder?.terminate();
     this._builtinEmbedder = null;
     if (this.reindexTimer !== null) window.clearTimeout(this.reindexTimer);
+    if (this.rebuildProgress?.state === "running") {
+      this.publishBuildProgress({ ...this.rebuildProgress, state: "cancelled", finishedAt: Date.now() });
+    }
+    this.progressListeners.clear();
   }
 
   /** Writes a delete/rename save still waiting on its timer, before the indexer's signal aborts. */
@@ -131,10 +139,20 @@ export class SemanticController {
         : s.embeddingEngine === "custom"
           ? new OllamaEmbedder(model, (_m, input) => this.deps.router().openaiCompat.embed(s.openaiCompatEmbeddingModel, input))
           : new OllamaEmbedder(s.embeddingModel, (m, input) => this.deps.router().ollama.embed(m, input));
+    // Each persisted float32 vector occupies this many base64 bytes. The
+    // complete file still has the byte guard below, including text/metadata.
+    // A fixed 400-chunk cap rejected indexes that fit the mobile budget.
+    const mobileChunkLimit = s.embeddingEngine === "builtin"
+      ? Math.floor(MOBILE_INDEX_BUDGET_BYTES / (4 * Math.ceil(builtinModelById(s.builtinEmbeddingModel).dim * 4 / 3)))
+      : 400;
     this._indexer = new SemanticIndexer({
       embeddingModel: model,
       signal: this.indexAbort.signal,
-      ...(this.deps.isMobile ? { maxChunks: 400 } : {}),
+      ...(this.deps.isMobile ? {
+        maxChunks: mobileChunkLimit,
+        maxSerializedBytes: MOBILE_INDEX_BUDGET_BYTES,
+        ...(s.embeddingEngine === "builtin" ? { embeddingDimensions: builtinModelById(s.builtinEmbeddingModel).dim } : {}),
+      } : {}),
       listMarkdown: () => this.deps.vault.getMarkdownFiles(),
       read: async (p: string) => {
         const f = this.deps.vault.getAbstractFileByPath(p);
@@ -316,8 +334,48 @@ export class SemanticController {
     return this.relatedNotes(path, k, accept);
   }
 
-  async rebuildSemanticIndex(): Promise<void> {
+  buildProgress(): SemanticIndexProgress | null {
+    return this.rebuildProgress ? { ...this.rebuildProgress } : null;
+  }
+
+  subscribeBuildProgress(listener: (progress: SemanticIndexProgress | null) => void): () => void {
+    if (!this.destroyed) this.progressListeners.add(listener);
+    listener(this.buildProgress());
+    return () => this.progressListeners.delete(listener);
+  }
+
+  private publishBuildProgress(progress: SemanticIndexProgress): void {
+    this.rebuildProgress = { ...progress };
+    for (const listener of this.progressListeners) {
+      try { listener(this.buildProgress()); }
+      catch (error) { console.debug("Claude Companion: index progress display failed", error); }
+    }
+  }
+
+  rebuildSemanticIndex(): Promise<void> {
+    if (this.destroyed) return Promise.resolve();
+    const s = this.deps.settings();
+    const modelId = embedderId(s.embeddingEngine, s.embeddingModel, s.builtinEmbeddingModel, s.openaiCompatEmbeddingModel);
+    if (this.rebuildRun?.modelId === modelId) return this.rebuildRun.promise;
+    const run = { modelId, promise: Promise.resolve() };
+    run.promise = Promise.resolve().then(() => this.performRebuild(run)).finally(() => {
+      if (this.rebuildRun !== run) return;
+      if (this.rebuildProgress?.state === "running") {
+        const outcome = this.deps.activity().snapshot().records.find((record) => record.id === `semantic-index:${modelId}`);
+        this.publishBuildProgress({ ...this.rebuildProgress,
+          state: this.destroyed ? "cancelled" : outcome?.state === "succeeded" ? "succeeded" : "failed", finishedAt: Date.now() });
+      }
+      this.rebuildRun = null;
+    });
+    this.rebuildRun = run;
+    return run.promise;
+  }
+
+  private async performRebuild(run: { modelId: string; promise: Promise<void> }): Promise<void> {
     if (this.destroyed) return;
+    this.publishBuildProgress({ state: "running", phase: "preparing", startedAt: Date.now(),
+      filesCompleted: 0, totalFiles: 0, chunksEmbedded: 0, completedFileChunks: 0,
+      currentFileChunksCompleted: 0, currentFileChunksTotal: 0 });
     this.mobileInferenceEnabled = true;
     this.inferencePaused = false;
     const s = this.deps.settings();
@@ -364,6 +422,11 @@ export class SemanticController {
     try {
       const res = await ix.build({
         force: true,
+        onDetailedProgress: (progress) => {
+          if (!this.destroyed && this.rebuildRun === run && this.rebuildProgress) {
+            this.publishBuildProgress({ ...this.rebuildProgress, ...progress });
+          }
+        },
         onProgress: (done, nextTotal) => {
           completed = done;
           total = nextTotal;
@@ -559,7 +622,7 @@ export class SemanticController {
     if (!this._builtinEmbedder) this._builtinEmbedder = new TransformersEmbedder(() => {
       if (this.deps.isMobile && this.deps.deviceChatBusy?.()) throw new Error("Stop on-device chat before loading an embedding model.");
       return createEmbedWorker() as unknown as WorkerLike;
-    }, model);
+    }, model, this.deps.isMobile ? "wasm" : "auto");
     return this._builtinEmbedder;
   }
 

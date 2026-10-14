@@ -2,7 +2,7 @@ import { App, clearNotices, FakeElement, WorkspaceLeaf } from "obsidian";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_SETTINGS } from "../src/types";
 import { buildPlugin } from "./fakes/plugin";
-import type { BuildResult } from "../src/semantic/indexer";
+import type { BuildResult, IndexBuildProgress } from "../src/semantic/indexer";
 import { RelatedView } from "../src/view/RelatedView";
 import { SemanticController, type SemanticControllerDeps } from "../src/semantic/controller";
 import { ActivityStore } from "../src/activity/store";
@@ -48,6 +48,36 @@ function makeDeps(overrides?: Partial<SemanticControllerDeps>): SemanticControll
 }
 
 describe("semantic activity", () => {
+  it("shares one rebuild and publishes chunk progress to all open views", async () => {
+    const activity = new ActivityStore();
+    const controller = new SemanticController(makeDeps({
+      activity: () => activity,
+      settings: () => ({ ...DEFAULT_SETTINGS, semanticEnabled: true, embeddingEngine: "ollama" }),
+    }));
+    const completion = deferred<BuildResult>();
+    const build = vi.fn(async ({ onDetailedProgress }: { onDetailedProgress: (progress: IndexBuildProgress) => void }) => {
+      onDetailedProgress({ phase: "embedding", filesCompleted: 0, totalFiles: 2, chunksEmbedded: 1,
+        completedFileChunks: 0, currentFileChunksCompleted: 1, currentFileChunksTotal: 10 });
+      return completion.promise;
+    });
+    vi.spyOn(controller, "indexer").mockReturnValue({ build } as never);
+    const updates: unknown[] = [];
+    const unsubscribe = controller.subscribeBuildProgress((progress) => updates.push(progress));
+    const first = controller.rebuildSemanticIndex();
+    const second = controller.rebuildSemanticIndex();
+    expect(first).toBe(second);
+    await vi.waitFor(() => expect(build).toHaveBeenCalledOnce());
+    expect(controller.buildProgress()).toMatchObject({ state: "running", chunksEmbedded: 1, currentFileChunksTotal: 10 });
+    completion.resolve({ indexed: 2, skipped: 0, removed: 0, failureCount: 0, failures: [] });
+    await first;
+    expect(controller.buildProgress()).toMatchObject({ state: "succeeded", finishedAt: expect.any(Number) });
+    const count = updates.length;
+    unsubscribe();
+    controller.destroy();
+    expect(updates).toHaveLength(count);
+    activity.dispose();
+  });
+
   it("refuses to allocate a mobile embedding worker while device chat owns memory", async () => {
     const controller = new SemanticController(makeDeps({ isMobile: true, deviceChatBusy: () => true }));
     await expect(controller.builtinEmbedder().download()).rejects.toThrow("Stop on-device chat");

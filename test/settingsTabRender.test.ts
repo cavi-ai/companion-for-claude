@@ -5,6 +5,7 @@ import { DEFAULT_SETTINGS } from "../src/types";
 import { unavailableStore } from "../src/secrets/store";
 import type ClaudeCompanionPlugin from "../src/main";
 import { fakeSemantic } from "./fakes/semantic";
+import type { SemanticIndexProgress } from "../src/semantic/progress";
 
 function stubPlugin(): ClaudeCompanionPlugin & { settings: Record<string, unknown> } {
   const semantic = fakeSemantic();
@@ -239,6 +240,44 @@ describe("settings tab render", () => {
 });
 
 describe("semantic settings action feedback", () => {
+  it("shows live chunks, elapsed time, and ETA when reopened, and cleans up on close", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(70_000);
+      const plugin = stubPlugin();
+      plugin.settings.semanticEnabled = true;
+      let current: SemanticIndexProgress = { state: "running", phase: "embedding", startedAt: 0,
+        filesCompleted: 3, totalFiles: 10, chunksEmbedded: 35, completedFileChunks: 30,
+        currentFileChunksCompleted: 5, currentFileChunksTotal: 20 };
+      let listener: (progress: SemanticIndexProgress | null) => void = () => {};
+      const unsubscribe = vi.fn();
+      plugin.semantic().buildProgress = () => current;
+      plugin.semantic().subscribeBuildProgress = (callback) => { listener = callback; callback(current); return unsubscribe; };
+      const row = flatten(definitionsOf(plugin)).find((item) => item.name === "Rebuild index")!;
+      const setting = new Setting(new FakeElement() as unknown as HTMLElement);
+      const cleanup = row.render!(setting, undefined);
+      const status = setting.settingEl.querySelectorAll(".cc-semantic-index-status")[0]!;
+      const button = setting.components[0] as ButtonComponent;
+      expect(status.textContent).toContain("35 chunks embedded · 3/10 notes");
+      expect(status.textContent).toContain("Elapsed: 1m 10s");
+      expect(status.textContent).toContain("Estimated remaining: ~2m 30s");
+      expect(button.buttonEl.disabled).toBe(true);
+      await Promise.resolve();
+      expect(status.textContent).toContain("35 chunks embedded");
+      current = { ...current, chunksEmbedded: 36, currentFileChunksCompleted: 6 };
+      listener(current);
+      vi.advanceTimersByTime(1000);
+      expect(status.textContent).toContain("36 chunks embedded");
+      expect(status.textContent).toContain("Elapsed: 1m 11s");
+      expect(typeof cleanup).toBe("function");
+      (cleanup as () => void)();
+      expect(unsubscribe).toHaveBeenCalledOnce();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("reuses the index status instead of showing conflicting counts", () => {
     const plugin = stubPlugin();
     plugin.settings.semanticEnabled = true;

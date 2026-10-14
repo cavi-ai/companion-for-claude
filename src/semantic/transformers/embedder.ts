@@ -5,7 +5,7 @@
 
 import type { Embedder } from "../embedder";
 import { BUILTIN_EMBEDDING_MODEL, type BuiltinModel } from "./model";
-import { RequestTracker, type ProgressEvent, type WorkerRequest, type WorkerResponse } from "./protocol";
+import { RequestTracker, type EmbeddingDevice, type ProgressEvent, type WorkerRequest, type WorkerResponse } from "./protocol";
 
 export interface WorkerLike {
   postMessage(msg: unknown): void;
@@ -24,6 +24,7 @@ export class TransformersEmbedder implements Embedder {
   constructor(
     private createWorker: () => WorkerLike,
     private model: BuiltinModel = BUILTIN_EMBEDDING_MODEL,
+    private device: EmbeddingDevice = "auto",
   ) {}
 
   get id(): string {
@@ -76,7 +77,7 @@ export class TransformersEmbedder implements Embedder {
       // caller already got its own rejection from tracker.rejectAll()).
       loadPromise.catch(() => {});
       this.loaded = loadPromise;
-      try { this.post({ id: req.id, type: "load", repo: this.model.hfRepo, pooling: this.model.pooling, revision: this.model.revision, dtype: this.model.dtype, maxTokens: this.model.maxTokens, dim: this.model.dim, allowDownload }); }
+      try { this.post({ id: req.id, type: "load", repo: this.model.hfRepo, pooling: this.model.pooling, revision: this.model.revision, dtype: this.model.dtype, maxTokens: this.model.maxTokens, dim: this.model.dim, allowDownload, device: this.device }); }
       catch (error) { this.tracker.rejectAll(error instanceof Error ? error : new Error(String(error))); }
     }
     return this.loaded;

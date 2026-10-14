@@ -150,8 +150,8 @@ returning nothing.
 ### Three embedding engines
 
 **Built-in (recommended, default)** — runs `Snowflake/snowflake-arctic-embed-xs`
-(384-dimension vectors) inside Obsidian via transformers.js, on WebGPU where
-available and WASM otherwise. Works on **every platform, including mobile**.
+(384-dimension vectors) inside Obsidian via transformers.js. Mobile uses
+single-threaded WASM; desktop uses WebGPU where available and WASM otherwise.
 
 It needs one explicit download: ~24 MB of q8 weights and tokenizer/config files from `huggingface.co` plus
 ~23 MB of ONNX runtime from `cdn.jsdelivr.net`. Nothing downloads until you click
@@ -164,7 +164,12 @@ removes the cached model.
 **OpenAI-compatible endpoint** — embeds against the endpoint configured under
 *Local models*, using its embedding model.
 
-The built-in embedding worker uses WebGPU or WASM. On-device chat uses WebGPU with quantized ONNX exports; neither worker uses native MLX or Android LiteRT. Arctic XS is the mobile recommendation because it has the smallest download and vector dimensions in this catalog. Download size is not peak runtime memory, and retrieval quality depends on the vault.
+The built-in embedding worker uses WASM on mobile to limit peak memory use, and WebGPU or WASM on desktop. On-device chat uses WebGPU with quantized ONNX exports; neither worker uses native MLX or Android LiteRT. Arctic XS is the mobile recommendation because it has the smallest download and vector dimensions in this catalog. Download size is not peak runtime memory, and retrieval quality depends on the vault.
+
+Mobile indexes are limited to 8 MiB including vectors, note text, and metadata.
+If the next note would exceed that budget, indexing stops and retains the
+previous saved index. Keyword search remains available. A smaller embedding
+model reduces vector storage; large vaults may still exceed the limit.
 
 | Built-in model | q8 model assets (decimal MB) | Vector dimensions |
 |---|---|---|

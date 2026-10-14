@@ -7,21 +7,16 @@ import type { SemanticController } from "../semantic/controller";
 import { BUILTIN_EMBEDDING_MODELS, builtinModelById } from "../semantic/transformers/model";
 import type { PluginSettings } from "../types";
 import { cachedModelHint, selectEmbedding, showCachedModelHint } from "./actions";
+import { renderIndexRebuild, setSemanticActionBusy } from "./semanticRebuild";
 
 export interface SemanticItemsContext {
   plugin: Pick<ClaudeCompanionPlugin, "activity" | "router" | "saveSettings" | "settings"> & {
-    semantic: () => Pick<SemanticController, "builtinEmbedder" | "builtinModelCached" | "clearBuiltinModel" | "indexer" | "invalidateIndexer" | "rebuildSemanticIndex">;
+    semantic: () => Pick<SemanticController, "builtinEmbedder" | "builtinModelCached" | "clearBuiltinModel" | "indexer" | "invalidateIndexer" | "rebuildSemanticIndex" | "buildProgress" | "subscribeBuildProgress">;
   };
   /** Re-render the settings page. */
   update(): void;
   /** Offer to rebuild an index built with a different embedding model. */
   offerIndexRebuild(label: string): void;
-}
-
-function setSemanticActionBusy(button: ButtonComponent, busy: boolean, label: string): void {
-  button.setDisabled(busy).setButtonText(label);
-  button.buttonEl.toggleClass("is-running", busy);
-  button.buttonEl.setAttribute("aria-busy", String(busy));
 }
 
 export function semanticItems(ctx: SemanticItemsContext): SettingGroupItem[] {
@@ -221,57 +216,7 @@ export function semanticItems(ctx: SemanticItemsContext): SettingGroupItem[] {
       name: "Rebuild index",
       desc: "Embed every note now. Re-embeds only changed notes on save afterward.",
       visible: enabled,
-      render: (setting) => {
-        const previousStatuses = Array.from(setting.settingEl.querySelectorAll(".cc-conn-status"));
-        const status = (previousStatuses[0] as HTMLElement | undefined)
-          ?? setting.settingEl.createDiv({ cls: "cc-conn-status setting-item-description" });
-        status.addClass("cc-semantic-index-status");
-        for (const duplicate of previousStatuses.slice(1)) duplicate.remove();
-        let running = false;
-        void plugin
-          .semantic()
-          .indexer()
-          ?.stats()
-          .then((s) => { if (!running) status.setText(`Index: ${s.notes} note(s), ${s.chunks} chunk(s).`); })
-          .catch(() => { if (!running) status.setText("Index: not built yet."); });
-        setting.addButton((btn) => {
-          btn.buttonEl.addClass("cc-semantic-action");
-          btn
-            .setButtonText("Rebuild")
-            .setCta()
-            .onClick(async () => {
-              if (running) return;
-              running = true;
-              setSemanticActionBusy(btn, true, "Rebuilding…");
-              status.removeClass("is-ok");
-              status.removeClass("is-err");
-              status.setText("Rebuilding index…");
-              try {
-                await plugin.semantic().rebuildSemanticIndex();
-                const s = await plugin.semantic().indexer()?.stats();
-                const outcome = plugin.activity.snapshot().records.find((record) =>
-                  record.kind === "semantic-index" && record.title === "Building semantic index",
-                );
-                if (outcome?.state === "needs-attention") {
-                  status.setText("Index needs attention — open Companion activity for details.");
-                  status.addClass("is-err");
-                } else if (outcome?.state === "succeeded" && s) {
-                  status.setText(`Index ready · ${s.notes} note(s), ${s.chunks} chunk(s).`);
-                  status.addClass("is-ok");
-                } else {
-                  status.setText("Rebuild result unavailable — open Companion activity for details.");
-                  status.addClass("is-err");
-                }
-              } catch (e) {
-                status.setText(`Rebuild failed: ${e instanceof Error ? e.message : String(e)}`);
-                status.addClass("is-err");
-              } finally {
-                running = false;
-                setSemanticActionBusy(btn, false, "Rebuild");
-              }
-            });
-        });
-      },
+      render: (setting) => renderIndexRebuild(setting, plugin),
     },
   ];
 }

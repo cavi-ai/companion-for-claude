@@ -2,8 +2,10 @@
 // embedding worker, plus request/response correlation. Pure — no obsidian,
 // no worker APIs; the embedder feeds worker messages into RequestTracker.
 
+export type EmbeddingDevice = "auto" | "wasm";
+
 export type WorkerRequest =
-  | { id: number; type: "load"; repo: string; pooling: "cls" | "mean"; revision: string; dtype: "q8"; maxTokens: number; dim: number; allowDownload?: boolean }
+  | { id: number; type: "load"; repo: string; pooling: "cls" | "mean"; revision: string; dtype: "q8"; maxTokens: number; dim: number; allowDownload?: boolean; device?: EmbeddingDevice }
   | { id: number; type: "embed"; texts: string[] }
   | { id: number; type: "dispose" };
 

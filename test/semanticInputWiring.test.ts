@@ -44,6 +44,27 @@ function indexFiles(app: App, files: Record<string, number>) {
 }
 
 describe("mobile semantic index file", () => {
+  it("indexes more than 400 small notes within the mobile byte budget", async () => {
+    Platform.isMobile = true;
+    Platform.isDesktop = false;
+    const app = new App();
+    for (let i = 0; i < 401; i++) app.vault.seed(`note-${i}.md`, "A short note about embeddings.");
+    vi.spyOn(SemanticController.prototype, "canEmbedWithoutDownload").mockResolvedValue(true);
+    vi.spyOn(SemanticController.prototype, "builtinEmbedder").mockReturnValue({
+      embed: async (input: string[]) => input.map(() => new Array<number>(384).fill(0)),
+      backend: () => "wasm", terminate: () => undefined,
+    } as never);
+    const plugin = mobilePlugin(app);
+    const { write } = indexFiles(app, {});
+
+    const result = await plugin.semantic().indexer()!.build({ force: true });
+
+    expect(result.failureCount).toBe(0);
+    expect(result.indexed).toBe(401);
+    expect(write).toHaveBeenCalledOnce();
+    expect(new TextEncoder().encode(write.mock.calls[0]![1]).length).toBeLessThan(8 * 1024 * 1024);
+  });
+
   it("never reads a desktop index over the mobile budget, and a rebuild writes the phone's own file", async () => {
     Platform.isMobile = true;
     Platform.isDesktop = false;

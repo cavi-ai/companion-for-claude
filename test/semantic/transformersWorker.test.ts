@@ -19,6 +19,25 @@ function stubWorkerSelf(scope: object): void {
 }
 
 describe("built-in embedding worker", () => {
+  it("uses WASM without probing WebGPU when explicitly requested", async () => {
+    const requestAdapter = vi.fn(async () => ({}));
+    transformers.pipeline.mockImplementation(async () => Object.assign(
+      async () => ({ tolist: () => [[1, 0]] }),
+      { tokenizer: { config: { model_max_length: 8192 } } },
+    ));
+    const responses: WorkerResponse[] = [];
+    const scope = { onmessage: null as ((e: { data: WorkerRequest }) => void) | null, postMessage: (m: WorkerResponse) => responses.push(m) };
+    stubWorkerSelf(scope);
+    vi.stubGlobal("navigator", { gpu: { requestAdapter } });
+    await import("../../src/semantic/transformers/worker");
+    scope.onmessage?.({ data: { id: 1, type: "load", repo: "test", revision: "pinned", dtype: "q8", maxTokens: 512, dim: 2, pooling: "cls", device: "wasm" } });
+    await vi.waitFor(() => expect(responses).toContainEqual({ id: 1, type: "result", vectors: [], backend: "wasm" }));
+    expect(requestAdapter).not.toHaveBeenCalled();
+    expect(transformers.pipeline).toHaveBeenCalledExactlyOnceWith("feature-extraction", "test", expect.objectContaining({ device: "wasm" }));
+    scope.onmessage?.({ data: { id: 2, type: "embed", texts: ["a passage"] } });
+    await vi.waitFor(() => expect(responses).toContainEqual({ id: 2, type: "result", vectors: [[1, 0]] }));
+  });
+
   it("bounds tokenizer context before GPU warm-up and fallback inference", async () => {
     const observed: number[] = [];
     transformers.pipeline.mockImplementation(async (_task, _repo, options) => {

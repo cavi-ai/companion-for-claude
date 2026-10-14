@@ -103,11 +103,23 @@ function readNotes(notes: Record<string, unknown>, dim: number, readVector: (vec
 const legacyVector = (dim: number) => (vector: unknown): number[] | null =>
   Array.isArray(vector) && dim > 0 && vector.length === dim && vector.every(Number.isFinite) ? (vector as number[]) : null;
 
+const jsonBytes = (value: unknown): number => new TextEncoder().encode(JSON.stringify(value)).length;
+type SizedChunk = Pick<ChunkRecord, "ord" | "text"> & { vector?: number[] };
+
+/** JSON keys, escaped text, metadata, separators, and base64 float32 vectors. */
+function noteBytes(path: string, hash: string, mtime: number, chunks: readonly SizedChunk[], dim?: number): number {
+  return jsonBytes(path) + 1 + jsonBytes({ hash, mtime, chunks: [] })
+    + Math.max(0, chunks.length - 1)
+    + chunks.reduce((sum, chunk) => sum + jsonBytes({ ord: chunk.ord, text: chunk.text, vector: "" })
+      + 4 * Math.ceil((dim ?? chunk.vector?.length ?? 0) * 4 / 3), 0);
+}
+
 /**
  * A thin, pure wrapper over IndexData with the operations the indexer needs.
  * Stores best-effort: callers persist via toJSON() after mutating.
  */
 export class SemanticStore {
+  private serializedNotesBytes: number | null = null;
   constructor(private data: IndexData) {}
 
   /** Rebuild from persisted JSON, or start empty if absent/stale/model-changed/corrupt. */
@@ -151,6 +163,18 @@ export class SemanticStore {
     return { version: INDEX_VERSION, model: this.data.model, dim: this.data.dim, notes };
   }
 
+  /** Full saved size after replacing one note, without allocating encoded vectors.
+   * Cache the unchanged notes so a build does not remeasure the whole vault per note. */
+  projectedSerializedBytes(path: string, hash: string, mtime: number, chunks: readonly Pick<ChunkRecord, "ord" | "text">[], dim: number): number {
+    this.serializedNotesBytes ??= Object.entries(this.data.notes).reduce((sum, [key, entry]) =>
+      sum + noteBytes(key, entry.hash, entry.mtime, entry.chunks), 0);
+    const old = this.data.notes[path];
+    const count = Object.keys(this.data.notes).length + (old ? 0 : 1);
+    return jsonBytes({ version: INDEX_VERSION, model: this.model, dim, notes: {} })
+      + this.serializedNotesBytes - (old ? noteBytes(path, old.hash, old.mtime, old.chunks) : 0)
+      + noteBytes(path, hash, mtime, chunks, dim) + Math.max(0, count - 1);
+  }
+
   /** True if this path is absent, its content hash differs, or (when given) its chunk texts differ from what's indexed. */
   needsReindex(path: string, hash: string, chunkTexts?: readonly string[]): boolean {
     const e = this.data.notes[path];
@@ -161,7 +185,10 @@ export class SemanticStore {
   /** Records that the indexed note was re-read at `mtime` and needed no re-embedding. */
   markCurrent(path: string, mtime: number): void {
     const e = this.data.notes[path];
-    if (e) e.mtime = mtime;
+    if (e) {
+      if (this.serializedNotesBytes !== null) this.serializedNotesBytes += jsonBytes(mtime) - jsonBytes(e.mtime);
+      e.mtime = mtime;
+    }
   }
 
   /** True if the path is indexed at exactly this mtime. */
@@ -176,20 +203,26 @@ export class SemanticStore {
   chunkCount(path: string): number { return this.data.notes[path]?.chunks.length ?? 0; }
 
   upsertNote(path: string, hash: string, mtime: number, chunks: ChunkRecord[]): void {
+    const old = this.data.notes[path];
+    if (this.serializedNotesBytes !== null) this.serializedNotesBytes += noteBytes(path, hash, mtime, chunks)
+      - (old ? noteBytes(path, old.hash, old.mtime, old.chunks) : 0);
     this.data.notes[path] = { hash, mtime, chunks };
     const first = chunks[0];
     if (first?.vector.length) this.data.dim = first.vector.length;
   }
 
   removeNote(path: string): void {
+    const old = this.data.notes[path];
+    if (old && this.serializedNotesBytes !== null) this.serializedNotesBytes -= noteBytes(path, old.hash, old.mtime, old.chunks);
     delete this.data.notes[path];
   }
 
   renameNote(oldPath: string, newPath: string): void {
     const e = this.data.notes[oldPath];
-    if (!e) return;
-    this.data.notes[newPath] = e;
-    delete this.data.notes[oldPath];
+    if (!e || oldPath === newPath) return;
+    this.removeNote(oldPath);
+    this.removeNote(newPath);
+    this.upsertNote(newPath, e.hash, e.mtime, e.chunks);
   }
 
   /** Drop indexed notes whose paths are no longer present in the vault. */
@@ -197,7 +230,7 @@ export class SemanticStore {
     let removed = 0;
     for (const p of Object.keys(this.data.notes)) {
       if (!livePaths.has(p)) {
-        delete this.data.notes[p];
+        this.removeNote(p);
         removed++;
       }
     }

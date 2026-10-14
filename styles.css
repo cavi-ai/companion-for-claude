@@ -542,6 +542,9 @@ body:not(.is-mobile) .cc-user {
   border-radius: 8px;
   min-height: 0;
 }
+.cc-semantic-index-status {
+  white-space: pre-line;
+}
 .cc-conn-status:empty {
   display: none;
 }

@@ -131,7 +131,9 @@ async function doLoad(id: number, model: ModelContract): Promise<void> {
   // session creation or first inference — probe the API up front, then verify
   // with a warm-up inference before committing to the backend. Weights are
   // already cached by then, so the wasm fallback re-load is offline.
-  if (!webgpuBroken && await hasWebGpuAdapter()) {
+  // Mobile WebKit can terminate the whole WebView on GPU memory pressure;
+  // a JavaScript catch cannot recover from that process-level failure.
+  if (model.device !== "wasm" && !webgpuBroken && await hasWebGpuAdapter()) {
     let webgpu: Extractor | null = null;
     try {
       webgpu = await makeExtractor("webgpu", id, model);
@@ -163,7 +165,8 @@ async function doLoad(id: number, model: ModelContract): Promise<void> {
 
 function sameContract(a: ModelContract | null, b: ModelContract): boolean {
   return a?.repo === b.repo && a.revision === b.revision && a.dtype === b.dtype
-    && a.pooling === b.pooling && a.maxTokens === b.maxTokens && a.dim === b.dim;
+    && a.pooling === b.pooling && a.maxTokens === b.maxTokens && a.dim === b.dim
+    && (a.device ?? "auto") === (b.device ?? "auto");
 }
 
 async function load(id: number, model: ModelContract): Promise<void> {
@@ -275,7 +278,7 @@ ctx.onmessage = (e) => {
     });
   if (msg.type === "load") {
     if (msg.allowDownload === true) allowNetwork = true;
-    void load(msg.id, { repo: msg.repo, pooling: msg.pooling, revision: msg.revision, dtype: msg.dtype, maxTokens: msg.maxTokens, dim: msg.dim }).catch(fail);
+    void load(msg.id, { repo: msg.repo, pooling: msg.pooling, revision: msg.revision, dtype: msg.dtype, maxTokens: msg.maxTokens, dim: msg.dim, device: msg.device ?? "auto" }).catch(fail);
   }
   else if (msg.type === "embed") void embed(msg.id, msg.texts).catch(fail);
   else if (msg.type === "dispose") {
