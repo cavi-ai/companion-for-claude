@@ -172,9 +172,13 @@ export default class ClaudeCompanionPlugin extends Plugin {
     this.turnCompleteStatusBarEl?.remove();
     const el = this.addStatusBarItem();
     el.addClass("cc-turn-complete-status");
-    el.setText(`✓ ${title}`);
-    el.setAttr("aria-label", "Claude finished — click to open");
-    el.addEventListener("click", () => {
+    el.setAttr("role", "status");
+    const action = el.createEl("button", {
+      cls: "cc-turn-complete-action",
+      text: `Reply ready: ${title}`,
+      attr: { type: "button", title },
+    });
+    action.addEventListener("click", () => {
       el.remove();
       if (this.turnCompleteStatusBarEl === el) this.turnCompleteStatusBarEl = null;
       void this.openConversationFromNotice(conversationId);

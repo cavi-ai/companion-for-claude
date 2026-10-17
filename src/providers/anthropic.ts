@@ -5,6 +5,7 @@ import { withCacheControl } from "../claude/cache";
 import { PING_MODEL } from "../claude/models";
 import { capabilitiesFor } from "../claude/capabilities";
 import { type CompletionRequest, type Provider, type ProviderStatus, ProviderError, isAbort } from "./types";
+import { systemWithSchema } from "./schemaPrompt";
 import { readStreamBody } from "./streamBody";
 import { type AuthInputs, type AuthMode, type ResolvedAuth, resolveAuth, resolveAuthBaseUrl, authHeaders, messagesUrl, buildSystem } from "./auth";
 
@@ -31,7 +32,7 @@ export function buildRequestBody(req: CompletionRequest, stream: boolean, auth: 
   // Cache breakpoints: system + tools + latest-user-message prefix (claude/cache.ts).
   const cached = withCacheControl({
     // OAuth tokens require the Claude Code identity as the first system block.
-    system: buildSystem(auth, req.system),
+    system: buildSystem(auth, systemWithSchema(req)),
     ...(req.tools
       ? {
           tools: req.tools.map((tool) => ({

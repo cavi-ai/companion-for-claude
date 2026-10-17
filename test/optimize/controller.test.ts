@@ -345,6 +345,15 @@ describe("OptimizeController.classify", () => {
     expect(stored).toEqual({ verdict: "merge", canonical: "machine-learning", a: "ml", b: "machine-learning", model: "m1", at: "2026-10-05T10:00:00.000Z" });
   });
 
+  it("counts pairs the reply left out as not answered", async () => {
+    const { controller } = setup({
+      classifier: fakeClassifier(async () => [{ id: "a1|b1", verdict: "keep" } as Verdict]),
+    }, { "n.md": { fm: ["a1", "b1", "a2", "b2"] } });
+    vi.spyOn(controller, "scan").mockResolvedValue({ totalTags: 4, singleUse: 0, dropped: 0, candidates: [cand(1), cand(2)] });
+    const res = await controller.classify();
+    expect(res).toMatchObject({ judged: 1, keep: 1, failedBatches: 0, unanswered: 1 });
+  });
+
   it("attaches stored verdicts to scan candidates by id", async () => {
     const { controller } = setup({}, NOTES);
     const id = pairKey("llm", "llms");

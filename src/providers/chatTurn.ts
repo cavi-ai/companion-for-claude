@@ -75,8 +75,9 @@ export async function routeTurn<F extends { provider: Pick<Provider, "id">; mode
   if (route.backend === "device") return tagged(primary, "device");
   const fallback = await attempts.localFallback();
   if (!fallback || !shouldFallbackToLocal({ backend: route.backend, localAvailable: true, error: primary.error })) return tagged(primary, route.providerId);
-  handlers.onNotice?.(`${fallbackReason(primary.error)} — answered locally with ${fallback.model}.`);
+  handlers.onNotice?.(`${fallbackReason(primary.error)} — trying ${fallback.model} locally…`);
   const result = await attempts.local(fallback);
+  if (!result.error && !result.aborted && !result.capped && result.text.trim()) handlers.onNotice?.(`${fallbackReason(primary.error)} — answered locally with ${fallback.model}.`);
   return result.error ? tagged(result, fallback.provider.id) : result;
 }
 

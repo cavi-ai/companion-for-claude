@@ -1,6 +1,7 @@
 import { requestUrl } from "obsidian";
 import type { StreamHandlers } from "../types";
 import { type ApiMessage, type CompletionRequest, type Provider, type ProviderStatus, ProviderError, isAbort, textContent } from "./types";
+import { systemWithSchema } from "./schemaPrompt";
 import { readStreamBody } from "./streamBody";
 
 /**
@@ -40,6 +41,7 @@ export class OpenAICompatProvider implements Provider {
   }
 
   private body(req: CompletionRequest, stream: boolean): string {
+    const system = systemWithSchema(req);
     return JSON.stringify({
       model: req.model || this.defaultModel,
       stream,
@@ -47,7 +49,7 @@ export class OpenAICompatProvider implements Provider {
       temperature: req.temperature ?? 0.7,
       max_tokens: req.maxTokens,
       messages: [
-        ...(req.system ? [{ role: "system", content: req.system }] : []),
+        ...(system ? [{ role: "system", content: system }] : []),
         // No tool-use translation — flatten any block content to text.
         ...req.messages.map((m: ApiMessage) => ({ role: m.role, content: textContent(m.content) })),
       ],

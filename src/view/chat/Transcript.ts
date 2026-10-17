@@ -1,16 +1,16 @@
-import { type App, MarkdownView, Notice, setIcon } from "obsidian";
+import { type App, MarkdownView, Notice, setIcon, type TFile } from "obsidian";
 import type { TranscriptHost } from "./hosts";
 import type { ChatMessage, ToolTraceEntry } from "../../types";
+import { errorMessage } from "../../records";
 import type { AgentTurnResult } from "../../agent/loop";
 import type { ChatTurnService, TurnEvent } from "../../chat/turnService";
 import type { ToolResultBlock, ToolUseBlock } from "../../providers/types";
 import type { Conversation } from "../../conversations/store";
-import type { ChatControls } from "../../claude/chatControls";
 import { hasIncompleteHtmlArtifactFence } from "../streamRender";
 import { TurnRenderer, type TurnRendererHost } from "../turnRenderer";
 import { ARTIFACT_HEIGHT } from "../../artifacts/renderInline";
 import { extractArtifact, saveArtifactNote, saveChatNote, savePlanNote } from "../../artifacts/artifactStore";
-import { extractTasks } from "../../build/spec";
+import { extractTasks, isPlanReply } from "../../build/spec";
 import { errorHint, type ErrorHintProvider } from "../../providers/errorHints";
 import { chipLabel } from "../toolChipLabel";
 import { addUsage } from "../../usage/tokens";
@@ -31,6 +31,7 @@ function previewText(text: string): string {
 export interface TranscriptDeps {
   /** Put text in the composer, focused and sized, without sending it. */
   setDraft(text: string): void;
+  reuseDraft(text: string, display?: string): void;
   onSend(): Promise<void>;
   prepareWorkspaceQuestion(workspace: Pick<CompanionWorkspaceCard, "kind" | "title" | "contextPath">): void;
   regenerate(opts?: { maxTokens?: number }): Promise<void>;
@@ -64,34 +65,16 @@ export class Transcript {
   constructor(private app: App, private plugin: TranscriptHost, private chat: ChatSession, private deps: TranscriptDeps) {}
 
   private get turn(): TurnState { return this.chat.turn; }
-  private get controls(): ChatControls { return this.chat.controls; }
   private get lastUserText(): string { return this.chat.lastUserText; }
   private get messages(): ChatMessage[] { return this.chat.messages; }
-  private get streaming(): boolean { return this.chat.streaming; }
 
   /** Render one persisted message, including assistant action buttons. */
   renderStoredMessage(m: ChatMessage): void {
-    // A user turn with a `display` is a slash/workflow invocation — show it as a
-    // command chip on replay too, matching the live render.
-    if (m.role === "user" && m.display !== undefined) {
-      const chipBubble = this.messagesEl.createDiv({ cls: "cc-msg cc-user cc-command" });
-      this.renderCommandChip(chipBubble, m.display);
-      this.addUserActions(chipBubble, m.content);
-      return;
-    }
-    const bubble = this.messagesEl.createDiv({ cls: `cc-msg cc-${m.role}` });
-    bubble.createDiv({ cls: "cc-role", text: m.role === "user" ? "You" : "Claude" });
-    if (m.role === "assistant") this.addSparkMark(bubble);
-    const body = bubble.createDiv({ cls: "cc-body" });
-    if (m.role === "assistant" && m.toolTrace && m.toolTrace.length > 0) this.renderTraceChips(bubble, body, m.toolTrace);
-    const rendered = m.display ?? m.content;
-    void this.deps.renderMarkdownInto(body, rendered).catch(() => {
-      // A broken Markdown extension must not make persisted conversation text
-      // disappear or reject the fire-and-forget conversation replay.
-      body.setText(rendered);
+    this.renderMessage(m.role, m.display ?? m.content, {
+      command: m.role === "user" && m.display !== undefined,
+      prompt: m.content,
+      stored: m,
     });
-    if (m.role === "assistant" && m.content.trim().length > 0) this.addAssistantActions(bubble, m.content);
-    if (m.role === "user") this.addUserActions(bubble, m.content);
   }
 
   renderEmptyState(): void {
@@ -202,13 +185,17 @@ export class Transcript {
    * Returns the unsubscribe — self-invoked once the turn settles.
    */
   startTurnRendering(conversationId: string, bubble: HTMLElement, body: HTMLElement, wantThinking: boolean, turnService: ChatTurnService): () => void {
+    const conversation = this.plugin.conversations().list().find((entry) => entry.id === conversationId);
+    const previous = conversation?.activeTurn?.regenerating ? conversation : undefined;
+    if (previous) bubble.addClass("cc-regeneration");
+    const previousBubble = previous ? bubble.previousElementSibling : null;
     const renderer = new TurnRenderer(this.turnHost(), bubble, body, wantThinking);
     const chips = this.createToolChips(bubble, body);
     const status = bubble.querySelector<HTMLElement>(".cc-turn-status");
     let unsubscribe: () => void = () => undefined;
     const settle = (result: AgentTurnResult): void => {
       status?.remove();
-      void this.settleTurnRendering(conversationId, bubble, body, renderer, result).finally(() => {
+      void this.settleTurnRendering(conversationId, bubble, body, renderer, result, previous, previousBubble).finally(() => {
         unsubscribe();
         if (this.turn.turnRenderUnsubscribe === unsubscribe) this.turn.turnRenderUnsubscribe = null;
       });
@@ -240,11 +227,14 @@ export class Transcript {
     body: HTMLElement,
     renderer: TurnRenderer,
     result: AgentTurnResult,
+    previous?: Conversation,
+    previousBubble?: Element | null,
   ): Promise<void> {
     // Idempotent per bubble: "done"/"error" and a stale replay can both reach
     // here for the same turn — only the first call commits the message + actions.
     if (bubble.dataset.ccFinished === "1") return;
     bubble.dataset.ccFinished = "1";
+    const messages = this.messages;
     this.clearThinkingStatus();
 
     // Never persist a half-generated HTML artifact fence left by an abort.
@@ -258,7 +248,20 @@ export class Transcript {
         body.setText(result.text);
       }
     }
-    const full = !incompleteArtifact && result.text.trim().length > 0 ? result.text : null;
+    if (this.messages !== messages) return; // A late render must not change another conversation.
+    const keepPrevious = !!previous && (!!result.error || !!result.aborted || !result.text.trim());
+    if (previous) {
+      if (keepPrevious) {
+        this.chat.messages = [...previous.messages];
+        this.annotateContext(previous.messages.at(-2)?.contextSources ?? []);
+        this.annotateAgentNotice(bubble, "Previous answer kept.");
+      } else {
+        previousBubble?.remove();
+        if (this.messages.at(-1)?.role === "assistant") this.messages.pop();
+        this.annotateContext(previous.activeTurn?.contextSources ?? []);
+      }
+    }
+    const full = !keepPrevious && !incompleteArtifact && result.text.trim().length > 0 ? result.text : null;
     if (full) {
       this.messages.push({ role: "assistant", content: full, ...(result.trace.length > 0 ? { toolTrace: result.trace } : {}) });
       this.addAssistantActions(bubble, full);
@@ -379,24 +382,31 @@ export class Transcript {
     return pre;
   }
 
-  renderMessage(role: "user" | "assistant", text: string, opts?: { command?: boolean; prompt?: string }): void {
-    if (this.messages.length === 1) this.messagesEl.empty();
+  renderMessage(role: "user" | "assistant", text: string, opts?: { command?: boolean; prompt?: string; stored?: ChatMessage }): void {
+    const stored = opts?.stored;
+    if (!stored && this.messages.length === 1) this.messagesEl.empty();
     const bubble = this.messagesEl.createDiv({ cls: `cc-msg cc-${role}${opts?.command ? " cc-command" : ""}` });
     if (opts?.command) {
       this.renderCommandChip(bubble, text);
-      if (role === "user") this.addUserActions(bubble, opts.prompt ?? text);
+    } else {
+      bubble.createDiv({ cls: "cc-role", text: role === "user" ? "You" : "Claude" });
+      if (role === "assistant") this.addSparkMark(bubble);
+      const body = bubble.createDiv({ cls: "cc-body" });
+      if (role === "assistant" && stored?.toolTrace?.length) this.renderTraceChips(bubble, body, stored.toolTrace);
+      const rendering = this.deps.renderMarkdownInto(body, text);
+      if (stored) void rendering.catch(() => body.setText(text));
+    }
+    if (role === "user") {
+      this.addUserActions(bubble, opts?.prompt ?? text, opts?.command ? text : undefined);
+      if (stored) this.renderContextNote(bubble, stored.contextSources);
+    } else if (stored?.content.trim()) {
+      this.addAssistantActions(bubble, stored.content);
+    }
+    // A send shows the latest message; saved history does not change scroll ownership.
+    if (!stored) {
       if (role === "user") this.jumpToBottom();
       else this.scrollToBottom();
-      return;
     }
-    bubble.createDiv({ cls: "cc-role", text: role === "user" ? "You" : "Claude" });
-    if (role === "assistant") this.addSparkMark(bubble);
-    const body = bubble.createDiv({ cls: "cc-body" });
-    void this.deps.renderMarkdownInto(body, text);
-    if (role === "user") this.addUserActions(bubble, opts?.prompt ?? text);
-    // Sending a message always shows it; a reply follows only a reader who is at the bottom.
-    if (role === "user") this.jumpToBottom();
-    else this.scrollToBottom();
   }
 
   /** A slash command / workflow invocation renders as a compact accent chip
@@ -426,7 +436,7 @@ export class Transcript {
   /** Flag a reply that the model truncated at the output-token limit. */
   private annotateTruncated(bubble: HTMLElement): void {
     if (bubble.querySelector(".cc-truncated-note")) return;
-    const cap = this.controls?.maxTokens ?? this.plugin.settings.maxTokens;
+    const cap = this.chat.controls?.maxTokens ?? this.plugin.settings.maxTokens;
     const note = bubble.createDiv({ cls: "cc-truncated-note" });
     note.createSpan({ cls: "cc-truncated-title", text: "Response hit the output-token limit" });
     note.createSpan({ text: ` — it was cut off at ${cap} tokens.` });
@@ -442,10 +452,17 @@ export class Transcript {
   }
 
   annotateContext(sources: string[]): void {
-    if (sources.length === 0) return;
-    const last = this.messagesEl.lastElementChild;
+    const users = this.messagesEl.querySelectorAll<HTMLElement>(".cc-user");
+    const last = users[users.length - 1];
     if (!last) return;
-    last.createDiv({ cls: "cc-context-note", text: `+ context: ${sources.join(", ")}` });
+    last.querySelectorAll(".cc-context-note").forEach((label) => label.remove());
+    this.renderContextNote(last, sources);
+  }
+
+  private renderContextNote(bubble: HTMLElement, sources?: string[]): void {
+    const valid = Array.isArray(sources) && sources.every((source) => typeof source === "string");
+    if (valid && sources.length === 0) return;
+    bubble.createDiv({ cls: "cc-context-note", text: valid ? `+ context: ${sources.join(", ")}` : "Context details unavailable" });
   }
 
   private addAssistantActions(bubble: HTMLElement, full: string): void {
@@ -467,13 +484,19 @@ export class Transcript {
       bar,
       isArtifact ? "Save artifact" : "Save as note",
       isArtifact ? "layout-dashboard" : "save",
-      () => void this.saveReplyAsNote(full),
+      () => {
+        if (saveBtn.disabled) return;
+        saveBtn.disabled = true;
+        void this.saveReplyAsNote(full)
+          .catch((error: unknown) => new Notice(`Couldn't save or open the reply: ${errorMessage(error)}`))
+          .finally(() => { saveBtn.disabled = false; });
+      },
     );
     if (isArtifact) saveBtn.addClass("cc-accent");
     // A plan reply (has a `## Build tasks` checklist) gets execution buttons:
     // "Implement" runs the tasks in-app via agent mode (vault work); "Build"
     // hands the plan off to Claude Code (code work outside the vault).
-    if (extractTasks(full).length > 0) {
+    if (isPlanReply(full)) {
       const impl = this.actionBtn(bar, "Implement", "play", () => void this.implementFromReply(full));
       impl.addClass("cc-accent");
       this.actionBtn(bar, "Build", "hammer", () => void this.buildFromReply(full));
@@ -486,10 +509,10 @@ export class Transcript {
     }
   }
 
-  private addUserActions(bubble: HTMLElement, prompt: string): void {
+  private addUserActions(bubble: HTMLElement, prompt: string, display?: string): void {
     const bar = bubble.createDiv({ cls: "cc-actions" });
     this.actionBtn(bar, "Copy prompt", "copy", () => void navigator.clipboard.writeText(prompt));
-    this.actionBtn(bar, "Use again", "text-cursor-input", () => this.deps.setDraft(prompt));
+    this.actionBtn(bar, "Use again", "text-cursor-input", () => this.deps.reuseDraft(prompt, display));
   }
 
   /** Add a hover "copy" button to each <pre><code> block in a rendered reply. */
@@ -538,7 +561,7 @@ export class Transcript {
    * user at the Build (Claude Code) handoff instead.
    */
   private async implementFromReply(full: string): Promise<void> {
-    if (this.streaming) return;
+    if (this.chat.streaming) return;
     if (!this.plugin.settings.agentModeEnabled || !this.plugin.router().chatCapabilities().agentActions) {
       new Notice("Turn on agent mode (and use Claude or Claude Code) to implement in-app, or use Build to hand off to Claude Code.");
       return;
@@ -559,14 +582,18 @@ export class Transcript {
 
   /** Save a plan reply as a `type: plan` note, then hand it to the build flow. */
   private async buildFromReply(full: string): Promise<void> {
+    const file = await this.savePlanReply(full);
+    await this.plugin.research().handoffToBuild(file);
+  }
+
+  private async savePlanReply(full: string) {
     const artifact = extractArtifact(full);
     const { tags, summary, title } = await this.maybeIndex(full);
     const planTitle = title ?? artifact?.title ?? this.fallbackTitle();
-    const file = await savePlanNote(this.app, this.plugin.settings.planFolder, planTitle, full, {
+    return savePlanNote(this.app, this.plugin.settings.planFolder, planTitle, full, {
       extraTags: tags,
       ...(summary !== undefined ? { summary } : {}),
     });
-    await this.plugin.research().handoffToBuild(file);
   }
 
   /**
@@ -615,38 +642,30 @@ export class Transcript {
   private async saveReplyAsNote(full: string): Promise<void> {
     const artifact = extractArtifact(full);
     new Notice("Indexing & saving…");
+    let file: TFile;
 
     // A plan reply carries a `## Build tasks` checklist. Save it as a canonical
     // `type: plan` note (artifact renders inline + checklist drives Build).
-    if (extractTasks(full).length > 0) {
-      const { tags, summary, title } = await this.maybeIndex(full);
-      const planTitle = title ?? artifact?.title ?? this.fallbackTitle();
-      const file = await savePlanNote(this.app, this.plugin.settings.planFolder, planTitle, full, {
-        extraTags: tags,
-        ...(summary !== undefined ? { summary } : {}),
-      });
-      await this.app.workspace.getLeaf(true).openFile(file);
-      return;
-    }
-
-    if (artifact) {
+    if (isPlanReply(full)) {
+      file = await this.savePlanReply(full);
+    } else if (artifact) {
       const { tags, summary } = await this.maybeIndex(`${artifact.title}\n\n${full}`);
-      const file = await saveArtifactNote(this.app, this.plugin.settings.artifactFolder, artifact, {
+      file = await saveArtifactNote(this.app, this.plugin.settings.artifactFolder, artifact, {
         height: ARTIFACT_HEIGHT,
         baseTags: this.plugin.settings.artifactBaseTags,
         extraTags: tags,
         ...(summary !== undefined ? { summary } : {}),
       });
-      await this.app.workspace.getLeaf(true).openFile(file);
-      return;
+    } else {
+      const { tags, summary, title } = await this.maybeIndex(full);
+      const heuristic = full.split("\n").find((l) => l.trim())?.replace(/^#+\s*/, "").slice(0, 60) ?? "Claude reply";
+      file = await saveChatNote(this.app, this.plugin.settings.chatFolder, title ?? heuristic, full, {
+        baseTags: this.plugin.settings.chatBaseTags,
+        extraTags: tags,
+        ...(summary !== undefined ? { summary } : {}),
+      });
     }
-    const { tags, summary, title } = await this.maybeIndex(full);
-    const heuristic = full.split("\n").find((l) => l.trim())?.replace(/^#+\s*/, "").slice(0, 60) ?? "Claude reply";
-    await saveChatNote(this.app, this.plugin.settings.chatFolder, title ?? heuristic, full, {
-      baseTags: this.plugin.settings.chatBaseTags,
-      extraTags: tags,
-      ...(summary !== undefined ? { summary } : {}),
-    });
+    await this.app.workspace.getLeaf(true).openFile(file);
   }
 
   private insertIntoNote(text: string): void {

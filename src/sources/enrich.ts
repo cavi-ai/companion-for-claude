@@ -1,4 +1,4 @@
-import { App, TFile, normalizePath, parseYaml } from "obsidian";
+import { App, TFile, normalizePath } from "obsidian";
 import type { FieldValue, RawCapture, SourceRecord, SourceType, SourceTypeSchema } from "./types";
 import { detectType, parseClipUrl } from "./detect";
 import { getSchema, type SchemaOverrides } from "./registry";
@@ -6,10 +6,9 @@ import { parseCsvMeta } from "./csvMeta";
 import { extractFields, type ExtractCompletionOpts } from "./extract";
 import { sanitize } from "../memory/sanitize";
 import { sourceFrontmatter, buildSidecarNote } from "./sourceNote";
-import { applySourceFrontmatter } from "./frontmatterMerge";
+import { applySourceFrontmatter, sourceProperties } from "./frontmatterMerge";
 import { sanitizeFileName } from "../artifacts/parse";
 import { validateEnrichment, validateMergedSourceProvenance } from "./enrichmentQuality";
-import { readFrontmatter } from "../markdown/frontmatter";
 
 export interface EnrichDeps {
   app: App;
@@ -91,14 +90,6 @@ export function prefilledFields(schema: SourceTypeSchema, frontmatter: Record<st
   return out;
 }
 
-/** Frontmatter of an existing markdown capture: metadata cache first, raw parse fallback. */
-function existingFrontmatter(app: App, path: string, content: string): Record<string, unknown> | undefined {
-  const file = app.vault.getAbstractFileByPath(path);
-  const cached = file instanceof TFile ? app.metadataCache.getFileCache(file)?.frontmatter : undefined;
-  if (cached) return cached;
-  return readFrontmatter(content, (yaml) => parseYaml(yaml) as unknown) ?? undefined;
-}
-
 /** Run a capture through the pipeline and write the typed result. */
 export async function enrichCapture(deps: EnrichDeps, capture: RawCapture): Promise<EnrichResult> {
   const type = detectType(capture);
@@ -118,7 +109,7 @@ export async function enrichCapture(deps: EnrichDeps, capture: RawCapture): Prom
   // Values the clipper already stamped (title/author/site/published/…) are
   // trusted as-is: the model is only asked for what the page couldn't say.
   const prefilled =
-    capture.kind === "markdown" ? prefilledFields(schema, existingFrontmatter(deps.app, capture.path, capture.content)) : {};
+    capture.kind === "markdown" ? prefilledFields(schema, sourceProperties(capture.content)) : {};
   const { fields } = await extractFields(schema, content, derived, { complete: deps.complete }, 2, prefilled);
   const safeFields = sanitizeFields(fields);
   const url = capture.kind === "markdown" ? capture.url ?? parseClipUrl(capture.content) : undefined;

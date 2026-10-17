@@ -104,5 +104,9 @@ export function parseTypeVerdicts(raw: string, notes: ReadonlyArray<{ path: stri
     seen.add(n);
     out.push({ path: (notes[n - 1] as { path: string }).path, type });
   }
+  // A reply that answers none of the notes gets the repair retry instead of passing as an empty success.
+  if (out.length === 0 && notes.length > 0) {
+    throw new TypeParseError(`Reply has no usable verdict for notes 1-${notes.length}; give one entry per note with its integer "n" number`);
+  }
   return out;
 }

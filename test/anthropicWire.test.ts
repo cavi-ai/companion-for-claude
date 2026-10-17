@@ -61,6 +61,14 @@ describe("buildRequestBody", () => {
     for (const m of body.messages) expect(Object.keys(m).sort()).toEqual(["content", "role"]);
   });
 
+  it("puts a JSON request's response schema into the system prompt", () => {
+    const schema = { type: "object", properties: { verdicts: { type: "array" } }, required: ["verdicts"] };
+    const body = JSON.parse(buildRequestBody({ ...baseReq, responseFormat: "json", responseSchema: schema }, false, apiKeyAuth));
+    expect(body.system[0].text).toBe(`Be concise.\n\nReply with one JSON object that matches this JSON Schema:\n${JSON.stringify(schema)}`);
+    const plain = JSON.parse(buildRequestBody({ ...baseReq, responseSchema: schema }, false, apiKeyAuth));
+    expect(plain.system[0].text).toBe("Be concise.");
+  });
+
   it("omits the tools key when no tools are set", () => {
     const body = JSON.parse(buildRequestBody(baseReq, true, apiKeyAuth));
     expect(body).not.toHaveProperty("tools");

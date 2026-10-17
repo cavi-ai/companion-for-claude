@@ -94,30 +94,30 @@ export class TypeWeaveModal extends Modal {
     contentEl.createDiv({ text: "Apply sets only the type property of checked notes. A row starts checked only when its type raises no ontology issue." });
     if (rows.length === 0) contentEl.createDiv({ text: "No type proposals to review." });
     for (const row of rows) {
-      const setting = new Setting(contentEl).setName(row.path).setDesc(rowDescription(row));
-      const check = setting.controlEl.createEl("input", { attr: { type: "checkbox" } });
-      check.checked = row.checked;
-      check.addEventListener("change", () => {
-        this.state = toggleRow(this.state, row.path, check.checked);
-      });
-      const select = setting.controlEl.createEl("select");
-      for (const type of this.state.proposable) select.createEl("option", { text: type, attr: { value: type } });
-      select.value = row.type;
-      select.disabled = this.applying;
-      select.addEventListener("change", () => {
-        this.state = setRowType(this.state, row.path, select.value);
-        this.render();
-      });
-      setting.addButton((b) => b.setButtonText("Dismiss").setDisabled(this.applying).onClick(() => {
-        if (this.applying) return;
-        void this.actions.dismiss(row.path).then(
-          () => {
-            this.state = removeRow(this.state, row.path);
+      new Setting(contentEl)
+        .setName(row.path)
+        .setDesc(rowDescription(row))
+        .addDropdown((d) => d
+          .addOptions(Object.fromEntries(this.state.proposable.map((type) => [type, type])))
+          .setValue(row.type)
+          .setDisabled(this.applying)
+          .onChange((type) => {
+            this.state = setRowType(this.state, row.path, type);
             this.render();
-          },
-          (error: unknown) => new Notice(`Type dismiss failed: ${errorMessage(error)}`),
-        );
-      }));
+          }))
+        .addExtraButton((b) => b.setIcon("x").setTooltip("Dismiss").setDisabled(this.applying).onClick(() => {
+          if (this.applying) return;
+          void this.actions.dismiss(row.path).then(
+            () => {
+              this.state = removeRow(this.state, row.path);
+              this.render();
+            },
+            (error: unknown) => new Notice(`Type dismiss failed: ${errorMessage(error)}`),
+          );
+        }))
+        .addToggle((t) => t.setValue(row.checked).onChange((on) => {
+          this.state = toggleRow(this.state, row.path, on);
+        }));
     }
     const { noProposal, notShown } = this.state;
     if (notShown > 0) contentEl.createDiv({ text: `${notShown} more ${notShown === 1 ? "row" : "rows"} not shown. Apply, then run this again.` });

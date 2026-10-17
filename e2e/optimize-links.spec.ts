@@ -41,10 +41,12 @@ test("connect an orphan note: the mention becomes a link and the related row add
   await expect(modal).toBeVisible();
 
   const inbound = modal.locator(".setting-item", { hasText: "mentioned in: Daily/log.md → Orphans/Zephyr Quill.md" });
-  await expect(inbound.locator("input[type=checkbox]")).toBeChecked();
+  await expect(inbound).toHaveClass(/mod-toggle/);
+  await expect(inbound.locator(".checkbox-container")).toHaveClass(/is-enabled/);
   const related = modal.locator(".setting-item", { hasText: "Orphans/Zephyr Quill.md → Topics/Twin.md" });
-  await expect(related.locator("input[type=checkbox]")).not.toBeChecked();
-  await related.locator("input[type=checkbox]").check();
+  await expect(related.locator(".checkbox-container")).not.toHaveClass(/is-enabled/);
+  await related.locator(".checkbox-container").click();
+  await expect(related.locator(".checkbox-container")).toHaveClass(/is-enabled/);
   await modal.getByRole("button", { name: "Apply selected" }).click();
 
   await expect.poll(() => page.evaluate(() => {

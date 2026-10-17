@@ -36,6 +36,7 @@ export interface ContextManagerModel {
 export interface ContextManagerInput {
   toggles: ContextToggles;
   activeNotePath: string | null;
+  selectionAvailable?: boolean;
   paths: readonly AttachedPath[];
   media: readonly MediaAttachment[];
   pages: readonly AttachedPage[];
@@ -62,6 +63,7 @@ export function buildContextManagerModel(input: ContextManagerInput): ContextMan
     label,
     enabled: input.toggles[key],
     ...(key === "activeNote" && input.activeNotePath ? { detail: input.activeNotePath } : {}),
+    ...(key === "selection" && !input.selectionAvailable ? { detail: "No text selected" } : {}),
   }));
   const pathSources: AddedContextItem[] = input.paths.map((item) => ({
     id: `path:${item.kind}:${item.path}`,
@@ -90,7 +92,7 @@ export function buildContextManagerModel(input: ContextManagerInput): ContextMan
   });
   const sources = [...pathSources, ...mediaSources, ...pageSources];
   const activeLabels = [
-    ...automatic.filter((item) => item.enabled).map((item) => item.label),
+    ...automatic.filter((item) => item.enabled && (item.key !== "selection" || input.selectionAvailable)).map((item) => item.label),
     ...sources.map((item) => item.label),
   ];
   const activeCount = activeLabels.length;

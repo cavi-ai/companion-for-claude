@@ -1,6 +1,6 @@
 // Wires the conversation cluster: the store controller, distillation, session actions and the turn service.
 
-import { Notice, TFile } from "obsidian";
+import { Notice, Platform, TFile } from "obsidian";
 import { saveSummaryNote } from "../artifacts/artifactStore";
 import { ChatTurnService } from "../chat/turnService";
 import { shouldNotifyTurnComplete } from "../chat/turnNotice";
@@ -76,7 +76,7 @@ export function buildChat(host: ChatHost, wiring: ChatWiring): ChatCluster {
       const service = new ChatTurnService();
       service.onUnattachedDone(({ conversationId, title, result }) => {
         if (!shouldNotifyTurnComplete(host.settings.notifyOnTurnComplete, result)) return;
-        new Notice(`Claude finished: ${title}`);
+        if (Platform.isMobile) new Notice(`Claude finished: ${title}`);
         wiring.onUnattachedTurnDone(conversationId, title);
       });
       turnServiceInstance = service;

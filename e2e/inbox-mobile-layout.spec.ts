@@ -51,3 +51,54 @@ test("the Inbox enrichment rows keep their own fills and fit a phone-width sideb
   }
   await expect.poll(async () => await row.evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1);
 });
+
+test("invalid clip properties stay readable and can be corrected before retry", async ({ rig }) => {
+  const path = `Clippings/${LONG}.md`;
+  const malformed = "---\n\n## Introduction\n\nArticle text\nwith: invalid: YAML\n---\n\nBody.  \n";
+  const { page } = await rig.reset({
+    settingsOverride: { sourceCaptureEnabled: true, sourceEnrichOnCreate: false, sourceCaptureConsent: "allow" },
+    extraFiles: { [path]: malformed },
+    providerReply: [{ match: "/./", replies: [JSON.stringify({ title: "Corrected clip", site: "Example", summary: "A concise summary." })] }],
+  });
+  await page.evaluate(async () => {
+    const app = (window as unknown as { app: { commands: { executeCommandById(id: string): Promise<void> } } }).app;
+    await app.commands.executeCommandById("claude-companion:open-source-inbox");
+  });
+  const inbox = page.locator(".cc-inbox-view:visible").first();
+  const row = inbox.locator(".cc-inbox-row", { hasText: LONG });
+  await row.getByRole("button", { name: `Enrich ${LONG}`, exact: true }).click();
+  await expect(row.locator(".cc-inbox-enrichment-error")).toContainText("Open the note and fix its opening YAML properties block, then retry.");
+  expect(await rig.providerRequests()).toBe(0);
+
+  for (const width of [320, 900]) {
+    await page.setViewportSize({ width, height: 900 });
+    await page.evaluate(() => {
+      const sidebar = document.querySelector<HTMLElement>(".workspace-split.mod-right-split")!;
+      for (const [name, value] of Object.entries({ display: "flex", position: "fixed", inset: "0", width: "100vw", "min-width": "0", "z-index": "100" })) {
+        sidebar.style.setProperty(name, value, "important");
+      }
+    });
+    const bounds = await row.evaluate((element) => {
+      const name = element.querySelector(".cc-inbox-open")!.getBoundingClientRect();
+      const error = element.querySelector(".cc-inbox-enrichment-error")!.getBoundingClientRect();
+      return { overflow: element.scrollWidth - element.clientWidth, nameWidth: name.width, nameBottom: name.bottom, errorTop: error.top };
+    });
+    expect(bounds.overflow).toBeLessThanOrEqual(1);
+    expect(bounds.nameWidth).toBeGreaterThan(100);
+    expect(bounds.errorTop).toBeGreaterThanOrEqual(bounds.nameBottom);
+  }
+
+  await row.locator(".cc-inbox-open").click();
+  const before = await page.evaluate(async (path) => {
+    const app = (window as unknown as { app: { workspace: { getActiveFile(): { path: string } | null }; vault: { getAbstractFileByPath(path: string): unknown; read(file: unknown): Promise<string>; modify(file: unknown, content: string): Promise<void> } } }).app;
+    if (app.workspace.getActiveFile()?.path !== path) throw new Error("The failed note did not open");
+    const file = app.vault.getAbstractFileByPath(path);
+    const before = await app.vault.read(file);
+    await app.vault.modify(file, "---\nsource: https://example.com/article\n---\n\nBody.  \n");
+    return before;
+  }, path);
+  expect(before).toBe(malformed);
+  await row.getByRole("button", { name: `Enrich ${LONG}`, exact: true }).click();
+  await expect(inbox.locator(".cc-inbox-typed")).toContainText(LONG);
+  expect(await rig.providerRequests()).toBe(1);
+});

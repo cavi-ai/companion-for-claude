@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { App, TFile } from "obsidian";
 import { enrichCapture } from "../../src/sources/enrich";
 import type { EnrichDeps } from "../../src/sources/enrich";
@@ -12,6 +12,20 @@ function deps(app: App, complete: EnrichDeps["complete"]): EnrichDeps {
 }
 
 describe("enrichCapture — markdown clip", () => {
+  it.each(["\n## Introduction\n\nArticle text\n\nMore article text", "title: [broken", "- list item"])("rejects invalid properties before requesting extraction: %s", async (yaml) => {
+    const app = new App();
+    const before = `---\n${yaml}\n---\n\nBody.  \n`;
+    const file = app.vault.seed("Clippings/invalid.md", before, { frontmatter: { title: "Stale cached title" } });
+    const complete = vi.fn(async () => JSON.stringify({ title: "Title", site: "Example", summary: "Summary" }));
+
+    await expect(enrichCapture(deps(app, complete), {
+      kind: "markdown", path: file.path, basename: "invalid", content: before,
+    })).rejects.toThrow("Open the note and fix its opening YAML properties block, then retry.");
+
+    expect(complete).not.toHaveBeenCalled();
+    expect(await app.vault.cachedRead(file as TFile)).toBe(before);
+  });
+
   it("preserves newer user frontmatter written while extraction is in flight", async () => {
     const app = new App();
     const initial = [

@@ -177,7 +177,7 @@ test("09 Companion continuity: active research becomes context, not a new home",
   await expect(workspace.getByRole("button", { name: "Open Research Desk" })).toBeVisible();
   await workspace.getByRole("button", { name: "Ask Companion" }).click();
   const contextTrigger = chat.locator(".cc-context-trigger");
-  await expect(contextTrigger).toHaveAttribute("aria-label", /Manage context, \d+ items active/);
+  await expect(contextTrigger).toHaveAttribute("aria-label", /Manage context, \d+ items? active/);
   await contextTrigger.click();
   const contextManager = chat.getByRole("dialog", { name: "Message context" });
   await expect(contextManager.getByLabel("This note")).toBeChecked();

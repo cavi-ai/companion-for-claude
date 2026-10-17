@@ -3,10 +3,19 @@
 // so it can be unit-tested.
 
 import { stripTags } from "../artifacts/parse";
+import { proseLines } from "../markdown/excerpt";
 
 export interface BuildTask {
   title: string;
   done: boolean;
+}
+
+/** Reply plans use an explicit Build tasks checklist outside fenced examples/artifacts. */
+export function isPlanReply(reply: string): boolean {
+  // Drop the preamble; each remaining section begins with its heading text.
+  return proseLines(reply).join("\n").split(/^ {0,3}#{1,6}[\t ]+/m).slice(1).some((section) =>
+    /^build tasks(?:[\t ]+#+)?[\t ]*\n/i.test(section) && /^ {0,3}[-*][\t ]+\[[ xX]\][\t ]+\S/m.test(section),
+  );
 }
 
 /**

@@ -10,18 +10,29 @@ test("ephemeral Companion feedback appears immediately and clears within 2.5 sec
     });
     const plan = page.getByRole("radio", { name: "Plan — read-only exploration, proposes a plan" });
     await expect(plan).toBeVisible();
+    // The notice's lifetime is timed inside the page, so Playwright's polling latency is not part of it.
+    await page.evaluate(() => {
+      const life: { shown?: number; hidden?: number } = {};
+      (window as unknown as { __planNotice: typeof life }).__planNotice = life;
+      const visible = (): boolean =>
+        [...document.querySelectorAll<HTMLElement>(".notice")].some((el) => el.textContent?.includes("Plan Mode: on") && el.checkVisibility());
+      new MutationObserver(() => {
+        const now = performance.now();
+        if (life.shown === undefined && visible()) life.shown = now;
+        else if (life.shown !== undefined && life.hidden === undefined && !visible()) life.hidden = now;
+      }).observe(document.body, { childList: true, subtree: true, attributes: true });
+    });
 
     const started = Date.now();
     await plan.click();
     const notice = page.locator(".notice").filter({ hasText: "Plan Mode: on" });
     await expect(notice).toBeVisible({ timeout: 500 });
     expect(Date.now() - started).toBeLessThan(500);
-    // The clear budget runs from when the notice appeared, not from before the
-    // click: one shared window makes a 1.8s notice fail whenever the click and
-    // the first poll are slow, which is a harness stall, not a regression.
-    const shown = Date.now();
-    await expect(notice).toBeHidden({ timeout: 2_500 });
-    expect(Date.now() - shown).toBeLessThan(2_500);
+    await expect(notice).toBeHidden({ timeout: 5_000 });
+    const life = await page.evaluate(() => (window as unknown as { __planNotice: { shown?: number; hidden?: number } }).__planNotice);
+    expect(life.shown).toBeDefined();
+    expect(life.hidden).toBeDefined();
+    expect(life.hidden! - life.shown!).toBeLessThan(2_500);
   } finally {
     await harness.close();
   }

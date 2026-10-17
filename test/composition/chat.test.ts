@@ -1,5 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import { TFile, clearNotices, getNoticeMessages } from "obsidian";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { Platform, TFile, clearNotices, getNoticeMessages } from "obsidian";
 
 type Deps = Record<string, (...args: never[]) => unknown>;
 
@@ -113,6 +113,8 @@ beforeEach(() => {
   for (const fn of [captured.list, captured.setDistilledNote, captured.archive, captured.fork, captured.createSeeded, captured.distillCall, captured.saveSummaryNote]) fn.mockReset();
   clearNotices();
 });
+
+afterEach(() => { Platform.isMobile = false; });
 
 describe("buildChat conversations", () => {
   it("maps state, persist, activity and settings to the host", async () => {
@@ -248,15 +250,17 @@ describe("buildChat sessionActions", () => {
 describe("buildChat turnService", () => {
   const done = { conversationId: "c1", title: "Title", result: { text: "answer", trace: [] } };
 
-  it("notifies and reports an unattached completion when enabled", () => {
+  it.each([false, true])("reports completion without a desktop toast (mobile: %s)", (mobile) => {
+    Platform.isMobile = mobile;
     const r = rig();
     buildChat(r.host, r.wiring).turnService();
     captured.unattached!(done);
-    expect(getNoticeMessages()).toEqual(["Claude finished: Title"]);
+    expect(getNoticeMessages()).toEqual(mobile ? ["Claude finished: Title"] : []);
     expect(r.m.onUnattachedTurnDone).toHaveBeenCalledWith("c1", "Title");
   });
 
-  it("does nothing when notifications are off", () => {
+  it.each([false, true])("does nothing when notifications are off (mobile: %s)", (mobile) => {
+    Platform.isMobile = mobile;
     const r = rig({ notify: false });
     buildChat(r.host, r.wiring).turnService();
     captured.unattached!(done);

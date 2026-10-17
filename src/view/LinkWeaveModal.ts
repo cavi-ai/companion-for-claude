@@ -47,21 +47,20 @@ export class LinkWeaveModal extends Modal {
       const setting = new Setting(contentEl)
         .setName(`${kindLabel(p)}: ${p.source} → ${p.target}`)
         .setDesc(p.mention?.excerpt ?? "");
-      const check = setting.controlEl.createEl("input", { attr: { type: "checkbox" } });
-      check.checked = row.checked;
-      check.addEventListener("change", () => {
-        this.state = toggleRow(this.state, p.id, check.checked);
-      });
-      setting.addButton((b) => b.setButtonText("Dismiss").setDisabled(this.applying).onClick(() => {
-        if (this.applying) return;
-        void this.actions.dismiss(p).then(
-          () => {
-            this.state = removeRow(this.state, p.id);
-            this.render();
-          },
-          (error: unknown) => new Notice(`Link dismiss failed: ${errorMessage(error)}`),
-        );
-      }));
+      setting
+        .addExtraButton((b) => b.setIcon("x").setTooltip("Dismiss").setDisabled(this.applying).onClick(() => {
+          if (this.applying) return;
+          void this.actions.dismiss(p).then(
+            () => {
+              this.state = removeRow(this.state, p.id);
+              this.render();
+            },
+            (error: unknown) => new Notice(`Link dismiss failed: ${errorMessage(error)}`),
+          );
+        }))
+        .addToggle((t) => t.setValue(row.checked).onChange((on) => {
+          this.state = toggleRow(this.state, p.id, on);
+        }));
     }
     if (this.state.remaining > 0) {
       contentEl.createDiv({ text: `${this.state.remaining} more orphan ${this.state.remaining === 1 ? "note" : "notes"} not shown. Apply, then run this again.` });

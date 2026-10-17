@@ -250,7 +250,7 @@ describe("Chat render lifecycle", () => {
 
     expect(turns.complete).toHaveBeenCalledOnce();
     expect(turns.complete.mock.calls[0]?.[2]).toEqual([
-      { role: "user", content: "Hello" },
+      { role: "user", content: "Hello", contextSources: [] },
       { role: "assistant", content: "Hello" },
     ]);
     const assistantBubbles = (seam.messagesEl as unknown as FakeElement).querySelectorAll(".cc-assistant");

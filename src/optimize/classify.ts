@@ -89,5 +89,9 @@ export function parseVerdicts(raw: string, pairs: ClassifyPair[]): Verdict[] {
     const chosen = picked === tagId(p.a) ? p.a : picked === tagId(p.b) ? p.b : null;
     out.push(chosen === null ? { id: p.id, verdict: "keep" } : { id: p.id, verdict: "merge", canonical: chosen });
   }
+  // A reply that answers none of the pairs gets the repair retry instead of passing as an empty success.
+  if (out.length === 0 && pairs.length > 0) {
+    throw new VerdictParseError(`Reply has no usable verdict for pairs 1-${pairs.length}; give one entry per pair with its integer "pair" number`);
+  }
   return out;
 }

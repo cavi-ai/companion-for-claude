@@ -28,6 +28,7 @@ export function conversationFakes(seed: Partial<ConversationState> = {}, setting
   /** Replaces the turn lifecycle with spies that resolve a fixed turn, for tests that do not exercise persistence. */
   const stubTurns = () => ({
     begin: vi.spyOn(conversations, "beginTurn").mockResolvedValue({ conversationId: "conversation-1", turnId: "turn-1" }),
+    context: vi.spyOn(conversations, "setTurnContext").mockResolvedValue(true),
     register: vi.spyOn(conversations, "registerTurn").mockReturnValue(() => undefined),
     complete: vi.spyOn(conversations, "completeTurn").mockResolvedValue(undefined),
     interrupt: vi.spyOn(conversations, "interruptTurn").mockResolvedValue(undefined),

@@ -60,6 +60,60 @@ const BASIC: SeedMessage[] = [
   { role: "assistant", content: "first answer about the launch" },
 ];
 
+test("switching conversations preserves their separate drafts and sending clears only its owner", async ({ rig }) => {
+  const a = "Summarize the pilot findings.";
+  const b = "Review the release checklist.";
+  const draftA = "Explain the pilot's limitations.";
+  const draftB = "Confirm the release owner and deadline.";
+  const newDraft = "Start an independent question.";
+  const answer = "The owner and deadline should be confirmed.";
+  const { page } = await rig.reset({ providerReply: [{ match: "/./", replies: [answer] }] });
+  await seedConversation(page, [{ role: "user", content: a }, { role: "assistant", content: "Pilot answer." }]);
+  await seedConversation(page, [{ role: "user", content: b }, { role: "assistant", content: "Release answer." }]);
+  await openChat(page);
+  const chat = page.locator(".cc-chat-root");
+  const input = chat.locator("textarea");
+  const select = async (title: string) => {
+    // Completion notices overlap the history button and pause dismissal on hover.
+    await page.mouse.move(500, 150);
+    await expect(page.locator(".notice")).toHaveCount(0);
+    const dropdown = await openDropdown(page);
+    await dropdown.locator(".cc-session-row").filter({ hasText: title }).click();
+  };
+
+  await input.fill(draftB);
+  await select(a);
+  await expect(input).toHaveValue("");
+  await input.fill(draftA);
+  await select(b);
+  await expect(input).toHaveValue(draftB);
+  expect(await rig.providerRequests()).toBe(0);
+  await chat.getByRole("button", { name: /^Send(?: message)?$/ }).click();
+  await expect(chat.locator(".cc-assistant .cc-body").last()).toHaveText(answer);
+  await expect(chat.locator(".cc-assistant").last().getByRole("button", { name: "Save as note", exact: true })).toBeVisible();
+  await expect(input).toHaveValue("");
+  await select(a);
+  await expect(input).toHaveValue(draftA);
+  await select(b);
+  await expect(input).toHaveValue("");
+
+  await chat.getByRole("button", { name: "New chat", exact: true }).click();
+  await expect(input).toHaveValue("");
+  await input.fill(newDraft);
+  await select(a);
+  await expect(input).toHaveValue(draftA);
+  await chat.getByRole("button", { name: "New chat", exact: true }).click();
+  await expect(input).toHaveValue(newDraft);
+  await chat.getByRole("button", { name: /^Send(?: message)?$/ }).click();
+  await expect(chat.locator(".cc-assistant .cc-body")).toHaveText([answer]);
+  await expect(chat.getByRole("button", { name: "Save as note", exact: true })).toBeVisible();
+  await chat.getByRole("button", { name: "New chat", exact: true }).click();
+  await expect(input).toHaveValue("");
+  await select(a);
+  await expect(input).toHaveValue(draftA);
+  expect(await rig.providerRequests()).toBe(2);
+});
+
 test("the dropdown opens under the history button, narrow, inside the viewport", async ({ rig }) => {
   const { page } = await rig.reset({ providerReply: [DISTILL_RULE] });
   await seedConversation(page, BASIC);

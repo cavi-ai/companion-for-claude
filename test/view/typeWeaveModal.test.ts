@@ -24,7 +24,8 @@ const base = (list: TypeProposal[] = proposals): TypeScanReport => ({ status: "o
 const result: TypeApplyResult = { typed: 1, skipped: [], failed: [], runNote: null };
 
 const allText = (el: FakeElement): string => [el.textContent, ...el.children.map(allText)].join("\n");
-const button = (root: FakeElement, text: string): FakeElement => root.querySelectorAll("button").find((b) => b.textContent === text)!;
+const button = (root: FakeElement, name: string): FakeElement =>
+  root.querySelectorAll("button").find((b) => b.textContent === name || b.getAttribute("aria-label") === name)!;
 const disabled = (el: FakeElement): boolean => (el as unknown as { disabled: boolean }).disabled;
 const checks = (root: FakeElement) => root.querySelectorAll("input") as unknown as Array<FakeElement & { checked: boolean }>;
 const selects = (root: FakeElement) => root.querySelectorAll("select");

@@ -17,11 +17,11 @@ import { DEVICE_MODELS } from "../../device/models";
 import { capabilitiesFor, effortLevels } from "../../claude/capabilities";
 import { type ChatControls, knobVisibility } from "../../claude/chatControls";
 import { mergeDetectedModels } from "../../providers/localModels";
-import { quickNotice } from "../../notice";
 import type { ComposerHost } from "./hosts";
 import type { ContextToggles } from "../../types";
 import { applyMention, initialToggles } from "./contextScope";
 import { appendCliModelOptions, syncModelSelection } from "./cliModelOptions";
+import { attachPastedImage } from "./pastedImage";
 
 export interface ComposerDeps {
   applyChatFontSize(): void;
@@ -285,16 +285,13 @@ export class Composer {
 
   /** Attach an image pasted into the composer (screenshots, copied images). */
   async attachPastedImage(file: File): Promise<void> {
-    if (file.size > maxBytesFor("image")) {
-      new Notice(`Pasted image is too large to attach (max ${Math.round(maxBytesFor("image") / 1024 / 1024)} MB).`);
-      return;
-    }
-    const buf = await file.arrayBuffer();
-    const data = arrayBufferToBase64(buf);
-    const n = this.attachedMedia.filter((m) => !m.path).length + 1;
-    this.attachedMedia.push({ label: file.name || `Pasted image ${n}`, kind: "image", mime: sniffMime(buf) ?? (file.type || "image/png"), data });
-    this.renderContextManager();
-    quickNotice("Image attached to your next message.");
+    await attachPastedImage(file, { media: () => this.attachedMedia, changed: () => this.renderContextManager() });
+  }
+
+  clearAttachments(): void {
+    this.attachedPaths = [];
+    this.attachedMedia = [];
+    this.attachedPages = [];
   }
 
   /** Open/refresh/close the "@"/"#" picker based on the cursor's active token (innermost wins). */
@@ -408,10 +405,11 @@ export class Composer {
 
   renderContextManager(): void {
     if (!this.contextManager) return;
-    const active = this.deps.resolveMarkdownContextView()?.file ?? this.app.workspace.getActiveFile();
+    const view = this.deps.resolveMarkdownContextView();
     const model = buildContextManagerModel({
       toggles: this.contextToggles,
-      activeNotePath: active?.path ?? null,
+      activeNotePath: (view?.file ?? this.app.workspace.getActiveFile())?.path ?? null,
+      selectionAvailable: !!view?.editor.getSelection().trim(),
       paths: this.attachedPaths,
       media: this.attachedMedia,
       pages: this.attachedPages,
@@ -428,10 +426,9 @@ export class Composer {
   }
 
   removeContextSource(id: string): void {
-    const active = this.deps.resolveMarkdownContextView()?.file ?? this.app.workspace.getActiveFile();
     const model = buildContextManagerModel({
       toggles: this.contextToggles,
-      activeNotePath: active?.path ?? null,
+      activeNotePath: null,
       paths: this.attachedPaths,
       media: this.attachedMedia,
       pages: this.attachedPages,

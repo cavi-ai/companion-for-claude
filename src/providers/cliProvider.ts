@@ -7,6 +7,7 @@ import type { CliBackend } from "../cli/backends/types";
 import type { CliChild } from "../cli/session";
 import { runCliCompletion } from "../cli/completion";
 import type { CliModel } from "../cli/modelDiscovery";
+import { systemWithSchema } from "./schemaPrompt";
 
 export interface CliProbe {
   executable: string;
@@ -122,7 +123,7 @@ export class CliProvider implements Provider {
       },
       writeSystemPromptFile: (t) => runtime.writeSystemPromptFile(t),
       removeFile: (p) => runtime.removeFile(p),
-    }, req, cwd, onText);
+    }, { ...req, system: systemWithSchema(req) }, cwd, onText);
   }
 
   async stream(req: CompletionRequest, handlers: StreamHandlers): Promise<void> {

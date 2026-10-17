@@ -62,8 +62,13 @@ describe("parseVerdicts", () => {
     expect(out).toEqual([{ id: "a|b", verdict: "keep" }, { id: "c|d", verdict: "keep" }]);
   });
 
-  it("leaves pairs without an entry unjudged", () => {
-    expect(parseVerdicts(reply([]), pairs)).toEqual([]);
+  it("leaves pairs without an entry unjudged when the reply answers some pairs", () => {
+    expect(parseVerdicts(reply([{ pair: 2, verdict: "keep" }]), pairs)).toEqual([{ id: "c|d", verdict: "keep" }]);
+  });
+
+  it("throws when the reply answers none of the pairs, so the repair retry runs", () => {
+    expect(() => parseVerdicts(reply([]), pairs)).toThrow(VerdictParseError);
+    expect(() => parseVerdicts(reply([{ pair: 9, verdict: "keep" }, { pair: "1", verdict: "keep" }]), pairs)).toThrow(/pairs 1-2/);
   });
 
   it("accepts a fenced reply", () => {

@@ -156,11 +156,18 @@ describe("classify", () => {
     const ctx = setup([note("a.md", { mtime: 7 }), note("b.md", { mtime: 3 })], { replies: [reply({ n: 1, type: "person" }, { n: 2, type: null })] });
     const result = await ctx.controller.classify();
     expect(ctx.classifierCalls).toEqual([{ interactive: true }]);
-    expect(result).toEqual({ judged: 2, typed: 1, none: 1, failedBatches: 0, notChecked: 0 });
+    expect(result).toEqual({ judged: 2, typed: 1, none: 1, failedBatches: 0, notChecked: 0, unanswered: 0 });
     expect(ctx.getState().typeVerdicts).toEqual({
       "a.md": { type: "person", model: "m1", at: "2026-10-07T10:00:00.000Z", mtime: 7, types: "person,project" },
       "b.md": { type: null, model: "m1", at: "2026-10-07T10:00:00.000Z", mtime: 3, types: "person,project" },
     });
+  });
+
+  it("counts notes the reply left out as not answered", async () => {
+    const ctx = setup([note("a.md", { mtime: 7 }), note("b.md", { mtime: 3 })], { replies: [reply({ n: 1, type: "person" })] });
+    const result = await ctx.controller.classify();
+    expect(result).toMatchObject({ judged: 1, typed: 1, failedBatches: 0, unanswered: 1 });
+    expect(formatTypeClassifyNotice(result)).toBe("Model checked 1 note: 1 typed, 0 no fitting type, 1 note not answered");
   });
 
   it("a verdict is attached to the note the reply numbered, newest first", async () => {
@@ -535,7 +542,9 @@ describe("notices", () => {
   it("apply and classify notices", () => {
     expect(formatTypeApplyNotice({ typed: 1, skipped: [], failed: [], runNote: null })).toBe("Typed 1 note");
     expect(formatTypeApplyNotice({ typed: 2, skipped: ["a"], failed: [{ path: "b", message: "m" }], runNote: null })).toBe("Typed 2 notes, 1 note typed since the review and left alone, 1 note failed");
-    expect(formatTypeClassifyNotice({ judged: 3, typed: 2, none: 1, failedBatches: 1, notChecked: 5 })).toBe("Model checked 3 notes: 2 typed, 1 no fitting type, 1 batch failed, 5 not checked (limit)");
+    expect(formatTypeClassifyNotice({ judged: 3, typed: 2, none: 1, failedBatches: 1, notChecked: 5, unanswered: 2 })).toBe(
+      "Model checked 3 notes: 2 typed, 1 no fitting type, 1 batch failed, 2 notes not answered, 5 not checked (limit)",
+    );
   });
 
   it("renderTypeRunNote lists skipped and failed sections", () => {

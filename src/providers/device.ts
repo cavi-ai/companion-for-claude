@@ -3,13 +3,14 @@ import { DEVICE_MAX_INPUT_CHARS, DEVICE_MAX_OUTPUT_TOKENS, deviceModel } from ".
 import type { DeviceChatClient } from "../device/client";
 import type { DeviceRequest } from "../device/protocol";
 import { probeDeviceGpu } from "../device/gpu";
+import { systemWithSchema } from "./schemaPrompt";
 import type { CompletionRequest, Provider, ProviderStatus } from "./types";
 
 export function prepareDeviceRequest(request: CompletionRequest): DeviceRequest {
   deviceModel(request.model);
   if (request.tools?.length) throw new Error("On-device chat does not support agent tools. Turn off agent mode.");
   if (!Number.isFinite(request.maxTokens) || request.maxTokens < 1) throw new Error("Choose a positive response token limit.");
-  const messages: DeviceRequest["messages"] = [{ role: "system", content: request.system }];
+  const messages: DeviceRequest["messages"] = [{ role: "system", content: systemWithSchema(request) }];
   for (const message of request.messages) {
     if (typeof message.content !== "string" && message.content.some((b) => b.type !== "text")) throw new Error("On-device chat supports text only. Remove media or tool messages.");
     messages.push({ role: message.role, content: typeof message.content === "string" ? message.content : message.content.map((b) => (b as { text: string }).text).join("\n") });

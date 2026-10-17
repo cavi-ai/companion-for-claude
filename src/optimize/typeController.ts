@@ -46,6 +46,8 @@ export interface TypeClassifyResult {
   none: number;
   failedBatches: number;
   notChecked: number;
+  /** Notes sent in a batch whose reply carried no verdict for them. */
+  unanswered: number;
 }
 
 export interface TypeApplyResult {
@@ -77,6 +79,7 @@ export function formatTypeApplyNotice(result: TypeApplyResult): string {
 export function formatTypeClassifyNotice(result: TypeClassifyResult): string {
   let text = `Model checked ${count(result.judged, "note", "notes")}: ${result.typed} typed, ${result.none} no fitting type`;
   if (result.failedBatches > 0) text += `, ${count(result.failedBatches, "batch", "batches")} failed`;
+  if (result.unanswered > 0) text += `, ${count(result.unanswered, "note", "notes")} not answered`;
   if (result.notChecked > 0) text += `, ${result.notChecked} not checked (limit)`;
   return text;
 }
@@ -144,7 +147,7 @@ export class TypeWeaveController {
   }
 
   private async runClassify(opts: { signal?: AbortSignal }): Promise<TypeClassifyResult> {
-    const result: TypeClassifyResult = { judged: 0, typed: 0, none: 0, failedBatches: 0, notChecked: 0 };
+    const result: TypeClassifyResult = { judged: 0, typed: 0, none: 0, failedBatches: 0, notChecked: 0, unanswered: 0 };
     const registry = await this.deps.registry();
     const report = this.scanNotes(this.deps.notes(), registry);
     if (report.status !== "ok" || !registry || report.pending.length === 0) return result;
@@ -201,14 +204,17 @@ export class TypeWeaveController {
           }
           throw error;
         }
+        let answered = 0;
         for (const v of verdicts) {
           const item = batch.find((b) => b.path === v.path);
           if (!item) continue;
+          answered++;
           stored[v.path] = { type: v.type, model: classifier.model, at: this.deps.now(), mtime: item.mtime, types: typesKey };
           result.judged++;
           if (v.type === null) result.none++;
           else result.typed++;
         }
+        result.unanswered += batch.length - answered;
       }
     } catch (error) {
       if (error instanceof ClassifierStoppedError) stopped = error;

@@ -1,6 +1,7 @@
 import { ItemView, MarkdownView, Notice, Platform, WorkspaceLeaf, setIcon, type ViewStateResult } from "obsidian";
 import type { ChatViewHost } from "./chat/hosts";
 import type { ChatMessage, ContextToggles } from "../types";
+import { errorMessage } from "../records";
 import { effectiveToggles } from "./chat/contextScope";
 import type { AgentTurnHandlers, AgentTurnResult } from "../agent/loop";
 import { continuationFor, shouldAutoContinue } from "./chat/continuation";
@@ -34,6 +35,9 @@ import { ComposerContextManager } from "./ComposerContextManager";
 import { type AutomaticContextKey } from "./contextManagerModel";
 import { HeaderControls } from "./chat/HeaderControls";
 import { Composer } from "./chat/Composer";
+import { ConversationDrafts } from "./chat/conversationDrafts";
+import { DraftSubmission, type DraftStart } from "./chat/draftSubmission";
+import { reuseDraft } from "./chat/reuseDraft";
 import { pinChatAboveKeyboard } from "./chat/keyboardPin";
 import { Transcript } from "./chat/Transcript";
 import { TurnRunners } from "./chat/turnRunners";
@@ -145,10 +149,10 @@ export class ChatView extends ItemView {
   /** Latest streamed text of the in-flight turn (for clean abort handling). */
   private get _lastBuffer(): string { return this.turn.lastBuffer; }
   private set _lastBuffer(v: string) { this.turn.lastBuffer = v; }
-  /** Guards the setup card's background sign-in probe against stacking on re-render, per CLI backend id. */
-
   /** The conversation this leaf shows; null for an unstarted "New chat tab". Persisted via getState/setState. */
   private conversationId: string | null = null;
+  private readonly drafts = new ConversationDrafts(() => this.composer);
+  private readonly submission = new DraftSubmission();
 
   constructor(
     leaf: WorkspaceLeaf,
@@ -198,6 +202,7 @@ export class ChatView extends ItemView {
     });
     this.transcript = new Transcript(this.app, plugin, this.chat, {
       setDraft: (text) => this.composer.setDraft(text),
+      reuseDraft: (text, display) => reuseDraft(this.app, this.composer, this.drafts, display && parseSkillInvocation(display, SKILLS) ? display : text),
       onSend: (...args) => this.onSend(...args),
       prepareWorkspaceQuestion: (...args) => this.prepareWorkspaceQuestion(...args),
       regenerate: (...args) => this.regenerate(...args),
@@ -285,12 +290,10 @@ export class ChatView extends ItemView {
     if (raw === null) {
       // Explicit "start empty" signal (the New chat tab command) — overrides
       // whatever onOpen loaded by default for a freshly created leaf.
-      this.conversationId = null;
       this.resetToEmpty();
     } else if (typeof raw === "string") {
       const conversation = this.plugin.conversations().list().find((c) => c.id === raw);
       if (conversation) {
-        this.conversationId = raw;
         this.loadConversation(conversation);
       }
       // An unknown id (e.g. a deleted conversation) keeps the current state.
@@ -370,6 +373,7 @@ export class ChatView extends ItemView {
   /** Replace the panel contents with a stored conversation and render it. */
   loadConversation(conversation: Conversation): void {
     this.detachTurnRendering();
+    this.drafts.switchTo(this.conversationId, conversation.id);
     this.conversationId = conversation.id;
     this.projects.forget();
     void this.projects.refreshCurrent();
@@ -424,6 +428,7 @@ export class ChatView extends ItemView {
   /** Clear the panel to its empty state without altering stored history. */
   resetToEmpty(): void {
     this.detachTurnRendering();
+    this.drafts.switchTo(this.conversationId, null);
     this.conversationId = null;
     this.projects.forget();
     this.messages = [];
@@ -473,9 +478,12 @@ export class ChatView extends ItemView {
   // ---------- public entry point (used by commands) ----------
 
   async submitPrompt(text: string, display?: string, maxTokens?: number, opts?: { model?: string; context?: Partial<ContextToggles> }): Promise<boolean> {
-    if (!text.trim() || this.streaming) return false;
-    this.inputEl.value = "";
-    return this.run(text.trim(), display, maxTokens, opts);
+    if (!text.trim() || this.streaming || this.submission.pending) return false;
+    return this.submitDraft((submission) => this.run(text.trim(), display, maxTokens, { ...opts, submission }));
+  }
+  private submitDraft(send: (submission: DraftStart) => Promise<boolean>): Promise<boolean> {
+    const generation = this.drafts.generation;
+    return this.submission.run(this.inputEl, () => this.drafts.generation === generation, () => this.composer.autosizeInput(), send);
   }
 
   // ---------- "@" context picker ----------
@@ -541,13 +549,11 @@ export class ChatView extends ItemView {
 
   clearChat(): void {
     this.detachTurnRendering();
-    this.chat.clear();
-    // The previous conversation is already auto-saved; detach so the next turn
-    // begins a fresh one instead of continuing it.
+    this.drafts.switchTo(this.conversationId, null);
     this.conversationId = null;
+    this.chat.clear();
     this.projects.clear();
-    this.attachedPaths = [];
-    this.attachedPages = [];
+    this.composer.clearAttachments();
     this.composer.resetContextToggles();
     this.composer.dismissedPageUrl = null;
     this.composer.pageOfferEl?.setCssStyles({ display: "none" });
@@ -577,6 +583,7 @@ export class ChatView extends ItemView {
       await this.stopCurrentTurn();
       return;
     }
+    if (this.submission.pending) return;
     const text = this.inputEl.value.trim();
     if (!text) return;
     // Check credentials BEFORE clearing the composer — a new user's first
@@ -592,16 +599,12 @@ export class ChatView extends ItemView {
       const display = skillDisplay(skill.entry, skill.args);
       this.lastUserText = prompt;
       this.lastDisplay = display;
-      this.inputEl.value = "";
-      this.composer.autosizeInput();
-      await this.run(prompt, display, undefined, { context: { searchVault: true } });
+      await this.submitDraft((submission) => this.run(prompt, display, undefined, { context: { searchVault: true }, submission }));
       return;
     }
     this.lastUserText = text;
     this.lastDisplay = undefined;
-    this.inputEl.value = "";
-    this.composer.autosizeInput();
-    await this.run(text);
+    await this.submitDraft((submission) => this.run(text, undefined, undefined, { submission }));
   }
 
   private setSending(sending: boolean): void {
@@ -616,7 +619,7 @@ export class ChatView extends ItemView {
     }
   }
 
-  private async run(userText: string, display?: string, maxTokens?: number, opts?: { model?: string; context?: Partial<ContextToggles> }): Promise<boolean> {
+  private async run(userText: string, display?: string, maxTokens?: number, opts?: { model?: string; context?: Partial<ContextToggles>; regenerate?: boolean; submission?: DraftStart }): Promise<boolean> {
     this.maxTokensOverride = maxTokens ?? null; // reset each turn
     this.turnModelOverride = opts?.model ?? null;
     this.turnContextOverride = opts?.context ?? null;
@@ -639,10 +642,13 @@ export class ChatView extends ItemView {
       new Notice(preflight.notice);
       return false;
     }
+    if (opts?.submission && !opts.submission.current()) return false;
     const { provider, model, caps } = preflight;
     if (preflight.reprobed) void this.refreshBackendPill();
 
-    const previousTurn = this.conversationId ? this.plugin.conversations().list().find((entry) => entry.id === this.conversationId)?.activeTurn : undefined;
+    const previousConversation = this.conversationId ? this.plugin.conversations().list().find((entry) => entry.id === this.conversationId) : undefined;
+    const previousTurn = previousConversation?.activeTurn;
+    if (previousTurn?.regenerating && previousTurn.state !== "running") this.messages = [...previousConversation!.messages];
     const started = await startTurn((conversationId, messages, input) => this.plugin.conversations().beginTurn(conversationId, messages, input), {
       conversationId: this.conversationId,
       messages: this.messages,
@@ -652,17 +658,19 @@ export class ChatView extends ItemView {
       model: this.turnModelOverride ?? model,
       mode: this.mode.mode,
       continuationDepth: this.continuationDepth,
+      regenerate: !!opts?.regenerate,
     });
     if (!started.ok) {
-      if (this.inputEl) {
-        this.inputEl.value = userText;
-        this.composer.autosizeInput();
-      }
       new Notice(started.notice);
       return false;
     }
     const { turn, turnMessages } = started;
+    if (opts?.regenerate) {
+      this.messagesEl.empty();
+      for (const message of started.regenerating ? this.messages : started.messages.slice(0, -1)) this.renderStoredMessage(message);
+    }
     this.messages = started.messages;
+    this.drafts.consume(this.conversationId);
     this.conversationId = turn.conversationId;
     this.refreshTabTitle();
     await this.projects.bindPending(turn.conversationId);
@@ -679,8 +687,9 @@ export class ChatView extends ItemView {
       }
     });
     this.setSending(true);
+    opts?.submission?.accepted();
     this._turnUsage = null;
-    this.transcript.renderMessage("user", display ?? userText, { command: display !== undefined, prompt: userText });
+    if (!started.regenerating) this.transcript.renderMessage("user", display ?? userText, { command: display !== undefined, prompt: userText });
 
     // Agent mode: the model pulls vault context itself via tools. Gated on the
     // provider actually round-tripping tool_use (Claude, and local models whose
@@ -697,8 +706,7 @@ export class ChatView extends ItemView {
     // mode the pre-emptive vault-search stuffing is skipped — the vault_search
     // tool replaces it with better, model-chosen queries.
     const toggles = effectiveToggles(this.contextToggles, this.turnContextOverride, agentActive);
-    // A chat project's pinned notes join the attach list for this turn only —
-    // the composer's own attachedPaths (session-scoped) stay untouched.
+    // Project-pinned notes join this turn's context without changing the composer.
     const pinnedPaths: AttachedPath[] = (this.currentChatProject?.pinned ?? [])
       .filter((path) => !this.attachedPaths.some((a) => a.path === path))
       .map((path) => ({ path, kind: "note" as const }));
@@ -715,15 +723,28 @@ export class ChatView extends ItemView {
       toggles.linkedNotes || toggles.searchVault ? await this.plugin.loadedOntology() : null,
     );
     if (controller.signal.aborted) return true;
-    // A resumed Claude Code session already owns its history. Sending the whole
-    // conversation again can repeat the interrupted request and duplicate writes.
+    try {
+      if (!await this.plugin.conversations().setTurnContext(turn.conversationId, turn.turnId, ctx.sources)) return true;
+    } catch (error) {
+      const message = `Couldn't save this request's context, so it was not sent: ${errorMessage(error)}`;
+      await this.plugin.conversations().interruptTurn(turn.conversationId, turn.turnId, turnMessages, message);
+      this.unregisterCurrentTurn?.();
+      this.unregisterCurrentTurn = null;
+      this.currentTurn = null;
+      this.setSending(false);
+      new Notice(message);
+      return true;
+    }
+    if (controller.signal.aborted) return true;
+    turnMessages[turnMessages.length - 1]!.contextSources = [...ctx.sources];
+    // Resumed CLI sessions own their history; replaying it can duplicate writes.
     const wireMessages = this.resumeCliSessionId ? this.messages.slice(-1) : compactArtifactsInHistory(this.messages);
     const apiMessages: ApiMessage[] = toApiMessages(wireMessages);
     if (ctx.text) {
       const last = apiMessages[apiMessages.length - 1];
       if (last && typeof last.content === "string") last.content = `${ctx.text}\n\n---\n\n${last.content}`;
-      this.transcript.annotateContext(ctx.sources);
     }
+    if (this.conversationId === turn.conversationId) this.transcript.annotateContext(ctx.sources);
 
     // Attached PDFs/images become content blocks ahead of the text (media is
     // per-turn: consumed by this send, pills cleared). Local backends can't
@@ -748,8 +769,7 @@ export class ChatView extends ItemView {
     const wantThinking = agentActive || caps.cli
       ? !!(this.controls.thinking && this.controls.showThinking)
       : !startedOnLocal && !!(this.controls.thinking && this.controls.showThinking);
-    // Routing runs inside ChatTurnService.start() so it keeps going — and still
-    // persists — even if this view closes mid-turn.
+    // ChatTurnService owns routing and persistence after the view closes.
     const agentRoute = agentActive || caps.cli;
     const coreRun = (handlers: AgentTurnHandlers, signal: AbortSignal): Promise<AgentTurnResult> => routeTurn(
       { backend, agent: agentRoute, providerId: provider.id },
@@ -812,6 +832,11 @@ export class ChatView extends ItemView {
 
   async resumeInterruptedTurn(conversation: Conversation): Promise<void> {
     const receipt = conversation.activeTurn;
+    if (receipt?.regenerating) {
+      this.loadConversation(conversation);
+      await this.regenerate();
+      return;
+    }
     const continuation = receipt ? continuationFor(receipt) : null;
     if (!receipt || !continuation) return;
     this.resumeCliSessionId = receipt.cliSessionId ?? conversation.cliSessionId ?? null;
@@ -861,27 +886,14 @@ export class ChatView extends ItemView {
   }
 
   private openMcpMenu(anchor: MouseEvent | HTMLElement): void { return this.header.openMcpMenu(anchor); }
-
   private openOverflowMenu(): void { return this.header.openOverflowMenu(); }
-
   private openModelMenu(): void { return this.header.openModelMenu(); }
 
-  /** Drop the last assistant reply and re-run the previous user turn. */
+  /** Re-run the previous user turn; the saved answer survives until replacement succeeds. */
   private async regenerate(opts?: { maxTokens?: number }): Promise<void> {
     if (this.streaming || !this.lastUserText) return;
-    // Remove the trailing assistant message from state + DOM, plus the user msg
-    // (run() re-pushes it). Then re-run with the same text.
-    if (this.messages[this.messages.length - 1]?.role === "assistant") this.messages.pop();
-    if (this.messages[this.messages.length - 1]?.role === "user") this.messages.pop();
-    // Rebuild the transcript cleanly so we don't leave a stale bubble.
-    this.messagesEl.empty();
-    if (this.messages.length === 0) this.renderEmptyState();
-    else for (const m of this.messages) this.renderStoredMessage(m);
     // Re-attach the original turn's media so the regenerated turn sees it too.
-    if (this.attachedMedia.length === 0 && this.lastUserMedia.length > 0) {
-      this.attachedMedia = [...this.lastUserMedia];
-    }
-    await this.run(this.lastUserText, this.lastDisplay, opts?.maxTokens);
+    if (this.attachedMedia.length === 0) this.attachedMedia = [...this.lastUserMedia];
+    await this.run(this.lastUserText, this.lastDisplay, opts?.maxTokens, { regenerate: true });
   }
-
 }

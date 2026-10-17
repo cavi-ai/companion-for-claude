@@ -19,7 +19,8 @@ const groups: OrphanReview[] = [
 const result: LinkApplyResult = { links: 2, notes: 2, conflicts: [], failed: [], runNote: null };
 
 const allText = (el: FakeElement): string => [el.textContent, ...el.children.map(allText)].join("\n");
-const button = (root: FakeElement, text: string): FakeElement => root.querySelectorAll("button").find((b) => b.textContent === text)!;
+const button = (root: FakeElement, name: string): FakeElement =>
+  root.querySelectorAll("button").find((b) => b.textContent === name || b.getAttribute("aria-label") === name)!;
 const checks = (root: FakeElement) => root.querySelectorAll("input") as unknown as Array<FakeElement & { checked: boolean }>;
 
 const setup = (list = groups, remaining = 0) => {
@@ -119,7 +120,7 @@ describe("LinkWeaveModal", () => {
     let release!: (r: LinkApplyResult) => void;
     actions.apply.mockImplementationOnce(() => new Promise<LinkApplyResult>((resolve) => { release = resolve; }));
     button(root(), "Apply selected").dispatchEvent({ type: "click" });
-    const dismiss = root().querySelectorAll("button").filter((b) => b.textContent === "Dismiss");
+    const dismiss = root().querySelectorAll("button").filter((b) => b.getAttribute("aria-label") === "Dismiss");
     expect(dismiss.length).toBeGreaterThan(0);
     expect(dismiss.every((b) => (b as unknown as { disabled: boolean }).disabled)).toBe(true);
     for (const b of dismiss) b.dispatchEvent({ type: "click" });

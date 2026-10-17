@@ -83,8 +83,17 @@ describe("parseTypeVerdicts", () => {
   });
 
   it("drops a type that is not in the list, a case variant, a padded name, a non-string and a missing type", () => {
-    const out = parseTypeVerdicts(reply([{ n: 1, type: "Project" }, { n: 2, type: " project" }, { n: 3, type: 5 }, { n: 1 }, { n: 2, type: ["project"] }, { n: 1, type: "entity" }]), notes, types);
-    expect(out).toEqual([]);
+    const out = parseTypeVerdicts(
+      reply([{ n: 1, type: "Project" }, { n: 2, type: " project" }, { n: 3, type: 5 }, { n: 1 }, { n: 2, type: ["project"] }, { n: 1, type: "entity" }, { n: 3, type: null }]),
+      notes,
+      types,
+    );
+    expect(out).toEqual([{ path: "Café 🧠.md", type: null }]);
+  });
+
+  it("throws when the reply answers none of the notes, so the repair retry runs", () => {
+    expect(() => parseTypeVerdicts(reply([]), notes, types)).toThrow(TypeParseError);
+    expect(() => parseTypeVerdicts(reply([{ n: 9, type: "project" }, { n: 1, type: "Project" }]), notes, types)).toThrow(/notes 1-3/);
   });
 
   it("ignores non-object entries and extra keys", () => {

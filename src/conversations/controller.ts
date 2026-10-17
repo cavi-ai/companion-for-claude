@@ -71,7 +71,7 @@ export class ConversationsController {
   async beginTurn(
     conversationId: string | null,
     messages: ChatMessage[],
-    input: { backend: string; model: string; mode: ChatTurnMode; continuationDepth?: number },
+    input: { backend: string; model: string; mode: ChatTurnMode; continuationDepth?: number; regenerating?: boolean },
   ): Promise<{ conversationId: string; turnId: string }> {
     const { state, persist } = this.deps;
     const previousState = state.get();
@@ -88,6 +88,7 @@ export class ConversationsController {
       createdAt: now,
       updatedAt: now,
       ...(input.continuationDepth !== undefined && input.continuationDepth > 0 ? { continuationDepth: input.continuationDepth } : {}),
+      ...(input.regenerating ? { regenerating: true } : {}),
     };
     state.set(startConversationTurn(state.get(), id, messages, receipt, this.maxConversations()));
     // The leaf that starts a turn is the focused leaf — starting a turn makes its conversation active.
@@ -116,6 +117,29 @@ export class ConversationsController {
     return this.lifecycle().register(conversationId, turnId, stop);
   }
 
+  /** Record gathered context before backend work, without changing the active conversation. */
+  async setTurnContext(conversationId: string, turnId: string, sources: string[]): Promise<boolean> {
+    const { state, persist } = this.deps;
+    const conversation = state.get().conversations.find(({ id }) => id === conversationId);
+    const receipt = conversation?.activeTurn;
+    if (!conversation || receipt?.id !== turnId || receipt.state !== "running") return false;
+    const index = receipt.userMessageIndex;
+    if (conversation.messages[index]?.role !== "user") return false;
+    const before = state.get();
+    const messages = conversation.messages.map((message, i) => i === index ? { ...message, contextSources: [...sources] } : message);
+    const next = saveConversation(before, receipt.regenerating
+      ? { ...conversation, activeTurn: { ...receipt, contextSources: [...sources] } }
+      : { ...conversation, messages }, 0);
+    state.set(next);
+    try {
+      await persist();
+    } catch (error) {
+      if (state.get() === next) state.set(before);
+      throw error;
+    }
+    return true;
+  }
+
   async stopTurn(conversationId: string, turnId: string): Promise<void> {
     const { state, persist } = this.deps;
     const turn = state.get().conversations.find(({ id }) => id === conversationId)?.activeTurn;
@@ -139,6 +163,10 @@ export class ConversationsController {
     const { state, persist } = this.deps;
     const conversation = state.get().conversations.find(({ id }) => id === conversationId);
     if (!conversation?.activeTurn || conversation.activeTurn.id !== turnId || conversation.activeTurn.state !== "running") return;
+    if (conversation.activeTurn.regenerating && messages.at(-1)?.role !== "assistant") {
+      await this.interruptTurn(conversationId, turnId, messages, "No replacement answer was received. Previous answer kept.");
+      return;
+    }
     const previousState = state.get();
     state.set(saveConversation(state.get(), touch(conversation, messages, Date.now()), this.maxConversations()));
     state.set(clearConversationTurn(state.get(), conversationId, turnId, Date.now()));
@@ -161,7 +189,9 @@ export class ConversationsController {
     const conversation = state.get().conversations.find(({ id }) => id === conversationId);
     if (!conversation?.activeTurn || conversation.activeTurn.id !== turnId || conversation.activeTurn.state !== "running") return;
     const previousState = state.get();
-    state.set(saveConversation(state.get(), touch(conversation, messages, Date.now()), this.maxConversations()));
+    const capped = touch(conversation, conversation.activeTurn.regenerating && messages.at(-1)?.role !== "assistant" ? conversation.messages : messages, Date.now());
+    if (capped.activeTurn?.regenerating) capped.activeTurn = { ...capped.activeTurn, regenerating: false };
+    state.set(saveConversation(state.get(), capped, this.maxConversations()));
     state.set(settleConversationTurn(state.get(), conversationId, turnId, "capped", Date.now(), undefined, handoff));
     try {
       await persist();
@@ -183,7 +213,8 @@ export class ConversationsController {
     const { state, persist } = this.deps;
     const conversation = state.get().conversations.find(({ id }) => id === conversationId);
     if (!conversation?.activeTurn || conversation.activeTurn.id !== turnId) return;
-    const interruptedMessages = messages.map((message, index) => index >= conversation.activeTurn!.userMessageIndex ? { ...message, contextExcluded: true } : message);
+    const interruptedMessages = conversation.activeTurn.regenerating ? conversation.messages
+      : messages.map((message, index) => index >= conversation.activeTurn!.userMessageIndex ? { ...message, contextExcluded: true } : message);
     state.set(saveConversation(state.get(), touch(conversation, interruptedMessages, Date.now()), this.maxConversations()));
     state.set(settleConversationTurn(state.get(), conversationId, turnId, "interrupted", Date.now(), error));
     try {

@@ -78,6 +78,7 @@ const context = await esbuild.context({
   outfile: "main.js",
   minify: prod,
   metafile: prod,
+  charset: "utf8",
 });
 
 if (prod) {

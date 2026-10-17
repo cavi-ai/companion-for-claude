@@ -12,13 +12,16 @@ export function renderInterruptedTurnRow(host: HTMLElement, conversation: Conver
   // One row at a time: a re-capped continuation replaces the stale prompt.
   removeInterruptedTurnRow(host);
   const capped = conversation.activeTurn?.state === "capped";
+  const regenerating = conversation.activeTurn?.regenerating;
   const row = host.createDiv({ cls: "cc-agent-notice cc-interrupted-turn" });
   row.createSpan({
-    text: capped
+    text: regenerating && !capped
+      ? `${conversation.activeTurn?.error ?? "Regeneration was interrupted."} Previous answer kept.`
+      : capped
       ? "Claude reached the tool-iteration limit before finishing. Its work so far is saved."
       : "This task was interrupted. Review any partial changes before resuming.",
   });
-  const resume = row.createEl("button", { text: capped ? "Continue" : "Resume", cls: "mod-cta" });
+  const resume = row.createEl("button", { text: capped ? "Continue" : regenerating ? "Retry" : "Resume", cls: "mod-cta" });
   resume.addEventListener("click", () => onResume(conversation));
 }
 

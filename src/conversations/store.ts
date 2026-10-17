@@ -58,6 +58,10 @@ export interface ChatTurnReceipt {
   handoff?: string;
   /** How many continuations preceded this turn; bounds auto-continue chains. */
   continuationDepth?: number;
+  /** The saved exchange remains authoritative until this replacement succeeds. */
+  regenerating?: boolean;
+  /** Context sent by the replacement, separate from the retained answer's sources. */
+  contextSources?: string[];
 }
 
 export interface ConversationState {
@@ -185,7 +189,7 @@ export function startConversationTurn(
 ): ConversationState {
   const base = state.conversations.find((conversation) => conversation.id === conversationId)
     ?? newConversation(conversationId, receipt.createdAt);
-  return saveConversation(state, { ...touch(base, messages, receipt.updatedAt), activeTurn: { ...receipt } }, maxKeep);
+  return saveConversation(state, { ...touch(base, receipt.regenerating ? base.messages : messages, receipt.updatedAt), activeTurn: { ...receipt } }, maxKeep);
 }
 
 export function settleConversationTurn(
@@ -213,6 +217,7 @@ export function settleConversationTurn(
 export function excludeTurnMessages(state: ConversationState, conversationId: string, turnId: string): ConversationState {
   const conversation = state.conversations.find((entry) => entry.id === conversationId);
   if (!conversation?.activeTurn || conversation.activeTurn.id !== turnId) return state;
+  if (conversation.activeTurn.regenerating) return state;
   const start = conversation.activeTurn.userMessageIndex;
   const messages = conversation.messages.map((message, index) => index >= start ? { ...message, contextExcluded: true } : message);
   return saveConversation(state, { ...conversation, messages }, 0);
@@ -361,6 +366,8 @@ function normalizeTurnReceipt(value: unknown): ChatTurnReceipt | undefined {
     ...(typeof receipt.error === "string" ? { error: receipt.error.slice(0, 500) } : {}),
     ...(typeof receipt.handoff === "string" && receipt.handoff.length > 0 ? { handoff: receipt.handoff.slice(0, 1500) } : {}),
     ...(typeof receipt.continuationDepth === "number" && Number.isInteger(receipt.continuationDepth) && receipt.continuationDepth > 0 ? { continuationDepth: receipt.continuationDepth } : {}),
+    ...(receipt.regenerating === true ? { regenerating: true } : {}),
+    ...(Array.isArray(receipt.contextSources) && receipt.contextSources.every((source) => typeof source === "string") ? { contextSources: [...receipt.contextSources] } : {}),
   };
 }
 

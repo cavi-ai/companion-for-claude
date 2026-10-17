@@ -71,26 +71,29 @@ export interface TurnStartInput {
   model: string;
   mode: ChatTurnMode;
   continuationDepth: number;
+  regenerate?: boolean;
 }
 
 export type BeginTurn = (
   conversationId: string | null,
   messages: ChatMessage[],
-  input: { backend: string; model: string; mode: ChatTurnMode; continuationDepth?: number },
+  input: { backend: string; model: string; mode: ChatTurnMode; continuationDepth?: number; regenerating?: boolean },
 ) => Promise<{ conversationId: string; turnId: string }>;
 
 export type TurnStart =
-  | { ok: true; turn: { conversationId: string; turnId: string }; messages: ChatMessage[]; turnMessages: ChatMessage[] }
+  | { ok: true; turn: { conversationId: string; turnId: string }; messages: ChatMessage[]; turnMessages: ChatMessage[]; regenerating: boolean }
   | { ok: false; notice: string };
 
 /** Prepares the turn's messages and begins it durably; a failed begin leaves the input untouched. */
 export async function startTurn(begin: BeginTurn, input: TurnStartInput): Promise<TurnStart> {
   const { previousTurn, user } = input;
+  const regenerating = !!input.regenerate && input.messages.at(-1)?.role === "assistant" && input.messages.at(-2)?.role === "user";
+  const history = input.regenerate ? input.messages.slice(0, regenerating ? -2 : input.messages.at(-1)?.role === "user" ? -1 : input.messages.length) : input.messages;
   // A capped turn's partial work stays in context so the continuation sees what was done.
   const base =
-    previousTurn && previousTurn.state !== "running" && previousTurn.state !== "capped"
-      ? input.messages.map((message, index) => (index >= previousTurn.userMessageIndex ? { ...message, contextExcluded: true } : message))
-      : input.messages;
+    previousTurn && !previousTurn.regenerating && previousTurn.state !== "running" && previousTurn.state !== "capped"
+      ? history.map((message, index) => (index >= previousTurn.userMessageIndex ? { ...message, contextExcluded: true } : message))
+      : history;
   const messages: ChatMessage[] = [...base, { role: "user", content: user.content, ...(user.display !== undefined ? { display: user.display } : {}) }];
   // Snapshot now: the view may switch conversations while the turn is in flight.
   const turnMessages = [...messages];
@@ -100,8 +103,9 @@ export async function startTurn(begin: BeginTurn, input: TurnStartInput): Promis
       model: input.model,
       mode: input.mode,
       ...(input.continuationDepth > 0 ? { continuationDepth: input.continuationDepth } : {}),
+      ...(regenerating ? { regenerating: true } : {}),
     });
-    return { ok: true, turn, messages, turnMessages };
+    return { ok: true, turn, messages, turnMessages, regenerating };
   } catch (error) {
     return { ok: false, notice: `Couldn't save this request, so it was not started: ${error instanceof Error ? error.message : String(error)}` };
   }

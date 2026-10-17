@@ -93,7 +93,7 @@ describe("gatherContext — typed context", () => {
     expect(count(a.text, "BOB BODY")).toBe(1);
     expect(a.text).not.toContain("### Related");
     expect(a.text).toContain(OLD_CITATION);
-    expect(a.sources).toEqual(["active note", "1 attached", "1 semantic match"]);
+    expect(a.sources).toEqual(["active note: Projects/Alpha.md", "1 attached", "1 semantic match"]);
 
     const activeOff = vault();
     setActive(activeOff, "Projects/Alpha.md");

@@ -44,6 +44,8 @@ export interface ClassifyResult {
   keep: number;
   failedBatches: number;
   dropped: number;
+  /** Pairs sent in a batch whose reply carried no verdict for them. */
+  unanswered: number;
   skipped?: "remote" | "recent" | "unavailable" | "stopped";
 }
 
@@ -82,6 +84,7 @@ function vocabHas(vocab: ReturnType<typeof buildVocabulary>, v: StoredVerdict): 
 export function formatClassifyNotice(result: ClassifyResult): string {
   let text = `Model checked ${count(result.judged, "pair", "pairs")}: ${result.merge} merge, ${result.keep} keep`;
   if (result.failedBatches > 0) text += `, ${count(result.failedBatches, "batch", "batches")} failed`;
+  if (result.unanswered > 0) text += `, ${count(result.unanswered, "pair", "pairs")} not answered`;
   if (result.dropped > 0) text += `, ${result.dropped} not checked (limit)`;
   return text;
 }
@@ -131,7 +134,7 @@ export class OptimizeController {
 
   classify(opts: { background?: boolean; signal?: AbortSignal } = {}): Promise<ClassifyResult> {
     if (this.inflight) {
-      if (opts.background === true) return Promise.resolve({ judged: 0, merge: 0, keep: 0, failedBatches: 0, dropped: 0, skipped: "recent" });
+      if (opts.background === true) return Promise.resolve({ judged: 0, merge: 0, keep: 0, failedBatches: 0, dropped: 0, unanswered: 0, skipped: "recent" });
       return this.inflight;
     }
     const run = this.runClassify(opts).finally(() => {
@@ -143,7 +146,7 @@ export class OptimizeController {
 
   private async runClassify(opts: { background?: boolean; signal?: AbortSignal }): Promise<ClassifyResult> {
     const background = opts.background === true;
-    const result: ClassifyResult = { judged: 0, merge: 0, keep: 0, failedBatches: 0, dropped: 0 };
+    const result: ClassifyResult = { judged: 0, merge: 0, keep: 0, failedBatches: 0, dropped: 0, unanswered: 0 };
     let classifier: Awaited<ReturnType<OptimizeDeps["classifier"]>>;
     try {
       classifier = await this.deps.classifier({ interactive: !background });
@@ -193,9 +196,11 @@ export class OptimizeController {
           }
           throw error;
         }
+        let answered = 0;
         for (const v of verdicts) {
           const pair = pairs.find((p) => p.id === v.id);
           if (!pair) continue;
+          answered++;
           stored[v.id] = {
             verdict: v.verdict,
             ...(v.verdict === "merge" && v.canonical ? { canonical: v.canonical } : {}),
@@ -207,6 +212,7 @@ export class OptimizeController {
           result.judged++;
           result[v.verdict]++;
         }
+        result.unanswered += pairs.length - answered;
       }
     } catch (error) {
       if (error instanceof ClassifierStoppedError) stopped = error;

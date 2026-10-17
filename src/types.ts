@@ -18,6 +18,8 @@ export interface ChatMessage {
    * receives the full `content`.
    */
   display?: string;
+  /** Labels of the context actually gathered for this request; display-only, never sent to the model. */
+  contextSources?: string[];
   /**
    * Display-only record of the tool calls behind an assistant turn (agent mode).
    * Used to re-render tool chips on conversation replay; never sent to the model.

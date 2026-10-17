@@ -182,7 +182,7 @@ body:not(.is-mobile) .cc-model.cc-model-tappable:hover {
   flex-direction: column;
   gap: 4px;
 }
-.cc-assistant + .cc-assistant {
+.cc-assistant + .cc-assistant:not(.cc-regeneration) {
   display: none;
 }
 /* Screen-reader only: bubble shape and the spark mark show the speaker. */
@@ -395,12 +395,12 @@ body:not(.is-mobile) .cc-user {
   border-radius: 6px;
   border: none;
   background: transparent;
-  color: var(--text-faint);
-  opacity: 0.55;
+  color: var(--text-normal);
+  opacity: 1;
   cursor: pointer;
   box-shadow: none;
 }
-/* Ghost actions surface on message hover or focus. */
+/* Keep enabled reply actions readable before hover or focus. */
 .cc-msg:hover .cc-action,
 .cc-msg:focus-within .cc-action {
   opacity: 1;
@@ -1727,6 +1727,7 @@ pre.cc-has-copy:hover .cc-code-copy { opacity: 1; }
 }
 .cc-inbox-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   padding: 4px 4px 4px 12px;
@@ -1798,13 +1799,16 @@ pre.cc-has-copy:hover .cc-code-copy { opacity: 1; }
   cursor: default;
 }
 .cc-inbox-enrichment-status {
-  flex: 0 0 auto;
+  flex: 0 1 auto;
+  min-width: 0;
   padding-inline-end: 8px;
   color: var(--text-muted);
   font-size: var(--font-ui-smaller);
-  white-space: nowrap;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 .cc-inbox-enrichment-error {
+  flex: 0 0 100%;
   color: var(--text-error);
 }
 .cc-inbox-typed {
@@ -3482,6 +3486,22 @@ body.is-mobile.keyboard-animating .workspace-leaf-content .view-content.cc-chat-
 }
 .cc-system-settings {
   margin-top: 8px;
+}
+
+.cc-turn-complete-action {
+  max-width: min(28rem, 40vw);
+  height: auto;
+  padding: 0 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background: transparent;
+  box-shadow: none;
+  font-size: inherit;
+}
+.cc-turn-complete-action:focus-visible {
+  outline: 2px solid var(--cc-accent);
+  outline-offset: 2px;
 }
 
 .cc-provenance { border-top: 1px solid var(--background-modifier-border); margin-top: 16px; padding-top: 8px; font-size: var(--font-ui-small); }

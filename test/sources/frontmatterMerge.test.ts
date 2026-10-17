@@ -4,6 +4,15 @@ import { applySourceFrontmatter } from "../../src/sources/frontmatterMerge";
 import { parse as parseYaml } from "yaml";
 
 describe("applySourceFrontmatter", () => {
+  it("explains invalid current properties without changing the note", async () => {
+    const app = new App();
+    const before = "---\ntitle: [broken\n---\n\nBody.  \n";
+    const file = app.vault.seed("Clippings/invalid.md", before);
+    await expect(applySourceFrontmatter(app, file as TFile, { source_enriched: true }))
+      .rejects.toThrow("Open the note and fix its opening YAML properties block, then retry.");
+    expect(await app.vault.cachedRead(file as TFile)).toBe(before);
+  });
+
   it("adds source keys, preserves the clipper's keys and the body", async () => {
     const app = new App();
     const file = app.vault.seed("Clippings/a.md", "---\nsource: https://x.com/p\n---\n\nBody text here.");

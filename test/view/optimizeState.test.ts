@@ -1,17 +1,18 @@
 import { describe, expect, it } from "vitest";
 import type { MergeCandidate, MergeEvidence } from "../../src/optimize/tagScan";
 import type { StoredVerdict } from "../../src/optimize/state";
-import { createOptimizeState, removeRow, selectedMerges, swapRow, toggleRow } from "../../src/view/optimizeState";
+import { createOptimizeState, isMergeOffer, removeRow, selectedMerges, swapRow, toggleRow } from "../../src/view/optimizeState";
 
 const cand = (id: string, evidence: MergeEvidence[]): MergeCandidate => ({ id, from: `${id}-from`, to: `${id}-to`, evidence, score: 1, fromCount: 1, toCount: 5 });
 
 describe("optimize view state", () => {
-  it("starts separator and plural rows checked, every other evidence unchecked", () => {
+  it("lists spelling variants with separator and plural checked; typo and semantic pairs wait for the model", () => {
     const kinds: MergeEvidence[] = ["separator", "plural", "plural-loose", "token-order", "leaf", "typo", "semantic"];
     const state = createOptimizeState(kinds.map((k) => cand(k, [k])));
     expect(Object.fromEntries(state.rows.map((r) => [r.id, r.checked]))).toEqual({
-      separator: true, plural: true, "plural-loose": false, "token-order": false, leaf: false, typo: false, semantic: false,
+      separator: true, plural: true, "plural-loose": false, "token-order": false, leaf: false,
     });
+    expect(state.awaitingModel).toBe(2);
   });
 
   it("checks a row that has plural evidence alongside others", () => {
@@ -19,7 +20,7 @@ describe("optimize view state", () => {
   });
 
   it("toggles, swaps from/to with counts, removes, and selects without mutating", () => {
-    const start = createOptimizeState([cand("a", ["typo"]), cand("b", ["plural"])]);
+    const start = createOptimizeState([cand("a", ["leaf"]), cand("b", ["plural"])]);
     const toggled = toggleRow(start, "a", true);
     expect(start.rows[0]?.checked).toBe(false);
     expect(selectedMerges(toggled)).toEqual([{ from: "a-from", to: "a-to" }, { from: "b-from", to: "b-to" }]);
@@ -31,13 +32,23 @@ describe("optimize view state", () => {
 
   const sv = (verdict: "merge" | "keep", canonical?: string, at = "t"): StoredVerdict => ({ verdict, ...(canonical ? { canonical } : {}), a: "x", b: "y", model: "m", at });
 
-  it("starts checked on a merge verdict and unchecked on keep", () => {
+  it("lists a merge verdict checked and never lists a keep verdict", () => {
     const state = createOptimizeState([
       { ...cand("m", ["semantic"]), verdict: sv("merge", "y") },
       { ...cand("k", ["semantic"]), verdict: sv("keep") },
       { ...cand("p", ["plural"]), verdict: sv("keep") },
     ]);
-    expect(state.rows.map((r) => r.checked)).toEqual([true, false, true]);
+    expect(state.rows.map((r) => [r.id, r.checked])).toEqual([["m", true]]);
+    expect(state.awaitingModel).toBe(0);
+  });
+
+  it("never offers related tags: a semantic or typo pair is listed only after a merge verdict", () => {
+    const related = { ...cand("calculus", ["semantic"]), from: "calculus", to: "complex-numbers" };
+    expect(isMergeOffer(related)).toBe(false);
+    expect(isMergeOffer({ ...cand("gui", ["typo"]) })).toBe(false);
+    expect(isMergeOffer({ ...related, verdict: sv("keep") })).toBe(false);
+    expect(isMergeOffer({ ...related, verdict: sv("merge", "complex-numbers") })).toBe(true);
+    expect(isMergeOffer(cand("llm", ["plural"]))).toBe(true);
   });
 
   it("a merge verdict whose canonical is the row's from swaps the row", () => {
@@ -47,10 +58,10 @@ describe("optimize view state", () => {
   });
 
   it("a rebuild keeps a prior row unless its verdict changed", () => {
-    const first = createOptimizeState([cand("a", ["typo"]), cand("b", ["typo"])]);
+    const first = createOptimizeState([cand("a", ["leaf"]), cand("b", ["leaf"])]);
     const edited = toggleRow(first, "a", true);
-    const next = createOptimizeState([cand("a", ["typo"]), { ...cand("b", ["typo"]), verdict: sv("merge", "y") }], edited);
+    const next = createOptimizeState([cand("a", ["leaf"]), { ...cand("b", ["leaf"]), verdict: sv("merge", "y") }], edited);
     expect(next.rows.map((r) => r.checked)).toEqual([true, true]);
-    expect(createOptimizeState([cand("a", ["typo"])], edited).rows[0]).toBe(edited.rows[0]);
+    expect(createOptimizeState([cand("a", ["leaf"])], edited).rows[0]).toBe(edited.rows[0]);
   });
 });

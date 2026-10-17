@@ -68,6 +68,21 @@ const local = { provider: { id: "ollama" as const }, model: "llama3.1" };
 const providerOf = (result: AgentTurnResult) => (result.error as Error & { ccProvider?: string } | undefined)?.ccProvider;
 
 describe("routeTurn", () => {
+  it.each([
+    { text: "", trace: [], error: new Error("connection refused") },
+    { text: "partial", trace: [], aborted: true },
+    { text: "", trace: [] },
+  ])("does not claim a local answer for an unsuccessful fallback %j", async (fallbackResult) => {
+    const notices: string[] = [];
+    await routeTurn({ backend: "auto", agent: false, providerId: "anthropic" }, {
+      primary: async () => failed(), localFallback: async () => local,
+      local: async () => {
+        expect(notices.join(" ")).not.toContain("answered locally");
+        return fallbackResult;
+      },
+    }, { onNotice: (text) => notices.push(text) });
+    expect(notices.join(" ")).not.toContain("answered locally");
+  });
   it("returns a successful primary attempt without asking for a fallback", async () => {
     const localFallback = vi.fn();
     const result = await routeTurn({ backend: "auto", agent: false, providerId: "anthropic" }, { primary: async () => ok("hi"), localFallback, local: vi.fn() }, {});
@@ -101,7 +116,7 @@ describe("routeTurn", () => {
     const onNotice = vi.fn();
     const result = await routeTurn({ backend: "auto", agent: false, providerId: "anthropic" }, { primary: async () => failed(), localFallback: async () => local, local: async () => ok("local answer") }, { onNotice });
     expect(result).toEqual(ok("local answer"));
-    expect(onNotice.mock.calls[0]![0]).toMatch(/answered locally with llama3\.1\.$/);
+    expect(onNotice.mock.calls.at(-1)![0]).toMatch(/answered locally with llama3\.1\.$/i);
   });
 
   it("names the failing provider when no fallback applies or the fallback fails too", async () => {

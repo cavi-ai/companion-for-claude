@@ -1,7 +1,22 @@
 import { describe, it, expect } from "vitest";
-import { extractTasks, specBody, type SpecInput } from "../src/build/spec";
+import { extractTasks, isPlanReply, specBody, type SpecInput } from "../src/build/spec";
 import { trackerNoteBody } from "../src/build/tracker";
 import { createBuildRun } from "../src/build/run";
+
+describe("isPlanReply", () => {
+  it.each([
+    ["## Build tasks\n- [ ] Create the parser", true],
+    ["### BUILD TASKS ###\r\n* [X] Create the parser", true],
+    ["## Build tasks\n- Create the parser", false],
+    ["## Build tasks\n\n## Findings\n- [ ] Read the report", false],
+    ["~~~markdown\n## Build tasks\n- [ ] Create the parser\n~~~", false],
+    ["## Build tasks\n```markdown\n- [ ] Example task\n```", false],
+    ["> ## Build tasks\n> - [ ] Create the parser", false],
+    ["    ## Build tasks\n    - [ ] Create the parser", false],
+  ])("recognizes explicit checklist intent in %j", (reply, expected) => {
+    expect(isPlanReply(reply)).toBe(expected);
+  });
+});
 
 describe("extractTasks", () => {
   it("reads markdown checkboxes with done state", () => {

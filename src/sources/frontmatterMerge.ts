@@ -18,14 +18,21 @@ function missing(value: unknown): boolean {
   return value === undefined || value === null || (typeof value === "string" && value.trim().length === 0) || (Array.isArray(value) && value.length === 0);
 }
 
-function leadingFrontmatter(content: string): { frontmatter: Record<string, unknown>; body: string; eol: "\n" | "\r\n" } {
+/** Parse the actual note, never a potentially stale metadata-cache entry. */
+export function sourceProperties(content: string): Record<string, unknown> {
   const block = frontmatterBlock(content);
-  if (!block) return { frontmatter: {}, body: content, eol: "\n" };
-  const parsed: unknown = parseYaml(block.yaml);
-  if (parsed !== null && (typeof parsed !== "object" || Array.isArray(parsed))) {
-    throw new Error("leading YAML frontmatter must be a mapping");
+  if (!block) return {};
+  const message = "Invalid YAML properties. Open the note and fix its opening YAML properties block, then retry. The note was not changed.";
+  let parsed: unknown;
+  try {
+    parsed = parseYaml(block.yaml);
+  } catch {
+    throw new Error(message);
   }
-  return { frontmatter: (parsed ?? {}) as Record<string, unknown>, body: content.slice(block.end), eol: block.eol };
+  if (parsed !== null && (typeof parsed !== "object" || Array.isArray(parsed))) {
+    throw new Error(message);
+  }
+  return (parsed ?? {}) as Record<string, unknown>;
 }
 
 /** Pure, frontmatter-only merge. Live values win; system enrichment markers deliberately refresh. */
@@ -34,7 +41,10 @@ export function mergeSourceMarkdown(
   fm: FrontmatterData,
   validateMerged?: MergedFrontmatterValidator,
 ): string {
-  const { frontmatter, body, eol } = leadingFrontmatter(content);
+  const frontmatter = sourceProperties(content);
+  const block = frontmatterBlock(content);
+  const body = block ? content.slice(block.end) : content;
+  const eol = block?.eol ?? "\n";
   for (const [key, value] of Object.entries(fm)) {
     if (value === undefined) continue;
     if (key === "tags") {

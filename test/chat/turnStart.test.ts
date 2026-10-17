@@ -115,6 +115,24 @@ function input(overrides: Partial<TurnStartInput> = {}): TurnStartInput {
 const begun = { conversationId: "c1", turnId: "t1" };
 
 describe("startTurn", () => {
+  it("regenerates without sending the superseded answer or mutating the saved exchange", async () => {
+    const begin = vi.fn(async () => begun);
+    const result = await startTurn(begin, input({ regenerate: true, user: { content: "c" } }));
+    expect(result.ok && result.messages).toEqual([{ role: "user", content: "a" }, { role: "assistant", content: "b" }, { role: "user", content: "c" }]);
+    expect(begin).toHaveBeenCalledWith("c1", expect.any(Array), { backend: "claude", model: "m", mode: "ask", regenerating: true });
+    expect(HISTORY.at(-1)?.content).toBe("d");
+  });
+
+  it("keeps the retained answer in context on a follow-up after failed regeneration", async () => {
+    const result = await startTurn(async () => begun, input({ previousTurn: { ...receipt("interrupted", 2), regenerating: true } }));
+    expect(result.ok && result.messages.some((message) => message.contextExcluded)).toBe(false);
+  });
+
+  it("retries an unanswered prompt without duplicating it", async () => {
+    const result = await startTurn(async () => begun, input({ messages: [{ role: "user", content: "q" }], regenerate: true, user: { content: "q" } }));
+    expect(result.ok && result.messages).toEqual([{ role: "user", content: "q" }]);
+    expect(result.ok && result.regenerating).toBe(false);
+  });
   it.each(["interrupted", "failed"] as const)("marks context excluded from the %s turn's user message and leaves earlier messages alone", async (state) => {
     const begin = vi.fn(async () => begun);
     const result = await startTurn(begin, input({ previousTurn: receipt(state, 2) }));

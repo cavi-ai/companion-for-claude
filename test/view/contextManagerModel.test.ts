@@ -4,6 +4,18 @@ import { buildContextManagerModel } from "../../src/view/contextManagerModel";
 const off = { activeNote: false, selection: false, linkedNotes: false, searchVault: false };
 
 describe("buildContextManagerModel", () => {
+  it("keeps Selection enabled without counting an empty selection as attached context", () => {
+    const input = { toggles: { ...off, activeNote: true, selection: true }, activeNotePath: "Notes/Alpha.md", paths: [], media: [], pages: [] };
+    const empty = buildContextManagerModel(input);
+    expect(empty.activeCount).toBe(1);
+    expect(empty.summary).toBe("Context · This note");
+    expect(empty.automatic.find((item) => item.key === "selection")).toMatchObject({ enabled: true, detail: "No text selected" });
+    const selected = buildContextManagerModel({ ...input, selectionAvailable: true });
+    expect(selected.activeCount).toBe(2);
+    expect(selected.signature).not.toBe(empty.signature);
+    expect(input.toggles.selection).toBe(true);
+  });
+
   it("summarizes empty, concise, dense, and long-primary context", () => {
     expect(buildContextManagerModel({ toggles: off, activeNotePath: null, paths: [], media: [], pages: [] }).summary).toBe("Add context");
     expect(buildContextManagerModel({ toggles: { ...off, activeNote: true }, activeNotePath: "Notes/Alpha.md", paths: [], media: [], pages: [] }).summary).toBe("Context · This note");
@@ -23,6 +35,7 @@ describe("buildContextManagerModel", () => {
     const input = {
       toggles: { activeNote: true, selection: true, linkedNotes: true, searchVault: true },
       activeNotePath: "Notes/Alpha.md",
+      selectionAvailable: true,
       paths: [
         { kind: "note" as const, path: "Research/Alpha/Project.md" },
         { kind: "note" as const, path: "Notes/Long note.md" },

@@ -93,7 +93,7 @@ export interface CompletionRequest {
   temperature?: number;
   /** Request a structured JSON response when the provider supports it. */
   responseFormat?: "json";
-  /** JSON Schema supplied to local providers that support constrained output. */
+  /** JSON Schema for the reply: Ollama constrains output with it; every other provider adds it to the system prompt. */
   responseSchema?: Record<string, unknown>;
   /** Extended-thinking config for the request body (model-aware; built by chatControls). */
   thinking?: { type: "adaptive" } | { type: "enabled"; budget_tokens: number } | { type: "disabled" } | { type: "between_tools" };

@@ -8,7 +8,7 @@ import { errorHint, type ErrorHintProvider } from "../providers/errorHints";
 import { UtilityUnavailableError } from "../providers/endpointPolicy";
 import type { EnrichDiagnostics } from "./enrichDiagnostics";
 import { TFile } from "obsidian";
-import { applySourceFrontmatter } from "./frontmatterMerge";
+import { applySourceFrontmatter, sourceProperties } from "./frontmatterMerge";
 import { extractResearchSourceEnrichment } from "../research/enrichSource";
 
 export interface FileRef {
@@ -234,6 +234,7 @@ export class SourceEnrichmentController {
     });
     try {
       const content = await this.deps.vault.cachedRead(file.path);
+      sourceProperties(content);
       const selection = await this.deps.router().utilitySelection();
       const enrichDeps = this.buildEnrichDeps(selection, lifecycleGeneration);
       const enrichment = await extractResearchSourceEnrichment({ content }, { complete: enrichDeps.complete });

@@ -10,12 +10,13 @@ const settle = async (turns = 24): Promise<void> => {
 
 const candidates: MergeCandidate[] = [
   { id: "llm|llms", from: "llms", to: "llm", evidence: ["plural"], score: 1, fromCount: 2, toCount: 9 },
-  { id: "kube|kubes", from: "kubes", to: "kube", evidence: ["typo"], score: 0.6, fromCount: 1, toCount: 4 },
+  { id: "kube|kubes", from: "kubes", to: "kube", evidence: ["plural-loose"], score: 0.7, fromCount: 1, toCount: 4 },
 ];
 const result: ApplyResult = { merges: 1, notes: 2, inlineSkipped: 0, failed: [], unchanged: 0, dropped: [], orders: [], runNote: null };
 
 const allText = (el: FakeElement): string => [el.textContent, ...el.children.map(allText)].join("\n");
-const button = (root: FakeElement, text: string): FakeElement => root.querySelectorAll("button").find((b) => b.textContent === text)!;
+const button = (root: FakeElement, name: string): FakeElement =>
+  root.querySelectorAll("button").find((b) => b.textContent === name || b.getAttribute("aria-label") === name)!;
 const setup = (list = candidates) => {
   const actions = {
     apply: vi.fn(async () => result),
@@ -31,7 +32,24 @@ const setup = (list = candidates) => {
 };
 
 describe("OptimizeBrainModal", () => {
-  it("lists rows with counts and evidence, plural checked and typo unchecked", () => {
+  it("the check notice names the pairs the model did not answer", async () => {
+    const { root, actions } = setup();
+    await settle();
+    actions.classify.mockResolvedValueOnce({ judged: 0, merge: 0, keep: 0, failedBatches: 0, dropped: 0, unanswered: 11 });
+    button(root(), "Check with model").dispatchEvent({ type: "click" });
+    await settle();
+    expect(getNoticeMessages()).toContain("Model checked 0 pairs: 0 merge, 0 keep, 11 pairs not answered");
+  });
+
+  it("lists only same-tag pairs and says how many wait for the model check", () => {
+    const related: MergeCandidate = { id: "calculus|complex-numbers", from: "calculus", to: "complex-numbers", evidence: ["semantic"], score: 0.94, fromCount: 1, toCount: 5 };
+    const { modal, root } = setup([candidates[0]!, related]);
+    expect(modal.titleEl.textContent).toBe("Review 1 tag merge");
+    expect(allText(root())).not.toContain("calculus");
+    expect(allText(root())).toContain("1 more pair is offered only if Check with model says they are the same tag.");
+  });
+
+  it("lists rows with counts and evidence, plural checked and plural-loose unchecked", () => {
     const { modal, root } = setup();
     expect(modal.titleEl.textContent).toBe("Review 2 tag merges");
     expect(allText(root())).toContain("llms (2) → llm (9)");
@@ -167,22 +185,23 @@ describe("OptimizeBrainModal", () => {
     await settle();
     expect(actions.classify).toHaveBeenCalledTimes(1);
     expect(rows(root()).map((c) => c.checked)).toEqual([true, true]);
-    expect(allText(root())).toContain("typo · model: merge");
+    expect(allText(root())).toContain("plural-loose · model: merge");
     expect(getNoticeMessages()).toContain("Model checked 1 pair: 1 merge, 0 keep, 1 batch failed, 3 not checked (limit)");
     expect(modal.titleEl.textContent).toBe("Review 2 tag merges");
     expect(actions.apply).not.toHaveBeenCalled();
   });
 
-  it("keeps checks for rows with no new verdict and a new keep verdict unchecks the row", async () => {
-    const { root, actions } = setup();
+  it("keeps checks for rows with no new verdict and a new keep verdict removes the row", async () => {
+    const { root, actions, modal } = setup();
     await settle();
     rows(root())[1]!.checked = true;
     rows(root())[1]!.dispatchEvent({ type: "change" });
     actions.rescan.mockResolvedValueOnce([candidates[0]!, { ...candidates[1]!, verdict: verdict("keep") }]);
     button(root(), "Check with model").dispatchEvent({ type: "click" });
     await settle();
-    expect(rows(root()).map((c) => c.checked)).toEqual([true, false]);
-    expect(allText(root())).toContain("typo · model: keep");
+    expect(rows(root()).map((c) => c.checked)).toEqual([true]);
+    expect(allText(root())).not.toContain("kubes");
+    expect(modal.titleEl.textContent).toBe("Review 1 tag merge");
   });
 
   it("a classify rejection shows the failure notice and re-enables the button", async () => {

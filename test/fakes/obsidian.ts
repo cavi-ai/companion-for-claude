@@ -516,21 +516,45 @@ export class TextComponent extends BaseComponent {
 export class TextAreaComponent extends TextComponent {
   override inputEl = new FakeElement("textarea");
 }
+// Like Obsidian's dropdown: a select with one option per entry; a change on the select calls onChange.
 export class DropdownComponent extends BaseComponent {
+  override inputEl = new FakeElement("select");
   selectEl = this.inputEl;
   options = new Map<string, string>();
   private changeCb: ((value: string) => void) | null = null;
-  addOption(value: string, display: string): this { this.options.set(value, display); return this; }
-  addOptions(options: Record<string, string>): this { for (const [v, d] of Object.entries(options)) this.options.set(v, d); return this; }
+  constructor() {
+    super();
+    this.selectEl.addEventListener("change", () => this.changeCb?.(this.selectEl.value));
+  }
+  addOption(value: string, display: string): this {
+    this.options.set(value, display);
+    this.selectEl.createEl("option", { text: display, attr: { value } });
+    return this;
+  }
+  addOptions(options: Record<string, string>): this { for (const [v, d] of Object.entries(options)) this.addOption(v, d); return this; }
   getValue(): string { return this.inputEl.value; }
   setValue(value: string): this { this.inputEl.value = value; return this; }
   onChange(cb: (value: string) => void): this { this.changeCb = cb; return this; }
   simulateSelect(value: string): void { this.inputEl.value = value; this.changeCb?.(value); }
 }
+// Like Obsidian's toggle: a label.checkbox-container around a checkbox; a change on the input flips it.
 export class ToggleComponent extends BaseComponent {
+  toggleEl = new FakeElement("label");
   private changeCb: ((value: boolean) => void) | null = null;
+  constructor() {
+    super();
+    this.toggleEl.addClass("checkbox-container");
+    this.inputEl.type = "checkbox";
+    this.toggleEl.appendChild(this.inputEl);
+    this.inputEl.addEventListener("change", () => this.simulateClick());
+  }
   getValue(): boolean { return this.inputEl.value === "on"; }
-  setValue(value: boolean): this { this.inputEl.value = value ? "on" : "off"; return this; }
+  setValue(value: boolean): this {
+    this.inputEl.value = value ? "on" : "off";
+    (this.inputEl as FakeElement & { checked?: boolean }).checked = value;
+    this.toggleEl.toggleClass("is-enabled", value);
+    return this;
+  }
   onChange(cb: (value: boolean) => void): this { this.changeCb = cb; return this; }
   simulateClick(): void { this.setValue(!this.getValue()); this.changeCb?.(this.getValue()); }
 }
@@ -550,6 +574,7 @@ export class ButtonComponent extends BaseComponent {
   setCta(): this { this.buttonEl.addClass("mod-cta"); return this; }
   setWarning(): this { this.buttonEl.addClass("mod-warning"); return this; }
   setIcon(icon: string): this { this.buttonEl.attributes.set("data-icon", icon); return this; }
+  override setTooltip(tooltip: string): this { this.buttonEl.attributes.set("aria-label", tooltip); return this; }
   onClick(cb: () => void): this { this.clickCb = cb; this.buttonEl.addEventListener("click", () => cb()); return this; }
   simulateClick(): void { this.clickCb?.(); }
 }
@@ -581,7 +606,8 @@ export class Setting {
     const component = new Ctor() as T;
     // Buttons carry buttonEl, not inputEl — append whichever the component owns
     // so an addButton row is reachable from the rendered tree.
-    const el = (component as unknown as { buttonEl?: FakeElement }).buttonEl ?? component.inputEl;
+    const owned = component as unknown as { toggleEl?: FakeElement; buttonEl?: FakeElement };
+    const el = owned.toggleEl ?? owned.buttonEl ?? component.inputEl;
     this.controlEl.appendChild(el);
     this.components.push(component);
     cb(component as never);
@@ -590,7 +616,11 @@ export class Setting {
   addText(cb: (component: TextComponent) => void): this { return this.add<TextComponent>(TextComponent as unknown as ComponentCtor, cb as never); }
   addTextArea(cb: (component: TextAreaComponent) => void): this { return this.add<TextAreaComponent>(TextAreaComponent as unknown as ComponentCtor, cb as never); }
   addDropdown(cb: (component: DropdownComponent) => void): this { return this.add<DropdownComponent>(DropdownComponent as unknown as ComponentCtor, cb as never); }
-  addToggle(cb: (component: ToggleComponent) => void): this { return this.add<ToggleComponent>(ToggleComponent as unknown as ComponentCtor, cb as never); }
+  addToggle(cb: (component: ToggleComponent) => void): this {
+    this.add<ToggleComponent>(ToggleComponent as unknown as ComponentCtor, cb as never);
+    this.settingEl.addClass("mod-toggle");
+    return this;
+  }
   addSlider(cb: (component: SliderComponent) => void): this { return this.add<SliderComponent>(SliderComponent as unknown as ComponentCtor, cb as never); }
   addButton(cb: (component: ButtonComponent) => void): this { return this.add<ButtonComponent>(ButtonComponent as unknown as ComponentCtor, cb as never); }
   addExtraButton(cb: (component: ExtraButtonComponent) => void): this { return this.add<ExtraButtonComponent>(ExtraButtonComponent as unknown as ComponentCtor, cb as never); }

@@ -43,7 +43,8 @@ test("type an untyped note from its folder: the folder row is checked and Apply 
 
   const row = modal.locator(".setting-item", { hasText: "Projects/New idea.md" });
   await expect(row).toContainText("folder: 3 of 3 typed notes in Projects/ are project");
-  await expect(row.locator("input[type=checkbox]")).toBeChecked();
+  await expect(row).toHaveClass(/mod-toggle/);
+  await expect(row.locator(".checkbox-container")).toHaveClass(/is-enabled/);
   await modal.getByRole("button", { name: "Apply selected" }).click();
 
   await expect.poll(() => page.evaluate(() => {

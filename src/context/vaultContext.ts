@@ -57,7 +57,7 @@ export async function gatherContext(
       const block = section(`Selected text from "${activeFile?.basename ?? "current note"}"`, sel.trim());
       blocks.push(clip(block, budget));
       budget -= block.length;
-      sources.push("selection");
+      sources.push(`selection: ${activeFile?.path ?? "current note"}`);
     }
   }
 
@@ -67,7 +67,7 @@ export async function gatherContext(
     const block = section(`Current note: ${activeFile.path}`, content);
     blocks.push(clip(block, budget));
     budget -= Math.min(block.length, budget);
-    sources.push("active note");
+    sources.push(`active note: ${activeFile.path}`);
   }
 
   // 2b. Explicitly @-attached notes / folders (a folder pulls its notes in).
