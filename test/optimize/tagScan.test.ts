@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { pairKey, scanTags } from "../../src/optimize/tagScan";
-import { buildVocabulary } from "../../src/tags/vocabulary";
+import { buildVocabulary, tagId } from "../../src/tags/vocabulary";
 
 function vocabOf(counts: Record<string, number>) {
   const files: Array<{ path: string; tags: string[] }> = [];
@@ -125,6 +125,21 @@ describe("scanTags", () => {
     expect(report.candidates).toHaveLength(1);
     expect(report.candidates[0]).toMatchObject({ from: "ml", to: "machine-learning", evidence: ["semantic"] });
     expect(report.candidates[0]?.score).toBeGreaterThan(0.86);
+  });
+
+  it("never targets a tag on most tagged notes, and skips tags with an empty path segment", () => {
+    const files: Array<{ path: string; tags: string[] }> = [];
+    const add = (tag: string, n: number) => { for (let i = 0; i < n; i++) files.push({ path: `${tag}-${i}.md`, tags: [tag] }); };
+    add("ml", 1);
+    add("source", 6);
+    add("120301/", 1);
+    add("machine-learning", 3);
+    const vocab = buildVocabulary(files, tagId);
+    const vecs: Record<string, number[]> = { ml: [1, 0], source: [1, 0], "120301/": [0, 1], "machine-learning": [0, 1] };
+    const report = scanTags({ vocab, centroid: (t) => vecs[t] ?? null });
+    expect(find(report, "ml", "source")).toBeUndefined();
+    expect(find(report, "120301/", "machine-learning")).toBeUndefined();
+    expect(report.candidates).toEqual([]);
   });
 
   it("skips dismissed pairs, sorts by score then fromCount then id, and caps with dropped", () => {

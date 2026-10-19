@@ -60,6 +60,10 @@ class FakeEventSource {
   trigger(name: string, ...args: unknown[]): void {
     for (const callback of this.listeners.get(name) ?? []) callback(...args);
   }
+
+  offref(callback: EventCallback): void {
+    for (const [name, callbacks] of this.listeners) this.listeners.set(name, callbacks.filter((listener) => listener !== callback));
+  }
 }
 
 interface FileCache {
@@ -145,6 +149,10 @@ class FakeVault extends FakeEventSource {
     return Promise.resolve(file);
   }
 
+  createBinary(path: string, data: ArrayBuffer): Promise<TFile> {
+    return this.create(path, Array.from(new Uint8Array(data), (byte) => String.fromCharCode(byte)).join(""));
+  }
+
   append(file: TFile, content: string): Promise<void> {
     file._content += content;
     file.stat.size = file._content.length;
@@ -207,6 +215,17 @@ class FakeMetadataCache extends FakeEventSource {
 class FakeFileManager {
   constructor(private vault: FakeVault) {}
 
+  async getAvailablePathForAttachment(filename: string, _sourcePath?: string): Promise<string> {
+    await this.vault.createFolder("Attachments");
+    const dot = filename.lastIndexOf(".");
+    const stem = dot > 0 ? filename.slice(0, dot) : filename;
+    const extension = dot > 0 ? filename.slice(dot) : "";
+    let path = `Attachments/${filename}`;
+    let index = 1;
+    while (this.vault.getAbstractFileByPath(path)) path = `Attachments/${stem} ${index++}${extension}`;
+    return path;
+  }
+
   renameFile(file: TFile, newPath: string): Promise<void> {
     const p = normalizePath(newPath);
     this.vault._moveFile(file, p);
@@ -268,10 +287,10 @@ export class App {
   vault = new FakeVault();
   metadataCache = new FakeMetadataCache(this.vault);
   fileManager = new FakeFileManager(this.vault);
-  workspace = {
+  workspace = Object.assign(new FakeEventSource(), {
     getLeaf: () => ({ openFile: async () => undefined }),
     getLeavesOfType: (_type: string): unknown[] => [],
-  };
+  });
   secretStorage = new FakeSecretStorage();
   scope = new Scope();
   keymap = {

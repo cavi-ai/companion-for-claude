@@ -17,6 +17,8 @@ interface ProviderLike {
 
 export interface PreflightDeps<P extends ProviderLike> {
   backend: string;
+  /** Selected images/PDFs must survive the chosen transport. */
+  hasMedia?: boolean;
   chatProvider(): { provider: P; model: string };
   chatCapabilities(): { cli: boolean; local: boolean };
   anthropicHasCredentials(): boolean;
@@ -50,7 +52,7 @@ export async function preflightTurn<P extends ProviderLike>(deps: PreflightDeps<
       return { ok: false, notice: signIn?.available() ? `${label} is not signed in — ${signIn.signInHint}, or add an API key in Companion settings.` : `${label} runs on desktop only. Add an API key to chat here.` };
     }
   }
-  if (!provider.hasCredentials() && backend !== "auto") {
+  if (!provider.hasCredentials() && (backend !== "auto" || deps.hasMedia)) {
     const notice =
       provider.id === "ollama"
         ? "Start Ollama (`ollama serve`) or set the host in settings."
@@ -59,6 +61,8 @@ export async function preflightTurn<P extends ProviderLike>(deps: PreflightDeps<
           : "Add your Anthropic credential in Claude Companion settings first.";
     return { ok: false, notice };
   }
+  // These two transports preserve media blocks; the others cannot transmit them.
+  if (deps.hasMedia && provider.id !== "anthropic" && provider.id !== "claude-cli") return { ok: false, notice: "Request not sent. The selected connection currently sends text only. Choose Claude (Anthropic API) or Claude Code to include attachments, or remove them from Message context." };
   return { ok: true, provider, model, caps, reprobed };
 }
 
@@ -66,12 +70,13 @@ export interface TurnStartInput {
   conversationId: string | null;
   messages: ChatMessage[];
   previousTurn: ChatTurnReceipt | undefined;
-  user: { content: string; display?: string };
+  user: Pick<ChatMessage, "content" | "display" | "media" | "contextAttachments">;
   backend: string;
   model: string;
   mode: ChatTurnMode;
   continuationDepth: number;
   regenerate?: boolean;
+  ownership?: { current(): boolean; interruptTurn: TurnPersistence["interruptTurn"] };
 }
 
 export type BeginTurn = (
@@ -81,20 +86,27 @@ export type BeginTurn = (
 ) => Promise<{ conversationId: string; turnId: string }>;
 
 export type TurnStart =
-  | { ok: true; turn: { conversationId: string; turnId: string }; messages: ChatMessage[]; turnMessages: ChatMessage[]; regenerating: boolean }
+  | { ok: true; turn: { conversationId: string; turnId: string }; messages: ChatMessage[]; turnMessages: ChatMessage[]; regenerating: boolean; keepCurrent(notify?: (notice: string) => void): Promise<boolean> }
   | { ok: false; notice: string };
 
-/** Prepares the turn's messages and begins it durably; a failed begin leaves the input untouched. */
-export async function startTurn(begin: BeginTurn, input: TurnStartInput): Promise<TurnStart> {
-  const { previousTurn, user } = input;
+/** Use the same history for source preparation and durable acceptance. */
+export function turnHistory(input: Pick<TurnStartInput, "messages" | "previousTurn" | "regenerate">): { messages: ChatMessage[]; regenerating: boolean } {
+  const { previousTurn } = input;
   const regenerating = !!input.regenerate && input.messages.at(-1)?.role === "assistant" && input.messages.at(-2)?.role === "user";
   const history = input.regenerate ? input.messages.slice(0, regenerating ? -2 : input.messages.at(-1)?.role === "user" ? -1 : input.messages.length) : input.messages;
   // A capped turn's partial work stays in context so the continuation sees what was done.
-  const base =
+  const messages =
     previousTurn && !previousTurn.regenerating && previousTurn.state !== "running" && previousTurn.state !== "capped"
       ? history.map((message, index) => (index >= previousTurn.userMessageIndex ? { ...message, contextExcluded: true } : message))
       : history;
-  const messages: ChatMessage[] = [...base, { role: "user", content: user.content, ...(user.display !== undefined ? { display: user.display } : {}) }];
+  return { messages, regenerating };
+}
+
+/** Prepares the turn's messages and begins it durably; a failed begin leaves the input untouched. */
+export async function startTurn(begin: BeginTurn, input: TurnStartInput): Promise<TurnStart> {
+  const { user } = input;
+  const { messages: base, regenerating } = turnHistory(input);
+  const messages: ChatMessage[] = [...base, { role: "user", content: user.content, ...(user.display !== undefined ? { display: user.display } : {}), ...(user.media?.length ? { media: user.media } : {}), ...(user.contextAttachments ? { contextAttachments: user.contextAttachments } : {}) }];
   // Snapshot now: the view may switch conversations while the turn is in flight.
   const turnMessages = [...messages];
   try {
@@ -105,7 +117,18 @@ export async function startTurn(begin: BeginTurn, input: TurnStartInput): Promis
       ...(input.continuationDepth > 0 ? { continuationDepth: input.continuationDepth } : {}),
       ...(regenerating ? { regenerating: true } : {}),
     });
-    return { ok: true, turn, messages, turnMessages, regenerating };
+    const notice = "Request saved but not sent because you switched chats. Resume it from history.";
+    let interrupted = false;
+    const keepCurrent = async (notify?: (notice: string) => void): Promise<boolean> => {
+      if (interrupted) return false;
+      if (!input.ownership || input.ownership.current()) return true;
+      interrupted = true;
+      await input.ownership.interruptTurn(turn.conversationId, turn.turnId, turnMessages, notice);
+      notify?.(notice);
+      return false;
+    };
+    if (!await keepCurrent()) return { ok: false, notice };
+    return { ok: true, turn, messages, turnMessages, regenerating, keepCurrent };
   } catch (error) {
     return { ok: false, notice: `Couldn't save this request, so it was not started: ${error instanceof Error ? error.message : String(error)}` };
   }

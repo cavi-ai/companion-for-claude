@@ -12,8 +12,9 @@ interface Harness {
   copied: string[];
   confirms: Array<[string, string]>;
   items: () => PublishedItem[];
-  respond: (fn: (req: GistRequest) => { status: number; json: unknown }) => void;
+  respond: (fn: (req: GistRequest) => { status: number; json: unknown } | Promise<{ status: number; json: unknown }>) => void;
   setNote: (text: string) => void;
+  setCopyFailure: (failed: boolean) => void;
 }
 
 const created = (id: string) => ({ id, html_url: `https://gist.github.com/me/${id}`, owner: { login: "me" } });
@@ -27,6 +28,7 @@ function harness(opts: { token?: string; confirm?: boolean; items?: PublishedIte
   let note = NOTE;
   let clock = 100;
   let serial = 0;
+  let copyFailed = false;
   let respond: Harness["respond"] extends (fn: infer F) => void ? F : never = (req) => {
     if (req.method === "DELETE") return { status: 204, json: null };
     if (req.method === "PATCH") return { status: 200, json: created(req.url.split("/").pop()!) };
@@ -45,7 +47,7 @@ function harness(opts: { token?: string; confirm?: boolean; items?: PublishedIte
       confirms.push([kind, title]);
       return opts.confirm ?? true;
     },
-    copy: async (text) => { copied.push(text); },
+    copy: async (text) => { if (copyFailed) throw new Error("Clipboard unavailable"); copied.push(text); },
     notice: (text) => { notices.push(text); },
     getItems: () => items,
     setItems: async (next) => { items = next; },
@@ -60,10 +62,56 @@ function harness(opts: { token?: string; confirm?: boolean; items?: PublishedIte
     items: () => items,
     respond: (fn) => { respond = fn; },
     setNote: (text) => { note = text; },
+    setCopyFailure: (failed) => { copyFailed = failed; },
   };
 }
 
 describe("publishNote", () => {
+  it.each([false, true])("follows repeated renames during an upload (republish: %s)", async (republish) => {
+    const h = harness();
+    if (republish) await h.controller.publishNote("n/A.md");
+    let release!: () => void;
+    let started!: () => void;
+    const pending = new Promise<void>((resolve) => { started = resolve; });
+    h.respond(() => new Promise((resolve) => {
+      release = () => resolve({ status: 201, json: created("g1") });
+      started();
+    }));
+    const upload = h.controller.publishNote("n/A.md");
+    await pending;
+    try {
+      await h.controller.renameNote("n/A.md", "n/B.md");
+      await h.controller.renameNote("n/B.md", "m/C.md");
+    } finally { release(); await upload; }
+    expect(h.items()).toHaveLength(1);
+    expect(h.items()[0]).toMatchObject({ key: "m/C.md", title: "C", gistId: "g1" });
+    h.respond(() => ({ status: 200, json: created("g1") }));
+    await h.controller.publishNote("m/C.md");
+    expect(h.confirms).toEqual([["note", "A"]]);
+    expect(h.requests.at(-1)).toMatchObject({ method: "PATCH", url: "http://stub/gists/g1" });
+    expect(h.items()).toHaveLength(1);
+  });
+
+  it("suppresses duplicate actions at the renamed path until the upload settles", async () => {
+    const h = harness();
+    let release!: () => void;
+    let started!: () => void;
+    const pending = new Promise<void>((resolve) => { started = resolve; });
+    h.respond(() => new Promise((resolve) => {
+      release = () => resolve({ status: 201, json: created("g1") });
+      started();
+    }));
+    const upload = h.controller.publishNote("n/A.md");
+    await pending;
+    try {
+      await h.controller.renameNote("n/A.md", "n/B.md");
+      h.respond(() => ({ status: 201, json: created("g2") }));
+      await h.controller.publishNote("n/B.md");
+      expect(h.requests).toHaveLength(1);
+      expect(h.confirms).toHaveLength(1);
+    } finally { release(); await upload; }
+  });
+
   it("points at the Publishing settings and sends nothing without a token", async () => {
     const h = harness({ token: "" });
     await h.controller.publishNote("n/A.md");
@@ -167,6 +215,44 @@ describe("publishNote", () => {
 });
 
 describe("publishArtifact", () => {
+  it.each([
+    ["content", "<p>First</p>", "Chart", "<p>Second</p>", "Chart"],
+    ["title", "<p>Same result</p>", "First", "<p>Same result</p>", "Second"],
+  ] as const)("publishes independently when artifact %s differs", async (_difference, firstHtml, firstTitle, secondHtml, secondTitle) => {
+    const h = harness();
+    let release!: () => void;
+    let started!: () => void;
+    const pending = new Promise<void>((resolve) => { started = resolve; });
+    h.respond(() => {
+      if (h.requests.length === 1) return new Promise((resolve) => { release = () => resolve({ status: 201, json: created("first") }); started(); });
+      return { status: 201, json: created("second") };
+    });
+    const first = h.controller.publishArtifact(firstHtml, firstTitle);
+    await pending;
+    try {
+      await h.controller.publishArtifact(secondHtml, secondTitle);
+      expect(h.confirms).toHaveLength(2);
+      expect(h.requests).toHaveLength(2);
+    } finally { release(); await first; }
+    expect(h.items().map(({ gistId }) => gistId).sort()).toEqual(["first", "second"]);
+  });
+
+  it("ignores repeated clicks on the same artifact while it is publishing", async () => {
+    const h = harness();
+    let release!: () => void;
+    let started!: () => void;
+    const pending = new Promise<void>((resolve) => { started = resolve; });
+    h.respond(() => new Promise((resolve) => { release = () => resolve({ status: 201, json: created("first") }); started(); }));
+    const first = h.controller.publishArtifact("<p>Chart</p>", "Chart");
+    await pending;
+    try {
+      await h.controller.publishArtifact("<p>Chart</p>", "Chart");
+      expect(h.confirms).toHaveLength(1);
+      expect(h.requests).toHaveLength(1);
+    } finally { release(); await first; }
+    expect(h.items()).toHaveLength(1);
+  });
+
   it("confirms every time and creates a new secret gist with the rendered link", async () => {
     const h = harness();
     await h.controller.publishArtifact("<div>art</div>", "Chart");
@@ -196,6 +282,26 @@ describe("publishArtifact", () => {
 
 describe("unpublish", () => {
   const seeded: PublishedItem = { key: "n/A.md", kind: "note", title: "A", gistId: "g1", url: "https://gist.github.com/me/g1", owner: "me", publishedAt: 1, updatedAt: 1 };
+
+  it("removes the renamed entry when deletion finishes", async () => {
+    const h = harness({ items: [seeded] });
+    let release!: () => void;
+    let started!: () => void;
+    const pending = new Promise<void>((resolve) => { started = resolve; });
+    h.respond(() => new Promise((resolve) => {
+      release = () => resolve({ status: 204, json: null });
+      started();
+    }));
+    const deletion = h.controller.unpublish("n/A.md");
+    await pending;
+    try {
+      await h.controller.renameNote("n/A.md", "n/B.md");
+      h.respond(() => ({ status: 204, json: null }));
+      await h.controller.unpublish("n/B.md");
+      expect(h.requests).toHaveLength(1);
+    } finally { release(); await deletion; }
+    expect(h.items()).toEqual([]);
+  });
 
   it("deletes the gist and removes the entry", async () => {
     const h = harness({ items: [seeded] });
@@ -230,6 +336,38 @@ describe("unpublish", () => {
 });
 
 describe("testToken, copyLink, rename", () => {
+  it.each(["note", "artifact"] as const)("keeps a published %s link and reports clipboard failure truthfully", async (kind) => {
+    const h = harness();
+    h.setCopyFailure(true);
+    if (kind === "note") await h.controller.publishNote("n/A.md");
+    else await h.controller.publishArtifact("<p>Chart</p>", "Chart");
+    expect(h.items()).toHaveLength(1);
+    expect(h.requests).toHaveLength(1);
+    expect(h.copied).toEqual([]);
+    const item = h.items()[0]!;
+    expect(h.notices.at(-1)).toContain(`Published ${item.title}`);
+    expect(h.notices.at(-1)).toContain("Couldn't copy the link");
+    expect(h.notices.at(-1)).toContain(item.url);
+    expect(h.notices.at(-1)).not.toMatch(/link copied/i);
+    h.setCopyFailure(false);
+    await h.controller.copyLink(item.key);
+    expect(h.copied).toEqual([item.url]);
+    expect(h.requests).toHaveLength(1);
+    expect(h.notices.at(-1)).toBe(`Link copied:\n${item.url}`);
+  });
+
+  it("does not claim an existing link was copied when the clipboard rejects it", async () => {
+    const h = harness();
+    await h.controller.publishNote("n/A.md");
+    h.setCopyFailure(true);
+    await h.controller.copyLink("n/A.md");
+    expect(h.copied).toHaveLength(1);
+    expect(h.items()).toHaveLength(1);
+    expect(h.requests).toHaveLength(1);
+    expect(h.notices.at(-1)).toContain("Couldn't copy the link");
+    expect(h.notices.at(-1)).not.toMatch(/link copied/i);
+  });
+
   it("reports the token result", async () => {
     const h = harness();
     expect(await h.controller.testToken()).toEqual({ ok: true, message: "GitHub accepted the token." });

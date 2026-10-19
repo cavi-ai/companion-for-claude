@@ -46,7 +46,6 @@ vi.mock("../../src/view/ConfirmModal", () => ({
   },
 }));
 vi.mock("../../src/vault/vaultFiles", () => ({
-  writeOrReplaceFile: vi.fn(async () => undefined),
   ensureVaultFolder: vi.fn(async () => "ensured"),
 }));
 vi.mock("../../src/composition/vaultTools", () => ({ vaultToolOptions: vi.fn(() => ({ options: true })) }));
@@ -89,7 +88,7 @@ import {
 import { vaultToolOptions } from "../../src/composition/vaultTools";
 import { catalogPromptProvider, composeResourceProviders, substrateResourceProvider, vaultResourceProvider } from "../../src/mcp/providers";
 import { UtilityUnavailableError } from "../../src/providers/endpointPolicy";
-import { ensureVaultFolder, writeOrReplaceFile } from "../../src/vault/vaultFiles";
+import { ensureVaultFolder } from "../../src/vault/vaultFiles";
 
 const call = <T>(deps: Deps | undefined, name: string, ...args: unknown[]): T => (deps![name] as (...a: unknown[]) => T)(...args);
 
@@ -100,7 +99,6 @@ beforeEach(() => {
   captured.modals = [];
   captured.tools = [];
   captured.servers = [];
-  vi.mocked(writeOrReplaceFile).mockClear();
   vi.mocked(ensureVaultFolder).mockClear();
   vi.mocked(vaultToolOptions).mockClear();
   vi.mocked(substrateResourceProvider).mockClear();
@@ -123,6 +121,7 @@ describe("buildBuildController", () => {
       getAbstractFileByPath: vi.fn((p: string) => (p === note.path ? note : p === "folder" ? { path: "folder" } : null)),
       cachedRead: vi.fn(async () => "cached"),
       process: vi.fn(async () => "processed"),
+      create: vi.fn(async () => undefined),
       openFile: vi.fn(async () => undefined),
       getLeaf: vi.fn(),
       persist: vi.fn(async () => undefined),
@@ -132,7 +131,7 @@ describe("buildBuildController", () => {
     m.getLeaf.mockReturnValue({ openFile: m.openFile });
     const host = {
       app: {
-        vault: { getAbstractFileByPath: m.getAbstractFileByPath, cachedRead: m.cachedRead, process: m.process },
+        vault: { getAbstractFileByPath: m.getAbstractFileByPath, cachedRead: m.cachedRead, process: m.process, create: m.create },
         workspace: { getLeaf: m.getLeaf },
       },
       settings: { s: 1 },
@@ -192,26 +191,30 @@ describe("buildBuildController", () => {
     const fn = vi.fn();
     await vault.processFile!("Plans/a.md", fn);
     expect(m.process).toHaveBeenCalledWith(note, fn);
-    await vault.processFile!("folder", fn);
-    await vault.processFile!("missing", fn);
+    await expect(vault.processFile!("folder", fn)).rejects.toThrow("File not found");
+    await expect(vault.processFile!("missing", fn)).rejects.toThrow("File not found");
     expect(m.process).toHaveBeenCalledTimes(1);
   });
 
-  it("writeFile and ensureFolder forward to the vault helpers with the app", async () => {
-    const { host } = rig();
-    await expect(call<Promise<void>>(captured.build, "writeFile", "a/b.md", "body")).resolves.toBeUndefined();
-    expect(writeOrReplaceFile).toHaveBeenCalledWith(host.app, "a/b.md", "body");
+  it("creates new build documents without an overwrite helper", async () => {
+    const { host, m } = rig();
+    await expect(call<Promise<void>>(captured.build, "createFile", "a/b.md", "body")).resolves.toBeUndefined();
+    expect(m.create).toHaveBeenCalledWith("a/b.md", "body");
+    const vault = captured.build!.vault as { exists(path: string): boolean };
+    expect(vault.exists("Plans/a.md")).toBe(true);
+    expect(vault.exists("folder")).toBe(true);
+    expect(vault.exists("missing")).toBe(false);
     await expect(call<Promise<string>>(captured.build, "ensureFolder", "a")).resolves.toBe("ensured");
     expect(ensureVaultFolder).toHaveBeenCalledWith(host.app, "a");
   });
 
-  it("openFile opens a file in the current leaf and ignores non-files", async () => {
+  it("openFile opens a file in the current leaf and rejects non-files", async () => {
     const { m, note } = rig();
     await call<Promise<void>>(captured.build, "openFile", "Plans/a.md");
     expect(m.getLeaf).toHaveBeenCalledWith(false);
     expect(m.openFile).toHaveBeenCalledWith(note);
     m.openFile.mockClear();
-    await call<Promise<void>>(captured.build, "openFile", "folder");
+    await expect(call<Promise<void>>(captured.build, "openFile", "folder")).rejects.toThrow("File not found");
     expect(m.openFile).not.toHaveBeenCalled();
   });
 

@@ -1,4 +1,4 @@
-import { parseProvenanceJson } from "./draftSections";
+import { isOutlineEnvelope, isReviewedClaimFallback, parseProvenanceJson } from "./draftSections";
 
 export interface ProvenanceRow {
   heading: string;
@@ -15,7 +15,7 @@ export function provenanceRows(json: string): { rows: ProvenanceRow[]; issues: s
       heading: entry.heading,
       citations: entry.citations.map(({ key, sourcePath }) => ({ key, sourcePath, sourceTitle: (sourcePath.split("/").pop() ?? sourcePath).replace(/\.md$/i, "") })),
       passages: entry.evidence.length,
-      status: entry.provider === "companion" ? "Outline" : `Drafted · ${entry.model} · ${entry.generatedAt.slice(0, 10)}`,
+      status: isOutlineEnvelope(entry) ? "Outline" : isReviewedClaimFallback(entry) ? `Companion fallback · ${entry.generatedAt.slice(0, 10)}` : `Drafted · ${entry.model} · ${entry.generatedAt.slice(0, 10)}`,
     })),
   };
 }

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { App } from "obsidian";
+import { App, stringifyYaml } from "obsidian";
 import { parse as parseYaml } from "yaml";
 import { VaultTools, assertVaultPath, type SemanticSearch } from "../src/mcp/vaultTools";
 import { OntologyRegistry } from "../src/ontology/registry";
@@ -29,6 +29,9 @@ describe("assertVaultPath — vault-escape guard", () => {
 });
 
 describe("research tools", () => {
+  const seedResearchNote = (app: App, path: string, body: string, frontmatter: Record<string, unknown>) =>
+    app.vault.seed(path, `---\n${stringifyYaml(frontmatter)}---\n\n${body}`, { frontmatter });
+
   it("always defines reads/audit but only advertises mutations when writes are enabled", () => {
     const readNames = tools(false).vt.definitions().map(({ name }) => name);
     expect(new Set(readNames).size).toBe(readNames.length);
@@ -83,12 +86,12 @@ describe("research tools", () => {
   it("reads only the canonical project tree and surfaces damaged research metadata", async () => {
     const app = new App();
     const project = "Research/P/Project.md";
-    app.vault.seed(project, "# project", { frontmatter: { title: "P", type: "research-project", project: `[[${project}]]`, question: "Why?", stage: "frame", status: "active" } });
-    app.vault.seed("Research/P/Sources/S.md", "# source", { frontmatter: { title: "S", type: "research-source", project: `[[${project}]]`, source_kind: "web" } });
-    app.vault.seed("Research/P/Evidence/Damaged type.md", "# damaged", { frontmatter: { title: "Damaged", type: "not-research", project: `[[${project}]]` } });
-    app.vault.seed("Research/P/Claims/Damaged project.md", "# damaged", { frontmatter: { title: "Damaged", type: "claim", project: 42, proposition: "X", confidence: "low", review_state: "proposed" } });
-    app.vault.seed("Research/P/Loose.md", "not in canonical layout", { frontmatter: { type: "not-research" } });
-    for (let index = 0; index < 100; index += 1) app.vault.seed(`Notes/N${index}.md`, "unrelated body", { frontmatter: { type: "note" } });
+    seedResearchNote(app, project, "# project", { title: "P", type: "research-project", project: `[[${project}]]`, question: "Why?", stage: "frame", status: "active" });
+    seedResearchNote(app, "Research/P/Sources/S.md", "# source", { title: "S", type: "research-source", project: `[[${project}]]`, source_kind: "web" });
+    seedResearchNote(app, "Research/P/Evidence/Damaged type.md", "# damaged", { title: "Damaged", type: "not-research", project: `[[${project}]]` });
+    seedResearchNote(app, "Research/P/Claims/Damaged project.md", "# damaged", { title: "Damaged", type: "claim", project: 42, proposition: "X", confidence: "low", review_state: "proposed" });
+    seedResearchNote(app, "Research/P/Loose.md", "not in canonical layout", { type: "not-research" });
+    for (let index = 0; index < 100; index += 1) seedResearchNote(app, `Notes/N${index}.md`, "unrelated body", { type: "note" });
     const read = vi.spyOn(app.vault, "cachedRead");
     const output = await new VaultTools(app as never, { allowWrites: false, defaultFolder: "Claude" }).call("research_project_read", { project });
     const summary = JSON.parse(output);
@@ -109,9 +112,9 @@ describe("research tools", () => {
     const asset = app.vault.seed(assetPath, "\u0001");
     const initialDigest = await crypto.subtle.digest("SHA-256", new Uint8Array([1]));
     const initialFingerprint = `sha256:${[...new Uint8Array(initialDigest)].map((value) => value.toString(16).padStart(2, "0")).join("")}`;
-    app.vault.seed(project, "# project", { frontmatter: { title: "P", type: "research-project", project: `[[${project}]]`, question: "Why?", stage: "frame", status: "active" } });
-    app.vault.seed("Research/P/Sources/Paper.md", "# source", { frontmatter: { title: "Paper", type: "research-source", project: `[[${project}]]`, source_kind: "pdf", asset: `[[${assetPath}]]`, content_fingerprint: initialFingerprint } });
-    app.vault.seed("Research/P/Evidence/Result.md", "> Result", { frontmatter: { title: "Result", type: "evidence", project: `[[${project}]]`, source: "[[Research/P/Sources/Paper.md]]", source_fingerprint: initialFingerprint, locator_kind: "page", locator_value: "1", review_state: "reviewed" } });
+    seedResearchNote(app, project, "# project", { title: "P", type: "research-project", project: `[[${project}]]`, question: "Why?", stage: "frame", status: "active" });
+    seedResearchNote(app, "Research/P/Sources/Paper.md", "# source", { title: "Paper", type: "research-source", project: `[[${project}]]`, source_kind: "pdf", asset: `[[${assetPath}]]`, content_fingerprint: initialFingerprint });
+    seedResearchNote(app, "Research/P/Evidence/Result.md", "> Result", { title: "Result", type: "evidence", project: `[[${project}]]`, source: "[[Research/P/Sources/Paper.md]]", source_fingerprint: initialFingerprint, locator_kind: "page", locator_value: "1", review_state: "reviewed" });
     asset._content = "\u0002";
 
     const findings = JSON.parse(await new VaultTools(app as never, { allowWrites: false, defaultFolder: "Claude" }).call("research_audit", { project }));
@@ -128,10 +131,10 @@ describe("research tools", () => {
     const previousFingerprint = `sha256:${"a".repeat(64)}`;
     const asset = app.vault.seed(assetPath, "pdf");
     asset.stat.size = 25 * 1024 * 1024 + 1;
-    app.vault.seed(project, "# project", { frontmatter: { title: "P", type: "research-project", project: `[[${project}]]`, question: "Why?", stage: "frame", status: "active" } });
-    app.vault.seed(sourcePath, "# source", { frontmatter: { title: "Paper", type: "research-source", project: `[[${project}]]`, source_kind: "pdf", asset: `[[${assetPath}]]`, content_fingerprint: previousFingerprint } });
-    app.vault.seed(evidencePath, "> Result", { frontmatter: { title: "Result", type: "evidence", project: `[[${project}]]`, source: `[[${sourcePath}]]`, source_fingerprint: previousFingerprint, locator_kind: "page", locator_value: "1", review_state: "reviewed" } });
-    app.vault.seed("Research/P/Claims/Claim.md", "# claim", { frontmatter: { title: "Claim", type: "claim", project: `[[${project}]]`, proposition: "Result", confidence: "high", review_state: "reviewed", supports: [`[[${evidencePath}]]`] } });
+    seedResearchNote(app, project, "# project", { title: "P", type: "research-project", project: `[[${project}]]`, question: "Why?", stage: "frame", status: "active" });
+    seedResearchNote(app, sourcePath, "# source", { title: "Paper", type: "research-source", project: `[[${project}]]`, source_kind: "pdf", asset: `[[${assetPath}]]`, content_fingerprint: previousFingerprint });
+    seedResearchNote(app, evidencePath, "> Result", { title: "Result", type: "evidence", project: `[[${project}]]`, source: `[[${sourcePath}]]`, source_fingerprint: previousFingerprint, locator_kind: "page", locator_value: "1", review_state: "reviewed" });
+    seedResearchNote(app, "Research/P/Claims/Claim.md", "# claim", { title: "Claim", type: "claim", project: `[[${project}]]`, proposition: "Result", confidence: "high", review_state: "reviewed", supports: [`[[${evidencePath}]]`] });
 
     const findings = JSON.parse(await new VaultTools(app as never, { allowWrites: false, defaultFolder: "Claude" }).call("research_audit", { project }));
 

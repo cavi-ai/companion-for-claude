@@ -6,7 +6,7 @@ const ACTION_NAMES = [
   "openChat", "newChat", "newChatTab", "generatePlanFromNote", "generateArtifactFromContext", "editWithClaude",
   "enrichNote", "enableVaultSearch", "rebuildSemanticIndex", "openRelatedNotes", "openResearchDesk",
   "triageClippings", "startResearchFromActiveNote", "showSemanticIndexStatus",
-  "browseConversations", "deleteActiveConversation", "handoffToBuild", "markNoteAsPlan", "organizeClippings",
+  "browseConversations", "deleteActiveConversation", "handoffToBuild", "openBuildRunner", "markNoteAsPlan", "organizeClippings",
   "dispatchCloudSession", "pullCloudReplies", "reviewLinkSuggestions", "openWorkflowPicker", "suggestFrontmatterForActiveNote",
   "createPromptTemplate", "createStandingOrder", "runStandingOrder", "openSessionPicker", "openMemoryView", "consolidateMemory", "enrichNoteAsSource",
   "openSourceInbox", "openSystem", "exportClipperTemplates", "seedOntology", "optimizeBrain", "optimizeLinks", "optimizeTypes",
@@ -93,6 +93,7 @@ describe("plain commands", () => {
 
   it.each([
     ["open-chat", "openChat"],
+    ["open-build-runner", "openBuildRunner"],
     ["new-chat", "newChat"],
     ["new-chat-tab", "newChatTab"],
     ["artifact-from-selection", "generateArtifactFromContext"],

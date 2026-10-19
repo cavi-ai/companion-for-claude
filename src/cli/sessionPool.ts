@@ -1,5 +1,5 @@
 // The CLI sessions open for chat conversations: one per conversation, reused while its signature holds
-// and the process is alive, at most `capacity` open with the least recently used idle one closed first.
+// and its context is current, at most `capacity` open with the least recently used idle one closed first.
 // Closing a session then runs its entry's release. Calls for one conversation run in order, so a close
 // waits for that conversation's open and a second acquire reuses the first one's session. Pure; opening
 // is injected.
@@ -18,7 +18,7 @@ export interface PoolEntry<S extends PooledSession> {
 }
 
 export class CliSessionPool<S extends PooledSession> {
-  private readonly entries = new Map<string, { entry: PoolEntry<S>; session: S; signature: string; lastUsed: number }>();
+  private readonly entries = new Map<string, { entry: PoolEntry<S>; session: S; signature: string; lastUsed: number; invalidated?: boolean }>();
   /** The last queued call per conversation. */
   private readonly queues = new Map<string, Promise<unknown>>();
 
@@ -28,12 +28,20 @@ export class CliSessionPool<S extends PooledSession> {
   ) {}
 
   /**
-   * The conversation's open session when its signature matches and it is alive; otherwise the old one is
+   * The conversation's open session when its context and signature match and it is alive; otherwise the old one is
    * closed, idle sessions over capacity are evicted, and `open` supplies a new one. `fresh` always opens.
    * When `open` throws nothing is stored; `open` releases what it opened.
    */
   acquire(id: string, signature: string, open: () => Promise<PoolEntry<S>>, opts: { fresh?: boolean } = {}): Promise<S> {
     return this.enqueue(id, () => this.acquireNow(id, signature, open, opts));
+  }
+
+  /** A different provider accepted a turn; stop reusing this conversation's stale context on its next CLI request. */
+  invalidate(id: string): void {
+    void this.enqueue(id, async () => {
+      const held = this.entries.get(id);
+      if (held) held.invalidated = true;
+    });
   }
 
   interrupt(id: string): void {
@@ -63,7 +71,7 @@ export class CliSessionPool<S extends PooledSession> {
 
   private async acquireNow(id: string, signature: string, open: () => Promise<PoolEntry<S>>, opts: { fresh?: boolean }): Promise<S> {
     const existing = this.entries.get(id);
-    if (!opts.fresh && existing && existing.signature === signature && !existing.session.isClosed()) {
+    if (!opts.fresh && existing && !existing.invalidated && existing.signature === signature && !existing.session.isClosed()) {
       existing.lastUsed = this.now();
       return existing.session;
     }

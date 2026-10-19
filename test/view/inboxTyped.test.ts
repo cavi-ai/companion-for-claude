@@ -7,7 +7,7 @@ const settle = async (turns = 24): Promise<void> => {
   for (let turn = 0; turn < turns; turn++) await Promise.resolve();
 };
 
-function harness(clipperSetupNeeded = true): { app: App; view: InboxView; organizeClippings: ReturnType<typeof vi.fn>; triageClippingsWithPicker: ReturnType<typeof vi.fn> } {
+function harness(clipperSetupNeeded = true): { app: App; view: InboxView; organizeClippings: ReturnType<typeof vi.fn>; triageClippingsWithPicker: ReturnType<typeof vi.fn>; activity: ReturnType<typeof buildPlugin>["activity"] } {
   const app = new App();
   const organizeClippings = vi.fn(async () => undefined);
   const triageClippingsWithPicker = vi.fn(async () => undefined);
@@ -19,7 +19,7 @@ function harness(clipperSetupNeeded = true): { app: App; view: InboxView; organi
     triageClippingsWithPicker,
     clipperSetup: () => ({ setupNeeded: () => clipperSetupNeeded }),
   }, app);
-  return { app, view: new InboxView(new WorkspaceLeaf(app), plugin), organizeClippings, triageClippingsWithPicker };
+  return { app, view: new InboxView(new WorkspaceLeaf(app), plugin), organizeClippings, triageClippingsWithPicker, activity: plugin.activity };
 }
 
 const html = (view: InboxView): string => {
@@ -137,5 +137,47 @@ describe("Inbox typed clips", () => {
     const verified = harness(false);
     await verified.view.onOpen();
     expect(html(verified.view)).not.toContain("Set up Web Clipper");
+  });
+});
+
+
+describe("Inbox enrichment across views", () => {
+  it("shows a shared running batch and disables conflicting controls", async () => {
+    const { app, view, activity } = harness();
+    app.vault.seed("Clippings/Pending.md", "Body");
+    app.vault.seed("Clippings/Typed.md", "Body", { frontmatter: { source_enriched: true, type: "article" } });
+    activity.start({ id: "source-enrichment:inbox-batch", kind: "source-enrichment", title: "Enriching Inbox", total: 2 });
+    activity.update("source-enrichment:inbox-batch", { currentItem: "Clippings/Pending.md" });
+    await view.render();
+    const root = view.contentEl as unknown as FakeElement;
+    expect(root.querySelector(".cc-inbox-operation-running")?.textContent).toContain("Enriching");
+    for (const selector of [".cc-inbox-enrich-all", ".cc-inbox-enrich", ".cc-inbox-organize", ".cc-inbox-themes-run"]) {
+      expect(root.querySelector(selector)?.disabled).toBe(true);
+    }
+    expect(root.querySelector(".cc-inbox-enrichment-running")?.textContent).toBe("Enriching…");
+  });
+
+  it("rejects a stale batch handler before overwriting another view's progress", async () => {
+    const { view, activity } = harness();
+    const id = activity.start({ id: "source-enrichment:inbox-batch", kind: "source-enrichment", title: "Enriching Inbox", total: 3 });
+    activity.update(id, { completed: 1, succeeded: 1, currentItem: "Clippings/Second.md" });
+    await (view as unknown as { enrichAll(items: []): Promise<void> }).enrichAll([]);
+    expect(activity.snapshot().records.find(record => record.id === id)).toMatchObject({ state: "running", total: 3, completed: 1, succeeded: 1, currentItem: "Clippings/Second.md" });
+  });
+
+  it("refreshes a reopened view when a shared batch finishes and retains its failures", async () => {
+    const { app, view, activity } = harness();
+    app.vault.seed("Clippings/Failed.md", "Body");
+    const id = activity.start({ id: "source-enrichment:inbox-batch", kind: "source-enrichment", title: "Enriching Inbox", total: 2 });
+    await view.onOpen();
+    try {
+      activity.fail(id, { completed: 2, succeeded: 1, failed: 1, details: [{ key: "Clippings/Failed.md", label: "Clippings/Failed.md", message: "Invalid YAML properties", state: "error" }] });
+      await vi.waitFor(() => {
+        const root = view.contentEl as unknown as FakeElement;
+        expect(root.querySelector(".cc-inbox-operation-error")?.textContent).toContain("needs attention");
+        expect(root.querySelector(".cc-inbox-enrichment-error")?.textContent).toContain("Invalid YAML properties");
+        expect(root.querySelector(".cc-inbox-enrich-all")?.disabled).toBe(false);
+      });
+    } finally { await view.onClose(); }
   });
 });

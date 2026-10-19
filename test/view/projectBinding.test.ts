@@ -165,6 +165,48 @@ describe("ChatProjectBinding reloads", () => {
 });
 
 describe("ChatProjectBinding project choice", () => {
+  it("does not replace a newer conversation project with an older lookup", async () => {
+    const r = rig();
+    let release!: (value: ChatProject) => void;
+    r.conversation.id = "a";
+    r.plugin.chatProjectFor.mockImplementationOnce(() => new Promise<ChatProject>((resolve) => { release = resolve; }));
+    const first = r.binding.refreshCurrent();
+    r.conversation.id = "b";
+    const next = project("new.md");
+    r.plugin.chatProjectFor.mockResolvedValue(next);
+    await r.binding.refreshCurrent();
+    release(project("old.md"));
+    await first;
+    expect(r.chat.project).toBe(next);
+  });
+
+  it("keeps a new-chat project chosen while an earlier lookup is pending", async () => {
+    const r = rig();
+    let release!: (value: ChatProject) => void;
+    r.plugin.chatProjectFor.mockImplementationOnce(() => new Promise<ChatProject>((resolve) => { release = resolve; }));
+    const first = r.binding.refreshCurrent();
+    r.binding.clear();
+    const next = project("new.md");
+    await r.binding.applyChosen(next);
+    release(project("old.md"));
+    await first;
+    expect(r.chat.project).toBe(next);
+  });
+
+  it("does not consume a new pending project when an earlier binding finishes", async () => {
+    const r = rig();
+    await r.binding.applyChosen(project("old.md"));
+    let release!: () => void;
+    r.setProject.mockImplementationOnce(() => new Promise<void>((resolve) => { release = resolve; }));
+    const first = r.binding.bindPending("a");
+    r.binding.clear();
+    await r.binding.applyChosen(project("new.md"));
+    release();
+    await first;
+    await r.binding.bindPending("b");
+    expect(r.setProject).toHaveBeenLastCalledWith("b", "new.md");
+  });
+
   it("holds the choice as pending when there is no conversation", async () => {
     const r = rig();
     const p = project("a.md", "Alpha");

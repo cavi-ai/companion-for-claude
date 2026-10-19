@@ -3,6 +3,7 @@ import { completeJsonWithRepair } from "../providers/jsonRepair";
 import { buildDraftGrounding, groundingClaimFingerprint, type DraftGroundingPacket } from "./draftGrounding";
 import { buildDraftRequest, parseDraftResponse } from "./draftRequest";
 import type { DraftSectionEnvelope, ParsedDraftSection } from "./draftSections";
+import { REVIEWED_CLAIM_FALLBACK_MODEL } from "./draftSections";
 import { validateDraftResponse, type ValidatedDraftResponse } from "./draftValidation";
 import type { ProjectSnapshot } from "./graph";
 
@@ -75,10 +76,13 @@ export class DraftCoordinator {
     const request = buildDraftRequest(packet);
     const completion = { ...request, model, maxTokens: this.deps.maxTokens(), temperature: 0, responseFormat: "json" as const, responseSchema: DRAFT_RESPONSE_SCHEMA, ...(signal ? { signal } : {}) };
     let response: ValidatedDraftResponse;
+    let fallback = false;
     try {
       response = (await completeJsonWithRepair(provider, completion, (raw) => parseDraftResponse(packet, raw))).response;
-    } catch {
+    } catch (error) {
+      if (signal?.aborted) throw error;
       response = groundedFallback(packet);
+      fallback = true;
     }
     const citations = [...new Map(packet.evidence.map(({ citationKey: key, sourcePath }) => [sourcePath, { key, sourcePath }])).values()];
     return {
@@ -90,8 +94,8 @@ export class DraftCoordinator {
         claimPaths: [claimPath],
         evidence: packet.evidence.map(({ path, fingerprint }) => ({ path, fingerprint })),
         citations,
-        provider: provider.id,
-        model,
+        provider: fallback ? "companion" : provider.id,
+        model: fallback ? REVIEWED_CLAIM_FALLBACK_MODEL : model,
         generatedAt: this.deps.now?.() ?? new Date().toISOString(),
         claimFingerprint: groundingClaimFingerprint(packet),
       },

@@ -45,9 +45,10 @@ export function scanVaultHealth(input: HealthInput): HealthReport {
 
   if (input.typedNotes) {
     const bad = input.typedNotes.filter((n) => n.issues.length > 0);
+    const review = input.typedNotes.filter((n) => n.issues.length > 0 || n.fixChanges > 0);
     sections.push({
-      id: "ontology", group: "vault", title: "Ontology", count: bad.length, severity: bad.length > 0 ? "warning" : "ok",
-      items: bad.slice(0, HEALTH_ITEM_CAP).map((n) => ({ path: n.path, message: n.issues.map((i) => i.message).join("; ") })),
+      id: "ontology", group: "vault", title: "Ontology", count: review.length, severity: bad.length > 0 ? "warning" : review.length > 0 ? "info" : "ok",
+      items: review.slice(0, HEALTH_ITEM_CAP).map((n) => ({ path: n.path, message: n.issues.length > 0 ? n.issues.map((i) => i.message).join("; ") : `${plural(n.fixChanges, "property correction")} ready for review.` })),
       fixable: input.typedNotes.filter((n) => n.fixChanges > 0).length,
     });
   }

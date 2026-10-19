@@ -83,9 +83,15 @@ export function buildSystemDeps(host: SystemHost): SystemViewDeps {
     reviewTagMerges: (done) => void host.optimize().reviewTagMerges(done),
     connectOrphans: (done) => void host.optimize().reviewOrphanLinks(done),
     typeUntypedNotes: (done) => void host.optimize().reviewUntypedNotes(done),
-    reviewSafeFixes: (fixes, done) => new SafeFixModal(host.app, fixes, async (path, patch) => {
-      const file = host.app.vault.getFileByPath(path);
-      if (file) await host.app.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => { Object.assign(fm, patch); });
+    reviewSafeFixes: (fixes, done) => new SafeFixModal(host.app, fixes, async (fix) => {
+      const file = host.app.vault.getFileByPath(fix.path);
+      if (!file) throw new Error("This note no longer exists.");
+      await host.app.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => {
+        if (fm.type !== fix.fixed.type || fix.changes.some(({ key, from }) => JSON.stringify(fm[key]) !== JSON.stringify(from))) {
+          throw new Error("This note changed since review. Review safe fixes again.");
+        }
+        Object.assign(fm, Object.fromEntries(fix.changes.map(({ key, to }) => [key, to])));
+      });
     }, () => done()).open(),
   };
 }

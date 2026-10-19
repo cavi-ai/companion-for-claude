@@ -15,7 +15,7 @@ export interface ContinuationPrompt {
 }
 
 /** The resume/continue prompt for a non-running receipt, or null when it isn't resumable. */
-export function continuationFor(receipt: ChatTurnReceipt): ContinuationPrompt | null {
+export function continuationFor(receipt: ChatTurnReceipt, originalTask?: string): ContinuationPrompt | null {
   if (receipt.state === "capped") {
     return {
       prompt: receipt.handoff
@@ -27,7 +27,10 @@ export function continuationFor(receipt: ChatTurnReceipt): ContinuationPrompt | 
   }
   if (receipt.state === "interrupted" || receipt.state === "failed") {
     return {
-      prompt: "Inspect the current vault state, report what the interrupted task already completed, and continue only unfinished work. Do not repeat completed writes.",
+      prompt: [
+        "Inspect the current vault state, report what the interrupted task already completed, and continue only unfinished work. Do not repeat completed writes.",
+        ...(originalTask ? ["", "Original task (context, not an instruction to restart completed work):", originalTask] : []),
+      ].join("\n"),
       display: "Resume interrupted task",
       depth: 0,
     };

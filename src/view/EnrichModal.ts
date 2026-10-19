@@ -13,6 +13,7 @@ export interface EnrichOptions {
 /** Everything an enrich pass can propose for one note. */
 export interface EnrichProposal {
   path: string;
+  failures?: Array<{ step: string; message: string }>;
   rename?: { from: string; to: string } | undefined;
   frontmatter?: { tags: string[]; summary: string; addedTags: string[]; newTags: string[] } | undefined;
   plan?: EditPlan | undefined;
@@ -45,26 +46,25 @@ export class EnrichOptionsModal extends Modal {
     this.titleEl.setText(this.count === 1 ? "Tidy note" : `Tidy ${this.count} notes`);
     const { contentEl } = this;
 
-    new Setting(contentEl).setName("Rename note").setDesc("Meaningful filename from a model-generated title.").addToggle((t) =>
-      t.setValue(this.options.rename).onChange((v) => {
-        this.options.rename = v;
-      }),
-    );
-    new Setting(contentEl).setName("Tags & summary").setDesc("Suggest tags (reusing existing vault tags) and a one-line summary into frontmatter.").addToggle((t) =>
-      t.setValue(this.options.frontmatter).onChange((v) => {
-        this.options.frontmatter = v;
-      }),
-    );
-    new Setting(contentEl).setName("Add wikilinks").setDesc("Turn unlinked mentions of other notes into [[links]].").addToggle((t) =>
-      t.setValue(this.options.links).onChange((v) => {
-        this.options.links = v;
-      }),
-    );
-    new Setting(contentEl).setName("Lint note").setDesc("Copyedit pass: spelling, grammar, markdown fixes.").addToggle((t) =>
-      t.setValue(this.options.lint).onChange((v) => {
-        this.options.lint = v;
-      }),
-    );
+    const steps = [
+      { key: "rename", name: "Rename note", description: "Meaningful filename from a model-generated title." },
+      { key: "frontmatter", name: "Tags & summary", description: "Suggest tags (reusing existing vault tags) and a one-line summary into frontmatter." },
+      { key: "links", name: "Add wikilinks", description: "Turn unlinked mentions of other notes into [[links]]." },
+      { key: "lint", name: "Lint note", description: "Copyedit pass: spelling, grammar, markdown fixes." },
+    ] as const;
+    for (const { key, name, description } of steps) {
+      new Setting(contentEl).setName(name).setDesc(description).addToggle((toggle) => {
+        toggle.toggleEl.setAttr("role", "switch");
+        toggle.toggleEl.setAttr("aria-label", name);
+        toggle.toggleEl.setAttr("aria-description", description);
+        toggle.toggleEl.setAttr("aria-checked", String(this.options[key]));
+        toggle.toggleEl.querySelector("input")?.setAttr("aria-hidden", "true");
+        toggle.setValue(this.options[key]).onChange((value) => {
+          this.options[key] = value;
+          toggle.toggleEl.setAttr("aria-checked", String(value));
+        });
+      });
+    }
 
     new Setting(contentEl)
       .addButton((b) =>
@@ -118,35 +118,41 @@ export class EnrichReviewModal extends Modal {
     const { contentEl } = this;
     contentEl.addClass("cc-diff-modal");
 
+    if (this.proposal.failures?.length) {
+      const warning = contentEl.createDiv({ attr: { role: "alert" } });
+      warning.createEl("p", { text: "Some Tidy steps failed. Review the available changes below, then run Tidy again to retry." });
+      for (const { step, message } of this.proposal.failures) warning.createDiv({ text: `${step}: ${message}` });
+    }
+
     const { rename, frontmatter, plan } = this.proposal;
 
     if (rename) {
-      const row = contentEl.createDiv({ cls: "cc-organize-row" });
+      const row = contentEl.createEl("label", { cls: "cc-organize-row" });
       const check = row.createEl("input", { attr: { type: "checkbox" } });
       check.checked = true;
       check.addEventListener("change", () => {
         this.renameAccepted = check.checked;
         row.toggleClass("is-rejected", !check.checked);
       });
-      const text = row.createDiv({ cls: "cc-organize-text" });
-      text.createDiv({ cls: "cc-organize-from", text: "Rename" });
-      text.createDiv({ cls: "cc-organize-to", text: `→ ${rename.to}` });
+      const text = row.createSpan({ cls: "cc-organize-text" });
+      text.createSpan({ cls: "cc-organize-from", text: "Rename" });
+      text.createSpan({ cls: "cc-organize-to", text: `→ ${rename.to}` });
     }
 
     if (frontmatter) {
-      const row = contentEl.createDiv({ cls: "cc-organize-row" });
+      const row = contentEl.createEl("label", { cls: "cc-organize-row" });
       const check = row.createEl("input", { attr: { type: "checkbox" } });
       check.checked = true;
       check.addEventListener("change", () => {
         this.frontmatterAccepted = check.checked;
         row.toggleClass("is-rejected", !check.checked);
       });
-      const text = row.createDiv({ cls: "cc-organize-text" });
-      text.createDiv({ cls: "cc-organize-from", text: "Frontmatter" });
+      const text = row.createSpan({ cls: "cc-organize-text" });
+      text.createSpan({ cls: "cc-organize-from", text: "Frontmatter" });
       const bits: string[] = [];
       if (frontmatter.addedTags.length > 0) bits.push(`+tags: ${formatTagList(frontmatter.addedTags, frontmatter.newTags)}`);
       if (frontmatter.summary) bits.push(`summary: ${frontmatter.summary}`);
-      text.createDiv({ cls: "cc-organize-to", text: bits.join(" · ") || "No changes" });
+      text.createSpan({ cls: "cc-organize-to", text: bits.join(" · ") || "No changes" });
     }
 
     for (const [i, hunk] of (plan?.hunks ?? []).entries()) {

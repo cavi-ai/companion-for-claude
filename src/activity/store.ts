@@ -18,6 +18,8 @@ export interface ActivityRecoveryAction {
 }
 
 export interface ActivityDetail {
+  /** Stable item identity, independent of the shortened display label. */
+  key?: string;
   label: string;
   message: string;
   state: "success" | "error";
@@ -69,6 +71,7 @@ interface ActivityStoreOptions {
 
 interface InternalRecord extends ActivityRecord {
   order: number;
+  unresolvedFailures: Set<string>;
 }
 
 const positiveInteger = (value: number, fallback: number): number =>
@@ -118,6 +121,7 @@ export class ActivityStore {
       details: [],
       recovery: [],
       order: ++this.order,
+      unresolvedFailures: new Set(),
     };
     this.records.set(id, record);
     this.trimRecords();
@@ -136,10 +140,16 @@ export class ActivityStore {
         ? count(update.total)
         : undefined;
     const completed = count(update.completed, current.completed);
+    for (const detail of update.details ?? []) {
+      if (!detail.key) continue;
+      if (detail.state === "error") current.unresolvedFailures.add(detail.key);
+      else current.unresolvedFailures.delete(detail.key);
+    }
     const details = update.details === undefined
       ? current.details
       : [...current.details, ...update.details.map((detail) => ({
           label: this.text(detail.label),
+          ...(detail.key === undefined ? {} : { key: detail.key }),
           message: this.text(detail.message),
           state: detail.state,
         }))].slice(-this.maxDetails);
@@ -180,6 +190,28 @@ export class ActivityStore {
     this.update(id, { ...update, state: "needs-attention" });
   }
 
+  /** Resolve one recorded failure without erasing other failures or unattempted work. */
+  resolveFailure(id: string, key: string, message = "Resolved"): boolean {
+    const current = this.records.get(id);
+    if (!current || current.state !== "needs-attention" || current.failed === 0 || !current.unresolvedFailures.delete(key)) return false;
+    const label = current.details.find((detail) => detail.key === key)?.label ?? key;
+    current.details = current.details.filter((detail) => detail.key !== key);
+    const failed = current.failed - 1;
+    const finished = failed === 0 && (current.total === undefined || current.completed >= current.total);
+    this.update(id, {
+      failed,
+      succeeded: current.succeeded + 1,
+      currentItem: key,
+      details: [{ key, label, message, state: "success" }],
+      ...(finished ? {
+        state: "succeeded",
+        technicalDetails: "",
+        recovery: current.recovery.filter((action) => action.kind === "copy-details" || action.kind === "open"),
+      } : {}),
+    });
+    return true;
+  }
+
   dismiss(id: string): void {
     if (this.disposed) return;
     this.cancelSuccessCleanup(id);
@@ -206,7 +238,7 @@ export class ActivityStore {
     if (this.disposed) return { records: [], disposed: true };
     const records = [...this.records.values()]
       .sort((left, right) => right.order - left.order)
-      .map(({ order: _order, details, recovery, ...record }) => ({
+      .map(({ order: _order, unresolvedFailures: _unresolvedFailures, details, recovery, ...record }) => ({
         ...record,
         details: details.map((detail) => ({ ...detail })),
         recovery: recovery.map((action) => ({ ...action })),

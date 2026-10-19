@@ -37,6 +37,12 @@ export interface FrontmatterData {
   [key: string]: string | number | boolean | string[] | undefined;
 }
 
+/** Date-only note properties follow the user's local calendar. */
+export function localCalendarDate(now = new Date()): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+}
+
 /**
  * Build a dated, human-readable note base name: "YYYY-MM-DD — Title". Keeps saved
  * notes sorted by day and titled meaningfully, instead of named after the prompt.

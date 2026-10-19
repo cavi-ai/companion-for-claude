@@ -22,8 +22,9 @@ function setup(overrides: Record<string, unknown> = {}) {
     createClaim: vi.fn(async () => ({ path: "R/P/Claims/New.md" })),
   };
   const changed = vi.fn(async () => undefined);
-  const actions = new ResearchActions({ app: new WorkspaceLeaf().app, repository: repository as never, openPath: async () => undefined, changed, selectProject: async () => undefined, ...overrides } as never);
-  return { actions, repository, calls, changed };
+  const app = new WorkspaceLeaf().app;
+  const actions = new ResearchActions({ app, repository: repository as never, openPath: async () => undefined, changed, selectProject: async () => undefined, ...overrides } as never);
+  return { actions, repository, calls, changed, app };
 }
 const modal = () => getLastOpenedModal()!;
 const all = (selector: string): any[] => [...modal().contentEl.querySelectorAll(selector)];
@@ -33,7 +34,134 @@ const click = (el: any) => el.dispatchEvent({ type: "click" });
 const type = (el: any, value: string) => { el.value = value; el.dispatchEvent({ type: "input" }); };
 const settle = async () => { for (let i = 0; i < 12; i++) await Promise.resolve(); };
 
+describe.each(["claim", "evidence"] as const)("%s review note navigation", (kind) => {
+  const open = (actions: ResearchActions) => {
+    const snapshot = snap([ev("A"), claim("C", { challenges: ["R/P/Evidence/A.md"] })]);
+    if (kind === "claim") actions.reviewClaim(snapshot, "R/P/Claims/C.md");
+    else actions.reviewEvidence(snapshot, "R/P/Evidence/A.md");
+  };
+  const field = () => byLabel(kind === "claim" ? "What this claim doesn't cover" : "Evidence interpretation");
+  const path = kind === "claim" ? "R/P/Claims/C.md" : "R/P/Evidence/A.md";
+
+  it("closes only after successful navigation and ignores repeated clicks while opening", async () => {
+    let finish!: () => void;
+    const openPath = vi.fn(() => new Promise<void>((resolve) => { finish = resolve; }));
+    const { actions, app } = setup({ openPath });
+    app.vault.seed(path, "# Note");
+    open(actions);
+    const original = modal();
+    click(button("Open note"));
+    click(button("Open note"));
+    expect(original.closed).toBe(false);
+    expect(openPath).toHaveBeenCalledTimes(1);
+    expect(openPath).toHaveBeenCalledWith(path);
+    finish();
+    await settle();
+    expect(original.closed).toBe(true);
+  });
+
+  it("preserves unsaved text on cancellation and opens after explicit discard", async () => {
+    const openPath = vi.fn(async () => undefined);
+    const { actions, app } = setup({ openPath });
+    app.vault.seed(path, "# Note");
+    open(actions);
+    const original = modal();
+    const input = field();
+    type(input, "Keep this unfinished review.");
+    const openButton = button("Open note");
+    click(openButton);
+    expect(button("Cancel")).toBeDefined();
+    click(button("Cancel"));
+    expect(openPath).not.toHaveBeenCalled();
+    expect(original.closed).toBe(false);
+    expect(input.value).toBe("Keep this unfinished review.");
+    click(openButton);
+    click(button("Discard and open"));
+    await settle();
+    expect(openPath).toHaveBeenCalledWith(path);
+    expect(original.closed).toBe(true);
+  });
+
+  it("retains edits entered while the note is opening", async () => {
+    let finish!: () => void;
+    const { actions, app } = setup({ openPath: () => new Promise<void>((resolve) => { finish = resolve; }) });
+    app.vault.seed(path, "# Note");
+    open(actions);
+    const original = modal();
+    click(button("Open note"));
+    const input = field();
+    type(input, "A newer review edit.");
+    finish();
+    await settle();
+    expect(original.closed).toBe(false);
+    expect(input.value).toBe("A newer review edit.");
+    expect(all("p").map((el) => el.textContent)).toContain("The note is open. Your newer review edits are still here.");
+  });
+
+  it("keeps the review open and reports failed navigation", async () => {
+    const { actions, app } = setup({ openPath: async () => { throw new Error("The note could not be opened"); } });
+    app.vault.seed(path, "# Note");
+    open(actions);
+    const original = modal();
+    click(button("Open note"));
+    await settle();
+    expect(original.closed).toBe(false);
+    expect(all("p").map((el) => el.textContent)).toContain("The note could not be opened");
+  });
+
+  it("keeps the review open when its note has disappeared", async () => {
+    const openPath = vi.fn(async () => undefined);
+    const { actions } = setup({ openPath });
+    open(actions);
+    const original = modal();
+    click(button("Open note"));
+    await settle();
+    expect(original.closed).toBe(false);
+    expect(openPath).not.toHaveBeenCalled();
+    expect(all("p").map((el) => el.textContent)).toContain(`Research note not found: ${path}`);
+  });
+});
+
 describe("evidence review", () => {
+  it.each([undefined, "", "   "])("keeps the form open without writes when the location is %j", async (location) => {
+    const { actions, calls } = setup();
+    actions.reviewEvidence(snap([ev("E", { reviewState: "proposed", locatorValue: location })]));
+    type(byLabel("Evidence interpretation"), "My reading stays here");
+    click(button("Keep"));
+    await settle();
+    expect(modal().closed).toBe(false);
+    expect(calls).toEqual([]);
+    expect(byLabel("Evidence interpretation").value).toBe("My reading stays here");
+    expect(byLabel("Locator value").getAttribute("aria-invalid")).toBe("true");
+    expect(all("p").map((el) => el.textContent)).toContain("Add a page, section, or other location before keeping this passage.");
+    type(byLabel("Locator value"), "Methods");
+    expect(byLabel("Locator value").getAttribute("aria-invalid")).toBeNull();
+    byLabel("Locator type").value = "section";
+    click(button("Keep"));
+    await settle();
+    expect(modal().closed).toBe(true);
+    expect(calls).toEqual(["locator:section:Methods", "interpretation", "review:reviewed"]);
+  });
+
+  it("does not silently keep the old location after it is cleared", async () => {
+    const { actions, calls } = setup();
+    actions.reviewEvidence(snap([ev("E")]), "R/P/Evidence/E.md");
+    type(byLabel("Locator value"), "   ");
+    click(button("Keep"));
+    await settle();
+    expect(modal().closed).toBe(false);
+    expect(calls).toEqual([]);
+  });
+
+  it("allows rejecting a passage without a location", async () => {
+    const { actions, calls } = setup();
+    actions.reviewEvidence(snap([ev("E", { locatorKind: undefined, locatorValue: undefined })]));
+    click(button("Reject"));
+    await settle();
+    expect(modal().closed).toBe(true);
+    expect(calls).toEqual(["review:rejected"]);
+  });
+
   it("opens the passage the Desk named, not the first proposed one", () => {
     const { actions } = setup();
     actions.reviewEvidence(snap([ev("First", { reviewState: "proposed" }), ev("Named", { reviewState: "reviewed", sourceFingerprint: "old" })]), "R/P/Evidence/Named.md");
@@ -79,6 +207,84 @@ describe("evidence review", () => {
 });
 
 describe("claim review", () => {
+  it.each([
+    { sourceFingerprint: "old" },
+    { locatorValue: undefined },
+  ])("requires checking an untrusted candidate before linking it: %j", (extra) => {
+    const { actions } = setup();
+    actions.reviewClaim(snap([ev("Needs check", extra), ev("Current"), claim("C")]), "R/P/Claims/C.md");
+    expect(byLabel("Link Needs check").disabled).toBe(true);
+    expect(byLabel("Link Current").disabled).toBe(false);
+    expect(all("p").map((el) => el.textContent)).toContain("Check this passage before linking it as current support.");
+    const check = all("button").find((el) => el.getAttribute("aria-label") === "Check passage: Needs check");
+    expect(check).toBeDefined();
+    click(check);
+    expect(all("h2")[0].textContent).toBe("Check Needs check");
+  });
+
+  it("shows saved limitations even without challenging passages", () => {
+    const { actions } = setup();
+    actions.reviewClaim(snap([ev("A"), claim("C", { supports: ["R/P/Evidence/A.md"], limitations: ["Adults only", "One workflow was studied"] })]), "R/P/Claims/C.md");
+    expect(all("li").map((el) => el.textContent)).toEqual(["Adults only", "One workflow was studied"]);
+  });
+
+  it("adds a new limitation while displaying the existing ones", async () => {
+    const { actions, calls } = setup();
+    actions.reviewClaim(snap([ev("A"), claim("C", { challenges: ["R/P/Evidence/A.md"], limitations: ["Adults only"] })]), "R/P/Claims/C.md");
+    expect(all("li").map((el) => el.textContent)).toEqual(["Adults only"]);
+    expect(byLabel("Add another limitation").value).toBe("");
+    type(byLabel("Add another limitation"), "One workflow was studied");
+    click(button("Mark reviewed"));
+    await settle();
+    expect(calls).toEqual(["claim:reviewed:One workflow was studied"]);
+  });
+
+  it("shows stale support and opens the named passage for checking", () => {
+    const { actions } = setup();
+    actions.reviewClaim(snap([ev("A", { sourceFingerprint: "old" }), claim("C", { supports: ["R/P/Evidence/A.md"] })]), "R/P/Claims/C.md");
+    const texts = all("p").map((el) => el.textContent);
+    expect(texts).toContain("S · page 4");
+    expect(texts).toContain("The source changed. Re-check this passage before relying on it.");
+    expect(texts).toContain("Marking this claim reviewed does not check its passages.");
+    const check = all("button").find((el) => el.getAttribute("aria-label") === "Check passage: A");
+    expect(check).toBeDefined();
+    click(check);
+    expect(all("h2")[0].textContent).toBe("Check A");
+    expect(all("p").map((el) => el.textContent)).toContain("The source changed since this was checked. Confirm the passage still says this.");
+  });
+
+  it("keeps unsaved review edits when passage navigation is cancelled", () => {
+    const { actions } = setup();
+    actions.reviewClaim(snap([ev("A"), ev("B"), claim("C", { supports: ["R/P/Evidence/A.md"], challenges: ["R/P/Evidence/B.md"] })]), "R/P/Claims/C.md");
+    const original = modal();
+    const limitation = byLabel("What this claim doesn't cover");
+    type(limitation, "Adults only");
+    const check = all("button").find((el) => el.getAttribute("aria-label") === "Check passage: A");
+    click(check);
+    expect(all("button").map((el) => el.textContent)).toContain("Cancel");
+    click(button("Cancel"));
+    expect(original.closed).toBe(false);
+    expect(limitation.value).toBe("Adults only");
+    click(check);
+    click(button("Discard and check"));
+    expect(original.closed).toBe(true);
+    expect(all("h2")[0].textContent).toBe("Check A");
+  });
+
+  it("distinguishes checked, unchecked, unlocated, and missing passages", () => {
+    const { actions } = setup();
+    actions.reviewClaim(snap([
+      ev("Current"), ev("Suggested", { reviewState: "proposed" }), ev("Unlocated", { locatorValue: undefined }),
+      claim("C", { supports: ["R/P/Evidence/Current.md", "R/P/Evidence/Suggested.md", "R/P/Evidence/Unlocated.md", "R/P/Evidence/Missing.md"] }),
+    ]), "R/P/Claims/C.md");
+    const texts = all("p").map((el) => el.textContent);
+    expect(texts).toContain("Checked passage.");
+    expect(texts).toContain("This passage is not marked reviewed.");
+    expect(texts).toContain("Add a page or section so the passage can be found.");
+    expect(texts).toContain("This passage is missing. Repair its link in the claim note.");
+    expect(all("button").some((el) => el.getAttribute("aria-label") === "Check passage: Missing")).toBe(false);
+  });
+
   it("links checked passages then reviews with the limitation", async () => {
     const { actions, calls } = setup();
     actions.reviewClaim(snap([ev("A"), ev("B"), claim("C", { challenges: ["R/P/Evidence/B.md"] })]), "R/P/Claims/C.md");
@@ -102,6 +308,20 @@ describe("claim review", () => {
 
 describe("claim creation", () => {
   const suggestion = JSON.stringify({ title: "Drafted title", proposition: "Drafted proposition.", confidence: "high", relations: [{ evidence: "R/P/Evidence/A.md", relation: "supports" }] });
+
+  it.each([
+    ["current", {}, "S · page 4", "Checked passage."],
+    ["stale", { sourceFingerprint: "old" }, "S · page 4", "The source changed. Re-check this passage before relying on it."],
+    ["unlocated", { locatorKind: undefined, locatorValue: undefined }, "S", "Add a page or section so the passage can be found."],
+  ] as const)("shows source context for %s evidence before creating a claim", (_state, properties, location, warning) => {
+    const { actions } = setup();
+    actions.createClaim(snap([ev("A", properties)]));
+    const row = modal().contentEl.querySelector(".cc-research-claim-evidence")!;
+    const text = [...row.querySelectorAll("p")].map((el) => el.textContent);
+    expect(text).toContain(location);
+    expect(text).toContain(warning);
+    expect(byLabel("A supports")).toBeDefined();
+  });
 
   it("fills only the fields the user has not touched", async () => {
     let resolve!: (value: string) => void;
@@ -238,6 +458,15 @@ describe("extract evidence modal", () => {
     const texts = all("p").map((el) => el.textContent);
     expect(texts).toContain("Couldn't read this source automatically. Add a passage yourself below.");
     expect(texts).toContain("offline");
+  });
+
+  it("reports an unusable model reply as a retryable failure", async () => {
+    const { actions } = setup({ sourceText, completeResearch: async () => "not a passage list" });
+    actions.extractEvidence(snap([]));
+    await settle();
+    expect(all("p").map((el) => el.textContent)).toContain("The model did not return a valid passage list.");
+    expect(button("Try reading again")).toBeDefined();
+    expect(all("p").map((el) => el.textContent)).not.toContain("No new exact passages were found for this source. Add one yourself below.");
   });
 
   it("keeps failed passages checked and the modal open", async () => {

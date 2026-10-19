@@ -124,6 +124,9 @@ test("an unresponsive Claude Code turn survives restart and resumes explicitly",
   await expect.poll(async () => /"activeTurn"\s*:/.test(await readFile(dataPath, "utf8").catch(() => "")), { timeout: 10_000 }).toBe(false);
   const log = await readFile(harness.argvLog, "utf8");
   expect(log.split("\n").filter((line) => line.startsWith("ARGV ")).at(-1)).toContain("--resume");
+  const resumedInput = log.split("\n").filter((line) => line.startsWith("STDIN ")).at(-1);
+  expect(resumedInput).toContain("Original task (context, not an instruction to restart completed work)");
+  expect(resumedInput).toContain("hang forever");
 });
 
 test("research Sharpen with Claude runs a tool-less Claude Code one-shot", async ({ rig }) => {

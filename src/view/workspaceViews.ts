@@ -20,6 +20,7 @@ import { RELATED_VIEW_TYPE } from "./RelatedView";
 import { SYSTEM_VIEW_TYPE } from "./SystemView";
 import { WorkflowPicker } from "./WorkflowPicker";
 import { resolveCompanionWorkspace, type CompanionWorkspaceCard } from "./companionWorkspace";
+import { saveEditedNote } from "./saveEditedNote";
 
 /** Output-token ceiling for artifact-producing flows (plans, artifacts, workflows),
  *  which routinely run past the chat default. A ceiling, not a target — you only
@@ -220,7 +221,18 @@ export class WorkspaceViews {
 
   /** Inbox-view entry point: guard + consent + enrich, then refresh open inbox views. */
   async enrichInboxItem(file: TFile, options?: { inline?: boolean; refreshInboxViews?: boolean }): Promise<EnrichRunOutcome> {
-    const outcome = await this.deps.enrichment().enrichFile(file, !options?.inline);
+    const enrichment = this.deps.enrichment();
+    const sizeFailure = enrichment.mobileSourceSizeFailure(file);
+    if (sizeFailure) return sizeFailure;
+    try {
+      await saveEditedNote(this.app, file);
+    } catch (cause) {
+      const detail = cause instanceof Error ? cause.message : String(cause);
+      const error = new Error(`Couldn't save ${file.basename} before enrichment: ${detail}`, { cause });
+      if (!options?.inline) new Notice(error.message);
+      return { status: "failed", error };
+    }
+    const outcome = await enrichment.enrichFile(file, !options?.inline);
     if (options?.refreshInboxViews === false) return outcome;
     for (const leaf of this.app.workspace.getLeavesOfType(INBOX_VIEW_TYPE)) {
       if (leaf.view instanceof InboxView) {

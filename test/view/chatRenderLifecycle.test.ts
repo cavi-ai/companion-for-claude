@@ -47,6 +47,8 @@ describe("Chat render lifecycle", () => {
   it("persists the submitted turn before starting backend work", async () => {
     let releasePersist!: () => void;
     const persisted = new Promise<void>((resolve) => { releasePersist = resolve; });
+    let beginPersist!: () => void;
+    const persisting = new Promise<void>(resolve => { beginPersist = resolve; });
     const stream = vi.fn(async (_request: unknown, handlers: { onDone(text: string): void }) => { handlers.onDone("answer"); });
     const provider = { id: "anthropic", hasCredentials: () => true, stream };
     const settings = {
@@ -57,6 +59,7 @@ describe("Chat render lifecycle", () => {
     const fakes = conversationFakes({}, settings);
     const turns = fakes.stubTurns();
     turns.begin.mockImplementation(async () => {
+      beginPersist();
       await persisted;
       return { conversationId: "conversation-1", turnId: "turn-1" };
     });
@@ -72,6 +75,7 @@ describe("Chat render lifecycle", () => {
         localFallback: async () => null,
       }),
       ...fakes.host,
+      invalidateCliSession: vi.fn(),
       composeSystemPrompt: () => "system",
       semantic: () => ({ semanticSearch: async () => [] }),
       loadedOntology: vi.fn(async () => null),
@@ -98,13 +102,15 @@ describe("Chat render lifecycle", () => {
     seam.renderer.renderInto =async () => undefined;
 
     const running = seam.run("Research this");
-    await Promise.resolve();
+    await persisting;
 
     expect(turns.begin).toHaveBeenCalledOnce();
     expect(stream).not.toHaveBeenCalled();
+    expect(plugin.invalidateCliSession).not.toHaveBeenCalled();
 
     releasePersist();
     await running;
+    expect(plugin.invalidateCliSession).toHaveBeenCalledWith("conversation-1");
     expect(stream).toHaveBeenCalledOnce();
   });
 
@@ -134,6 +140,7 @@ describe("Chat render lifecycle", () => {
         localFallback: async () => null,
       }),
       ...fakes.host,
+      invalidateCliSession: vi.fn(),
       composeSystemPrompt: () => "system",
       semantic: () => ({ semanticSearch: async () => [] }),
       loadedOntology: vi.fn(async () => null),
@@ -196,6 +203,7 @@ describe("Chat render lifecycle", () => {
         localFallback: async () => null,
       }),
       ...fakes.host,
+      invalidateCliSession: vi.fn(),
       composeSystemPrompt: () => "system",
       semantic: () => ({ semanticSearch: async () => [] }),
       loadedOntology: vi.fn(async () => null),
@@ -250,7 +258,7 @@ describe("Chat render lifecycle", () => {
 
     expect(turns.complete).toHaveBeenCalledOnce();
     expect(turns.complete.mock.calls[0]?.[2]).toEqual([
-      { role: "user", content: "Hello", contextSources: [] },
+      { role: "user", content: "Hello", contextSources: [], contextAttachments: { paths: [], pages: [] } },
       { role: "assistant", content: "Hello" },
     ]);
     const assistantBubbles = (seam.messagesEl as unknown as FakeElement).querySelectorAll(".cc-assistant");
@@ -394,6 +402,7 @@ describe("Chat render lifecycle", () => {
     const plugin = {
       settings,
       ...fakes.host,
+      invalidateCliSession: vi.fn(),
     } as unknown as ClaudeCompanionPlugin;
     const view = new ChatView(new WorkspaceLeaf(app), plugin);
     const seam = view as unknown as { runners: { reviewLastProposedEdit(conversation: Conversation): Promise<void> } };
@@ -432,6 +441,7 @@ describe("Chat render lifecycle", () => {
       semantic: () => ({ semanticSearch: async () => [] }),
       loadedOntology: vi.fn(async () => null),
       ...fakes.host,
+      invalidateCliSession: vi.fn(),
       turnService: () => new ChatTurnService(),
     } as unknown as ClaudeCompanionPlugin;
     const view = new ChatView(new WorkspaceLeaf(new App()), plugin);

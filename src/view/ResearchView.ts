@@ -43,7 +43,8 @@ export class ResearchView extends ItemView {
   private projectPath: string | undefined;
   private renderSequence = 0;
   private sectionsOpen = false;
-  private instruction = "";
+  private readonly instructions = new Map<string, { text: string; revision: number }>();
+  private instructionInput: HTMLTextAreaElement | undefined;
   private askFocus: { start: number; end: number } | undefined;
   private restoreFocus: { start: number; end: number } | undefined;
   private rendering = false;
@@ -68,6 +69,9 @@ export class ResearchView extends ItemView {
       this.draftPanel?.dispose();
       this.sectionsOpen = false;
       this.expanded.clear();
+      this.askFocus = undefined;
+      this.restoreFocus = undefined;
+      this.instructionInput = undefined;
     }
     this.projectPath = path;
     await this.render();
@@ -80,6 +84,7 @@ export class ResearchView extends ItemView {
     this.draftPanel?.dispose();
     this.disposeChrome?.(false);
     this.disposeChrome = null;
+    this.instructionInput = undefined;
   }
 
   async render(): Promise<void> {
@@ -166,12 +171,16 @@ export class ResearchView extends ItemView {
       button.addEventListener("click", () => void this.runStep(step, snapshot, document));
     }
     const form = ask.createDiv({ cls: "cc-desk-ask-form" });
+    const projectPath = snapshot.project.path;
+    const draft = this.instructions.get(projectPath) ?? { text: "", revision: 0 };
+    this.instructions.set(projectPath, draft);
     const input = form.createEl("textarea", { cls: "cc-desk-ask-input", attr: { "aria-label": "Instruction for Claude", placeholder: "Tell Claude what to do next…", rows: "2" } });
-    input.value = this.instruction;
+    this.instructionInput = input;
+    input.value = draft.text;
     const caret = () => ({ start: input.selectionStart ?? input.value.length, end: input.selectionEnd ?? input.value.length });
     input.addEventListener("focus", () => { this.askFocus = caret(); });
     input.addEventListener("blur", () => { if (!this.rendering) this.askFocus = undefined; });
-    input.addEventListener("input", () => { this.instruction = input.value; if (this.askFocus) this.askFocus = caret(); });
+    input.addEventListener("input", () => { draft.text = input.value; draft.revision += 1; if (this.askFocus) this.askFocus = caret(); });
     for (const type of ["keyup", "click"]) input.addEventListener(type, () => { if (this.askFocus) this.askFocus = caret(); });
     if (this.restoreFocus) {
       const { start, end } = this.restoreFocus;
@@ -184,10 +193,13 @@ export class ResearchView extends ItemView {
     send.addEventListener("click", () => {
       const instruction = input.value.trim();
       if (!instruction) return;
+      const revision = draft.revision;
       void (async () => {
-        if (!await this.deps.askResearch(snapshot.project.path, buildResearchAgentPrompt(snapshot.project, instruction), instruction)) return;
-        this.instruction = "";
-        input.value = "";
+        if (!await this.deps.askResearch(projectPath, buildResearchAgentPrompt(snapshot.project, instruction), instruction)) return;
+        if (draft.revision !== revision) return;
+        draft.text = "";
+        draft.revision += 1;
+        if (this.projectPath === projectPath && this.instructionInput) this.instructionInput.value = "";
       })();
     });
   }

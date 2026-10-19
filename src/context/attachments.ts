@@ -15,6 +15,9 @@ export interface MediaAttachment {
   path?: string;
   /** Base64 payload for pasted/ephemeral media (vault files load lazily). */
   data?: string;
+  /** Draft-only state while a pasted image is being prepared. */
+  pending?: boolean;
+  error?: string;
 }
 
 const IMAGE_MIME: Record<string, string> = {

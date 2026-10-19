@@ -22,7 +22,7 @@ const outlineDoc = renderManagedDocument("# Outline", [{ envelope: { id: "c", cl
 function make(over: { snapshot?: typeof snapshot; doc?: string; projects?: Array<typeof project> } = {}) {
   const repository = {
     listProjects: vi.fn(async () => over.projects ?? [project]),
-    loadProject: vi.fn(async () => over.snapshot ?? snapshot),
+    loadProject: vi.fn(async (_path: string) => over.snapshot ?? snapshot),
     loadDraftSections: vi.fn(async () => parseDraftSections(over.doc ?? outlineDoc)),
     convertDocumentFormat: vi.fn(async () => 1),
   };
@@ -91,6 +91,79 @@ describe("ResearchView", () => {
     click(button(view, "Send"));
     await flush();
     expect(input().value).toBe("");
+  });
+
+  it("keeps separate multiline instruction drafts for each project", async () => {
+    const { view, repository } = make();
+    const other = { ...project, path: "Research/B/Project.md", project: "Research/B/Project.md" };
+    repository.loadProject.mockImplementation(async (path) => path === P ? snapshot : buildProjectSnapshot(other.path, [other], []));
+    const type = (text: string) => {
+      const input = all(view, "textarea")[0] as HTMLTextAreaElement;
+      input.value = text;
+      input.dispatchEvent({ type: "input" } as never);
+    };
+    await view.setProjectPath(P);
+    type("  Compare the codecs.\nKeep the limitations.  ");
+    await view.setProjectPath(other.path);
+    expect((all(view, "textarea")[0] as HTMLTextAreaElement).value).toBe("");
+    type("Define the population.\nThen define the outcome.");
+    await view.setProjectPath(P);
+    expect((all(view, "textarea")[0] as HTMLTextAreaElement).value).toBe("  Compare the codecs.\nKeep the limitations.  ");
+    await view.setProjectPath(other.path);
+    expect((all(view, "textarea")[0] as HTMLTextAreaElement).value).toBe("Define the population.\nThen define the outcome.");
+  });
+
+  it("clears an accepted instruction after a refresh without clearing another project", async () => {
+    const { view, repository, askResearch } = make();
+    const other = { ...project, path: "Research/B/Project.md", project: "Research/B/Project.md" };
+    repository.loadProject.mockImplementation(async (path) => path === P ? snapshot : buildProjectSnapshot(other.path, [other], []));
+    let accept!: (accepted: boolean) => void;
+    askResearch.mockImplementationOnce(() => new Promise<boolean>((resolve) => { accept = resolve; }));
+    await view.setProjectPath(P);
+    const original = all(view, "textarea")[0] as HTMLTextAreaElement;
+    original.value = "Summarize the codecs";
+    original.dispatchEvent({ type: "input" } as never);
+    click(button(view, "Send"));
+    await view.render();
+    accept(true);
+    await flush();
+    expect((all(view, "textarea")[0] as HTMLTextAreaElement).value).toBe("");
+    await view.setProjectPath(other.path);
+    const next = all(view, "textarea")[0] as HTMLTextAreaElement;
+    next.value = "Keep this separate question";
+    next.dispatchEvent({ type: "input" } as never);
+    await view.setProjectPath(P);
+    const input = all(view, "textarea")[0] as HTMLTextAreaElement;
+    input.value = "One more summary";
+    input.dispatchEvent({ type: "input" } as never);
+    askResearch.mockImplementationOnce(() => new Promise<boolean>((resolve) => { accept = resolve; }));
+    click(button(view, "Send"));
+    await view.setProjectPath(other.path);
+    accept(true);
+    await flush();
+    expect((all(view, "textarea")[0] as HTMLTextAreaElement).value).toBe("Keep this separate question");
+    await view.setProjectPath(P);
+    expect((all(view, "textarea")[0] as HTMLTextAreaElement).value).toBe("");
+  });
+
+  it("keeps edits made while an instruction is being sent, even if the text returns to its original value", async () => {
+    const { view, askResearch } = make();
+    let accept!: (accepted: boolean) => void;
+    askResearch.mockImplementationOnce(() => new Promise<boolean>((resolve) => { accept = resolve; }));
+    await view.setProjectPath(P);
+    const input = all(view, "textarea")[0] as HTMLTextAreaElement;
+    input.value = "Summarize the codecs";
+    input.dispatchEvent({ type: "input" } as never);
+    click(button(view, "Send"));
+    input.value = "Changed question";
+    input.dispatchEvent({ type: "input" } as never);
+    input.value = "Summarize the codecs";
+    input.dispatchEvent({ type: "input" } as never);
+    accept(true);
+    await flush();
+    expect(input.value).toBe("Summarize the codecs");
+    await view.render();
+    expect((all(view, "textarea")[0] as HTMLTextAreaElement).value).toBe("Summarize the codecs");
   });
 
   it("restores Ask focus and caret across a refresh", async () => {

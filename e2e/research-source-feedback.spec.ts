@@ -1,0 +1,42 @@
+import { expect, test } from "./fixtures";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
+
+test("vault source selection reports success and duplicates after mouse or keyboard selection", async ({ rig }, testInfo) => {
+  const { page } = await rig.reset();
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  const original = await readFile(join(rig.paths.vault, "Build plan.md"), "utf8");
+  await page.evaluate(async () => {
+    await (window as unknown as { app: { commands: { executeCommandById(id: string): Promise<void> } } }).app.commands.executeCommandById("claude-companion:open-research-desk");
+  });
+  const desk = page.locator(".cc-research-desk");
+  await desk.getByLabel("Active research project").selectOption("Research/Beta/Project.md");
+  await desk.getByRole("button", { name: "Link or file", exact: true }).click();
+  const capture = page.locator(".modal").filter({ has: page.getByRole("heading", { name: "Add research source", exact: true }) });
+  const status = capture.locator(".cc-source-capture-status");
+  await capture.getByLabel("URL to clip").fill("this is not a link");
+  await capture.getByRole("button", { name: "Clip & add", exact: true }).click();
+  await expect(status).toHaveText("Paste a valid http(s) URL first.");
+  await expect(capture.getByLabel("URL to clip")).toHaveValue("this is not a link");
+  const pick = capture.getByRole("button", { name: "Choose a vault note…", exact: true });
+  await pick.click();
+  await page.locator(".prompt-input").press("Escape");
+  await expect(status).toBeEmpty();
+  await expect(desk.locator(".cc-desk-argument")).toContainText("0 sources");
+  await pick.click();
+  await page.locator(".suggestion-item").filter({ hasText: /^Build plan\.md$/ }).click();
+  await expect(status).toHaveText("Imported note: Build plan");
+  await expect(desk.locator(".cc-desk-argument")).toContainText("1 source");
+  await capture.screenshot({ path: testInfo.outputPath("source-import-confirmation.png") });
+  await pick.click();
+  await page.locator(".prompt-input").fill("Build plan.md");
+  await expect(page.locator(".suggestion-item").first()).toHaveText("Build plan.md");
+  await page.locator(".prompt-input").press("Enter");
+  await expect(status).toHaveText("Already in the library: Build plan");
+  await expect(desk.locator(".cc-desk-argument")).toContainText("1 source");
+  await capture.screenshot({ path: testInfo.outputPath("duplicate-source-confirmation.png") });
+  expect(await readFile(join(rig.paths.vault, "Build plan.md"), "utf8")).toBe(original);
+  expect(await rig.providerRequests()).toBe(0);
+  expect(errors).toEqual([]);
+});

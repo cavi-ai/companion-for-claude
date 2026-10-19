@@ -31,6 +31,14 @@ describe("scanVaultHealth", () => {
     expect(s).toMatchObject({ count: 1, severity: "warning", fixable: 1, items: [{ path: "a.md", message: "missing status" }] });
   });
 
+  it("keeps safe corrections visible when there are no other ontology issues", () => {
+    const s = section(base({ typedNotes: [
+      { path: "a.md", issues: [], fixChanges: 2 },
+      { path: "b.md", issues: [], fixChanges: 0 },
+    ] }), "ontology")!;
+    expect(s).toMatchObject({ count: 1, severity: "info", fixable: 1, items: [{ path: "a.md", message: "2 property corrections ready for review." }] });
+  });
+
   it("counts broken link occurrences with one row per source note", () => {
     const s = section(base({ unresolved: { "a.md": { "Missing": 2, "Gone": 1 }, "b.md": {} } }), "links")!;
     expect(s.count).toBe(3);

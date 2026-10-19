@@ -77,7 +77,8 @@ export function buildContextManagerModel(input: ContextManagerInput): ContextMan
     kind: item.kind,
     label: item.label,
     ...(item.path ? { detail: item.path } : {}),
-    status: "ready",
+    status: item.pending ? "pending" : item.error ? "error" : "ready",
+    ...(item.error ? { error: item.error } : {}),
   }));
   const pageSources: AddedContextItem[] = input.pages.map((item) => {
     const fallbackLabel = pageLabel(item.url);

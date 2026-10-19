@@ -9,8 +9,8 @@ import { type AutomaticContextKey, buildContextManagerModel } from "../contextMa
 import { ModeControl } from "../ModeControl";
 import type { ChatSession } from "./chatSession";
 import type { AttachedPath } from "../../context/vaultContext";
-import { type MediaAttachment, arrayBufferToBase64, maxBytesFor, mediaBlock, mediaKind, mediaMime, sniffMime } from "../../context/attachments";
-import { type AttachedPage, detectPageUrl, pageLabel } from "../../context/urlContext";
+import { type MediaAttachment, mediaKind, mediaMime } from "../../context/attachments";
+import { type AttachedPage, detectPageUrl, pageLabel, snapshotPages } from "../../context/urlContext";
 import type { ContentBlock } from "../../providers/types";
 import { CLAUDE_MODELS } from "../../claude/models";
 import { DEVICE_MODELS } from "../../device/models";
@@ -21,7 +21,9 @@ import type { ComposerHost } from "./hosts";
 import type { ContextToggles } from "../../types";
 import { applyMention, initialToggles } from "./contextScope";
 import { appendCliModelOptions, syncModelSelection } from "./cliModelOptions";
-import { attachPastedImage } from "./pastedImage";
+import { loadMediaBlocks } from "./mediaBlocks";
+import { loadAttachedNotes, type PreparedAttachedNote } from "../../context/attachedNotes";
+import { cancelPastedImages, PastedImagePreparation } from "./pastedImage";
 
 export interface ComposerDeps {
   applyChatFontSize(): void;
@@ -65,6 +67,7 @@ export class Composer {
   attachedPaths: AttachedPath[] = [];
   /** PDFs/images attached via "@" or paste — cleared after the next send. */
   attachedMedia: MediaAttachment[] = [];
+  readonly pastedImages = new PastedImagePreparation(() => this.attachedMedia);
   /** Web pages attached via "Attach page content" (captured markdown). */
   attachedPages: AttachedPage[] = [];
   /** This tab's automatic context; settings.context only seeds it. */
@@ -188,7 +191,7 @@ export class Composer {
     this.sendBtn.addEventListener("click", () => this.deps.onSend());
   }
 
-  destroy(): void { this.modeControl?.dispose(); this.contextManager?.destroy(); }
+  destroy(): void { this.pastedImages.dispose(); this.modeControl?.dispose(); this.contextManager?.destroy(); }
 
   constructor(private app: App, private plugin: ComposerHost, private chat: ChatSession, private deps: ComposerDeps) {
     this.contextToggles = initialToggles(plugin.settings.context);
@@ -256,41 +259,41 @@ export class Composer {
     return buildClaimItems(this.deps.cachedClaims());
   }
 
-  /** Load attached media into wire blocks; oversize/unreadable files are skipped with a notice. */
-  async mediaBlocks(): Promise<ContentBlock[]> {
-    const blocks: ContentBlock[] = [];
-    for (const m of this.attachedMedia) {
-      try {
-        let data = m.data;
-        let mime = m.mime;
-        if (!data && m.path) {
-          const file = this.app.vault.getAbstractFileByPath(m.path);
-          if (!(file instanceof TFile)) throw new Error("file not found");
-          if (file.stat.size > maxBytesFor(m.kind)) {
-            new Notice(`${m.label} is too large to attach (max ${Math.round(maxBytesFor(m.kind) / 1024 / 1024)} MB).`);
-            continue;
-          }
-          const buf = await this.app.vault.readBinary(file);
-          // Trust the bytes over the extension so a mislabeled file isn't 400'd.
-          mime = sniffMime(buf) ?? m.mime;
-          data = arrayBufferToBase64(buf);
-        }
-        if (data) blocks.push(mediaBlock(m.kind, mime, data));
-      } catch (e) {
-        new Notice(`Couldn't attach ${m.label}: ${e instanceof Error ? e.message : String(e)}`);
-      }
+  /** Keep the question while selected page captures are pending or unavailable. */
+  pageContext(pages: readonly AttachedPage[]): AttachedPage[] | null {
+    try { return snapshotPages(pages); }
+    catch (error) {
+      new Notice(`Request not sent. ${error instanceof Error ? error.message : String(error)}`);
+      return null;
     }
-    return blocks;
+  }
+
+  /** Capture explicit note/folder content while the question is still editable. */
+  async noteContext(paths: readonly AttachedPath[], isCurrent: () => boolean = () => true): Promise<PreparedAttachedNote[] | null> {
+    try { return await loadAttachedNotes(this.app, paths, this.plugin.settings.maxContextNotes); }
+    catch (error) {
+      if (isCurrent()) new Notice(`Request not sent. ${error instanceof Error ? error.message : String(error)}`);
+      return null;
+    }
+  }
+
+  /** Refuse the turn when any selected image/PDF cannot be loaded. */
+  async mediaBlocks(media: readonly MediaAttachment[] = this.attachedMedia, isCurrent: () => boolean = () => true): Promise<ContentBlock[] | null> {
+    try { return await loadMediaBlocks(this.app, media); }
+    catch (error) {
+      if (isCurrent()) new Notice(`Request not sent. ${error instanceof Error ? error.message : String(error)}`);
+      return null;
+    }
   }
 
   /** Attach an image pasted into the composer (screenshots, copied images). */
   async attachPastedImage(file: File): Promise<void> {
-    await attachPastedImage(file, { media: () => this.attachedMedia, changed: () => this.renderContextManager() });
+    await this.pastedImages.attach(file, { app: this.app, sourcePath: this.deps.resolveMarkdownContextView()?.file?.path, media: () => this.attachedMedia, changed: () => this.renderContextManager() });
   }
 
   clearAttachments(): void {
     this.attachedPaths = [];
-    this.attachedMedia = [];
+    cancelPastedImages(this.attachedMedia.splice(0));
     this.attachedPages = [];
   }
 
@@ -352,7 +355,7 @@ export class Composer {
     this.renderContextManager();
     try {
       const result = await capture(page.url);
-      if (!result) {
+      if (!result?.markdown.trim()) {
         page.error = "No readable content on that page.";
       } else {
         page.markdown = result.markdown;
@@ -436,7 +439,7 @@ export class Composer {
     const index = model.sources.findIndex((source) => source.id === id);
     if (index < 0) return;
     if (index < this.attachedPaths.length) this.attachedPaths.splice(index, 1);
-    else if (index < this.attachedPaths.length + this.attachedMedia.length) this.attachedMedia.splice(index - this.attachedPaths.length, 1);
+    else if (index < this.attachedPaths.length + this.attachedMedia.length) cancelPastedImages(this.attachedMedia.splice(index - this.attachedPaths.length, 1));
     else this.attachedPages.splice(index - this.attachedPaths.length - this.attachedMedia.length, 1);
     this.renderContextManager();
     this.deps.updateUsageBar();

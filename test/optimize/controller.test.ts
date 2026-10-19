@@ -66,8 +66,11 @@ describe("OptimizeController.scan", () => {
   });
 
   it("adds semantic candidates from note vectors only when semantic is on", async () => {
-    const vecs: Record<string, number[]> = { "a.md": [1, 0], "b.md": [1, 0.01], "c.md": [1, 0.02], "d.md": [1, 0.015] };
-    const notes = { "a.md": { fm: ["machine-learning"] }, "b.md": { fm: ["machine-learning"] }, "c.md": { fm: ["machine-learning"] }, "d.md": { fm: ["ml"] } };
+    const vecs: Record<string, number[]> = { "a.md": [1, 0], "b.md": [1, 0.01], "c.md": [1, 0.02], "d.md": [1, 0.015], "e.md": [0, 1], "f.md": [0, 1], "g.md": [0, 1] };
+    const notes = {
+      "a.md": { fm: ["machine-learning"] }, "b.md": { fm: ["machine-learning"] }, "c.md": { fm: ["machine-learning"] }, "d.md": { fm: ["ml"] },
+      "e.md": { fm: ["cooking"] }, "f.md": { fm: ["cooking"] }, "g.md": { fm: ["travel"] },
+    };
     const { controller } = setup({ noteVectors: async () => (p) => vecs[p] ?? null }, notes);
     const on = await controller.scan();
     expect(on.candidates).toMatchObject([{ from: "ml", to: "machine-learning", evidence: ["semantic"] }]);

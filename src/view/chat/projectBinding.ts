@@ -24,6 +24,7 @@ export class ChatProjectBinding {
   private cachedProjects: ChatProject[] = [];
   /** A project chosen before the first send (no conversation yet); applied once `run()` creates one. */
   private pendingProjectId: string | null = null;
+  private projectGeneration = 0;
 
   constructor(
     private app: App,
@@ -51,6 +52,7 @@ export class ChatProjectBinding {
   }
 
   dispose(): void {
+    this.projectGeneration++;
     this.claimReloadGeneration++;
     if (this.claimReloadTimer !== null) {
       window.clearTimeout(this.claimReloadTimer);
@@ -59,6 +61,7 @@ export class ChatProjectBinding {
   }
 
   forget(): void {
+    this.projectGeneration++;
     this.pendingProjectId = null;
   }
 
@@ -70,19 +73,23 @@ export class ChatProjectBinding {
   /** Persist a project chosen before the first send onto the conversation `run()` just created. */
   async bindPending(conversationId: string): Promise<void> {
     if (this.pendingProjectId === null) return;
-    await this.plugin.conversations().setProject(conversationId, this.pendingProjectId);
-    this.pendingProjectId = null;
+    const generation = this.projectGeneration;
+    const projectId = this.pendingProjectId;
+    await this.plugin.conversations().setProject(conversationId, projectId);
+    if (generation === this.projectGeneration && this.pendingProjectId === projectId) this.pendingProjectId = null;
   }
 
   /** Sync the bound project (and the pill/header label) to the current conversation's persisted projectId. */
   async refreshCurrent(): Promise<void> {
+    const generation = ++this.projectGeneration;
+    const conversationId = this.deps.conversationId();
     let project: ChatProject | null = null;
     try {
-      project = await this.plugin.chatProjectFor(this.deps.conversationId());
+      project = await this.plugin.chatProjectFor(conversationId);
     } catch {
       // Conversation/registry lookup unavailable — no project for this turn.
     }
-    this.setLocalProject(project);
+    if (generation === this.projectGeneration && conversationId === this.deps.conversationId()) this.setLocalProject(project);
   }
 
   /** Apply a project chosen from the "@" menu or the "Chat: choose project" command. */
@@ -95,6 +102,7 @@ export class ChatProjectBinding {
       return;
     }
     await this.plugin.conversations().setProject(conversationId, project.id);
+    if (conversationId !== this.deps.conversationId()) return;
     await this.refreshCurrent();
     this.deps.updateUsageBar();
   }
@@ -154,6 +162,7 @@ export class ChatProjectBinding {
 
   /** Set the bound project and its pill/header label, without touching persisted storage. */
   private setLocalProject(project: ChatProject | null): void {
+    this.projectGeneration++;
     this.chat.project = project;
     this.deps.showProject(project);
   }

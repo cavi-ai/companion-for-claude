@@ -19,6 +19,23 @@ describe("isPlanReply", () => {
 });
 
 describe("extractTasks", () => {
+  it.each([
+    ["- [ ] Ship formatter\n```markdown\n- [ ] Example item\n```", [{ title: "Ship formatter", done: false }]],
+    ["~~~markdown\n- [x] Example item\n~~~\n- [x] Review design\n- [ ] Ship formatter", [{ title: "Review design", done: true }, { title: "Ship formatter", done: false }]],
+    ["````markdown\n```\n- [ ] Example item\n```\n````\n- [ ] Ship formatter", [{ title: "Ship formatter", done: false }]],
+    ["```markdown\n- [ ] Example item\n```", []],
+    ["- [ ] Ship formatter\n~~~markdown\n- [ ] Unclosed example", [{ title: "Ship formatter", done: false }]],
+    ["1. Ship formatter\n```markdown\n- [ ] Example checkbox\n```", [{ title: "Ship formatter", done: false }]],
+    ["~~~text\n1. Example milestone\n~~~\n1. Ship formatter", [{ title: "Ship formatter", done: false }]],
+    ["---\nexample: |\n  - [ ] Metadata example\n---\n- [ ] Ship formatter", [{ title: "Ship formatter", done: false }]],
+  ])("extracts work from prose rather than examples in %j", (plan, expected) => {
+    expect(extractTasks(plan as string)).toEqual(expected);
+  });
+
+  it("retains real nested checklist items and their done state", () => {
+    expect(extractTasks("- [ ] Parent\n    - [x] Child")).toEqual([{ title: "Parent", done: false }, { title: "Child", done: true }]);
+  });
+
   it("reads markdown checkboxes with done state", () => {
     const tasks = extractTasks("- [ ] First\n- [x] Second done\n* [X] Third");
     expect(tasks).toEqual([

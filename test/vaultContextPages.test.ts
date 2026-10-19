@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { App } from "obsidian";
 import { gatherContext } from "../src/context/vaultContext";
+import { rememberTurnContext, readTurnContext } from "../src/chat/turnSources";
 import { DEFAULT_SETTINGS } from "../src/types";
 
 const NO_TOGGLES = { activeNote: false, selection: false, linkedNotes: false, searchVault: false };
@@ -12,6 +13,15 @@ function app(): App {
 }
 
 describe("gatherContext — attached web pages", () => {
+  it("preserves gathered page context through bounded accepted-turn persistence", async () => {
+    const pages = [{ url: "https://example.test/long", title: "Long article", markdown: "abc ".repeat(10000) }];
+    const original = await gatherContext(app(), DEFAULT_SETTINGS, NO_TOGGLES, "q", undefined, [], pages);
+    const saved = rememberTurnContext([], pages);
+    expect(saved.pages[0]!.markdown.length).toBe(6000);
+    const restored = readTurnContext(JSON.parse(JSON.stringify([{ role: "user", content: "q", contextAttachments: saved }])));
+    expect(await gatherContext(app(), DEFAULT_SETTINGS, NO_TOGGLES, "q", undefined, [], restored.pages)).toEqual(original);
+  });
+
   it("includes captured pages as labeled blocks within the budget", async () => {
     const ctx = await gatherContext(app(), DEFAULT_SETTINGS, NO_TOGGLES, "q", undefined, [], [
       { url: "https://example.com/a", title: "Page A", markdown: "Content of A." },

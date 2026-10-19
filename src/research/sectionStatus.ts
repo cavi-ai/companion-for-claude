@@ -1,5 +1,6 @@
 import { buildDraftGrounding, groundingClaimFingerprint } from "./draftGrounding";
 import type { DraftSectionParseResult, ParsedDraftSection } from "./draftSections";
+import { isOutlineEnvelope } from "./draftSections";
 import type { ProjectSnapshot } from "./graph";
 import type { ResearchDocumentRecord } from "./types";
 
@@ -33,7 +34,7 @@ export function evidenceChanged(snapshot: ProjectSnapshot, section: ParsedDraftS
 }
 
 export function sectionState(snapshot: ProjectSnapshot, section: ParsedDraftSection): SectionState {
-  if (section.envelope.provider === "companion") return "outline";
+  if (isOutlineEnvelope(section.envelope)) return "outline";
   return section.modifiedSinceReview || evidenceChanged(snapshot, section) ? "changed" : "drafted";
 }
 

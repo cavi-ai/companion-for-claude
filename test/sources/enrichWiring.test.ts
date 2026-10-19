@@ -343,11 +343,11 @@ describe("source enrichment wiring", () => {
     app.workspace = { getActiveFile: () => active, getLeavesOfType: () => [] } as never;
     vi.spyOn(router.openaiCompat, "complete").mockResolvedValue("TYPE: -\nTAGS: LLMs, brand-new\nSUMMARY: s");
 
-    await plugin.noteFlows().suggestFrontmatterForActiveNote();
-
-    const modal = getLastOpenedModal() as unknown as { contentEl: FakeElement };
+    const pending = plugin.noteFlows().suggestFrontmatterForActiveNote();
     const collect = (e: FakeElement): string => [e.textContent, ...e.children.map(collect)].join("\n");
-    expect(collect(modal.contentEl)).toContain("llm, brand-new (new)");
+    await vi.waitFor(() => expect(collect(getLastOpenedModal()!.contentEl as unknown as FakeElement)).toContain("llm, brand-new (new)"));
+    getLastOpenedModal()!.close();
+    await pending;
   });
 
   it("Tidy proposes resolved tags and lists only the new ones as new", async () => {

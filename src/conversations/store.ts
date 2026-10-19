@@ -4,8 +4,9 @@
 // ids/timestamps so this stays unit-testable.
 
 import type { ChatMessage } from "../types";
-import type { ApiMessage } from "../providers/types";
+import type { ApiMessage, ContentBlock } from "../providers/types";
 import type { ProposedEdit } from "../edit/diff";
+import { currentSourceReferences, currentTurnContext } from "../chat/turnSources";
 
 export interface RecoverableEditProposal {
   path: string;
@@ -98,7 +99,7 @@ export function compactMessages(messages: ChatMessage[]): ChatMessage[] {
   for (const message of messages) {
     const prev = out[out.length - 1];
     if (prev?.role === "assistant" && message.role === "assistant") continue;
-    out.push({ ...message });
+    out.push({ ...message, ...(Array.isArray(message.media) ? { media: currentSourceReferences(message.media) } : {}), ...(message.contextAttachments ? { contextAttachments: currentTurnContext(message.contextAttachments) } : {}) });
   }
   return out;
 }
@@ -133,20 +134,28 @@ export function compactArtifactsInHistory(messages: ChatMessage[]): ChatMessage[
  * the next send appended another `user` message. This is also the wire boundary:
  * the result carries `role` + `content` only.
  */
-export function toApiMessages(messages: ChatMessage[]): ApiMessage[] {
-  // String content throughout: the inputs are chat turns, never tool-use blocks.
-  const out: Array<{ role: ChatMessage["role"]; content: string }> = [];
+export function toApiMessages(messages: ChatMessage[], projectContent: (message: ChatMessage) => ApiMessage["content"] = message => message.content): ApiMessage[] {
+  const out: ApiMessage[] = [];
   for (const m of messages) {
     if (m.contextExcluded) continue;
+    const content = projectContent(m);
     const prev = out[out.length - 1];
-    if (prev && prev.role === m.role) {
-      prev.content = `${prev.content}\n\n${m.content}`;
-    } else {
-      // Project, never spread: the API 400s on any extra key (display, toolTrace).
-      out.push({ role: m.role, content: m.content });
-    }
+    if (prev && prev.role === m.role) prev.content = mergeApiContent(prev.content, content);
+    else out.push({ role: m.role, content });
   }
   return out;
+}
+
+function mergeApiContent(left: ApiMessage["content"], right: ApiMessage["content"]): ApiMessage["content"] {
+  if (typeof left === "string" && typeof right === "string") return `${left}\n\n${right}`;
+  const a: ContentBlock[] = typeof left === "string" ? [{ type: "text", text: left }] : [...left];
+  const b: ContentBlock[] = typeof right === "string" ? [{ type: "text", text: right }] : [...right];
+  const tail = a.at(-1), head = b[0];
+  if (tail?.type === "text" && head?.type === "text") {
+    a[a.length - 1] = { type: "text", text: `${tail.text}\n\n${head.text}` };
+    b.shift();
+  }
+  return [...a, ...b];
 }
 
 /**

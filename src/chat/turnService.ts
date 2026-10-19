@@ -118,18 +118,18 @@ export class ChatTurnService {
 
     turn.result = Promise.race([running, interrupted])
       .then(async (result) => {
-        push({ kind: "done", result });
         if (result.aborted || result.error) await input.interruptTurn(result, result.error);
         else if (result.capped && input.capTurn) await input.capTurn(result);
         else await input.completeTurn(result);
+        push({ kind: "done", result });
         this.settle(conversationId, turn, result);
         return result;
       })
       .catch(async (error: unknown) => {
         const err = error instanceof Error ? error : new Error(String(error));
         const result: AgentTurnResult = { text: "", trace: [], error: err };
-        push({ kind: "error", error: err });
         await input.interruptTurn(result, err);
+        push({ kind: "error", error: err });
         this.settle(conversationId, turn, result);
         throw err;
       })

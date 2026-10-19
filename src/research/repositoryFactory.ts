@@ -7,7 +7,7 @@
 import { App, TFile, normalizePath, parseYaml } from "obsidian";
 import { ResearchRepository } from "./repository";
 import type { ResearchNoteInput } from "./parse";
-import { frontmatterBlock } from "../markdown/frontmatter";
+import { frontmatterBlock, readFrontmatter } from "../markdown/frontmatter";
 
 export interface ResearchRepositoryFactoryOptions {
   /** Create missing parent folders before createWithParents writes. */
@@ -34,8 +34,8 @@ export function createResearchRepository(app: App, opts: ResearchRepositoryFacto
         const content = await app.vault.cachedRead(file);
         const block = frontmatterBlock(content);
         const body = block ? content.slice(block.end) : content;
-        const cached = app.metadataCache.getFileCache(file)?.frontmatter as Record<string, unknown> | undefined;
-        const frontmatter = cached ?? (block ? (parseYaml(block.yaml) as Record<string, unknown>) : undefined);
+        // Metadata indexing can lag writes; keep frontmatter and body on one revision.
+        const frontmatter = readFrontmatter(content, parseYaml) ?? undefined;
         return { path: file.path, ...(frontmatter ? { frontmatter } : {}), body };
       }),
     );

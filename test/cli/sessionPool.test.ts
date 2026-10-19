@@ -31,6 +31,31 @@ describe("CliSessionPool", () => {
     expect(open).toHaveBeenCalledOnce();
   });
 
+  it("replaces an invalidated conversation while preserving other cached sessions", async () => {
+    const { pool, opener, events } = harness();
+    const first = await pool.acquire("c1", "same", opener("old"));
+    const other = await pool.acquire("c2", "same", opener("other"));
+    pool.invalidate("c1");
+    const next = await pool.acquire("c1", "same", opener("new"));
+    expect(next).not.toBe(first);
+    await expect(pool.acquire("c2", "same", opener("unused"))).resolves.toBe(other);
+    expect(events).toEqual(["close old", "release old"]);
+  });
+
+  it("invalidates a session that was still opening when another provider took over", async () => {
+    const { pool, opener } = harness();
+    let finish!: (entry: PoolEntry<FakeSession>) => void;
+    const pending = pool.acquire("c1", "same", () => new Promise<PoolEntry<FakeSession>>(resolve => { finish = resolve; }));
+    await Promise.resolve();
+    pool.invalidate("c1");
+    const replacement = pool.acquire("c1", "same", opener("replacement"));
+    const late = new FakeSession();
+    finish({ session: late, release: async () => undefined });
+    await expect(pending).resolves.toBe(late);
+    await expect(replacement).resolves.not.toBe(late);
+    expect(late.closed).toBe(true);
+  });
+
   it("closes then releases the old session before opening one for a new signature", async () => {
     const { pool, opener, events } = harness();
     const first = await pool.acquire("c1", "chat", opener("old"));

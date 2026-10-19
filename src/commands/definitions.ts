@@ -33,6 +33,7 @@ export interface CommandActions {
   browseConversations(): void;
   deleteActiveConversation(): void | Promise<void>;
   handoffToBuild(): void | Promise<void>;
+  openBuildRunner(): void;
   markNoteAsPlan(file: TFile): void;
   organizeClippings(): void;
   dispatchCloudSession(): void;
@@ -142,6 +143,7 @@ export function companionCommands(actions: CommandActions): Command[] {
     { id: "browse-conversations", name: "Resume a past conversation", callback: () => actions.browseConversations() },
     whenEnabled("delete-active-conversation", "Delete the current conversation", () => actions.hasActiveConversation(), () => void actions.deleteActiveConversation()),
     onActiveFile("build-from-plan", "Build current plan with Claude", actions, () => void actions.handoffToBuild()),
+    { id: "open-build-runner", name: "Open Build Runner", callback: () => actions.openBuildRunner() },
     onActiveFile("mark-note-as-plan", "Mark current note as a plan (adds type: plan + Build icon)", actions, (file) => actions.markNoteAsPlan(file)),
     { id: "organize-clippings", name: "Organize clippings (rename, tag, sort into folders)", callback: () => actions.organizeClippings() },
     { id: "dispatch-cloud-session", name: "Send to cloud Claude session (mobile-friendly)", callback: () => actions.dispatchCloudSession() },

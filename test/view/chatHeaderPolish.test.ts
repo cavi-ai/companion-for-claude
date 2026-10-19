@@ -43,6 +43,7 @@ function headerPlugin(fakes = conversationFakes()): ClaudeCompanionPlugin {
     mcpStats: () => ({ running: false, port: null, activeRequests: 0, handledRequests: 0 }),
     shell: () => ({ companionChrome: () => chromeDeps }),
     promptTemplates: async () => [],
+    captureWebPage: () => undefined,
     ...fakes.host,
     secrets: () => ({ available: () => false }),
     composeSystemPrompt: () => "system",

@@ -98,5 +98,8 @@ export class NotePickModal extends FuzzySuggestModal<TFile> {
 
   onChooseItem(file: TFile): void { this.chosen = true; this.choose(file); }
 
-  override onClose(): void { if (!this.chosen) this.cancel(); }
+  override onClose(): void {
+    // Obsidian can close the picker before calling onChooseItem in the same task.
+    queueMicrotask(() => { if (!this.chosen) this.cancel(); });
+  }
 }

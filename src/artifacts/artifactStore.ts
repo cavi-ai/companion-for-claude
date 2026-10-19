@@ -1,7 +1,8 @@
 import { App, Notice, TFile } from "obsidian";
 import { sanitizeFileName, type ExtractedArtifact } from "./parse";
-import { buildFrontmatter, normalizeTags, datedTitleBase } from "../indexing/frontmatter";
+import { buildFrontmatter, normalizeTags, datedTitleBase, localCalendarDate } from "../indexing/frontmatter";
 import { ensureVaultFolder, uniqueNotePath } from "../vault/vaultFiles";
+import { replyContextSection } from "./replyContext";
 
 export { extractArtifact, type ExtractedArtifact } from "./parse";
 
@@ -24,10 +25,12 @@ export interface SaveOptions {
   extraTags?: string[];
   /** Optional one-line summary for frontmatter + search. */
   summary?: string;
+  /** Snapshot of the inputs recorded for this reply, not the current note. */
+  contextSources?: string[];
 }
 
 export async function saveArtifactNote(app: App, folder: string, artifact: ExtractedArtifact, opts: SaveOptions): Promise<TFile> {
-  const created = new Date().toISOString().slice(0, 10);
+  const created = localCalendarDate();
   const fm = buildFrontmatter({
     title: artifact.title,
     created,
@@ -36,7 +39,7 @@ export async function saveArtifactNote(app: App, folder: string, artifact: Extra
     summary: opts.summary,
     tags: normalizeTags([...opts.baseTags, ...(opts.extraTags ?? [])]),
   });
-  const note = [fm, "", `# ${artifact.title}`, "", "```claude-html height=" + opts.height, artifact.html, "```", ""].join("\n");
+  const note = [fm, "", `# ${artifact.title}`, "", "```claude-html height=" + opts.height, artifact.html, "```", ""].join("\n") + replyContextSection(opts.contextSources, folder);
   const file = await writeUnique(app, folder, datedTitleBase(created, artifact.title), "md", note);
   new Notice(`Saved artifact → ${file.path}`);
   return file;
@@ -49,7 +52,7 @@ export async function saveArtifactNote(app: App, folder: string, artifact: Extra
  * makes the note "canonical" — it gets the Build header icon.
  */
 export async function savePlanNote(app: App, folder: string, title: string, markdown: string, opts?: Partial<SaveOptions>): Promise<TFile> {
-  const created = new Date().toISOString().slice(0, 10);
+  const created = localCalendarDate();
   const fm = buildFrontmatter({
     title,
     created,
@@ -58,7 +61,7 @@ export async function savePlanNote(app: App, folder: string, title: string, mark
     summary: opts?.summary,
     tags: normalizeTags([...(opts?.baseTags ?? ["claude", "plan"]), ...(opts?.extraTags ?? [])]),
   });
-  const note = [fm, "", `# ${title}`, "", markdown, ""].join("\n");
+  const note = [fm, "", `# ${title}`, "", markdown, ""].join("\n") + replyContextSection(opts?.contextSources, folder);
   const file = await writeUnique(app, folder, datedTitleBase(created, title), "md", note);
   new Notice(`Saved plan → ${file.path}`);
   return file;
@@ -71,7 +74,7 @@ export async function saveSummaryNote(app: App, folder: string, title: string, c
 
 /** Save a chat transcript as a markdown note. */
 export async function saveChatNote(app: App, folder: string, title: string, markdown: string, opts?: Partial<SaveOptions>): Promise<TFile> {
-  const created = new Date().toISOString().slice(0, 10);
+  const created = localCalendarDate();
   const fm = buildFrontmatter({
     title,
     created,
@@ -80,7 +83,7 @@ export async function saveChatNote(app: App, folder: string, title: string, mark
     summary: opts?.summary,
     tags: normalizeTags([...(opts?.baseTags ?? ["claude", "chat"]), ...(opts?.extraTags ?? [])]),
   });
-  const note = [fm, "", `# ${title}`, "", markdown, ""].join("\n");
+  const note = [fm, "", `# ${title}`, "", markdown, ""].join("\n") + replyContextSection(opts?.contextSources, folder);
   const file = await writeUnique(app, folder, datedTitleBase(created, title), "md", note);
   new Notice(`Saved chat → ${file.path}`);
   return file;

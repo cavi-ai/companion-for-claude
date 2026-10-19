@@ -42,13 +42,13 @@ export class OrganizeReviewModal extends Modal {
     for (const [domain, moves] of [...groups.entries()].sort(([a], [b]) => a.localeCompare(b))) {
       contentEl.createDiv({ cls: "cc-organize-group-heading", text: `${domain} (${moves.length})` });
       for (const move of moves) {
-        const row = contentEl.createDiv({ cls: "cc-organize-row" });
+        const row = contentEl.createEl("label", { cls: "cc-organize-row" });
         const check = row.createEl("input", { attr: { type: "checkbox" } });
         check.checked = domain !== "misc";
         checks.push({ move, el: check });
-        const text = row.createDiv({ cls: "cc-organize-text" });
-        text.createDiv({ cls: "cc-organize-from", text: move.from });
-        text.createDiv({ cls: "cc-organize-to", text: `→ ${move.to}` });
+        const text = row.createSpan({ cls: "cc-organize-text" });
+        text.createSpan({ cls: "cc-organize-from", text: move.from });
+        text.createSpan({ cls: "cc-organize-to", text: `→ ${move.to}` });
       }
     }
 

@@ -175,20 +175,42 @@ describe("buildSystemDeps", () => {
     const { host, m } = rig();
     const done = vi.fn();
     buildSystemDeps(host).reviewSafeFixes(["fix"] as never, done);
-    const [app, fixes, write, onDone] = captured.modal as [unknown, unknown, (p: string, patch: Record<string, unknown>) => Promise<void>, () => void];
+    const [app, fixes, write, onDone] = captured.modal as [unknown, unknown, (fix: import("../../src/health/controller").SafeFix) => Promise<void>, () => void];
     expect(app).toBe(host.app);
     expect(fixes).toEqual(["fix"]);
-    const fm: Record<string, unknown> = { keep: 1 };
+    const fm: Record<string, unknown> = { type: "tagged", aliases: "solo", keep: 1 };
     m.processFrontMatter.mockImplementationOnce(async (_f, cb) => cb(fm));
-    await write("a.md", { type: "note" });
+    const fix = { path: "a.md", changes: [{ key: "aliases", from: "solo", to: ["solo"] }], fixed: { type: "tagged", aliases: ["solo"] } };
+    await write(fix);
     expect(m.getFileByPath).toHaveBeenCalledWith("a.md");
-    expect(fm).toEqual({ keep: 1, type: "note" });
+    expect(fm).toEqual({ keep: 1, type: "tagged", aliases: ["solo"] });
     m.getFileByPath.mockReturnValueOnce(null as never);
     m.processFrontMatter.mockClear();
-    await write("gone.md", { type: "x" });
+    await expect(write({ ...fix, path: "gone.md" })).rejects.toThrow("no longer exists");
     expect(m.processFrontMatter).not.toHaveBeenCalled();
     onDone();
     expect(done).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["aliases", "type"])("rejects an outdated safe fix when %s changes inside the write", async (changed) => {
+    const { host, m } = rig();
+    buildSystemDeps(host).reviewSafeFixes([], () => {});
+    const write = captured.modal![2] as (fix: import("../../src/health/controller").SafeFix) => Promise<void>;
+    const fm = { type: changed === "type" ? "other" : "tagged", aliases: changed === "aliases" ? ["new-choice"] : "solo", keep: true };
+    const before = JSON.stringify(fm);
+    m.processFrontMatter.mockImplementationOnce(async (_f, cb) => cb(fm));
+    await expect(write({ path: "a.md", changes: [{ key: "aliases", from: "solo", to: ["solo"] }], fixed: { type: "tagged", aliases: ["solo"] } })).rejects.toThrow("changed since review");
+    expect(JSON.stringify(fm)).toBe(before);
+  });
+
+  it("validates every reviewed property before applying any of them", async () => {
+    const { host, m } = rig();
+    buildSystemDeps(host).reviewSafeFixes([], () => {});
+    const write = captured.modal![2] as (fix: import("../../src/health/controller").SafeFix) => Promise<void>;
+    const fm = { type: "tagged", aliases: "solo", score: "2" };
+    m.processFrontMatter.mockImplementationOnce(async (_f, cb) => cb(fm));
+    await expect(write({ path: "a.md", changes: [{ key: "aliases", from: "solo", to: ["solo"] }, { key: "score", from: "1", to: 1 }], fixed: { type: "tagged", aliases: ["solo"], score: 1 } })).rejects.toThrow("changed since review");
+    expect(fm).toEqual({ type: "tagged", aliases: "solo", score: "2" });
   });
 });
 

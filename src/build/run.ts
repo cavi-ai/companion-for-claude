@@ -32,6 +32,7 @@ export interface BuildRun {
   activeTaskIndex: number | null;
   log: string;
   error?: string;
+  trackerError?: string;
   sessionUrl?: string;
   createdAt: number;
   updatedAt: number;
@@ -132,6 +133,7 @@ export function restoreBuildRuns(value: unknown): BuildRun[] {
       activeTaskIndex: null,
       log: typeof raw.log === "string" ? raw.log.slice(-16_000) : "",
       ...(typeof raw.error === "string" ? { error: raw.error } : {}),
+      ...(typeof raw.trackerError === "string" ? { trackerError: raw.trackerError } : {}),
       ...(typeof raw.sessionUrl === "string" ? { sessionUrl: raw.sessionUrl } : {}),
       createdAt: typeof raw.createdAt === "number" ? raw.createdAt : Date.now(),
       updatedAt: typeof raw.updatedAt === "number" ? raw.updatedAt : Date.now(),
@@ -163,6 +165,10 @@ export class BuildRunCoordinator {
 
   snapshot(): BuildRun {
     return cloneRun(this.run);
+  }
+
+  updateDocumentPaths(paths: Pick<BuildRun, "specPath" | "trackerPath">): void {
+    this.run = { ...this.run, ...paths };
   }
 
   start(): Promise<void> {

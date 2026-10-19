@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { App } from "obsidian";
-import { gatherContext } from "../../src/context/vaultContext";
+import { CITATION_RULE, gatherContext } from "../../src/context/vaultContext";
 import { OntologyRegistry } from "../../src/ontology/registry";
 import { DEFAULT_SETTINGS } from "../../src/types";
 import { hits, linkingApp, seededRegistry, setActive } from "./typedVault";
@@ -8,11 +8,6 @@ import { hits, linkingApp, seededRegistry, setActive } from "./typedVault";
 const NO_TOGGLES = { activeNote: false, selection: false, linkedNotes: false, searchVault: false };
 const SEARCH_ONLY = { ...NO_TOGGLES, searchVault: true };
 const MARKER = "\n…[truncated]";
-const OLD_CITATION =
-  'When you draw on the "Search match" notes above, cite each inline as an ' +
-  "Obsidian wikilink — [[Note Name]], using the note's file name without the " +
-  "folder path or .md extension — so the reader can click through to the source.";
-const NEW_CITATION = OLD_CITATION.replace('"Search match" notes', '"Search match" or "Related" notes');
 
 const ANN = { type: "person", works_on: ["[[Alpha|the alpha]]"], knows: ["[[Bob#Intro]]", "[[Diagram.png]]", "[[Nowhere]]"] };
 
@@ -38,7 +33,7 @@ describe("gatherContext — typed context", () => {
         "### Search match: People/Ann.md (type: person)\nS",
         "### Related (works_on of People/Ann.md): Projects/Alpha.md (type: project)\nALPHA BODY",
         "### Related (knows of People/Ann.md): People/Bob.md (type: person)\nBOB BODY",
-        NEW_CITATION,
+        CITATION_RULE,
         "</vault_context>",
       ].join("\n\n"),
     );
@@ -47,7 +42,7 @@ describe("gatherContext — typed context", () => {
   });
 
   it("is identical to the untyped output with no registry, an empty registry, or no typed matches", async () => {
-    const expected = ["<vault_context>", "### Search match: People/Ann.md\nS", OLD_CITATION, "</vault_context>"].join("\n\n");
+    const expected = ["<vault_context>", "### Search match: People/Ann.md\nS", CITATION_RULE, "</vault_context>"].join("\n\n");
     const empty = new OntologyRegistry({ listSchemaNotes: () => Promise.resolve([]), parseYaml: () => ({}) });
     await empty.load();
     const untypedAnn = { works_on: ANN.works_on, knows: ANN.knows };
@@ -65,7 +60,7 @@ describe("gatherContext — typed context", () => {
 
   it("labels a padded type exactly as written and follows none of its relations", async () => {
     const ctx = await gatherContext(vault({ ...ANN, type: " person" }), DEFAULT_SETTINGS, SEARCH_ONLY, "qqq", hits("People/Ann.md"), [], [], undefined, await seededRegistry());
-    expect(ctx.text).toBe(["<vault_context>", "### Search match: People/Ann.md (type:  person)\nS", OLD_CITATION, "</vault_context>"].join("\n\n"));
+    expect(ctx.text).toBe(["<vault_context>", "### Search match: People/Ann.md (type:  person)\nS", CITATION_RULE, "</vault_context>"].join("\n\n"));
     expect(ctx.sources).toEqual(["1 semantic match"]);
   });
 
@@ -92,7 +87,7 @@ describe("gatherContext — typed context", () => {
     expect(count(a.text, "ALPHA BODY")).toBe(1);
     expect(count(a.text, "BOB BODY")).toBe(1);
     expect(a.text).not.toContain("### Related");
-    expect(a.text).toContain(OLD_CITATION);
+    expect(a.text).toContain(CITATION_RULE);
     expect(a.sources).toEqual(["active note: Projects/Alpha.md", "1 attached", "1 semantic match"]);
 
     const activeOff = vault();

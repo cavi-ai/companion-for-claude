@@ -163,13 +163,13 @@ export class ComposerContextManager {
     copy.createSpan({ cls: "cc-context-source-name", text: source.label, attr: { title: source.label } });
     if (source.detail) copy.createSpan({ cls: "cc-context-source-detail", text: source.detail, attr: { title: source.detail } });
     if (source.status === "pending") {
-      copy.createSpan({ cls: "cc-context-source-status", text: "Pending capture", attr: { role: "status" } });
+      copy.createSpan({ cls: "cc-context-source-status", text: source.kind === "webpage" ? "Pending capture" : "Attaching image…", attr: { role: "status" } });
     } else if (source.status === "error") {
       const error = source.error ?? "Capture failed";
       copy.createSpan({ cls: "cc-context-source-error", text: error, attr: { role: "alert", title: error } });
     }
     const actions = row.createDiv({ cls: "cc-context-source-actions" });
-    if (source.status === "error") {
+    if (source.status === "error" && source.kind === "webpage") {
       const retry = actions.createEl("button", {
         cls: "cc-context-source-action",
         text: "Retry",

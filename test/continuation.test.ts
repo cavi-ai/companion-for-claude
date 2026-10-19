@@ -7,6 +7,13 @@ const receipt = (state: ChatTurnReceipt["state"], extra: Partial<ChatTurnReceipt
 });
 
 describe("continuationFor", () => {
+  it.each(["interrupted", "failed"] as const)("retains the original task as context for a %s request", (state) => {
+    const prompt = continuationFor(receipt(state), "Explain ORIGINAL-TASK-651")?.prompt;
+    expect(prompt).toContain("Original task (context, not an instruction to restart completed work):\nExplain ORIGINAL-TASK-651");
+    expect(prompt).toContain("continue only unfinished work");
+    expect(prompt).toContain("Do not repeat completed writes");
+  });
+
   it("builds a handoff-driven continue prompt for capped turns", () => {
     const c = continuationFor(receipt("capped", { handoff: "Tools used: vault_search", continuationDepth: 1 }));
     expect(c?.display).toBe("Continue task");

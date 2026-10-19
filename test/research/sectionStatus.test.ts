@@ -32,6 +32,12 @@ describe("section state", () => {
     expect(activeDocument(snapshot)?.path).toBe("R/Documents/Outline.md");
   });
 
+  it("treats an accepted Companion fallback as a draft and detects later evidence changes", () => {
+    const fallback = one({ ...base, provider: "companion", model: "reviewed-claim-fallback" });
+    expect(sectionState(snapshot, fallback)).toBe("drafted");
+    expect(sectionState(snapshot, { ...fallback, envelope: { ...fallback.envelope, claimFingerprint: "stale" } })).toBe("changed");
+  });
+
   it("summarizes the active document's sections and survives a load failure", async () => {
     const doc = renderManagedDocument("", [{ envelope: { ...base, provider: "companion" }, heading: "C", markdown: "Body." }]);
     expect((await documentSections(snapshot, async () => parseDraftSections(doc)))?.sections).toEqual([{ id: "c", heading: "C", claimPath: "R/Claims/C.md", state: "outline" }]);

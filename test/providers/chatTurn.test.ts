@@ -133,3 +133,14 @@ describe("routeTurn", () => {
     expect(providerOf(result)).toBe("ollama");
   });
 });
+
+it("keeps a failed media request instead of degrading it to a text-only local answer", async () => {
+  const primary = failed("", "fetch failed");
+  const localFallback = vi.fn(async () => local), runLocal = vi.fn(async () => ok("An answer without the image"));
+  const onNotice = vi.fn();
+  const result = await routeTurn({ backend: "auto", agent: false, providerId: "anthropic", hasMedia: true }, { primary: async () => primary, localFallback, local: runLocal }, { onNotice });
+  expect(result).toBe(primary);
+  expect(localFallback).not.toHaveBeenCalled();
+  expect(runLocal).not.toHaveBeenCalled();
+  expect(onNotice).toHaveBeenCalledWith(expect.stringContaining("attachments"));
+});

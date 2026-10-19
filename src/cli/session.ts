@@ -53,12 +53,28 @@ const INTERRUPT_KILL_MS = 3000;
 const IDLE_NOTICE_MS = 60_000;
 const IDLE_ABORT_MS = 300_000;
 
-/** The stream-json line for the request's last user message (text, image, document blocks) — persistent backends only. */
+function messageBlocks(content: string | ContentBlock[]): ContentBlock[] {
+  return typeof content === "string" ? [{ type: "text", text: content }] : content.filter((block) => block.type === "text" || block.type === "image" || block.type === "document");
+}
+
+/** Fresh processes receive media-bearing history as context in one user line; existing sessions receive only the newest message. */
 export function userMessageLine(req: CompletionRequest, transcript: string | null): string {
-  const last = [...req.messages].reverse().find((m) => m.role === "user");
-  const blocks: ContentBlock[] = last === undefined ? [] : typeof last.content === "string" ? [{ type: "text", text: last.content }] : last.content.filter((b) => b.type === "text" || b.type === "image" || b.type === "document");
-  const content = transcript ? [{ type: "text", text: transcript } as ContentBlock, ...blocks] : blocks;
-  return `${JSON.stringify({ type: "user", message: { role: "user", content } })}\n`;
+  const last = [...req.messages].reverse().find((message) => message.role === "user");
+  const blocks = last === undefined ? [] : messageBlocks(last.content);
+  const history = last === undefined ? [] : req.messages.slice(0, req.messages.lastIndexOf(last));
+  const hasMedia = history.some(({ content }) => typeof content !== "string" && content.some((block) => block.type === "image" || block.type === "document"));
+  let context: ContentBlock[] = transcript ? [{ type: "text", text: transcript }] : [];
+  if (transcript && hasMedia) {
+    context = [
+      { type: "text", text: "Earlier conversation (context only; do not repeat earlier actions). Reply only to the newest user message below." },
+      ...history.flatMap((message): ContentBlock[] => [
+        { type: "text", text: message.role === "user" ? "User:" : "Assistant:" },
+        ...messageBlocks(message.content),
+      ]),
+      { type: "text", text: "Newest user message:" },
+    ];
+  }
+  return `${JSON.stringify({ type: "user", message: { role: "user", content: [...context, ...blocks] } })}\n`;
 }
 
 /** The plain text of the request's last user message — per-turn backends take the prompt as a CLI argument, text only. */

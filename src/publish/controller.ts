@@ -39,19 +39,23 @@ export function publishConfirmMessage(kind: PublishedItem["kind"]): string {
 
 const titleOf = (path: string): string => (path.split("/").pop() ?? path).replace(/\.md$/i, "");
 
+interface PendingOperation {
+  key: string;
+}
+
 export class PublishController {
-  private inFlight = new Set<string>();
+  private inFlight = new Set<PendingOperation>();
 
   constructor(private deps: PublishDeps) {}
 
   async publishNote(path: string): Promise<void> {
     const token = this.deps.token();
     if (!token) return this.deps.notice(NO_TOKEN);
-    await this.guarded(path, async () => {
+    await this.guarded(path, async (operation) => {
       const title = titleOf(path);
       const content = transformNoteForPublish(await this.deps.readNote(path));
       if (content === "") return this.deps.notice(`Nothing to publish in ${title}.`);
-      const existing = this.deps.getItems().find((i) => i.key === path);
+      const existing = this.deps.getItems().find((i) => i.key === operation.key);
       if (!existing && !(await this.deps.confirm("note", title))) return;
       const files = { [NOTE_FILE]: content };
       const base = this.deps.apiBase();
@@ -68,16 +72,17 @@ export class PublishController {
       }
       if (outcome?.kind !== "ok") return;
       const now = this.deps.now();
-      const item: PublishedItem = { key: path, kind: "note", title, gistId: outcome.id, url: outcome.url, owner: outcome.owner, publishedAt: publishedAt ?? now, updatedAt: now };
+      const currentTitle = titleOf(operation.key);
+      const item: PublishedItem = { key: operation.key, kind: "note", title: currentTitle, gistId: outcome.id, url: outcome.url, owner: outcome.owner, publishedAt: publishedAt ?? now, updatedAt: now };
       await this.deps.setItems(upsertPublished(this.deps.getItems(), item));
-      await this.share(item.url, `Published ${title}`);
+      await this.share(item.url, `Published ${currentTitle}`);
     });
   }
 
   async publishArtifact(html: string, title: string): Promise<void> {
     const token = this.deps.token();
     if (!token) return this.deps.notice(NO_TOKEN);
-    await this.guarded(`artifact-pending:${title}`, async () => {
+    await this.guarded(`artifact-pending:${JSON.stringify([title, html])}`, async () => {
       if (!(await this.deps.confirm("artifact", title))) return;
       const files = { [ARTIFACT_FILE]: artifactPageHtml(html, title) };
       const outcome = await this.send(createGistRequest(this.deps.apiBase(), token, files, title), "create");
@@ -95,10 +100,10 @@ export class PublishController {
     if (!item) return;
     const token = this.deps.token();
     if (!token) return this.deps.notice(NO_TOKEN);
-    await this.guarded(key, async () => {
+    await this.guarded(key, async (operation) => {
       const outcome = await this.send(deleteGistRequest(this.deps.apiBase(), token, item.gistId), "delete");
       if (outcome?.kind !== "ok" && outcome?.kind !== "gone") return;
-      await this.deps.setItems(removePublished(this.deps.getItems(), key));
+      await this.deps.setItems(removePublished(this.deps.getItems(), operation.key));
       this.deps.notice(`Unpublished ${item.title}.`);
     });
   }
@@ -117,10 +122,13 @@ export class PublishController {
 
   async copyLink(key: string): Promise<void> {
     const item = this.deps.getItems().find((i) => i.key === key);
-    if (item) await this.share(item.url, "Link copied");
+    if (item) await this.share(item.url);
   }
 
   async renameNote(oldPath: string, newPath: string): Promise<void> {
+    for (const operation of this.inFlight) {
+      if (operation.key === oldPath) operation.key = newPath;
+    }
     const items = this.deps.getItems();
     if (!items.some((i) => i.key === oldPath)) return;
     await this.deps.setItems(renamePublished(items, oldPath, newPath));
@@ -139,18 +147,24 @@ export class PublishController {
     }
   }
 
-  private async share(url: string, lead: string): Promise<void> {
-    await this.deps.copy(url).catch(() => {});
-    this.deps.notice(`${lead} — link copied:\n${url}`);
+  private async share(url: string, lead?: string): Promise<void> {
+    try {
+      await this.deps.copy(url);
+    } catch {
+      this.deps.notice(`${lead ? `${lead} — ` : ""}Couldn't copy the link. It's available under Publishing in Companion settings:\n${url}`);
+      return;
+    }
+    this.deps.notice(`${lead ? `${lead} — link copied` : "Link copied"}:\n${url}`);
   }
 
-  private async guarded(key: string, run: () => Promise<void>): Promise<void> {
-    if (this.inFlight.has(key)) return;
-    this.inFlight.add(key);
+  private async guarded(key: string, run: (operation: PendingOperation) => Promise<void>): Promise<void> {
+    if ([...this.inFlight].some((operation) => operation.key === key)) return;
+    const operation = { key };
+    this.inFlight.add(operation);
     try {
-      await run();
+      await run(operation);
     } finally {
-      this.inFlight.delete(key);
+      this.inFlight.delete(operation);
     }
   }
 }

@@ -11,6 +11,8 @@ const ui = vi.hoisted(() => ({
   accepted: null as boolean[] | null,
   batch: null as unknown,
   apply: false,
+  onReview: null as (() => void) | null,
+  onFrontmatter: null as (() => void) | null,
   optionCounts: [] as number[],
   proposals: [] as unknown[],
   diffs: [] as Array<{ path: string; description: string }>,
@@ -33,7 +35,7 @@ vi.mock("../../src/view/EnrichModal", () => ({
   },
   EnrichReviewModal: class {
     constructor(_app: unknown, private proposal: unknown, private resolve: (value: unknown) => void) {}
-    open(): void { ui.proposals.push(this.proposal); this.resolve(ui.decision); }
+    open(): void { ui.proposals.push(this.proposal); ui.onReview?.(); this.resolve(ui.decision); }
   },
 }));
 vi.mock("../../src/view/DiffModal", () => ({
@@ -53,6 +55,7 @@ vi.mock("../../src/view/FrontmatterModal", () => ({
     constructor(_app: unknown, private basename: string, private proposal: Record<string, unknown>, private label: string, private cb: (apply: boolean) => Promise<void>) {}
     open(): void {
       ui.frontmatter.push({ basename: this.basename, proposal: this.proposal, label: this.label });
+      ui.onFrontmatter?.();
       void this.cb(ui.apply);
     }
   },
@@ -92,6 +95,7 @@ const setActive = (app: App, file: TFile | null): void => {
 beforeEach(() => {
   clearNotices();
   ui.options = null; ui.decision = null; ui.accepted = null; ui.batch = null; ui.apply = false;
+  ui.onReview = null; ui.onFrontmatter = null;
   ui.optionCounts.length = 0; ui.proposals.length = 0; ui.diffs.length = 0; ui.frontmatter.length = 0;
   tagger.summarizeAndTag.mockReset();
   lint.parseLintResponse.mockReset();
@@ -182,6 +186,33 @@ describe("NoteFlows reviewLinkSuggestions", () => {
 });
 
 describe("NoteFlows enrichNoteFlow", () => {
+  it("keeps review activity pending and reports a failed apply", async () => {
+    const { app, flows, activity } = rig();
+    const note = app.vault.seed("Doc.md", "Original body.");
+    tagger.summarizeAndTag.mockResolvedValue({ title: "Doc", tags: ["fresh"], newTags: [], summary: "Summary." });
+    let reviewState: string | undefined;
+    ui.onReview = () => { reviewState = activity.snapshot().records[0]?.state; };
+    ui.decision = { accepted: [], frontmatter: true, rename: false };
+    vi.spyOn(app.fileManager, "processFrontMatter").mockRejectedValue(new Error("vault locked"));
+    await flows.enrichNoteFlow(note, { ...OPTIONS, frontmatter: true });
+    expect(reviewState).toBe("running");
+    expect(activity.snapshot().records[0]?.state).toBe("needs-attention");
+    expect(getNoticeMessages()).toContain("Tidy failed — vault locked");
+    expect(note._content).toBe("Original body.");
+  });
+
+  it.each([{ tags: ["keep", "user-added"] }, { tags: "user-added" }, { tags: [] }])("merges reviewed tag additions into current tags %j without replacing a newer summary", async ({ tags: currentTags }) => {
+    const { app, flows } = rig();
+    const note = app.vault.seed("Doc.md", "body", { frontmatter: { tags: ["keep", "removed"] } });
+    tagger.summarizeAndTag.mockResolvedValue({ title: "Doc", tags: ["keep", "fresh"], newTags: ["fresh"], summary: "Generated summary." });
+    ui.decision = { accepted: [], frontmatter: true, rename: false };
+    const current = { tags: currentTags, summary: "My newer summary.", keep: true };
+    vi.spyOn(app.fileManager, "processFrontMatter").mockImplementation(async (_file, update) => { update(current); });
+    await flows.enrichNoteFlow(note, { ...OPTIONS, frontmatter: true });
+    const tags = typeof currentTags === "string" ? [currentTags] : currentTags;
+    expect(current).toEqual({ tags: [...tags, "fresh"], summary: "My newer summary.", keep: true });
+  });
+
   it("stops quietly when the step picker is dismissed", async () => {
     const { app, flows } = rig();
     const note = app.vault.seed("Notes/Doc.md", "text");
@@ -198,6 +229,15 @@ describe("NoteFlows enrichNoteFlow", () => {
     expect(getNoticeMessages()).toEqual(["Doc is already in good shape."]);
     expect(ui.optionCounts).toEqual([]);
     expect(activity.snapshot().records.map((r) => r.state)).not.toContain("running");
+  });
+
+  it("reports no changes when copyediting completed with an unchanged reply", async () => {
+    const { app, flows, activity } = rig();
+    const note = app.vault.seed("Doc.md", "Original body.");
+    lint.parseLintResponse.mockReturnValue(null);
+    await flows.enrichNoteFlow(note, { ...OPTIONS, lint: true });
+    expect(getNoticeMessages()).toEqual(["Doc is already in good shape."]);
+    expect(activity.snapshot().records[0]?.state).toBe("succeeded");
   });
 
   it("proposes a rename and merged tags, then applies only what the review accepts", async () => {
@@ -241,15 +281,15 @@ describe("NoteFlows enrichNoteFlow", () => {
     expect(getNoticeMessages()).toEqual(["Tidied Doc."]);
   });
 
-  it("keeps going when the copyedit pass fails", async () => {
-    const { app, flows, complete } = rig();
+  it("reports a failed copyedit without claiming the note passed its checks", async () => {
+    const { app, flows, complete, activity } = rig();
     const note = app.vault.seed("Notes/Doc.md", "text");
     complete.mockRejectedValue(new Error("model down"));
-    const debug = vi.spyOn(console, "debug").mockImplementation(() => undefined);
     await flows.enrichNoteFlow(note, { ...OPTIONS, lint: true });
-    expect(debug).toHaveBeenCalled();
-    debug.mockRestore();
-    expect(getNoticeMessages()).toEqual(["Doc is already in good shape."]);
+    expect(getNoticeMessages().join("\n")).toContain("Lint note: model down");
+    expect(getNoticeMessages().join("\n")).not.toContain("already in good shape");
+    expect(note._content).toBe("text");
+    expect(activity.snapshot().records[0]?.state).toBe("needs-attention");
   });
 
   it("writes nothing when the review is dismissed", async () => {
@@ -262,18 +302,57 @@ describe("NoteFlows enrichNoteFlow", () => {
     expect(getNoticeMessages()).toEqual([]);
   });
 
-  it("ignores a failed best-effort tagging pass but stops on an unavailable utility model", async () => {
+  it("reports a failed tagging pass and stops on an unavailable utility model", async () => {
     const { app, flows, activity } = rig();
     const note = app.vault.seed("Notes/Doc.md", "body");
     tagger.summarizeAndTag.mockRejectedValueOnce(new Error("bad json"));
     await flows.enrichNoteFlow(note, { ...OPTIONS, rename: true });
-    expect(getNoticeMessages()).toEqual(["Doc is already in good shape."]);
+    expect(getNoticeMessages().join("\n")).toContain("Rename note: bad json");
+    expect(getNoticeMessages().join("\n")).not.toContain("already in good shape");
 
     clearNotices();
     tagger.summarizeAndTag.mockRejectedValueOnce(new UtilityUnavailableError("Utility model is not available.", {} as never));
     await flows.enrichNoteFlow(note, { ...OPTIONS, rename: true });
     expect(getNoticeMessages()).toEqual(["Tidy failed — Utility model is not available."]);
     expect(activity.snapshot().records.some((r) => r.state === "needs-attention")).toBe(true);
+  });
+
+  it.each([true, false])("keeps valid copyedits reviewable when tagging fails (apply: %s)", async (apply) => {
+    const { app, flows, activity } = rig();
+    const note = app.vault.seed("Doc.md", "Original body.");
+    tagger.summarizeAndTag.mockRejectedValue(new Error("tag service unavailable"));
+    lint.parseLintResponse.mockReturnValue("Corrected body.");
+    ui.decision = apply ? { accepted: [true], frontmatter: false, rename: false } : null;
+    await flows.enrichNoteFlow(note, { ...OPTIONS, rename: true, frontmatter: true, lint: true });
+    expect(ui.proposals[0]).toMatchObject({ failures: [{ step: "Rename note / Tags & summary", message: "tag service unavailable" }], plan: { hunks: expect.any(Array) } });
+    expect(note._content).toBe(apply ? "Corrected body." : "Original body.");
+    expect(activity.snapshot().records[0]?.state).toBe("needs-attention");
+    expect(getNoticeMessages().join("\n")).not.toContain("Tidied Doc.");
+    if (apply) expect(getNoticeMessages().join("\n")).toContain("Some Tidy steps failed");
+  });
+
+  it("preserves valid metadata proposals when copyediting fails", async () => {
+    const { app, flows, complete, activity } = rig();
+    const note = app.vault.seed("Doc.md", "Original body.");
+    tagger.summarizeAndTag.mockResolvedValue({ title: "Renamed", tags: ["fresh"], newTags: ["fresh"], summary: "Summary." });
+    complete.mockRejectedValue(new Error("copyeditor unavailable"));
+    ui.decision = null;
+    await flows.enrichNoteFlow(note, { ...OPTIONS, rename: true, frontmatter: true, lint: true });
+    expect(ui.proposals[0]).toMatchObject({ rename: { to: "Renamed.md" }, frontmatter: { tags: ["fresh"] }, failures: [{ step: "Lint note", message: "copyeditor unavailable" }] });
+    expect(note._content).toBe("Original body.");
+    expect(activity.snapshot().records[0]?.state).toBe("needs-attention");
+  });
+
+  it("reports every failed pass when no proposal can be reviewed", async () => {
+    const { app, flows, complete } = rig();
+    const note = app.vault.seed("Doc.md", "Original body.");
+    tagger.summarizeAndTag.mockRejectedValue(new Error("tag service unavailable"));
+    complete.mockRejectedValue(new Error("copyeditor unavailable"));
+    await flows.enrichNoteFlow(note, { ...OPTIONS, rename: true, lint: true });
+    expect(ui.proposals).toEqual([]);
+    expect(getNoticeMessages().join("\n")).toContain("Rename note: tag service unavailable");
+    expect(getNoticeMessages().join("\n")).toContain("Lint note: copyeditor unavailable");
+    expect(note._content).toBe("Original body.");
   });
 });
 
@@ -310,6 +389,34 @@ describe("NoteFlows enrichFolderFlow", () => {
 });
 
 describe("NoteFlows suggestFrontmatterForActiveNote", () => {
+  it("owns the review through apply and reports write failures", async () => {
+    const { app, flows, activity } = rig();
+    const note = app.vault.seed("Doc.md", "Original body.");
+    setActive(app, note);
+    let reviewState: string | undefined;
+    ui.onFrontmatter = () => { reviewState = activity.snapshot().records[0]?.state; };
+    ui.apply = true;
+    vi.spyOn(app.fileManager, "processFrontMatter").mockRejectedValue(new Error("vault locked"));
+    await flows.suggestFrontmatterForActiveNote();
+    expect(reviewState).toBe("running");
+    expect(getNoticeMessages()).toContain("Couldn't apply frontmatter: vault locked");
+    expect(activity.snapshot().records[0]?.state).toBe("needs-attention");
+    expect(note._content).toBe("Original body.");
+  });
+
+  it("preserves tag additions, removals and scalar fields changed while the preview is open", async () => {
+    const { app, flows, complete } = rig();
+    const note = app.vault.seed("Doc.md", "body", { frontmatter: { tags: ["keep", "removed"] } });
+    setActive(app, note);
+    complete.mockResolvedValue({ text: "TYPE: project\nTAGS: fresh\nSUMMARY: Generated summary.", provider: { label: "Utility" } });
+    ui.apply = true;
+    const current = { type: "person", tags: ["keep", "user-added"], summary: "My newer summary.", keep: true };
+    vi.spyOn(app.fileManager, "processFrontMatter").mockImplementation(async (_file, update) => { update(current); });
+    await flows.suggestFrontmatterForActiveNote();
+    await vi.waitFor(() => expect(getNoticeMessages()).toContain("Frontmatter updated: Doc"));
+    expect(current).toEqual({ type: "person", tags: ["keep", "user-added", "fresh"], summary: "My newer summary.", keep: true });
+  });
+
   it("asks for a markdown note and refuses an empty one", async () => {
     const { app, flows, complete } = rig();
     await flows.suggestFrontmatterForActiveNote();
@@ -358,5 +465,26 @@ describe("NoteFlows suggestFrontmatterForActiveNote", () => {
     expect(complete.mock.calls[0]![1].user.endsWith("\n…[truncated]")).toBe(true);
     expect(getNoticeMessages()).toEqual(["Couldn't suggest frontmatter: offline"]);
     expect(activity.snapshot().records.some((r) => r.state === "needs-attention")).toBe(true);
+  });
+});
+
+describe("note review ownership", () => {
+  it.each(["Tidy", "frontmatter"])("does not apply an old %s proposal to a replacement note at the same path", async (action) => {
+    const { app, flows, activity } = rig();
+    const original = app.vault.seed("Doc.md", "Original body.");
+    setActive(app, original);
+    tagger.summarizeAndTag.mockResolvedValue({ title: "Doc", tags: ["fresh"], newTags: [], summary: "Summary." });
+    const replace = () => { app.vault.seed("Doc.md", "Replacement body."); };
+    ui.onReview = replace;
+    ui.onFrontmatter = replace;
+    ui.apply = true;
+    ui.decision = { accepted: [], frontmatter: true, rename: false };
+    const write = vi.spyOn(app.fileManager, "processFrontMatter");
+    if (action === "Tidy") await flows.enrichNoteFlow(original, { ...OPTIONS, frontmatter: true });
+    else await flows.suggestFrontmatterForActiveNote();
+    expect(write).not.toHaveBeenCalled();
+    expect(await app.vault.read(app.vault.getAbstractFileByPath("Doc.md") as TFile)).toBe("Replacement body.");
+    expect(getNoticeMessages().join("\n")).toContain("no longer available");
+    expect(activity.snapshot().records[0]?.state).toBe("needs-attention");
   });
 });

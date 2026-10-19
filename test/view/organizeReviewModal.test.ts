@@ -10,6 +10,19 @@ const moves: OrganizeMove[] = [
 ];
 
 describe("OrganizeReviewModal", () => {
+  it("labels every selection with its source and destination paths", () => {
+    const modal = new OrganizeReviewModal(new App(), moves, 0, () => {});
+    modal.onOpen();
+    const root = modal.contentEl as unknown as FakeElement;
+    const labels = root.querySelectorAll("label");
+    expect(labels).toHaveLength(moves.length);
+    labels.forEach((label, index) => {
+      expect(label.querySelector("input")).not.toBeNull();
+      expect(label.querySelector(".cc-organize-from")?.textContent).toBe(moves[index]!.from);
+      expect(label.querySelector(".cc-organize-to")?.textContent).toBe(`→ ${moves[index]!.to}`);
+    });
+  });
+
   it("groups rows under a heading per destination folder with a count", () => {
     const modal = new OrganizeReviewModal(new App(), moves, 0, () => {});
     modal.onOpen();

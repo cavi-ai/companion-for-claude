@@ -1,7 +1,7 @@
 import { expect, test as base } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { ControlClient, PLUGIN_ROOT, liveState } from "./rig/client.ts";
-import { connectRig, cyclePlugin, openSettingsSurface, resetVaultState, setProcessEnv } from "./rig/pageOps.ts";
+import { connectRig, cyclePlugin, dismissSettingsSurface, openSettingsSurface, resetVaultState, setProcessEnv } from "./rig/pageOps.ts";
 import type { GithubRequest, ScenarioOptions, StubPorts } from "./rig/types.ts";
 
 export interface Rig {
@@ -76,4 +76,4 @@ export const test = base.extend<{}, { rig: Rig }>({
   }, { scope: "worker" }],
 });
 
-export { expect };
+export { expect, dismissSettingsSurface };

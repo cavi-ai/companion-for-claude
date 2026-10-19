@@ -1,4 +1,4 @@
-import { App, MarkdownView, TFile, WorkspaceLeaf, clearNotices, getNoticeMessages } from "obsidian";
+import { App, MarkdownView, TFile, WorkspaceLeaf, clearNotices, getNoticeMessages, getLastOpenedModal, type FakeElement } from "obsidian";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ActivityStore } from "../../src/activity/store";
 import { PLANNING_INSTRUCTION } from "../../src/artifacts/designSystem";
@@ -160,11 +160,11 @@ describe("ResearchFeature chat hand-off", () => {
     expect(view.submitPrompt).toHaveBeenCalledWith("prompt", "display");
   });
 
-  it("says Claude is busy when the prompt is not accepted", async () => {
+  it("does not infer a busy reply from an unaccepted prompt", async () => {
     const { feature, view } = rig();
     view.submitPrompt.mockResolvedValue(false);
     await expect(feature.askResearch("R/Project.md", "p", "d")).resolves.toBe(false);
-    expect(getNoticeMessages()).toEqual(["Claude is still busy — try again when the current reply finishes."]);
+    expect(getNoticeMessages()).toEqual([]);
   });
 
   it("returns false without a chat view", async () => {
@@ -352,4 +352,78 @@ describe("ResearchFeature project seeding", () => {
     expect(activate).toHaveBeenCalledWith("Research/Raft/Project.md");
     expect(getNoticeMessages()).toContain("Project started with “Raft” as the first source.");
   });
+  const recoveryButton = (name: string) => [...getLastOpenedModal()!.contentEl.querySelectorAll("button")].find((button) => button.textContent === name)!;
+  const click = (button: HTMLButtonElement) => (button as unknown as FakeElement).dispatchEvent({ type: "click" });
+  const settle = async () => { for (let i = 0; i < 15; i++) await Promise.resolve(); };
+
+  it("keeps a created project and retries only the failed source import", async () => {
+    const { feature, repo, activate } = seeded(LONG);
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    repo.importSource.mockRejectedValueOnce(new Error("Source write unavailable"));
+    await feature.startResearchFromActiveNote();
+    await expect(modals[0]!.submit({ title: "Raft" })).resolves.toBeUndefined();
+    const modal = getLastOpenedModal()!;
+    expect(modal.contentEl.querySelector('[role="alert"]')?.textContent).toContain("Source write unavailable");
+    click(recoveryButton("Retry adding source"));
+    await settle();
+    expect(repo.createProject).toHaveBeenCalledTimes(1);
+    expect(repo.importSource).toHaveBeenCalledTimes(2);
+    expect(repo.importSource.mock.calls[1]).toEqual(repo.importSource.mock.calls[0]);
+    expect(activate).toHaveBeenCalledWith("Research/Raft/Project.md");
+    expect(modal.closed).toBe(true);
+  });
+
+  it("lets the user open the created project without retrying the source", async () => {
+    const { feature, repo, activate } = seeded(LONG);
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    repo.importSource.mockRejectedValueOnce(new Error("Source write unavailable"));
+    await feature.startResearchFromActiveNote();
+    await modals[0]!.submit({ title: "Raft" });
+    const modal = getLastOpenedModal()!;
+    click(recoveryButton("Open project"));
+    await settle();
+    expect(repo.createProject).toHaveBeenCalledTimes(1);
+    expect(repo.importSource).toHaveBeenCalledTimes(1);
+    expect(activate).toHaveBeenCalledWith("Research/Raft/Project.md");
+    expect(modal.closed).toBe(true);
+  });
+
+  it("keeps recovery available after another source save fails", async () => {
+    const { feature, repo } = seeded(LONG);
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    repo.importSource.mockRejectedValueOnce(new Error("First failure")).mockRejectedValueOnce(new Error("Still unavailable"));
+    await feature.startResearchFromActiveNote();
+    await modals[0]!.submit({ title: "Raft" });
+    const modal = getLastOpenedModal()!;
+    click(recoveryButton("Retry adding source"));
+    await settle();
+    expect(modal.closed).toBe(false);
+    expect(modal.contentEl.querySelector('[role="alert"]')?.textContent).toContain("Still unavailable");
+    expect(recoveryButton("Retry adding source").disabled).toBe(false);
+    click(recoveryButton("Retry adding source"));
+    await settle();
+    expect(modal.closed).toBe(true);
+    expect(repo.createProject).toHaveBeenCalledTimes(1);
+  });
+
+  it("ignores repeated retries and does not navigate after recovery is closed", async () => {
+    const { feature, repo, activate } = seeded(LONG);
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    let finish!: () => void;
+    repo.importSource.mockRejectedValueOnce(new Error("Source write unavailable")).mockImplementationOnce(() => new Promise<void>((resolve) => { finish = resolve; }));
+    await feature.startResearchFromActiveNote();
+    await modals[0]!.submit({ title: "Raft" });
+    const modal = getLastOpenedModal()!;
+    const retry = recoveryButton("Retry adding source");
+    click(retry);
+    click(retry);
+    await settle();
+    expect(repo.importSource).toHaveBeenCalledTimes(2);
+    modal.close();
+    finish();
+    await settle();
+    expect(activate).not.toHaveBeenCalled();
+    expect(repo.createProject).toHaveBeenCalledTimes(1);
+  });
+
 });

@@ -1,4 +1,5 @@
 import type { BuildTaskEvent, BuildTaskExecution, BuildTaskExecutionInput, BuildTaskExecutor } from "./run";
+import { parseCliLine } from "../cli/streamJson";
 
 export interface ManagedProcessOptions {
   cwd: string;
@@ -38,7 +39,7 @@ const taskPrompt = (input: BuildTaskExecutionInput): string => [
 
 const sanitize = (value: string): string => value
   .replace(/\bBearer\s+\S+/gi, "Bearer [redacted]")
-  .replace(/\b(?:api[_-]?key|token|password)\s*[=:]\s*\S+/gi, "$1=[redacted]")
+  .replace(/\b(api[_-]?key|token|password)\s*[=:]\s*\S+/gi, "$1=[redacted]")
   .replace(/[\r\t]+/g, " ")
   .trim();
 
@@ -80,14 +81,26 @@ export class DesktopBuildExecutor implements BuildTaskExecutor {
     let stdoutBuffer = "";
     let stderr = "";
     let summary: string | undefined;
+    let resultSeen = false;
+    let structuredError: string | undefined;
+    const consumeLine = (line: string): void => {
+      if (line.trim().startsWith("{")) for (const event of parseCliLine(line)) {
+        if (event.kind !== "result") continue;
+        resultSeen = true;
+        if (event.isError || event.subtype !== "success") {
+          structuredError ??= sanitize(event.text) || (event.subtype === "error_max_turns"
+            ? "Claude Code reached its turn limit before finishing the task. Retry the task."
+            : "Claude Code did not complete the task. Retry the task.");
+        }
+      }
+      const text = outputText(line);
+      if (text) { summary = text; emit(text); }
+    };
     const consume = (chunk: string): void => {
       stdoutBuffer += chunk;
       const lines = stdoutBuffer.split("\n");
       stdoutBuffer = lines.pop() ?? "";
-      for (const line of lines) {
-        const text = outputText(line);
-        if (text) { summary = text; emit(text); }
-      }
+      for (const line of lines) consumeLine(line);
     };
 
     let result: ManagedProcessResult;
@@ -101,15 +114,16 @@ export class DesktopBuildExecutor implements BuildTaskExecutor {
     } catch (cause) {
       throw executionError(cause);
     }
-    const tail = outputText(stdoutBuffer);
-    if (tail) { summary = tail; emit(tail); }
-    const safeError = sanitize(result.stderr || stderr);
+    consumeLine(stdoutBuffer);
+    const safeError = sanitize(result.stderr || stderr || structuredError || "");
     if (result.code !== 0) {
       if (/\b401\b|unauthori[sz]ed|authentication|not logged in/i.test(safeError)) {
         throw new Error("Claude Code authentication failed. Open a terminal, run `claude`, sign in, then Retry in Companion.");
       }
       throw new Error(`Claude Code exited with status ${result.code}${safeError ? `: ${safeError}` : "."}`);
     }
+    if (structuredError) throw new Error(structuredError);
+    if (!resultSeen) throw new Error("Claude Code ended without a task result. Retry the task.");
     return { ...(summary ? { summary } : {}) };
   }
 }

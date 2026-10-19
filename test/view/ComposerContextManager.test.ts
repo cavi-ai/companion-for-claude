@@ -76,6 +76,19 @@ describe("ComposerContextManager", () => {
     expect(byAria(host, "Retry Failed article")).toBeDefined();
   });
 
+  it("shows image preparation without offering an unavailable page-capture retry", () => {
+    const model = modelWithAllKinds();
+    model.sources = [
+      { id: "media:image:0", kind: "image", label: "Pending.png", status: "pending" },
+      { id: "media:image:1", kind: "image", label: "Failed.png", status: "error", error: "Paste again to attach this image." },
+    ];
+    manager.render(model); manager.open();
+    expect(allText(byRole(host, "status"))).toContain("Attaching image");
+    expect(allText(byRole(host, "alert"))).toContain("Paste again");
+    expect(descendants(host).some(el => el.getAttribute("aria-label") === "Retry Failed.png")).toBe(false);
+    expect(byAria(host, "Remove Failed.png")).toBeDefined();
+  });
+
   it("labels the trigger with the full summary, or the compact one in the phone toolbar", () => {
     manager.render(modelWithAllKinds());
     expect(host.querySelector(".cc-context-trigger-label")?.textContent).toBe("Context · This note + 3");

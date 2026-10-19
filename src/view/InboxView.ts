@@ -13,6 +13,7 @@ import type { WorkspaceViews } from "./workspaceViews";
 
 export const INBOX_VIEW_TYPE = "claude-inbox-view";
 const INBOX_REFRESH_DEBOUNCE_MS = 100;
+const ENRICHMENT_BATCH_ID = "source-enrichment:inbox-batch";
 
 type InboxFeedbackState = "idle" | "running" | "success" | "error";
 
@@ -51,6 +52,7 @@ const TYPED_LIST_LIMIT = 10;
  */
 export class InboxView extends ItemView {
   private disposeChrome: ((remove?: boolean) => void) | null = null;
+  private disposeActivity: (() => void) | null = null;
   private enriching = new Set<string>();
   private linking = new Set<string>();
   private readonly refresh: InboxRefreshController;
@@ -103,12 +105,15 @@ export class InboxView extends ItemView {
       this.requestRefresh();
     }));
     this.registerEvent(this.app.metadataCache.on("changed", () => this.requestRefresh()));
+    this.disposeActivity = this.plugin.activity.subscribe(() => this.requestRefresh());
     await this.render();
   }
 
   override async onClose(): Promise<void> {
     this.disposeChrome?.(false);
     this.disposeChrome = null;
+    this.disposeActivity?.();
+    this.disposeActivity = null;
     this.refresh.dispose();
   }
 
@@ -116,6 +121,14 @@ export class InboxView extends ItemView {
   private requestRefresh(): void {
     if (this.batchOperation !== null) return;
     this.refresh.request();
+  }
+
+  private enrichmentBatch() {
+    return this.plugin.activity.snapshot().records.find(record => record.id === ENRICHMENT_BATCH_ID);
+  }
+
+  private batchBusy(): boolean {
+    return this.batchOperation !== null || this.enrichmentBatch()?.state === "running";
   }
 
   private entries(): InboxFileEntry[] {
@@ -188,7 +201,7 @@ export class InboxView extends ItemView {
       });
       bar.createSpan({ cls: "cc-inbox-backend", text: `Utility: ${this.plugin.utilityRouting().backendLabel()}` });
       const all = bar.createEl("button", { cls: "cc-inbox-enrich-all", text: "Enrich all" });
-      all.disabled = this.batchOperation !== null;
+      all.disabled = this.batchBusy();
       all.addEventListener("click", () => void this.enrichAll(items));
 
       const list = root.createDiv({ cls: "cc-inbox-list" });
@@ -198,7 +211,7 @@ export class InboxView extends ItemView {
           action: {
             icon: this.enriching.has(item.path) ? "loader" : "wand-sparkles",
             label: `Enrich ${item.basename}`,
-            disabled: this.enriching.has(item.path) || this.batchOperation !== null,
+            disabled: this.enriching.has(item.path) || this.batchBusy(),
             onClick: () => void this.enrichOne(item),
           },
           feedback: true,
@@ -258,7 +271,7 @@ export class InboxView extends ItemView {
       attr: { role: "status", "aria-live": "polite" },
     });
     const organize = header.createEl("button", { cls: "cc-inbox-organize", text: "Organize into folders" });
-    organize.disabled = this.batchOperation !== null;
+    organize.disabled = this.batchBusy();
     organize.addEventListener("click", () => void this.plugin.organizeClippings());
     const list = section.createDiv({ cls: "cc-inbox-list" });
     for (const item of typed.slice(0, TYPED_LIST_LIMIT)) {
@@ -282,7 +295,7 @@ export class InboxView extends ItemView {
     const header = section.createDiv({ cls: "cc-inbox-typed-header" });
     header.createDiv({ cls: "cc-eyebrow", text: "RESEARCH THEMES" });
     const run = header.createEl("button", { cls: "cc-inbox-themes-run", text: "Find research themes…" });
-    run.disabled = this.batchOperation !== null;
+    run.disabled = this.batchBusy();
     run.addEventListener("click", () => void this.plugin.triageClippingsWithPicker());
   }
 
@@ -338,15 +351,28 @@ export class InboxView extends ItemView {
   }
 
   private renderOperationFeedback(root: HTMLElement): void {
+    const batch = this.enrichmentBatch();
+    let feedback = this.operationFeedback;
+    if (batch && (batch.state === "running" || feedback.state === "idle")) {
+      if (batch.state === "running") feedback = { state: "running", message: `Enriching ${batch.total ?? "Inbox"} note${batch.total === 1 ? "" : "s"}…` };
+      else if (batch.state === "succeeded") feedback = { state: "success", message: `Typed ${batch.succeeded} source note${batch.succeeded === 1 ? "" : "s"}.` };
+      else if (batch.state === "needs-attention") feedback = { state: "error", message: "Inbox enrichment needs attention. Open activity for details." };
+    }
     root.createEl("p", {
-      cls: `cc-inbox-operation-status cc-inbox-operation-${this.operationFeedback.state}`,
-      text: this.operationFeedback.message,
+      cls: `cc-inbox-operation-status cc-inbox-operation-${feedback.state}`,
+      text: feedback.message,
       attr: { role: "status", "aria-live": "polite" },
     });
   }
 
   private renderFileFeedback(row: HTMLElement, path: string): void {
-    const feedback = this.enrichmentFeedback.get(path) ?? { state: "idle" as const, message: "Ready" };
+    const batch = this.enrichmentBatch();
+    const detail = batch?.details.filter(item => item.key === path).at(-1);
+    const feedback = batch?.state === "running"
+      ? { state: "running" as const, message: batch.currentItem === path ? "Enriching…" : "Waiting…" }
+      : this.enrichmentFeedback.get(path) ?? (detail?.state === "error"
+        ? { state: "error" as const, message: `Couldn't enrich — ${detail.message}` }
+        : { state: "idle" as const, message: "Ready" });
     row.createSpan({
       cls: `cc-inbox-enrichment-status cc-inbox-enrichment-${feedback.state}`,
       text: feedback.message,
@@ -413,7 +439,7 @@ export class InboxView extends ItemView {
         attr: { role: "status", "aria-live": "polite" },
       });
       const reviewAll = header.createEl("button", { cls: "cc-inbox-review-all", text: "Review all links" });
-      reviewAll.disabled = this.batchOperation !== null;
+      reviewAll.disabled = this.batchBusy();
       reviewAll.addEventListener("click", () => void this.reviewAllLinks());
     }
     if (this.linkSummary) {
@@ -433,7 +459,7 @@ export class InboxView extends ItemView {
         action: {
           icon: this.linking.has(item.path) ? "loader" : "link",
           label: `Review link suggestions for ${item.basename}`,
-          disabled: this.batchOperation !== null || this.linking.has(item.path),
+          disabled: this.batchBusy() || this.linking.has(item.path),
           onClick: () => void this.reviewOneLinks(item.path, item.basename),
         },
       });
@@ -441,7 +467,7 @@ export class InboxView extends ItemView {
   }
 
   private async reviewOneLinks(path: string, basename: string): Promise<void> {
-    if (this.batchOperation !== null || this.linking.has(path)) return;
+    if (this.batchBusy() || this.linking.has(path)) return;
     const file = this.app.vault.getAbstractFileByPath(path);
     if (!(file instanceof TFile)) return;
     this.linking.add(path);
@@ -460,7 +486,7 @@ export class InboxView extends ItemView {
   }
 
   private async enrichOne(item: InboxItem, fromBatch = false): Promise<InboxEnrichOutcome> {
-    if ((!fromBatch && this.batchOperation !== null) || this.enriching.has(item.path)) {
+    if ((!fromBatch && this.batchBusy()) || this.enriching.has(item.path)) {
       return { status: "skipped", reason: `${item.basename} is already being enriched.` };
     }
     const f = this.app.vault.getAbstractFileByPath(item.path);
@@ -474,6 +500,7 @@ export class InboxView extends ItemView {
       if (outcome.status === "enriched") {
         this.enrichedOptimistically.add(item.path);
         this.enrichmentFeedback.delete(item.path);
+        if (!fromBatch) this.plugin.activity.resolveFailure(ENRICHMENT_BATCH_ID, item.path, "Enriched");
         if (!fromBatch) this.setOperationFeedback("success", `Typed source note: ${item.basename}.`);
         return outcome;
       }
@@ -493,12 +520,12 @@ export class InboxView extends ItemView {
   }
 
   private async enrichAll(items: InboxItem[]): Promise<void> {
-    if (this.batchOperation !== null) return;
+    if (this.batchBusy()) return;
     this.batchOperation = "enrich";
     const releaseReindex = this.plugin.semantic().suspendReindex();
     this.setOperationFeedback("running", `Enriching ${items.length} note${items.length === 1 ? "" : "s"}…`);
     const activityId = this.plugin.activity.start({
-      id: "source-enrichment:inbox-batch",
+      id: ENRICHMENT_BATCH_ID,
       kind: "source-enrichment",
       title: "Enriching Inbox",
       total: items.length,
@@ -520,7 +547,7 @@ export class InboxView extends ItemView {
             completed,
             succeeded: enriched,
             failed,
-            details: [{ label: item.path, message: "Enriched", state: "success" }],
+            details: [{ key: item.path, label: item.path, message: "Enriched", state: "success" }],
           });
         } else {
           failed++;
@@ -529,7 +556,7 @@ export class InboxView extends ItemView {
             completed,
             succeeded: enriched,
             failed,
-            details: [{ label: item.path, message: detail, state: "error" }],
+            details: [{ key: item.path, label: item.path, message: detail, state: "error" }],
           });
         }
         if (Platform.isMobile && outcome.status === "failed" && outcome.error instanceof ExtractError) {
@@ -593,7 +620,7 @@ export class InboxView extends ItemView {
   }
 
   private async reviewAllLinks(): Promise<void> {
-    if (this.batchOperation !== null) return;
+    if (this.batchBusy()) return;
     this.batchOperation = "link";
     this.linkSummary = null;
     this.linkResult = null;

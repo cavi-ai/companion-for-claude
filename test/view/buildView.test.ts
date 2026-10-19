@@ -11,12 +11,14 @@ const makeRun = (status: BuildRun["status"] = "ready", transport: BuildRun["tran
   status,
 });
 
-function harness(initial = makeRun()) {
+function harness(initial = makeRun(), runs = [initial]) {
   let run = initial;
   let listener: ((snapshot: BuildRun) => void) | undefined;
-  const actions = { start: vi.fn(), pause: vi.fn(), resume: vi.fn(), cancel: vi.fn(), openSpec: vi.fn(), openTracker: vi.fn(), openSession: vi.fn() };
+  const actions = { start: vi.fn(), pause: vi.fn(), resume: vi.fn(), cancel: vi.fn(), openSpec: vi.fn(), openTracker: vi.fn(), openSession: vi.fn(), retryTracker: vi.fn() };
   const deps: BuildViewDependencies = {
     getRun: () => run,
+    getRuns: () => runs,
+    selectRun: async (id) => { const next = runs.find((item) => item.id === id); if (next) { run = next; listener?.(next); } },
     subscribe: (next) => { listener = next; return () => { listener = undefined; }; },
     ...actions,
   };
@@ -28,6 +30,58 @@ function harness(initial = makeRun()) {
 const rootOf = (view: BuildView): FakeElement => view.contentEl as unknown as FakeElement;
 
 describe("BuildView", () => {
+  it("shows tracker synchronization failure separately from completed task results", async () => {
+    const h = harness({ ...makeRun("completed"), trackerError: "Couldn't update build tracker: access denied" });
+    await h.view.onOpen();
+    const root = rootOf(h.view);
+    expect(root.querySelector('[role="status"]')?.textContent).toBe("Build complete");
+    expect(root.querySelector('[role="alert"]')?.textContent).toContain("access denied");
+    const retry = root.querySelector(".cc-build-retry-tracker")!;
+    expect(retry.getAttribute("hidden")).toBeNull();
+    retry.dispatchEvent({ type: "click" });
+    expect(h.actions.retryTracker).toHaveBeenCalledOnce();
+    h.update(makeRun("completed"));
+    expect(retry.getAttribute("hidden")).toBe("");
+  });
+
+  it("hides document and execution controls when no build is selected", async () => {
+    const h = harness();
+    await h.view.onOpen();
+    h.view.setRun(null);
+    const root = rootOf(h.view);
+    expect(root.querySelector(".cc-build-links")?.getAttribute("hidden")).toBe("");
+    expect(root.querySelector(".cc-build-task-list")?.getAttribute("hidden")).toBe("");
+    expect(root.querySelector(".cc-build-output")?.getAttribute("hidden")).toBe("");
+    h.update(makeRun());
+    expect(root.querySelector(".cc-build-links")?.getAttribute("hidden")).toBeNull();
+  });
+
+  it("offers named saved builds and changes controls without replacing the picker", async () => {
+    const first = makeRun("paused");
+    const second = { ...makeRun(), id: "run-2", createdAt: 2 };
+    const h = harness(second, [first, second]);
+    await h.view.onOpen();
+    const root = rootOf(h.view);
+    const picker = root.querySelector("select")!;
+    expect(picker?.getAttribute("aria-label")).toBe("Saved build");
+    const options = picker.querySelectorAll("option");
+    expect(options).toHaveLength(2);
+    expect(options[0]?.textContent).toContain("Comment threads");
+    expect(options[0]?.textContent).toContain("Build paused");
+    expect(options[0]?.textContent).not.toBe(options[1]?.textContent);
+    picker.value = "run-1";
+    picker.dispatchEvent({ type: "change" });
+    expect(root.querySelector(".cc-build-start")?.textContent).toBe("Resume build");
+    expect(root.querySelector("select")).toBe(picker);
+    expect(picker.value).toBe("run-1");
+    picker.value = "run-2";
+    picker.dispatchEvent({ type: "change" });
+    expect(root.querySelector(".cc-build-start")?.textContent).toBe("Start build");
+    await h.view.onClose();
+    await h.view.onOpen();
+    expect(root.querySelectorAll("option")).toHaveLength(2);
+  });
+
   it("renders accessible Ready state and starts without exposing a command", async () => {
     const h = harness();
     await h.view.onOpen();

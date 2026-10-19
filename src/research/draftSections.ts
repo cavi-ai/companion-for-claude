@@ -16,6 +16,17 @@ export interface DraftSectionEnvelope {
   revisedFromFingerprint?: string;
 }
 
+export const REVIEWED_CLAIM_FALLBACK_MODEL = "reviewed-claim-fallback";
+
+export function isReviewedClaimFallback(envelope: DraftSectionEnvelope): boolean {
+  return envelope.provider === "companion" && envelope.model === REVIEWED_CLAIM_FALLBACK_MODEL;
+}
+
+/** Preserve legacy Companion outline markers while distinguishing accepted fallback text. */
+export function isOutlineEnvelope(envelope: DraftSectionEnvelope): boolean {
+  return envelope.provider === "companion" && !isReviewedClaimFallback(envelope);
+}
+
 export interface ProvenanceEntry extends DraftSectionEnvelope {
   heading: string;
   fingerprint: string;

@@ -1,6 +1,7 @@
 import { Modal, type App } from "obsidian";
 import type { EvidenceRecord, SourceLocatorKind } from "../../research/types";
 import { sanitizeLoadError, type RewriteTextFn } from "./shared";
+import { reviewNoteOpener } from "./reviewNavigation";
 
 const INTERPRET_INSTRUCTION = "Write a one-to-three sentence interpretation of this evidence excerpt: what it shows and why it matters for the research project, stated cautiously without going beyond the excerpt.";
 const LOCATOR_KINDS: SourceLocatorKind[] = ["page", "section", "paragraph", "timestamp", "quote"];
@@ -51,6 +52,7 @@ export class EvidenceReviewModal extends Modal {
     interpretation.value = evidence.interpretation ?? "";
     const status = this.contentEl.createEl("p", { cls: "cc-research-modal-status", attr: { role: "status" } });
     const error = this.contentEl.createEl("p", { cls: "cc-research-error", attr: { role: "alert" } });
+    value.addEventListener("input", () => { value.removeAttribute("aria-invalid"); error.setText(""); });
     const again = this.contentEl.createEl("button", { cls: "is-hidden", text: "Draft again" });
 
     let touched = false;
@@ -73,6 +75,12 @@ export class EvidenceReviewModal extends Modal {
     const complete = (state: "reviewed" | "rejected"): void => {
       const text = interpretation.value.trim();
       const locator = value.value.trim();
+      if (state === "reviewed" && !locator) {
+        error.setText("Add a page, section, or other location before keeping this passage.");
+        value.setAttribute("aria-invalid", "true");
+        value.focus();
+        return;
+      }
       const changed = locator && (locator !== (evidence.locatorValue ?? "") || kind.value !== evidence.locatorKind);
       void this.deps.submit({
         state,
@@ -82,6 +90,10 @@ export class EvidenceReviewModal extends Modal {
     };
     actions.createEl("button", { cls: "mod-cta", text: "Keep" }).addEventListener("click", () => complete("reviewed"));
     actions.createEl("button", { text: "Reject" }).addEventListener("click", () => complete("rejected"));
-    actions.createEl("button", { text: "Open note" }).addEventListener("click", () => void this.deps.openNote().catch((cause) => error.setText(sanitizeLoadError(cause))));
+    actions.createEl("button", { text: "Open note" }).addEventListener("click", reviewNoteOpener(this, {
+      hasEdits: () => touched || interpretation.value !== (evidence.interpretation ?? "") || value.value !== (evidence.locatorValue ?? "") || kind.value !== (evidence.locatorKind ?? "page"),
+      openNote: () => this.deps.openNote(),
+      showError: (message) => error.setText(message),
+    }));
   }
 }

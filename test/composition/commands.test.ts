@@ -21,7 +21,7 @@ function rig(): Rig {
   const enrichment = group("enrichment", ["runEnrich"]);
   const optimize = group("optimize", ["reviewTagMerges", "reviewOrphanLinks", "reviewUntypedNotes"]);
   const publish = group("publish", ["publishNote", "copyLink", "unpublish"]);
-  const research = group("research", ["generatePlanFromNote", "activateResearchDesk", "startResearchFromActiveNote", "handoffToBuild", "markNoteAsPlan"]);
+  const research = group("research", ["generatePlanFromNote", "activateResearchDesk", "startResearchFromActiveNote", "handoffToBuild", "activateBuildView", "markNoteAsPlan"]);
   const publishing = {
     ...group("publishing", ["dispatchCloudSession", "pullCloudReplies"]),
     publishedItems: fn("publishing.publishedItems", () => [{ key: "notes/a.md" }]),
@@ -84,6 +84,7 @@ const ROWS: Row[] = [
   ["browseConversations", [], [["browseConversations", []]]],
   ["deleteActiveConversation", [], [["deleteActiveConversation", []]]],
   ["handoffToBuild", [], [["research.handoffToBuild", []]]],
+  ["openBuildRunner", [], [["research.activateBuildView", []]]],
   ["markNoteAsPlan", [file], [["research.markNoteAsPlan", [file]]]],
   ["organizeClippings", [], [["organizeClippings", []]]],
   ["dispatchCloudSession", [], [["publishing.dispatchCloudSession", []]]],

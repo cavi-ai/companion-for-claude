@@ -231,3 +231,26 @@ describe("ChatTurnService", () => {
     expect(() => unsubscribe()).not.toThrow();
   });
 });
+
+
+describe("terminal receipt ordering", () => {
+  it.each([false, true])("publishes the terminal event after persisting (runner rejection: %s)", async (reject) => {
+    const service = new ChatTurnService();
+    let entered!: () => void, release!: () => void;
+    const saving = new Promise<void>(resolve => { entered = resolve; });
+    const saved = new Promise<void>(resolve => { release = resolve; });
+    const events: string[] = [];
+    const handle = service.start("c1", {
+      turnId: "t1", title: "Stopped request",
+      run: async () => { if (reject) throw new Error("offline"); return { text: "partial", trace: [], aborted: true }; },
+      ...deps({ interruptTurn: async () => { entered(); await saved; events.push("persisted"); } }),
+    });
+    const settled = handle.result.catch(() => undefined);
+    service.subscribe("c1", event => { if (event.kind === "done" || event.kind === "error") events.push(event.kind); });
+    try {
+      await saving;
+      expect(events).toEqual([]);
+    } finally { release(); await settled; }
+    expect(events).toEqual(["persisted", reject ? "error" : "done"]);
+  });
+});

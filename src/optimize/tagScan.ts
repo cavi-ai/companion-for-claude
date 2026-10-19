@@ -20,6 +20,8 @@ export interface TagScanLimits {
   lowConsumer: number;
   established: number;
   maxEstablished: number;
+  /** A tag on more than this share of tagged notes marks a collection, not a topic, and is never a semantic target. */
+  maxTargetShare: number;
 }
 export const DEFAULT_SCAN_LIMITS: TagScanLimits = {
   maxCandidates: 200,
@@ -27,6 +29,7 @@ export const DEFAULT_SCAN_LIMITS: TagScanLimits = {
   lowConsumer: 2,
   established: 3,
   maxEstablished: 300,
+  maxTargetShare: 0.5,
 };
 export interface TagScanInput {
   vocab: Vocabulary;
@@ -237,12 +240,15 @@ export function scanTags(input: TagScanInput): TagScanReport {
 
   if (input.centroid) {
     const centroid = input.centroid;
+    // An empty path segment ("2024/", "a//b") is not a topic; neither is a tag on most tagged notes.
+    const malformed = (tag: string): boolean => tag.split("/").some((segment) => segment === "");
+    const taggedNotes = new Set(stats.flatMap((s) => s.notes)).size;
     const established = stats
-      .filter((s) => s.count >= limits.established)
+      .filter((s) => s.count >= limits.established && s.count <= taggedNotes * limits.maxTargetShare && !malformed(s.tag))
       .sort((x, y) => (mostUsed(x, y) ? -1 : 1))
       .slice(0, limits.maxEstablished);
     for (const low of stats) {
-      if (low.count > limits.lowConsumer) continue;
+      if (low.count > limits.lowConsumer || malformed(low.tag)) continue;
       const lowVec = centroid(low.tag);
       if (!lowVec) continue;
       let best: TagStat | null = null;

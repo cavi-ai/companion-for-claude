@@ -43,8 +43,17 @@ describe("parseExtraction", () => {
     expect(out[1]!.title).toBe("A second paragraph.");
   });
 
-  it("returns nothing for unusable replies", () => {
-    expect(parseExtraction("not json", doc, [])).toEqual([]);
+  it.each(["not json", "", "{}", '{"passages":"none"}', '{"passages":[null,{}, {"excerpt":5}]}'])("rejects unusable passage data: %s", (raw) => {
+    expect(() => parseExtraction(raw, doc, [])).toThrow("The model did not return a valid passage list.");
+  });
+
+  it("accepts an empty passage list as a valid result", () => {
+    expect(parseExtraction(reply(), doc, [])).toEqual([]);
+  });
+
+  it("keeps valid candidates from a partially malformed list", () => {
+    const raw = JSON.stringify({ passages: [null, {}, { excerpt: 5 }, { title: "Found", excerpt: "A second paragraph." }] });
+    expect(parseExtraction(raw, doc, [])).toEqual([{ title: "Found", excerpt: "A second paragraph.", locatorKind: "section", locatorValue: "Findings" }]);
   });
 });
 

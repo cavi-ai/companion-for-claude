@@ -70,6 +70,8 @@ test("invalid clip properties stay readable and can be corrected before retry", 
   await expect(row.locator(".cc-inbox-enrichment-error")).toContainText("Open the note and fix its opening YAML properties block, then retry.");
   expect(await rig.providerRequests()).toBe(0);
 
+  const sidebarStyle = await page.locator(".workspace-split.mod-right-split").getAttribute("style");
+  const viewport = page.viewportSize();
   for (const width of [320, 900]) {
     await page.setViewportSize({ width, height: 900 });
     await page.evaluate(() => {
@@ -88,16 +90,20 @@ test("invalid clip properties stay readable and can be corrected before retry", 
     expect(bounds.errorTop).toBeGreaterThanOrEqual(bounds.nameBottom);
   }
 
+  await page.locator(".workspace-split.mod-right-split").evaluate((element, style) => { element.setAttribute("style", style ?? ""); }, sidebarStyle);
+  if (viewport) await page.setViewportSize(viewport);
   await row.locator(".cc-inbox-open").click();
   const before = await page.evaluate(async (path) => {
     const app = (window as unknown as { app: { workspace: { getActiveFile(): { path: string } | null }; vault: { getAbstractFileByPath(path: string): unknown; read(file: unknown): Promise<string>; modify(file: unknown, content: string): Promise<void> } } }).app;
     if (app.workspace.getActiveFile()?.path !== path) throw new Error("The failed note did not open");
     const file = app.vault.getAbstractFileByPath(path);
-    const before = await app.vault.read(file);
-    await app.vault.modify(file, "---\nsource: https://example.com/article\n---\n\nBody.  \n");
-    return before;
+    return app.vault.read(file);
   }, path);
   expect(before).toBe(malformed);
+  const editor = page.locator(".markdown-source-view:visible .cm-content");
+  await editor.click();
+  await editor.press("Meta+A");
+  await page.keyboard.insertText("---\nsource: https://example.com/article\n---\n\nBody.  \n");
   await row.getByRole("button", { name: `Enrich ${LONG}`, exact: true }).click();
   await expect(inbox.locator(".cc-inbox-typed")).toContainText(LONG);
   expect(await rig.providerRequests()).toBe(1);

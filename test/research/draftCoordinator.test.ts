@@ -68,7 +68,17 @@ describe("DraftCoordinator", () => {
     expect(preview.response.markdown).toBe("Results vary. [@smith2025]");
     expect(preview.response.support[0]).toEqual(expect.objectContaining({ passage: "Results vary. [@smith2025]", evidencePaths: ["R/Evidence/E.md"] }));
     expect(preview.response.gaps[0]).toMatch(/minimal reviewed-claim fallback/i);
+    expect(preview.envelope).toMatchObject({ provider: "companion", model: "reviewed-claim-fallback" });
     expect(complete).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not turn a cancelled provider call into a generated fallback", async () => {
+    const controller = new AbortController();
+    const complete = vi.fn(async () => { controller.abort(); throw new Error("Cancelled"); });
+    const provider = { id: "ollama", label: "Local", hasCredentials: () => true, complete } as unknown as Provider;
+    const coordinator = new DraftCoordinator({ selection: () => ({ provider, model: "local-test" }), maxTokens: () => 2000 });
+    const section = makeSection({ id: "c-1", claimPaths: ["R/Claims/C.md"], evidence: [], citations: [], provider: "companion", model: "evidence-outline-v1", generatedAt: "outline" }, "C", "Placeholder.");
+    await expect(coordinator.preview(buildProjectSnapshot("R/Project.md", records, []), section, controller.signal)).rejects.toThrow("Cancelled");
   });
 
   it("fails before calling a provider when credentials are unavailable", async () => {

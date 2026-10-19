@@ -31,7 +31,8 @@ source of truth.
 
 - **Vault-aware chat** with the active note, selection, links, search results,
   notes a typed search result relates to, folders, PDFs, images, and pasted
-  screenshots as context.
+  screenshots as context. Pasted images are saved as ordinary vault files in
+  your configured Obsidian attachment folder.
 - **Agent mode** that can search, read, and follow links while showing every tool
   call; writes remain behind confirmation.
 - **Reviewable edits** with per-hunk acceptance before a note changes.

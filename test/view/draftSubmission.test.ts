@@ -11,6 +11,43 @@ function fixture() {
 }
 
 describe("draft submission", () => {
+  it("lets the selected chat submit while another chat's startup is still pending", async () => {
+    const { input, submission, resize } = fixture();
+    let current = true;
+    let finishFirst!: (result: boolean) => void;
+    let finishSecond: ((result: boolean) => void) | undefined;
+    const first = submission.run(input, () => current, resize, () => new Promise<boolean>((resolve) => { finishFirst = resolve; }));
+    try {
+      current = false;
+      input.value = "New chat's question";
+      expect(submission.pending).toBe(false);
+      const second = submission.run(input, () => true, resize, () => new Promise<boolean>((resolve) => { finishSecond = resolve; }));
+      expect(submission.pending).toBe(true);
+      finishFirst(true);
+      await first;
+      expect(submission.pending).toBe(true);
+      expect(input.value).toBe("New chat's question");
+      finishSecond!(false);
+      await second;
+      expect(submission.pending).toBe(false);
+    } finally {
+      finishFirst(false);
+      finishSecond?.(false);
+    }
+  });
+
+  it("accepts an external prompt without consuming an unrelated composer draft", async () => {
+    const { input, submission, resize } = fixture();
+    const original = input.value;
+    await expect(submission.run(input, () => true, resize, async (start) => {
+      start.accepted();
+      return true;
+    }, false)).resolves.toBe(true);
+    expect(input.value).toBe(original);
+    expect(submission.pending).toBe(false);
+    expect(resize).not.toHaveBeenCalled();
+  });
+
   it("clears at acceptance while the turn continues and ignores duplicate starts", async () => {
     const { input, submission, resize } = fixture();
     let accept!: DraftStart;

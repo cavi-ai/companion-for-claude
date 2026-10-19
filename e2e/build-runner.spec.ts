@@ -95,6 +95,9 @@ test("Build Runner keeps controls inside a compact mobile viewport", async ({ ri
     expect(await runner.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
     const startBox = await runner.getByRole("button", { name: "Start build" }).boundingBox();
     expect(startBox?.height).toBeGreaterThanOrEqual(44);
+    const pickerBox = await runner.getByRole("combobox", { name: "Saved build", exact: true }).boundingBox();
+    expect(pickerBox?.height).toBeGreaterThanOrEqual(44);
+    expect(pickerBox!.width).toBeLessThanOrEqual(box!.width);
     await runner.screenshot({ path: testInfo.outputPath("build-runner-mobile-ready.png") });
   } finally {
     await harness.close();

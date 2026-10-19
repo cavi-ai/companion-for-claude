@@ -2,8 +2,10 @@ import { Modal, type App } from "obsidian";
 import { QUESTION_INSTRUCTION, sanitizeLoadError, type ProjectCreateInput, type RewriteTextFn } from "./shared";
 
 export class ProjectCreateModal extends Modal {
+  private generation = 0;
   constructor(app: App, private readonly submit: (input: ProjectCreateInput) => Promise<void>, private readonly rewriteText?: RewriteTextFn, private readonly initial?: Partial<ProjectCreateInput>) { super(app); }
   override onOpen(): void {
+    const generation = ++this.generation;
     this.contentEl.empty();
     this.contentEl.createEl("h2", { text: "Create research project" });
     this.contentEl.createEl("p", { cls: "cc-research-modal-meta", text: "A project answers one question. You'll add sources, pull passages, make claims, then write." });
@@ -18,29 +20,60 @@ export class ProjectCreateModal extends Modal {
     const question = questionWrap.createEl("textarea", { attr: { "aria-label": "Research question", rows: "3", placeholder: "How does task-switching affect deep-work output for remote engineers?" } });
     if (this.initial?.question) question.value = this.initial.question;
     if (this.rewriteText) {
+      let questionRevision = 0;
+      let titleRevision = 0;
+      let request = 0;
+      let pendingTitle: number | undefined;
+      let suggestion: HTMLElement | undefined;
+      const dismissSuggestion = () => { suggestion?.remove(); suggestion = undefined; };
+      question.addEventListener("input", () => { questionRevision++; });
+      title.addEventListener("input", () => { titleRevision++; dismissSuggestion(); });
       const draftWrap = questionWrap.createDiv({ cls: "cc-research-modal-actions" });
       const draft = draftWrap.createEl("button", { text: "Draft with Claude", attr: { "aria-label": "Draft a sharp research question with Claude from the title" } });
-      draft.addEventListener("click", () => {
+      const offerSuggestion = (result: string) => {
+        dismissSuggestion();
+        suggestion = questionWrap.createDiv({ cls: "cc-research-question-suggestion cc-research-modal-field", attr: { role: "region", "aria-label": "Suggested research question" } });
+        suggestion.createEl("p", { text: "Your edits were kept. You can use this suggestion instead.", attr: { role: "status" } });
+        suggestion.createEl("p", { text: result });
+        const actions = suggestion.createDiv({ cls: "cc-research-modal-actions" });
+        actions.createEl("button", { text: "Use suggested question" }).addEventListener("click", () => {
+          question.value = result;
+          questionRevision++;
+          dismissSuggestion();
+        });
+        actions.createEl("button", { text: "Dismiss suggestion" }).addEventListener("click", dismissSuggestion);
+      };
+      const draftQuestion = (explicit: boolean) => {
         const topic = title.value.trim();
         const seed = question.value.trim();
         if (!topic && !seed) { error.setText("Give the project a title or a rough question first."); return; }
+        if (pendingTitle === titleRevision) return;
+        const owner = ++request;
+        const fromTitle = titleRevision;
+        const fromQuestion = questionRevision;
+        pendingTitle = fromTitle;
+        const current = () => this.generation === generation && request === owner;
         draft.disabled = true;
         draft.setText("Drafting…");
+        dismissSuggestion();
         error.setText("");
-        void this.rewriteText!({ text: seed || topic, instruction: QUESTION_INSTRUCTION, ...(topic ? { context: `Project title: ${topic}` } : {}) })
-          .then((result) => { question.value = result; })
-          .catch((cause) => error.setText(sanitizeLoadError(cause)))
-          .finally(() => { draft.disabled = false; draft.setText("Draft with Claude"); });
-      });
-    }
-
-    if (this.rewriteText) {
+        void Promise.resolve().then(() => this.rewriteText!({ text: seed || topic, instruction: QUESTION_INSTRUCTION, ...(topic ? { context: `Project title: ${topic}` } : {}) }))
+          .then((result) => {
+            if (!current() || titleRevision !== fromTitle) return;
+            if (questionRevision === fromQuestion) question.value = result;
+            else offerSuggestion(result);
+          })
+          .catch((cause) => { if (current() && titleRevision === fromTitle && explicit) error.setText(sanitizeLoadError(cause)); })
+          .finally(() => {
+            if (!current()) return;
+            pendingTitle = undefined;
+            draft.disabled = false;
+            draft.setText("Draft with Claude");
+          });
+      };
+      draft.addEventListener("click", () => draftQuestion(true));
       title.addEventListener("blur", () => {
-        const topic = title.value.trim();
-        if (!topic || question.value.trim()) return;
-        void this.rewriteText!({ text: topic, instruction: QUESTION_INSTRUCTION, context: `Project title: ${topic}` })
-          .then((result) => { if (!question.value.trim()) question.value = result; })
-          .catch(() => { /* the Draft button reports failures */ });
+        if (title.value.trim() && !question.value.trim()) draftQuestion(false);
       });
     }
 
@@ -65,4 +98,5 @@ export class ProjectCreateModal extends Modal {
       void this.submit(input).then(() => this.close()).catch((cause) => error.setText(sanitizeLoadError(cause)));
     });
   }
+  override onClose(): void { this.generation++; }
 }

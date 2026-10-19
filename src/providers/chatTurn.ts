@@ -47,6 +47,8 @@ export function streamAttempt(provider: Pick<Provider, "stream">, request: Compl
 
 export interface TurnRoute {
   backend: ChatBackend;
+  /** Current image/PDF blocks cannot survive a text-only local fallback. */
+  hasMedia?: boolean;
   /** Agent turns (vault tools or a CLI backend) keep a partial answer instead of falling back. */
   agent: boolean;
   /** The provider the primary attempt runs on, named on its error for the hint. */
@@ -73,6 +75,10 @@ export async function routeTurn<F extends { provider: Pick<Provider, "id">; mode
     return { text: primary.text, trace: primary.trace, ...(primary.aborted !== undefined ? { aborted: primary.aborted } : {}), ...(primary.capped !== undefined ? { capped: primary.capped } : {}) };
   }
   if (route.backend === "device") return tagged(primary, "device");
+  if (route.hasMedia && shouldFallbackToLocal({ backend: route.backend, localAvailable: true, error: primary.error })) {
+    handlers.onNotice?.("Local fallback was skipped because this connection cannot send attachments. Retry with Claude or remove the attachments and resend.");
+    return tagged(primary, route.providerId);
+  }
   const fallback = await attempts.localFallback();
   if (!fallback || !shouldFallbackToLocal({ backend: route.backend, localAvailable: true, error: primary.error })) return tagged(primary, route.providerId);
   handlers.onNotice?.(`${fallbackReason(primary.error)} — trying ${fallback.model} locally…`);

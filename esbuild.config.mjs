@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import { builtinModules } from "node:module";
 import process from "node:process";
 import { gzipSync } from "fflate";
+import { compressedSkillRegistry } from "./tools/compress-skill-registry.mjs";
 
 const prod = process.argv[2] === "production";
 
@@ -52,6 +53,7 @@ for (const name of ["embed-worker", "pdf-worker"]) {
 const context = await esbuild.context({
   banner: { js: banner },
   entryPoints: ["src/main.ts"],
+  plugins: [compressedSkillRegistry()],
   bundle: true,
   external: [
     "obsidian",

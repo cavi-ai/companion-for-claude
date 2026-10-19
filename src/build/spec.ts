@@ -23,9 +23,10 @@ export function isPlanReply(reply: string): boolean {
  * ("- [ ] x" / "- [x] x") and, failing that, milestone-like list items.
  */
 export function extractTasks(planText: string): BuildTask[] {
+  const lines = proseLines(planText);
   const tasks: BuildTask[] = [];
   const checkbox = /^\s*[-*]\s*\[( |x|X)\]\s+(.*\S)/;
-  for (const line of planText.split("\n")) {
+  for (const line of lines) {
     const m = checkbox.exec(line);
     const title = m?.[2]?.trim();
     if (title) tasks.push({ title, done: m?.[1]?.toLowerCase() === "x" });
@@ -34,7 +35,7 @@ export function extractTasks(planText: string): BuildTask[] {
 
   // Fallback: numbered or bulleted milestone lines (strip HTML tags first —
   // iterate-until-stable so multi-char reconstruction can't smuggle a tag through).
-  const text = stripTags(planText, " ");
+  const text = stripTags(lines.join("\n"), " ");
   const item = /^\s*(?:\d+[.)]|[-*•])\s+(.*\S)/;
   for (const line of text.split("\n")) {
     const m = item.exec(line);

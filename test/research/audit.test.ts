@@ -1,14 +1,42 @@
 import { describe, expect, it } from "vitest";
 import { auditProject, type AuditFinding } from "../../src/research/audit";
-import { buildProjectSnapshot } from "../../src/research/graph";
+import { buildProjectSnapshot, isTrustedEvidence } from "../../src/research/graph";
+import { buildArgument } from "../../src/research/argument";
+import { nextSteps } from "../../src/research/nextSteps";
+import type { ParseIssue } from "../../src/research/parse";
 import type { ResearchRecord } from "../../src/research/types";
 
-function project(records: ResearchRecord[]) {
+function project(records: ResearchRecord[], issues: ParseIssue[] = []) {
   const root: ResearchRecord = { path: "Projects/P.md", title: "P", type: "research-project", project: "Projects/P.md", question: "Why?", stage: "reason", status: "active" };
-  return buildProjectSnapshot("Projects/P.md", [root, ...records], []);
+  return buildProjectSnapshot("Projects/P.md", [root, ...records], issues);
 }
 
 describe("auditProject", () => {
+  const source: ResearchRecord = { path: "Sources/S.md", title: "S", type: "research-source", project: "Projects/P.md", sourceKind: "vault" };
+  const unlocated: ResearchRecord = { path: "Evidence/E.md", title: "E", type: "evidence", project: "Projects/P.md", source: source.path, excerpt: "X", reviewState: "proposed" };
+  const missingLocator: ParseIssue = { path: unlocated.path, code: "missing-locator", message: "Evidence should identify both locator_kind and locator_value" };
+
+  it.each(["proposed", "reviewed"] as const)("guides a readable %s unlocated passage to review without calling its properties unreadable", (reviewState) => {
+    const snapshot = project([source, { ...unlocated, reviewState }], [missingLocator]);
+    const findings = auditProject(snapshot);
+    expect(findings.filter(({ code }) => code === "missing-locator")).toEqual([expect.objectContaining({ path: unlocated.path, severity: "warning" })]);
+    expect(findings.some(({ code }) => code === "invalid-record")).toBe(false);
+    expect(buildArgument(snapshot, findings, []).fixFirst).toEqual([]);
+    expect(nextSteps({ snapshot, audit: findings, webSearch: false })[0]).toMatchObject({ kind: "check", path: unlocated.path });
+    expect(isTrustedEvidence(snapshot.evidence[0], snapshot.sources[0])).toBe(false);
+    expect(snapshot.issues).toEqual([missingLocator]);
+  });
+
+  it.each(["missing-field", "invalid-value"] as const)("retains a structural %s issue on a readable passage", (code) => {
+    const findings = auditProject(project([source, unlocated], [missingLocator, { path: unlocated.path, code, message: "Invalid field" }]));
+    expect(findings.filter(({ code }) => code === "invalid-record")).toEqual([expect.objectContaining({ severity: "error", explanation: `${code}: Invalid field` })]);
+    expect(findings.filter(({ code }) => code === "missing-locator")).toHaveLength(1);
+  });
+
+  it("keeps repair findings when the passage could not be parsed", () => {
+    expect(auditProject(project([source], [missingLocator]))).toEqual([expect.objectContaining({ code: "invalid-record", path: unlocated.path, severity: "error" })]);
+  });
+
   it("explains unreviewed, unsupported, and unused records in stable order", () => {
     const findings = auditProject(project([
       { path: "Sources/S.md", title: "S", type: "research-source", project: "Projects/P.md", sourceKind: "pdf" },

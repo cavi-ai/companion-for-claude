@@ -3,11 +3,12 @@ import { ChoiceModal } from "../ChoiceModal";
 import type { Composer } from "./Composer";
 import type { ConversationDrafts } from "./conversationDrafts";
 
-/** Only transcript reuse asks before replacing unsent work. */
-export function reuseDraft(app: App, composer: Composer, drafts: ConversationDrafts, text: string): void {
+/** Confirm before replacing unfinished text; follow-up actions run only after acceptance. */
+export function reuseDraft(app: App, composer: Composer, drafts: ConversationDrafts, text: string, afterReplace?: () => void): void {
+  const apply = () => { composer.setDraft(text); afterReplace?.(); };
   const original = composer.draft();
   if (!original.trim() || original === text) {
-    composer.setDraft(text);
+    apply();
     return;
   }
   const generation = drafts.generation;
@@ -23,7 +24,7 @@ export function reuseDraft(app: App, composer: Composer, drafts: ConversationDra
       // Obsidian restores the previous focus after onClose returns.
       queueMicrotask(() => {
         if (drafts.generation !== generation || composer.draft() !== original) return;
-        if (choice === "replace") composer.setDraft(text);
+        if (choice === "replace") apply();
         else input.focus();
       });
     },

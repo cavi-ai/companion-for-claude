@@ -42,6 +42,15 @@ describe("RevisionCoordinator", () => {
     expect(preview.response.markdown).toBe("The results vary [@smith].");
   });
 
+  it("can revise an accepted Companion fallback with model provenance for the new text", async () => {
+    const provider = { id: "anthropic", label: "Claude", hasCredentials: () => true, complete: vi.fn(async () => valid) } as unknown as Provider;
+    const coordinator = new RevisionCoordinator({ selection: () => ({ provider, model: "new-model" }), maxTokens: () => 2000 });
+    const fallback = { ...section, envelope: { ...section.envelope, provider: "companion", model: "reviewed-claim-fallback" } };
+    const preview = await coordinator.preview(snapshot, fallback, { intent: "clarity" });
+    expect(preview.response.canAccept).toBe(true);
+    expect(preview.envelope).toMatchObject({ provider: "anthropic", model: "new-model" });
+  });
+
   it("retries once and fails closed without a generated fallback", async () => {
     const complete = vi.fn(async () => "{}");
     const provider = { id: "ollama", label: "Local", hasCredentials: () => true, complete } as unknown as Provider;

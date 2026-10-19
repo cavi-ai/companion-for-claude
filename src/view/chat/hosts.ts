@@ -33,7 +33,7 @@ export type ChatViewHost = ComposerHost & Omit<TranscriptHost, "conversations"> 
 } & Pick<
   ClaudeCompanionPlugin,
   | "agentTools" | "callExternalMcp" | "chatProjectFor" | "cliTurnRunner" | "composeSystemPrompt"
-  | "externalMcpTools" | "interruptCliTurn" | "listChatProjects" | "loadedOntology" | "memory" | "promptTemplates"
+  | "externalMcpTools" | "invalidateCliSession" | "interruptCliTurn" | "listChatProjects" | "loadedOntology" | "memory" | "promptTemplates"
   | "research" | "router" | "saveSettings" | "settings" | "turnService" | "views"
 >;
 

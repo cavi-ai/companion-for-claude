@@ -1,4 +1,4 @@
-import { App, FakeElement, Platform, TFile, clearNotices, getNoticeMessages } from "obsidian";
+import { App, FakeElement, MarkdownView, Platform, TFile, WorkspaceLeaf, clearNotices, getNoticeMessages } from "obsidian";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_SETTINGS, type PluginSettings } from "../../src/types";
 import { WORKFLOWS } from "../../src/workflows/catalog";
@@ -21,6 +21,7 @@ interface Rig {
   settings: PluginSettings;
   workspace: Record<string, unknown>;
   enrichFile: ReturnType<typeof vi.fn>;
+  sizeFailure: ReturnType<typeof vi.fn>;
   queued: unknown[];
   leaves: Map<string, Leaf[]>;
   rightLeaf: Leaf;
@@ -43,15 +44,16 @@ function rig(over: { isMobile?: boolean; research?: unknown } = {}): Rig {
   };
   Object.assign(app.workspace, workspace);
   const enrichFile = vi.fn(async () => ({ status: "enriched" }));
+  const sizeFailure = vi.fn(() => null);
   const queued: unknown[] = [];
   const deps: WorkspaceViewsDeps = {
     app,
     settings: () => settings,
     research: () => (over.research ?? {}) as never,
     orders: () => ({ listQueuedEdits: () => queued }) as never,
-    enrichment: () => ({ enrichFile }) as never,
+    enrichment: () => ({ enrichFile, mobileSourceSizeFailure: sizeFailure }) as never,
   };
-  return { app, views: new WorkspaceViews(deps), settings, workspace, enrichFile, queued, leaves, rightLeaf };
+  return { app, views: new WorkspaceViews(deps), settings, workspace, enrichFile, sizeFailure, queued, leaves, rightLeaf };
 }
 
 beforeEach(() => { clearNotices(); });
@@ -234,6 +236,96 @@ describe("WorkspaceViews active note card", () => {
 });
 
 describe("WorkspaceViews inbox", () => {
+  it("keeps the mobile size guard ahead of editor saving and enrichment", async () => {
+    const r = rig();
+    const file = r.app.vault.seed("Clippings/a.md", "Large note");
+    const error = new Error("Note exceeds the mobile enrichment limit");
+    r.sizeFailure.mockReturnValue({ status: "failed", error });
+    const editor = Object.assign(new MarkdownView(new WorkspaceLeaf(r.app)), { file, save: vi.fn() });
+    r.leaves.set("markdown", [leaf(editor)]);
+    await expect(r.views.enrichInboxItem(file)).resolves.toEqual({ status: "failed", error });
+    expect(editor.save).not.toHaveBeenCalled();
+    expect(r.enrichFile).not.toHaveBeenCalled();
+  });
+  it("waits for the matching editor save before enrichment reads the file", async () => {
+    const r = rig();
+    const file = r.app.vault.seed("Clippings/a.md", "Old content");
+    const other = r.app.vault.seed("Notes/other.md", "Other content");
+    let release!: () => void;
+    const pending = new Promise<void>((resolve) => { release = resolve; });
+    const editor = Object.assign(new MarkdownView(new WorkspaceLeaf(r.app)), {
+      file,
+      getViewData: () => "Edited content",
+      save: vi.fn(async () => { await pending; await r.app.vault.modify(file, "Edited content"); }),
+    });
+    const unrelated = Object.assign(new MarkdownView(new WorkspaceLeaf(r.app)), { file: other, save: vi.fn() });
+    r.leaves.set("markdown", [leaf(editor), leaf(unrelated)]);
+    let read = "";
+    r.enrichFile.mockImplementation(async () => { read = await r.app.vault.cachedRead(file); return { status: "enriched" }; });
+    const result = r.views.enrichInboxItem(file, { inline: true });
+    await Promise.resolve();
+    expect(r.enrichFile).not.toHaveBeenCalled();
+    release();
+    await expect(result).resolves.toEqual({ status: "enriched" });
+    expect(read).toBe("Edited content");
+    expect(unrelated.save).not.toHaveBeenCalled();
+    expect(await r.app.vault.cachedRead(other)).toBe("Other content");
+  });
+
+  it("does not enrich when saving the edited note fails", async () => {
+    const r = rig();
+    const file = r.app.vault.seed("Clippings/a.md", "Original content");
+    const cause = new Error("disk full");
+    const editor = Object.assign(new MarkdownView(new WorkspaceLeaf(r.app)), { file, save: vi.fn(async () => { throw cause; }) });
+    r.leaves.set("markdown", [leaf(editor)]);
+    const result = await r.views.enrichInboxItem(file, { inline: true });
+    expect(result.status).toBe("failed");
+    if (result.status === "failed") {
+      expect(result.error.message).toContain("Couldn't save");
+      expect(result.error.cause).toBe(cause);
+    }
+    expect(r.enrichFile).not.toHaveBeenCalled();
+    expect(await r.app.vault.cachedRead(file)).toBe("Original content");
+  });
+
+  it("waits for a queued autosave even when save returns before the write", async () => {
+    const r = rig();
+    const file = r.app.vault.seed("Clippings/a.md", "Old content");
+    const editor = Object.assign(new MarkdownView(new WorkspaceLeaf(r.app)), {
+      file, getViewData: () => "Edited content", save: vi.fn(async () => undefined),
+    });
+    r.leaves.set("markdown", [leaf(editor)]);
+    let read = "";
+    r.enrichFile.mockImplementation(async () => { read = await r.app.vault.cachedRead(file); return { status: "enriched" }; });
+    const result = r.views.enrichInboxItem(file, { inline: true });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(r.enrichFile).not.toHaveBeenCalled();
+    await r.app.vault.modify(file, "Edited content");
+    r.app.vault.trigger("modify", file);
+    await expect(result).resolves.toEqual({ status: "enriched" });
+    expect(read).toBe("Edited content");
+    const reads = vi.spyOn(r.app.vault, "read");
+    r.app.vault.trigger("modify", file);
+    await Promise.resolve();
+    expect(reads).not.toHaveBeenCalled();
+  });
+
+  it("fails without enriching if a queued save never completes", async () => {
+    vi.useFakeTimers();
+    const r = rig();
+    const file = r.app.vault.seed("Clippings/a.md", "Old content");
+    const editor = Object.assign(new MarkdownView(new WorkspaceLeaf(r.app)), {
+      file, getViewData: () => "Edited content", save: vi.fn(async () => undefined),
+    });
+    r.leaves.set("markdown", [leaf(editor)]);
+    const result = r.views.enrichInboxItem(file, { inline: true });
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(await result).toMatchObject({ status: "failed", error: { message: expect.stringContaining("did not finish saving") } });
+    expect(r.enrichFile).not.toHaveBeenCalled();
+    expect(await r.app.vault.cachedRead(file)).toBe("Old content");
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it("enriches a file and refreshes open inbox views, with consent prompting unless inline", async () => {
     const r = rig();
     const inbox = inboxView();

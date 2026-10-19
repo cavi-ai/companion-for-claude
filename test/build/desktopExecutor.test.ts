@@ -17,12 +17,58 @@ const task = (index = 0): BuildTaskExecutionInput => ({
 });
 
 describe("DesktopBuildExecutor", () => {
+  it.each([
+    [{ type: "result", subtype: "success", is_error: true, result: "API Error: provider unavailable" }, "provider unavailable"],
+    [{ type: "result", subtype: "error_during_execution", is_error: false, result: "Execution failed" }, "Execution failed"],
+    [{ type: "result", subtype: "error_max_turns", is_error: false }, "turn limit"],
+  ])("rejects a structured task failure despite a zero exit code: %j", async (frame, message) => {
+    const line = JSON.stringify(frame);
+    const port: ManagedProcessPort = { run: async (_exe, _args, options) => {
+      options.onStdout(line.slice(0, 17));
+      options.onStdout(line.slice(17));
+      return { code: 0, stderr: "" };
+    } };
+    await expect(new DesktopBuildExecutor({ process: port, executable: "claude", cwd: "/vault" })
+      .execute(task(), new AbortController().signal, () => {})).rejects.toThrow(message as string);
+  });
+
+  it.each(["", "not JSON\n", '{"type":"assistant","message":{"content":[{"type":"text","text":"Working"}]}}\n'])("requires a terminal result after %j", async (stdout) => {
+    const port: ManagedProcessPort = { run: async (_exe, _args, options) => { options.onStdout(stdout); return { code: 0, stderr: "" }; } };
+    await expect(new DesktopBuildExecutor({ process: port, executable: "claude", cwd: "/vault" })
+      .execute(task(), new AbortController().signal, () => {})).rejects.toThrow("without a task result");
+  });
+
+  it("retains an explicit failure even if a later success frame arrives and redacts result credentials", async () => {
+    const port: ManagedProcessPort = { run: async (_exe, _args, options) => {
+      options.onStdout('{"type":"result","subtype":"success","is_error":true,"result":"API failed token=private-key Bearer private-bearer"}\n');
+      options.onStdout('{"type":"result","subtype":"success","is_error":false,"result":"Late success"}\n');
+      return { code: 0, stderr: "" };
+    } };
+    const output: string[] = [];
+    const result = await new DesktopBuildExecutor({ process: port, executable: "claude", cwd: "/vault" })
+      .execute(task(), new AbortController().signal, (line) => output.push(line)).catch((error: Error) => error);
+    expect(result).toBeInstanceOf(Error);
+    expect((result as Error).message).toContain("API failed");
+    expect((result as Error).message + output.join(" ")).not.toMatch(/private-key|private-bearer/);
+  });
+
+  it("accepts a successful result even when ordinary assistant text discusses an error", async () => {
+    const port: ManagedProcessPort = { run: async (_exe, _args, options) => {
+      options.onStdout('{"type":"assistant","message":{"content":[{"type":"text","text":"Fixed the API Error handler"}]}}\n');
+      options.onStdout('{"type":"result","subtype":"success","is_error":false,"result":"Handler verified"}');
+      return { code: 0, stderr: "" };
+    } };
+    const result = await new DesktopBuildExecutor({ process: port, executable: "claude", cwd: "/vault" })
+      .execute(task(), new AbortController().signal, () => {});
+    expect(result.summary).toBe("Handler verified");
+  });
+
   it("starts Claude Code with an argument array and stream-json output", async () => {
     const calls: Array<{ executable: string; args: string[]; options: ManagedProcessOptions }> = [];
     const port: ManagedProcessPort = {
       async run(executable, args, options) {
         calls.push({ executable, args, options });
-        options.onStdout('{"type":"result","result":"Parser complete"}\n');
+        options.onStdout('{"type":"result","subtype":"success","is_error":false,"result":"Parser complete"}\n');
         return { code: 0, stderr: "" };
       },
     };
@@ -44,7 +90,7 @@ describe("DesktopBuildExecutor", () => {
 
   it("resumes the stable named session for later tasks", async () => {
     const args: string[][] = [];
-    const port: ManagedProcessPort = { run: async (_exe, next) => { args.push(next); return { code: 0, stderr: "" }; } };
+    const port: ManagedProcessPort = { run: async (_exe, next, options) => { args.push(next); options.onStdout('{"type":"result","subtype":"success","is_error":false}\n'); return { code: 0, stderr: "" }; } };
     const executor = new DesktopBuildExecutor({ process: port, executable: "claude", cwd: "/vault" });
     await executor.execute(task(1), new AbortController().signal, () => {});
     expect(args[0]).toContain("--resume");

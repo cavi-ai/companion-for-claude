@@ -480,10 +480,12 @@ export default class ClaudeCompanionPlugin extends Plugin {
       }));
       this.registerEvent(this.app.vault.on("delete", (f) => { if (f instanceof TFile && (f.extension === "md" || f.extension === "pdf")) void this.semantic().indexer()?.removeNote(f.path); }));
       this.registerEvent(this.app.vault.on("rename", (f, oldPath) => { if (f instanceof TFile && (f.extension === "md" || f.extension === "pdf")) void this.semantic().renameNote(oldPath, f.path); }));
+      this.registerEvent(this.app.vault.on("rename", (f, oldPath) => { void this.conversations().renameAttachments(oldPath, f.path).catch((error: unknown) => new Notice(`Couldn't save renamed chat attachments: ${error instanceof Error ? error.message : String(error)}`)); }));
       this.registerEvent(this.app.vault.on("create", (f) => { if (f.path.endsWith(".md")) this.research().scheduleResearchRefresh(f.path); }));
       this.registerEvent(this.app.vault.on("delete", (f) => { if (f.path.endsWith(".md")) this.research().scheduleResearchRefresh(f.path); }));
       this.registerEvent(this.app.vault.on("rename", (f, oldPath) => { if (f.path.endsWith(".md") || oldPath.endsWith(".md")) this.research().scheduleResearchRefresh(f.path, oldPath); }));
       this.registerEvent(this.app.vault.on("rename", (f, oldPath) => { if (f instanceof TFile && f.extension === "md") void this.publish().renameNote(oldPath, f.path); }));
+      this.registerEvent(this.app.vault.on("rename", (f, oldPath) => { void this.build().renameDocuments(oldPath, f.path); }));
 
       // Inbox ribbon badge: pending count, refreshed on vault + frontmatter
       // changes (debounced — enrichment stamps source_enriched via frontmatter).
@@ -507,7 +509,10 @@ export default class ClaudeCompanionPlugin extends Plugin {
   /** Keeps the plan Build action and the last-seen note in step with the workspace. */
   private registerNoteTracking(): void {
     // Show a "Build" action in the header of any `type: plan` note.
-    this.registerEvent(this.app.workspace.on("file-open", () => this.research().syncPlanBuildActions()));
+    this.registerEvent(this.app.workspace.on("file-open", (file) => {
+      if (file?.extension === "md") this.lastMarkdownFile = file;
+      this.research().syncPlanBuildActions();
+    }));
     this.registerEvent(this.app.workspace.on("active-leaf-change", () => this.research().syncPlanBuildActions()));
     this.registerEvent(this.app.workspace.on("active-leaf-change", () => {
       const file = this.app.workspace.getActiveViewOfType(MarkdownView)?.file;
@@ -1062,6 +1067,10 @@ export default class ClaudeCompanionPlugin extends Plugin {
       await release();
       throw error;
     }
+  }
+
+  invalidateCliSession(conversationId: string): void {
+    this._cliPool?.invalidate(conversationId);
   }
 
   interruptCliTurn(conversationId: string): void {

@@ -61,6 +61,16 @@ function fixture(capture: () => Promise<{ markdown: string; title?: string } | n
 }
 
 describe("ChatView context manager wiring", () => {
+  it("keeps an empty capture recoverable through the Retry action", async () => {
+    const { seam, rendered } = fixture(async () => ({ markdown: " \n " }));
+    seam.attachedPages = [{ url: "https://example.test/article", markdown: "", error: "Timed out" }];
+    seam.retryContextSource("page:https://example.test/article");
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(seam.attachedPages[0]?.error).toBe("No readable content on that page.");
+    expect(rendered.at(-1)).toMatchObject({ sources: [expect.objectContaining({ status: "error" })] });
+  });
+
   it("keeps automatic toggles on the tab, never in settings, and refreshes the presentation model", async () => {
     const { seam, plugin, saveSettings, rendered } = fixture();
 

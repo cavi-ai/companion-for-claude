@@ -1,0 +1,157 @@
+import { expect, test } from "./fixtures";
+import type { Page } from "@playwright/test";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
+
+const documentPath = "Research/Gamma/Documents/Outline.md";
+const claimPath = "Research/Gamma/Claims/Gamma claim.md";
+const evidencePath = "Research/Gamma/Evidence/Gamma result.md";
+const sentence = "Gamma preserves continuity [@source-gamma-study].";
+const draft = JSON.stringify({ markdown: sentence, support: [{ passage: sentence, claimPath, evidencePaths: [evidencePath], citationKeys: ["source-gamma-study"] }], gaps: [] });
+const provenance = (text: string) => JSON.parse(text.split("```claude-provenance\n")[1]!.split("\n```")[0]!).sections[0] as { provider: string; model: string };
+
+async function openGamma(page: Page): Promise<void> {
+  await page.evaluate(async () => {
+    await (window as unknown as { app: { commands: { executeCommandById(id: string): Promise<void> } } }).app.commands.executeCommandById("claude-companion:open-research-desk");
+  });
+  await page.locator(".cc-research-desk").getByLabel("Active research project").selectOption("Research/Gamma/Project.md");
+}
+
+test("section drafting shows progress, cancels without writes, and can be retried", async ({ rig }, testInfo) => {
+  const { page } = await rig.reset({ providerDelayMs: 1500, providerReply: [{ match: ".", replies: [draft] }] });
+  const original = await readFile(join(rig.paths.vault, documentPath), "utf8");
+  await openGamma(page);
+  const desk = page.locator(".cc-research-desk");
+  const section = desk.locator(".cc-draft-section");
+  await desk.getByRole("button", { name: 'Draft "Gamma claim"', exact: true }).click();
+  await expect(section.locator(".cc-draft-status")).toHaveText("Drafting section…");
+  await expect.poll(() => rig.providerRequests()).toBe(1);
+  await section.screenshot({ path: testInfo.outputPath("draft-progress-with-cancel.png") });
+  await section.getByRole("button", { name: "Cancel draft", exact: true }).click();
+  await expect(section.getByRole("button", { name: "Preview draft", exact: true })).toBeVisible();
+  expect(await readFile(join(rig.paths.vault, documentPath), "utf8")).toBe(original);
+  await section.getByRole("button", { name: "Preview draft", exact: true }).click();
+  await expect(section.locator(".cc-draft-status")).toHaveText("Drafting section…");
+  await expect(section.getByRole("button", { name: "Accept section", exact: true })).toBeVisible();
+  expect(await rig.providerRequests()).toBe(2);
+  expect(await readFile(join(rig.paths.vault, documentPath), "utf8")).toBe(original);
+  await section.getByRole("button", { name: "Accept section", exact: true }).click();
+  await expect(section.locator(".cc-draft-status")).toHaveText("Accepted draft");
+  expect(provenance(await readFile(join(rig.paths.vault, documentPath), "utf8"))).toMatchObject({ provider: "anthropic", model: "e2e-model" });
+});
+
+test("fallback generation stays truthful after reload and supports recovery to a model revision", async ({ rig }, testInfo) => {
+  const { page } = await rig.reset({ providerDelayMs: 150, providerReply: [{ match: ".", replies: ["not a valid draft or revision"] }] });
+  const pageErrors: string[] = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  const original = await readFile(join(rig.paths.vault, documentPath), "utf8");
+  await openGamma(page);
+  const desk = page.locator(".cc-research-desk");
+  const section = desk.locator(".cc-draft-section");
+  await desk.getByRole("button", { name: 'Draft "Gamma claim"', exact: true }).click();
+  await expect(section.getByRole("button", { name: "Accept section", exact: true })).toBeVisible();
+  await expect(section.locator(".cc-draft-fallback")).toContainText("Companion generated this minimal version from the reviewed claim.");
+  await expect(section.locator(".cc-draft-provider")).toHaveText("Companion · reviewed-claim fallback");
+  expect(await rig.providerRequests()).toBe(2);
+  expect(await readFile(join(rig.paths.vault, documentPath), "utf8")).toBe(original);
+  await section.screenshot({ path: testInfo.outputPath("clearly-identified-companion-fallback.png") });
+  await section.getByRole("button", { name: "Accept section", exact: true }).click();
+  await expect(section.locator(".cc-draft-status")).toHaveText("Accepted fallback");
+  const accepted = await readFile(join(rig.paths.vault, documentPath), "utf8");
+  expect(provenance(accepted)).toMatchObject({ provider: "companion", model: "reviewed-claim-fallback" });
+  await rig.reloadPlugin();
+  await openGamma(page);
+  await expect(desk.locator(".cc-desk-document-progress")).toHaveText("1 of 1 section drafted");
+  await desk.getByRole("button", { name: "Sections", exact: true }).click();
+  await expect(section.locator(".cc-draft-status")).toHaveText("Accepted fallback");
+  await page.evaluate(async (path) => {
+    const app = (window as unknown as { app: { vault: { getAbstractFileByPath(path: string): unknown }; workspace: { getLeaf(value: boolean): { openFile(file: unknown, state: unknown): Promise<void> } } } }).app;
+    await app.workspace.getLeaf(false).openFile(app.vault.getAbstractFileByPath(path), { state: { mode: "preview" } });
+  }, documentPath);
+  await expect(page.locator(".markdown-reading-view .cc-provenance")).toContainText("Companion fallback");
+  await section.getByRole("button", { name: "Revise section", exact: true }).click();
+  await section.locator(".cc-revision-intent").selectOption("custom");
+  await section.locator(".cc-revision-instruction").fill("Make the scope clear.");
+  await section.getByRole("button", { name: "Preview revision", exact: true }).click();
+  await expect(section.locator(".cc-draft-status")).toHaveText("Preparing revision…");
+  await expect(section.getByRole("alert")).toBeVisible();
+  await expect(section.locator(".cc-revision-instruction")).toHaveValue("Make the scope clear.");
+  expect(await readFile(join(rig.paths.vault, documentPath), "utf8")).toBe(accepted);
+  const revised = "Within this workflow, Gamma preserves continuity [@source-gamma-study].";
+  const reply = JSON.stringify({ markdown: revised, support: [{ passage: revised, claimPath, evidencePaths: [evidencePath], citationKeys: ["source-gamma-study"] }], claimPreservation: [{ claimPath, passage: revised, status: "preserved" }], changes: [{ kind: "clarity", severity: "warning", description: "Makes the scope explicit." }], gaps: [] });
+  await rig.control.setStubs({ providerReply: [{ match: ".", replies: [reply] }] });
+  await section.getByRole("button", { name: "Preview revision", exact: true }).click();
+  await expect(section.getByRole("alert")).toContainText("This revision cannot be accepted.");
+  await expect(section.locator(".cc-revision-report")).toHaveAttribute("open", "");
+  await expect(section.locator(".cc-revision-report")).toContainText("Revision changed protected factual vocabulary");
+  expect(await readFile(join(rig.paths.vault, documentPath), "utf8")).toBe(accepted);
+  await section.screenshot({ path: testInfo.outputPath("blocked-revision-with-visible-reasons.png") });
+  await section.getByRole("button", { name: "Discard revision", exact: true }).click();
+  await expect(section.locator(".cc-revision-intent")).toHaveValue("custom");
+  await expect(section.locator(".cc-revision-instruction")).toHaveValue("Make the scope clear.");
+  await section.locator(".cc-revision-instruction").fill("Improve punctuation without adding facts.");
+  const valid = JSON.stringify({ markdown: sentence, support: [{ passage: sentence, claimPath, evidencePaths: [evidencePath], citationKeys: ["source-gamma-study"] }], claimPreservation: [{ claimPath, passage: sentence, status: "preserved" }], changes: [{ kind: "clarity", severity: "warning", description: "Adjusts punctuation." }], gaps: [] });
+  await rig.control.setStubs({ providerReply: [{ match: ".", replies: [valid] }] });
+  await section.getByRole("button", { name: "Preview revision", exact: true }).click();
+  await expect(section.getByRole("button", { name: "Accept revision", exact: true })).toBeVisible();
+  await section.getByRole("button", { name: "Accept revision", exact: true }).click();
+  await expect(section.locator(".cc-draft-status")).toHaveText("Accepted draft");
+  const saved = await readFile(join(rig.paths.vault, documentPath), "utf8");
+  expect(saved).toContain(sentence);
+  expect(provenance(saved)).toMatchObject({ provider: "anthropic", model: "e2e-model" });
+  await section.getByRole("button", { name: "Revise section", exact: true }).click();
+  await section.locator(".cc-revision-instruction").fill("Improve clarity while preserving the facts.");
+  await rig.control.setStubs({ providerReply: [{ match: ".", replies: [valid] }] });
+  await section.getByRole("button", { name: "Preview revision", exact: true }).click();
+  await expect(section.locator(".cc-draft-unchanged")).toHaveText("No text changes suggested.");
+  await expect(section.getByRole("button", { name: "Accept revision", exact: true })).toBeVisible();
+  expect(await readFile(join(rig.paths.vault, documentPath), "utf8")).toBe(saved);
+  await page.screenshot({ path: testInfo.outputPath("unchanged-revision-with-recovery-actions.png") });
+  await section.getByRole("button", { name: "Discard revision", exact: true }).click();
+  await expect(section.locator(".cc-revision-instruction")).toHaveValue("Improve clarity while preserving the facts.");
+  await section.getByRole("button", { name: "Cancel revision", exact: true }).click();
+  await expect(section.getByRole("button", { name: "Revise section", exact: true })).toBeVisible();
+  expect(pageErrors).toEqual([]);
+});
+
+test("section previews and custom revision instructions survive visiting another project's sections", async ({ rig }, testInfo) => {
+  const { page } = await rig.reset({ providerReply: [{ match: ".", replies: [draft] }] });
+  await page.evaluate(async () => {
+    const app = (window as unknown as { app: {
+      plugins: { plugins: Record<string, { research(): { researchRepository(): { createOutline(project: string, claims: string[]): Promise<unknown> } } }> };
+      vault: { getAbstractFileByPath(path: string): unknown; delete(file: unknown): Promise<void> };
+    } }).app;
+    await app.plugins.plugins["claude-companion"]!.research().researchRepository().createOutline("Research/Alpha/Project.md", ["Research/Alpha/Claims/Continuity claim.md"]);
+    await app.vault.delete(app.vault.getAbstractFileByPath("Research/Alpha/Documents/Draft.md"));
+  });
+  await openGamma(page);
+  const desk = page.locator(".cc-research-desk");
+  const project = desk.getByLabel("Active research project");
+  const section = desk.locator(".cc-draft-section");
+  await desk.getByRole("button", { name: 'Draft "Gamma claim"', exact: true }).click();
+  await expect(section.getByRole("button", { name: "Accept section", exact: true })).toBeVisible();
+  await project.selectOption("Research/Alpha/Project.md");
+  await desk.getByRole("button", { name: "Sections", exact: true }).click();
+  await expect(section.getByRole("heading", { name: "Continuity claim", exact: true })).toBeVisible();
+  await project.selectOption("Research/Gamma/Project.md");
+  await desk.getByRole("button", { name: 'Draft "Gamma claim"', exact: true }).click();
+  await expect(section.getByRole("button", { name: "Accept section", exact: true })).toBeVisible();
+  expect(await rig.providerRequests()).toBe(1);
+  await section.getByRole("button", { name: "Accept section", exact: true }).click();
+  await expect(section.getByRole("button", { name: "Revise section", exact: true })).toBeVisible();
+  const accepted = await readFile(join(rig.paths.vault, documentPath), "utf8");
+  await section.getByRole("button", { name: "Revise section", exact: true }).click();
+  await section.locator(".cc-revision-intent").selectOption("custom");
+  const instruction = "Keep the limitations explicit and compare the wording with the original conclusion.";
+  await section.locator(".cc-revision-instruction").fill(instruction);
+  await project.selectOption("Research/Alpha/Project.md");
+  await desk.getByRole("button", { name: "Sections", exact: true }).click();
+  await expect(section.getByRole("heading", { name: "Continuity claim", exact: true })).toBeVisible();
+  await project.selectOption("Research/Gamma/Project.md");
+  await desk.getByRole("button", { name: "Sections", exact: true }).click();
+  await expect(section.locator(".cc-revision-intent")).toHaveValue("custom");
+  await expect(section.locator(".cc-revision-instruction")).toHaveValue(instruction);
+  expect(await rig.providerRequests()).toBe(1);
+  expect(await readFile(join(rig.paths.vault, documentPath), "utf8")).toBe(accepted);
+  await page.screenshot({ path: testInfo.outputPath("revision-instruction-preserved-across-projects.png") });
+});

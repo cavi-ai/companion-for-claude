@@ -1,4 +1,5 @@
 import type { Provider } from "../providers/types";
+import { isOutlineEnvelope } from "./draftSections";
 import { completeJsonWithRepair } from "../providers/jsonRepair";
 import { buildDraftGrounding, groundingClaimFingerprint, type DraftGroundingPacket } from "./draftGrounding";
 import { draftMarkdownFingerprint, type DraftSectionEnvelope, type ParsedDraftSection } from "./draftSections";
@@ -29,7 +30,7 @@ export class RevisionCoordinator {
   constructor(private readonly deps: RevisionCoordinatorDeps) {}
 
   async preview(snapshot: ProjectSnapshot, section: ParsedDraftSection, request: RevisionRequest, signal?: AbortSignal): Promise<RevisionPreview> {
-    if (section.envelope.provider === "companion") throw new Error("Revision requires an accepted section");
+    if (isOutlineEnvelope(section.envelope)) throw new Error("Revision requires an accepted section");
     if (section.modifiedSinceReview) throw new Error("Revision requires a section that has not been modified since review");
     const [claimPath] = section.envelope.claimPaths;
     if (!claimPath || section.envelope.claimPaths.length !== 1) throw new Error("Revision requires exactly one linked claim");

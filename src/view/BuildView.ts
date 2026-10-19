@@ -5,6 +5,8 @@ export const BUILD_VIEW_TYPE = "claude-build-runner";
 
 export interface BuildViewDependencies {
   getRun(): BuildRun | null;
+  getRuns(): BuildRun[];
+  selectRun(id: string): void | Promise<void>;
   subscribe(listener: (run: BuildRun) => void): () => void;
   start(): void | Promise<void>;
   pause(): void | Promise<void>;
@@ -12,6 +14,7 @@ export interface BuildViewDependencies {
   cancel(): void | Promise<void>;
   openSpec(): void | Promise<void>;
   openTracker(): void | Promise<void>;
+  retryTracker(): void | Promise<void>;
   openSession(): void | Promise<void>;
 }
 
@@ -37,6 +40,8 @@ function statusCopy(run: BuildRun): string {
 export class BuildView extends ItemView {
   private disposeSubscription: (() => void) | null = null;
   private run: BuildRun | null = null;
+  private runPicker!: HTMLSelectElement;
+  private runOptionsKey = "";
   private titleEl!: HTMLElement;
   private statusEl!: HTMLElement;
   private progressEl!: HTMLProgressElement;
@@ -47,10 +52,12 @@ export class BuildView extends ItemView {
   private logEl!: HTMLElement;
   private taskListEl!: HTMLElement;
   private taskRows: HTMLElement[] = [];
+  private runSections: HTMLElement[] = [];
   private startButton!: HTMLButtonElement;
   private pauseButton!: HTMLButtonElement;
   private cancelButton!: HTMLButtonElement;
   private sessionButton!: HTMLButtonElement;
+  private retryTrackerButton!: HTMLButtonElement;
 
   constructor(leaf: WorkspaceLeaf, private readonly dependencies: BuildViewDependencies) {
     super(leaf);
@@ -73,6 +80,8 @@ export class BuildView extends ItemView {
 
   setRun(run: BuildRun | null): void {
     this.run = run;
+    for (const section of this.runSections) visible(section, !!run);
+    this.updateRunPicker(run);
     if (!run) {
       this.titleEl.setText("No build selected");
       this.statusEl.setText("Create a plan and choose Build to begin.");
@@ -84,6 +93,7 @@ export class BuildView extends ItemView {
       visible(this.errorEl, false);
       visible(this.cloudBoundaryEl, false);
       visible(this.sessionButton, false);
+      visible(this.retryTrackerButton, false);
       return;
     }
 
@@ -100,8 +110,9 @@ export class BuildView extends ItemView {
     const active = run.activeTaskIndex === null ? null : run.tasks[run.activeTaskIndex];
     this.currentTaskEl.setText(active ? `Current task · ${active.title}` : "");
     visible(this.currentTaskEl, !!active);
-    this.errorEl.setText(run.error ?? "");
-    visible(this.errorEl, !!run.error);
+    this.errorEl.setText([run.error, run.trackerError].filter(Boolean).join("\n"));
+    visible(this.errorEl, !!run.error || !!run.trackerError);
+    visible(this.retryTrackerButton, !!run.trackerError);
     this.logEl.setText(run.log || "No output yet.");
 
     const resumable = ["paused", "failed", "interrupted"].includes(run.status);
@@ -126,6 +137,11 @@ export class BuildView extends ItemView {
     root.empty();
     root.addClass("cc-build-view");
     root.createDiv({ cls: "cc-eyebrow", text: "BUILD RUNNER" });
+    const pickerLabel = root.createEl("label", { cls: "cc-build-picker" });
+    pickerLabel.createSpan({ text: "Saved build" });
+    this.runPicker = pickerLabel.createEl("select", { attr: { "aria-label": "Saved build" } });
+    this.runOptionsKey = "";
+    this.runPicker.addEventListener("change", () => void this.dependencies.selectRun(this.runPicker.value));
     this.titleEl = root.createEl("h2", { cls: "cc-build-title" });
     this.statusEl = root.createDiv({ cls: "cc-build-status", attr: { role: "status", "aria-live": "polite", "aria-atomic": "true" } });
     const progressGroup = root.createDiv({ cls: "cc-build-progress" });
@@ -142,17 +158,20 @@ export class BuildView extends ItemView {
     const links = root.createDiv({ cls: "cc-build-links" });
     const specButton = links.createEl("button", { cls: "cc-build-link", text: "Open spec" });
     const trackerButton = links.createEl("button", { cls: "cc-build-link", text: "Open tracker note" });
+    this.retryTrackerButton = links.createEl("button", { cls: "cc-build-link cc-build-retry-tracker", text: "Retry tracker update" });
     this.sessionButton = links.createEl("button", { cls: "cc-build-link cc-build-session", text: "Open cloud session" });
     this.taskListEl = root.createDiv({ cls: "cc-build-task-list", attr: { "aria-label": "Build tasks" } });
     const output = root.createEl("details", { cls: "cc-build-output" });
     output.createEl("summary", { text: "Build output" });
     this.logEl = output.createEl("pre", { cls: "cc-build-log" });
+    this.runSections = [progressGroup, actions, links, this.taskListEl, output];
 
     this.startButton.addEventListener("click", () => void (this.run?.status === "ready" ? this.dependencies.start() : this.dependencies.resume()));
     this.pauseButton.addEventListener("click", () => void this.dependencies.pause());
     this.cancelButton.addEventListener("click", () => void this.dependencies.cancel());
     specButton.addEventListener("click", () => void this.dependencies.openSpec());
     trackerButton.addEventListener("click", () => void this.dependencies.openTracker());
+    this.retryTrackerButton.addEventListener("click", () => void this.dependencies.retryTracker());
     this.sessionButton.addEventListener("click", () => void this.dependencies.openSession());
   }
 
@@ -167,5 +186,22 @@ export class BuildView extends ItemView {
       row.toggleClass("is-complete", task.status === "completed");
       row.toggleClass("is-running", task.status === "running");
     });
+  }
+
+  private updateRunPicker(selected: BuildRun | null): void {
+    const runs = this.dependencies.getRuns();
+    const key = JSON.stringify(runs.map((run) => [run.id, run.title, run.status, run.activeTaskIndex, run.tasks.length, run.createdAt]));
+    if (key !== this.runOptionsKey) {
+      this.runOptionsKey = key;
+      this.runPicker.empty();
+      runs.forEach((run, index) => {
+        this.runPicker.createEl("option", {
+          text: `${index + 1}. ${run.title} · ${statusCopy(run)} · ${new Date(run.createdAt).toLocaleString()}`,
+          attr: { value: run.id },
+        });
+      });
+    }
+    this.runPicker.disabled = runs.length === 0;
+    this.runPicker.value = selected?.id ?? "";
   }
 }

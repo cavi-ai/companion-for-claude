@@ -3,6 +3,9 @@
 // and the attached-page shape are pure; the fetch itself goes through
 // context/webCapture (Defuddle) on explicit user action only.
 
+/** A captured page contributes at most this many characters to one request. */
+export const MAX_PAGE_CONTEXT_CHARS = 6000;
+
 export interface AttachedPage {
   url: string;
   /** Page title when capture succeeded. */
@@ -13,6 +16,16 @@ export interface AttachedPage {
   error?: string;
   /** True while the capture is in flight. */
   pending?: boolean;
+}
+
+/** Take a request-local copy only after every explicitly selected capture is usable. */
+export function snapshotPages(pages: readonly AttachedPage[]): AttachedPage[] {
+  return pages.map((page) => {
+    if (page.pending) throw new Error(`Still capturing ${page.url}. Wait for capture to finish or remove the page from Message context, then send again.`);
+    if (page.error) throw new Error(`Couldn't capture ${page.url}: ${page.error}. Retry capture or remove the page from Message context, then send again.`);
+    if (!page.markdown.trim()) throw new Error(`No readable content was captured from ${page.url}. Retry capture or remove the page from Message context, then send again.`);
+    return { url: page.url, markdown: page.markdown, ...(page.title !== undefined ? { title: page.title } : {}) };
+  });
 }
 
 const URL_RE = /https?:\/\/[^\s<>"'()\]]+/i;

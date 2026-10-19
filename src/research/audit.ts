@@ -11,7 +11,9 @@ export interface AuditFinding {
 const severityOrder: Record<AuditFinding["severity"], number> = { error: 0, warning: 1, info: 2 };
 
 export function auditProject(snapshot: ProjectSnapshot): AuditFinding[] {
-  const findings: AuditFinding[] = snapshot.issues.map((issue) => ({
+  const evidence = new Map(snapshot.evidence.map((item) => [item.path, item]));
+  // Readable evidence gets the specific missing-location warning below.
+  const findings: AuditFinding[] = snapshot.issues.filter(({ code, path }) => code !== "missing-locator" || !evidence.has(path)).map((issue) => ({
     code: "invalid-record",
     severity: "error",
     path: issue.path,
@@ -19,7 +21,6 @@ export function auditProject(snapshot: ProjectSnapshot): AuditFinding[] {
     repair: "Repair the research frontmatter so the note can be parsed into the project graph.",
   }));
   const sources = new Map(snapshot.sources.map((source) => [source.path, source]));
-  const evidence = new Map(snapshot.evidence.map((item) => [item.path, item]));
   const claims = new Set(snapshot.claims.map((claim) => claim.path));
   const projectPaths = new Set([
     snapshot.project.path,

@@ -39,6 +39,7 @@ export function buildCommandActions(host: CommandActionsHost): CommandActions {
     browseConversations: () => void host.browseConversations(),
     deleteActiveConversation: () => host.deleteActiveConversation(),
     handoffToBuild: () => host.research().handoffToBuild(),
+    openBuildRunner: () => void host.research().activateBuildView(),
     markNoteAsPlan: (file) => void host.research().markNoteAsPlan(file),
     organizeClippings: () => void host.organizeClippings(),
     dispatchCloudSession: () => void host.publishing().dispatchCloudSession(),

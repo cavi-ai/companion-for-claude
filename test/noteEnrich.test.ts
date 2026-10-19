@@ -16,12 +16,12 @@ describe("parseLintResponse", () => {
     expect(parseLintResponse(original, original)).toBeNull();
   });
 
-  it("returns null for empty replies", () => {
-    expect(parseLintResponse("   ", original)).toBeNull();
+  it("rejects empty replies as an incomplete copyedit", () => {
+    expect(() => parseLintResponse("   ", original)).toThrow("empty");
   });
 
-  it("returns null for suspiciously short replies (content likely dropped)", () => {
-    expect(parseLintResponse("# Title", original)).toBeNull();
+  it("rejects suspiciously short replies as an incomplete copyedit", () => {
+    expect(() => parseLintResponse("# Title", original)).toThrow("too much");
   });
 
   it("preserves the original's no-trailing-newline convention", () => {

@@ -40,11 +40,24 @@ class RenameModal extends Modal {
     this.titleEl.setText("Rename session");
     const input = this.contentEl.createEl("input", { cls: "cc-session-rename-input", attr: { type: "text", "aria-label": "Session title" } });
     input.value = this.current;
-    input.addEventListener("keydown", (evt: KeyboardEvent) => {
-      if (evt.key !== "Enter") return;
-      evt.preventDefault();
-      this.result = input.value;
+    const buttons = this.contentEl.createDiv({ cls: "modal-button-container" });
+    buttons.createEl("button", { text: "Cancel" }).addEventListener("click", () => this.close());
+    const save = buttons.createEl("button", { text: "Save", cls: "mod-cta" });
+    let submitted = false;
+    const submit = () => {
+      const title = input.value.trim();
+      if (!title || submitted) return;
+      submitted = true;
+      this.result = title;
       this.close();
+    };
+    save.disabled = !input.value.trim();
+    input.addEventListener("input", () => { save.disabled = !input.value.trim(); });
+    save.addEventListener("click", submit);
+    input.addEventListener("keydown", (evt: KeyboardEvent) => {
+      if (evt.key !== "Enter" || evt.isComposing) return;
+      evt.preventDefault();
+      submit();
     });
     window.setTimeout(() => { input.focus(); input.select(); }, 0);
   }
