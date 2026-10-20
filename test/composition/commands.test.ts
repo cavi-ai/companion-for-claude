@@ -19,6 +19,10 @@ function rig(): Rig {
   const semantic = group("semantic", ["rebuildSemanticIndex", "showSemanticIndexStatus"]);
   const memory = group("memory", ["openSessionPicker", "consolidateMemory"]);
   const enrichment = group("enrichment", ["runEnrich"]);
+  const livingSources = {
+    ...group("livingSources", ["open"]),
+    kindOf: fn("livingSources.kindOf", (f: unknown) => (f === file ? "argument-map" : null)),
+  };
   const optimize = group("optimize", ["reviewTagMerges", "reviewOrphanLinks", "reviewUntypedNotes"]);
   const publish = group("publish", ["publishNote", "copyLink", "unpublish"]);
   const research = group("research", ["generatePlanFromNote", "activateResearchDesk", "startResearchFromActiveNote", "handoffToBuild", "activateBuildView", "markNoteAsPlan"]);
@@ -49,6 +53,7 @@ function rig(): Rig {
     semantic: () => semantic,
     memory: () => memory,
     enrichment: () => enrichment,
+    livingSources: () => livingSources,
     optimize: () => optimize,
     publish: () => publish,
     clipperSetup: () => clipperSetup,
@@ -99,6 +104,7 @@ const ROWS: Row[] = [
   ["openMemoryView", [], [["views.activateMemoryView", []]]],
   ["consolidateMemory", [], [["memory.consolidateMemory", []]]],
   ["enrichNoteAsSource", [file], [["enrichment.runEnrich", [file]]]],
+  ["openLivingView", [file], [["livingSources.open", [file]]]],
   ["openSourceInbox", [], [["views.activateInboxView", []]]],
   ["openSystem", [], [["views.activateSystem", []]]],
   ["exportClipperTemplates", [], [["clipperSetup.exportTemplates", []]]],
@@ -112,7 +118,7 @@ const ROWS: Row[] = [
   ["unpublishNote", [file], [["publish.unpublish", [file.path]]]],
 ];
 
-const VALUE_KEYS = ["activeMarkdownFile", "lastMarkdownFile", "hasActiveConversation", "sourceCaptureEnabled", "ontologyEnabled", "desktop", "isPublished"];
+const VALUE_KEYS = ["activeMarkdownFile", "lastMarkdownFile", "hasActiveConversation", "sourceCaptureEnabled", "ontologyEnabled", "desktop", "isPublished", "hasLivingView"];
 
 describe("buildCommandActions", () => {
   it("covers every CommandActions key exactly once", () => {
@@ -150,6 +156,8 @@ describe("buildCommandActions", () => {
     expect(actions.isPublished(file)).toBe(true);
     expect(actions.isPublished(new TFile("other.md", "", 0))).toBe(false);
     expect(host.publishing().publishedItems()).toHaveLength(1);
+    expect(actions.hasLivingView(file)).toBe(true);
+    expect(actions.hasLivingView(new TFile("other.md", "", 0))).toBe(false);
   });
 
   it("returns the promise from flows the command layer awaits", async () => {

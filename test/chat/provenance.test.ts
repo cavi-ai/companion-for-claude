@@ -1,5 +1,29 @@
 import { describe, expect, it } from "vitest";
-import { checkCitations, extractCitations, sectionExcerpt } from "../../src/chat/provenance";
+import { checkCitations, currentCitationTargets, extractCitations, resolveCitationPath, sectionExcerpt } from "../../src/chat/provenance";
+
+describe("resolveCitationPath", () => {
+  const paths = ["Projects/A/Overview.md", "Projects/B/Overview.md", "Notes/Unique.md", "Overview.md"];
+  it("refuses a shared short name instead of picking one project", () => {
+    expect(resolveCitationPath("Overview", paths)).toEqual({ path: null, ambiguous: true });
+  });
+  it("resolves qualified and root paths exactly and retains unique legacy names", () => {
+    expect(resolveCitationPath("Projects/B/Overview.md", paths).path).toBe("Projects/B/Overview.md");
+    expect(resolveCitationPath("Projects/B/Overview", paths).path).toBe("Projects/B/Overview.md");
+    expect(resolveCitationPath("Overview.md", paths).path).toBe("Overview.md");
+    expect(resolveCitationPath("Unique", paths).path).toBe("Notes/Unique.md");
+  });
+  it("does not substitute another folder when an explicit path is missing", () => {
+    expect(resolveCitationPath("Projects/C/Overview.md", paths)).toEqual({ path: null, ambiguous: false });
+  });
+});
+
+it("copies saved citation targets and rejects malformed persisted targets", () => {
+  const targets = [{ linkpath: "Alpha", heading: "Findings", path: "Notes/Alpha.md" }];
+  const copy = currentCitationTargets(targets)!;
+  copy[0]!.path = "Archive/Alpha.md";
+  expect(targets[0]!.path).toBe("Notes/Alpha.md");
+  for (const raw of [null, {}, [null], [{ linkpath: "Alpha", heading: 1, path: "Notes/Alpha.md" }], [{ linkpath: "Alpha", heading: null, path: false }]]) expect(currentCitationTargets(raw)).toBeUndefined();
+});
 
 describe("extractCitations", () => {
   it("returns each cited note and section once, in first-seen order", () => {
@@ -64,6 +88,14 @@ describe("sectionExcerpt", () => {
 });
 
 describe("checkCitations", () => {
+  it("reports an ambiguous name without treating an arbitrary matching note as its source", async () => {
+    const checked = await checkCitations([{ linkpath: "Overview", heading: "Findings" }], {
+      resolve: () => null,
+      ambiguous: () => true,
+      read: async () => { throw new Error("No source was identified"); },
+    });
+    expect(checked[0]).toMatchObject({ status: "ambiguous", path: null, excerpt: null });
+  });
   it("marks each citation found, section missing, or not in the vault", async () => {
     const notes: Record<string, string> = { "Notes/Alpha.md": "## Findings\nStarted in March.", "Files/chart.png": "" };
     const vault = {

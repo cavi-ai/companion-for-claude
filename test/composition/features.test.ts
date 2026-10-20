@@ -28,11 +28,13 @@ vi.mock("../../src/view/workspaceViews", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../src/view/workspaceViews")>()),
   WorkspaceViews: capture("views"),
 }));
+vi.mock("../../src/living/feature", () => ({ LivingSources: capture("living") }));
 
 import { Platform } from "obsidian";
 import {
   buildClipperSetup,
   buildDesktopIntegrations,
+  buildLivingSources,
   buildNoteFlows,
   buildOnboarding,
   buildOrders,
@@ -304,5 +306,21 @@ describe("buildPublishing", () => {
     await call("publishing", "persist");
     expect(m.persist).toHaveBeenCalledTimes(1);
     expect(m.saveSettings).not.toHaveBeenCalled();
+  });
+});
+
+describe("buildLivingSources", () => {
+  it("reads the artifact folder live and resolves the model through utility routing", async () => {
+    const resolveSession = vi.fn(async () => "selection");
+    const host = { app: { id: "app" }, settings: { artifactFolder: "Claude/Artifacts" }, utilityRouting: () => ({ resolveSession }) };
+    buildLivingSources(host as never);
+    expect(captured.living!.app).toBe(host.app);
+    expect(call("living", "folder")).toBe("Claude/Artifacts");
+    host.settings.artifactFolder = "Views";
+    expect(call("living", "folder")).toBe("Views");
+    expect(await call("living", "selection")).toBe("selection");
+    expect(resolveSession).toHaveBeenCalledTimes(1);
+    // No DOM parser here, so video notes must carry their transcript.
+    expect(captured.living!.transcript).toBeUndefined();
   });
 });

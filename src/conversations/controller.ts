@@ -1,6 +1,7 @@
 import type { ActivityStore } from "../activity/store";
 import { ChatTurnLifecycle } from "../chat/turnLifecycle";
 import { renameTurnMedia, renameTurnContext } from "../chat/turnSources";
+import { currentCitationTargets, extractCitations, invalidateCitationTargets, renameCitationTargets } from "../chat/provenance";
 import type { ChatMessage } from "../types";
 import type { PluginSettings } from "../types";
 import {
@@ -36,6 +37,7 @@ export interface ConversationsControllerDeps {
   persist: () => Promise<void>;
   activity: () => ActivityStore;
   settings: () => PluginSettings;
+  resolveCitation?: (linkpath: string) => string | null;
 }
 
 /**
@@ -69,6 +71,18 @@ export class ConversationsController {
     return getActive(this.deps.state.get());
   }
 
+  private withCitationTargets(messages: ChatMessage[], previous: ChatMessage[] = []): ChatMessage[] {
+    if (!this.deps.resolveCitation) return messages;
+    return messages.map((message, index) => {
+      const known = previous[index];
+      const targets = currentCitationTargets(known?.citationTargets);
+      if (message.role === "assistant" && known?.role === message.role && known.content === message.content && targets) return { ...message, citationTargets: targets };
+      if (message.role !== "assistant" || currentCitationTargets(message.citationTargets)) return message;
+      const citations = extractCitations(message.content);
+      return citations.length ? { ...message, citationTargets: citations.map(citation => ({ ...citation, path: this.deps.resolveCitation!(citation.linkpath) })) } : message;
+    });
+  }
+
   /** Update saved references on native file/folder moves, including inactive chats. */
   async renameAttachments(oldPath: string, newPath: string): Promise<void> {
     const state = this.deps.state.get();
@@ -78,11 +92,31 @@ export class ConversationsController {
       const messages = conversation.messages.map((message) => {
         const media = Array.isArray(message.media) ? renameTurnMedia(message.media, oldPath, newPath) : message.media;
         const contextAttachments = message.contextAttachments ? renameTurnContext(message.contextAttachments, oldPath, newPath) : undefined;
-        if (media === message.media && contextAttachments === message.contextAttachments) return message;
+        const citationTargets = renameCitationTargets(message.citationTargets, oldPath, newPath);
+        if (media === message.media && contextAttachments === message.contextAttachments && citationTargets === message.citationTargets) return message;
         changed = moved = true;
-        return { ...message, ...(media ? { media } : {}), ...(contextAttachments ? { contextAttachments } : {}) };
+        return { ...message, ...(media ? { media } : {}), ...(contextAttachments ? { contextAttachments } : {}), ...(citationTargets ? { citationTargets } : {}) };
       });
       return moved ? { ...conversation, messages } : conversation;
+    });
+    if (!changed) return;
+    this.deps.state.set({ ...state, conversations });
+    await this.deps.persist();
+  }
+
+  /** Persist deleted sources as unavailable in active and inactive conversations. */
+  async invalidateCitations(deletedPath: string): Promise<void> {
+    const state = this.deps.state.get();
+    let changed = false;
+    const conversations = state.conversations.map(conversation => {
+      let invalidated = false;
+      const messages = conversation.messages.map(message => {
+        const citationTargets = invalidateCitationTargets(message.citationTargets, deletedPath);
+        if (!citationTargets || citationTargets === message.citationTargets) return message;
+        changed = invalidated = true;
+        return { ...message, citationTargets };
+      });
+      return invalidated ? { ...conversation, messages } : conversation;
     });
     if (!changed) return;
     this.deps.state.set({ ...state, conversations });
@@ -97,6 +131,7 @@ export class ConversationsController {
     const { state, persist } = this.deps;
     const previousState = state.get();
     const id = conversationId ?? this.nextId();
+    messages = this.withCitationTargets(messages, previousState.conversations.find(conversation => conversation.id === id)?.messages);
     const turnId = crypto.randomUUID();
     const now = Date.now();
     const receipt = {
@@ -189,7 +224,7 @@ export class ConversationsController {
       return;
     }
     const previousState = state.get();
-    state.set(saveConversation(state.get(), touch(conversation, messages, Date.now()), this.maxConversations()));
+    state.set(saveConversation(state.get(), touch(conversation, this.withCitationTargets(messages, conversation.messages), Date.now()), this.maxConversations()));
     state.set(clearConversationTurn(state.get(), conversationId, turnId, Date.now()));
     try {
       await persist();
@@ -210,7 +245,7 @@ export class ConversationsController {
     const conversation = state.get().conversations.find(({ id }) => id === conversationId);
     if (!conversation?.activeTurn || conversation.activeTurn.id !== turnId || conversation.activeTurn.state !== "running") return;
     const previousState = state.get();
-    const capped = touch(conversation, conversation.activeTurn.regenerating && messages.at(-1)?.role !== "assistant" ? conversation.messages : messages, Date.now());
+    const capped = touch(conversation, conversation.activeTurn.regenerating && messages.at(-1)?.role !== "assistant" ? conversation.messages : this.withCitationTargets(messages, conversation.messages), Date.now());
     if (capped.activeTurn?.regenerating) capped.activeTurn = { ...capped.activeTurn, regenerating: false };
     state.set(saveConversation(state.get(), capped, this.maxConversations()));
     state.set(settleConversationTurn(state.get(), conversationId, turnId, "capped", Date.now(), undefined, handoff));
@@ -236,7 +271,7 @@ export class ConversationsController {
     if (!conversation?.activeTurn || conversation.activeTurn.id !== turnId) return;
     const interruptedMessages = conversation.activeTurn.regenerating ? conversation.messages
       : messages.map((message, index) => index >= conversation.activeTurn!.userMessageIndex ? { ...message, contextExcluded: true } : message);
-    state.set(saveConversation(state.get(), touch(conversation, interruptedMessages, Date.now()), this.maxConversations()));
+    state.set(saveConversation(state.get(), touch(conversation, this.withCitationTargets(interruptedMessages, conversation.messages), Date.now()), this.maxConversations()));
     state.set(settleConversationTurn(state.get(), conversationId, turnId, "interrupted", Date.now(), error));
     try {
       await persist();

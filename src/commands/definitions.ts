@@ -48,6 +48,9 @@ export interface CommandActions {
   openMemoryView(): void;
   consolidateMemory(): void;
   enrichNoteAsSource(file: TFile): void;
+  /** Whether the note is a source that gets a living view (an article, or a dataset with a CSV). */
+  hasLivingView(file: TFile): boolean;
+  openLivingView(file: TFile): void;
   openSourceInbox(): void;
   openSystem(): void;
   exportClipperTemplates(): void;
@@ -172,6 +175,16 @@ export function companionCommands(actions: CommandActions): Command[] {
         const file = actions.activeMarkdownFile();
         if (checking) return actions.sourceCaptureEnabled() && !!file;
         if (file) actions.enrichNoteAsSource(file);
+        return true;
+      },
+    },
+    {
+      id: "open-living-view",
+      name: "Open living view for this source",
+      checkCallback: (checking) => {
+        const file = actions.activeMarkdownFile();
+        if (checking) return !!file && actions.hasLivingView(file);
+        if (file) actions.openLivingView(file);
         return true;
       },
     },

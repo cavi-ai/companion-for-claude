@@ -1,3 +1,4 @@
+import { currentCitationTargets } from "../chat/provenance";
 // Pure (Obsidian-free) conversation store. Holds saved chats so they survive
 // app restarts and can be resumed from a session list. All functions are
 // immutable and side-effect-free — the plugin owns persistence and supplies
@@ -99,7 +100,9 @@ export function compactMessages(messages: ChatMessage[]): ChatMessage[] {
   for (const message of messages) {
     const prev = out[out.length - 1];
     if (prev?.role === "assistant" && message.role === "assistant") continue;
-    out.push({ ...message, ...(Array.isArray(message.media) ? { media: currentSourceReferences(message.media) } : {}), ...(message.contextAttachments ? { contextAttachments: currentTurnContext(message.contextAttachments) } : {}) });
+    const { citationTargets: rawTargets, ...rest } = message;
+    const citationTargets = currentCitationTargets(rawTargets);
+    out.push({ ...rest, ...(citationTargets ? { citationTargets } : {}), ...(Array.isArray(message.media) ? { media: currentSourceReferences(message.media) } : {}), ...(message.contextAttachments ? { contextAttachments: currentTurnContext(message.contextAttachments) } : {}) });
   }
   return out;
 }

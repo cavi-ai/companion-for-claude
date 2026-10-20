@@ -3,8 +3,17 @@
 
 /** How a reply should cite a vault note; shared by the context and agent prompts. */
 export const CITATION_FORM =
-  "an Obsidian wikilink to the note's file name, without the folder path or .md extension: " +
-  "[[Note Name]], or [[Note Name#Heading]] when it comes from one section";
+  "an Obsidian wikilink using the full vault-relative path shown in the source, including its folders and .md extension: " +
+  "[[Folder/Note Name.md]], or [[Folder/Note Name.md#Heading]] when it comes from one section; do not shorten the path to a shared file name";
+
+/** Qualified paths identify a file exactly; legacy short names must have one match. */
+export function resolveCitationPath(linkpath: string, paths: readonly string[]): { path: string | null; ambiguous: boolean } {
+  const key = (path: string) => path.replace(/^\/+/, "").replace(/\.md$/i, "").toLowerCase();
+  const wanted = key(linkpath);
+  const qualified = linkpath.includes("/") || /\.md$/i.test(linkpath);
+  const matches = paths.filter(path => (qualified ? key(path) : key(path).split("/").pop()) === wanted);
+  return { path: matches.length === 1 ? matches[0]! : null, ambiguous: matches.length > 1 };
+}
 
 /** One note (and optional section) a reply cites. */
 export interface Citation {
@@ -12,8 +21,45 @@ export interface Citation {
   heading: string | null;
 }
 
-/** found: the note (and section) exist; no-section: the note exists without that heading; missing: no note resolves. */
-export type CitationStatus = "found" | "no-section" | "missing";
+/** The source resolved when an answer was saved; independent of its historical wording. */
+export interface CitationTarget extends Citation {
+  path: string | null;
+}
+
+export function currentCitationTargets(raw: unknown): CitationTarget[] | undefined {
+  if (!Array.isArray(raw) || !raw.every((value: unknown): value is CitationTarget => {
+    if (!value || typeof value !== "object") return false;
+    const item = value as Record<string, unknown>;
+    return typeof item.linkpath === "string" && (item.heading === null || typeof item.heading === "string") && (item.path === null || typeof item.path === "string");
+  })) return undefined;
+  return raw.map(({ linkpath, heading, path }) => ({ linkpath, heading, path }));
+}
+
+export function renameCitationTargets(targets: CitationTarget[] | undefined, oldPath: string, newPath: string): CitationTarget[] | undefined {
+  if (!targets) return targets;
+  let changed = false;
+  const next = targets.map(target => {
+    if (target.path !== oldPath && !target.path?.startsWith(`${oldPath}/`)) return target;
+    changed = true;
+    return { ...target, path: newPath + target.path.slice(oldPath.length) };
+  });
+  return changed ? next : targets;
+}
+
+/** A deleted source must not reconnect to a different file that later reuses its path. */
+export function invalidateCitationTargets(targets: CitationTarget[] | undefined, deletedPath: string): CitationTarget[] | undefined {
+  if (!targets) return targets;
+  let changed = false;
+  const next = targets.map(target => {
+    if (target.path !== deletedPath && !target.path?.startsWith(`${deletedPath}/`)) return target;
+    changed = true;
+    return { ...target, path: null };
+  });
+  return changed ? next : targets;
+}
+
+/** found: source exists; no-section: heading is absent; missing: no source; ambiguous: several notes share the name. */
+export type CitationStatus = "found" | "no-section" | "missing" | "ambiguous";
 
 export interface CheckedCitation extends Citation {
   status: CitationStatus;
@@ -26,29 +72,58 @@ export interface CheckedCitation extends Citation {
 export interface CitationVault {
   /** Vault path a link resolves to, or null. */
   resolve(linkpath: string): string | null;
+  /** A short name that matches several notes is not an identified source. */
+  ambiguous?(linkpath: string): boolean;
   read(path: string): Promise<string>;
 }
 
 const EXCERPT_CHARS = 160;
 const WIKILINK = /(!?)\[\[([^\]\n]+?)\]\]/g;
 
-/** Strip fenced code blocks and inline code so links inside code are not citations. */
+/** Mask code without changing offsets, so citation edits preserve the original Markdown. */
 function withoutCode(markdown: string): string {
   const lines: string[] = [];
   let fence: string | null = null;
+  const mask = (text: string) => " ".repeat(text.length);
   for (const line of markdown.split("\n")) {
     const marker = /^\s*(`{3,}|~{3,})/.exec(line)?.[1];
     if (fence) {
       if (marker && marker[0] === fence[0] && marker.length >= fence.length) fence = null;
+      lines.push(mask(line));
       continue;
     }
     if (marker) {
       fence = marker;
+      lines.push(mask(line));
       continue;
     }
-    lines.push(line.replace(/`[^`\n]*`/g, ""));
+    lines.push(line.replace(/(`+)(?!`)([^`]|(?!\1)`)*?\1(?!`)/g, mask));
   }
   return lines.join("\n");
+}
+
+/** Resolve exported links at action time; never change the stored conversation or code examples. */
+export function exportCitationLinks(markdown: string, targets: readonly CitationTarget[]): string {
+  let result = "";
+  let offset = 0;
+  for (const match of withoutCode(markdown).matchAll(WIKILINK)) {
+    if (match[1]) continue;
+    const citation = extractCitations(match[0])[0];
+    if (!citation) continue;
+    const target = targets.find(item => item.linkpath.toLowerCase() === citation.linkpath.toLowerCase() && item.heading?.toLowerCase() === citation.heading?.toLowerCase());
+    if (!target) continue;
+    const raw = match[2]!;
+    const pipe = raw.indexOf("|");
+    const destination = pipe < 0 ? raw : raw.slice(0, pipe);
+    const hash = destination.indexOf("#");
+    const alias = pipe < 0 ? "" : raw.slice(pipe);
+    const replacement = target.path
+      ? `[[${target.path}${hash < 0 ? "" : destination.slice(hash)}${alias}]]`
+      : `${(alias ? alias.slice(1) : destination).replace(/[\\`*_{}[\]<>!|]/g, "\\$&")} (source unavailable)`;
+    result += markdown.slice(offset, match.index) + replacement;
+    offset = match.index + match[0].length;
+  }
+  return result + markdown.slice(offset);
 }
 
 /** Wikilinks a reply cites, in first-seen order, one per note and section; embeds and code are skipped. */
@@ -112,7 +187,7 @@ export function sectionExcerpt(note: string, heading: string): string | null {
 export async function checkCitations(citations: Citation[], vault: CitationVault): Promise<CheckedCitation[]> {
   return Promise.all(citations.map(async (citation): Promise<CheckedCitation> => {
     const path = vault.resolve(citation.linkpath);
-    if (!path) return { ...citation, status: "missing", path: null, excerpt: null };
+    if (!path) return { ...citation, status: vault.ambiguous?.(citation.linkpath) ? "ambiguous" : "missing", path: null, excerpt: null };
     if (!citation.heading) return { ...citation, status: "found", path, excerpt: null };
     const excerpt = path.endsWith(".md") ? sectionExcerpt(await vault.read(path), citation.heading) : null;
     return excerpt === null

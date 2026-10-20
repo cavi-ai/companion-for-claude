@@ -2,6 +2,29 @@ import { App } from "obsidian";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { saveArtifactNote, saveChatNote, savePlanNote } from "../../src/artifacts/artifactStore";
 
+describe("saved source context", () => {
+  it.each(["chat", "plan", "artifact"] as const)("preserves historical labels with current targets for a %s", async kind => {
+    const app = new App();
+    await app.vault.create("Migration.md", "# Migration");
+    const opts = { height: 400, baseTags: [], contextSources: ["active note: Alpha.md", "selection: Deleted.md"], citationTargets: [{ linkpath: "Alpha.md", heading: null, path: "Migration.md" }] };
+    const file = kind === "chat" ? await saveChatNote(app, "Saved", "Pilot", "Reply", opts)
+      : kind === "plan" ? await savePlanNote(app, "Saved", "Pilot", "Reply", opts)
+        : await saveArtifactNote(app, "Saved", { title: "Pilot", html: "<p>Pilot</p>" }, opts);
+    const text = await app.vault.cachedRead(file);
+    expect(text).toContain("[active note: Alpha.md](../Migration.md)");
+    expect(text).toContain("- selection: Deleted.md");
+    expect(text).not.toContain("../Deleted.md");
+  });
+  it("does not relink a deleted source to a replacement with its old name", async () => {
+    const app = new App();
+    await app.vault.create("Alpha.md", "Different source");
+    const file = await saveChatNote(app, "Saved", "Pilot", "Reply", {
+      contextSources: ["active note: Alpha.md"], citationTargets: [{ linkpath: "Alpha.md", heading: null, path: null }],
+    });
+    expect(await app.vault.cachedRead(file)).toContain("- active note: Alpha.md\n");
+  });
+});
+
 const originalTimezone = process.env.TZ;
 afterEach(() => {
   vi.useRealTimers();

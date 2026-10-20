@@ -9,15 +9,45 @@ function harness() {
   const app = new App();
   const settings = { ...structuredClone(DEFAULT_SETTINGS), autoTagOnSave: false };
   const chat = new ChatSession({ writes: () => false, setWrites: () => undefined, save: async () => undefined, notify: () => undefined });
+  const regenerate = vi.fn(async () => undefined);
   const transcript = new Transcript(app, { settings } as TranscriptHost, chat, {
+    regenerate,
     renderMarkdownInto: async (el: HTMLElement, text: string) => { el.setText(text); },
   } as TranscriptDeps);
   const list = new FakeElement();
   transcript.messagesEl = list as unknown as HTMLElement;
-  return { app, transcript, list };
+  return { app, transcript, list, chat, regenerate };
 }
 
 describe("chat reply actions and provenance", () => {
+  it("only offers regeneration on the latest stored answer, even when replies have identical text", () => {
+    const { transcript, list, chat, regenerate } = harness();
+    chat.messages = [
+      { role: "user", content: "First question" }, { role: "assistant", content: "Same answer" },
+      { role: "user", content: "Second question" }, { role: "assistant", content: "Same answer" },
+    ];
+    chat.lastUserText = "Second question";
+    for (const message of chat.messages) transcript.renderStoredMessage(message);
+    const answers = list.querySelectorAll(".cc-assistant");
+    const actions = (index: number) => answers[index]!.querySelectorAll("button").filter(button => button.getAttribute("aria-label") === "Regenerate");
+    expect(actions(0)).toHaveLength(0);
+    expect(actions(1)).toHaveLength(1);
+    actions(1)[0]!.dispatchEvent({ type: "click" });
+    expect(regenerate).toHaveBeenCalledOnce();
+  });
+
+  it("retires previous regeneration actions when a new assistant turn begins", () => {
+    const { transcript, list, chat } = harness();
+    chat.messages = [{ role: "user", content: "Question" }, { role: "assistant", content: "Answer" }];
+    chat.lastUserText = "Question";
+    for (const message of chat.messages) transcript.renderStoredMessage(message);
+    expect(list.querySelectorAll("button").filter(button => button.getAttribute("aria-label") === "Regenerate")).toHaveLength(1);
+    transcript.createAssistantBubble();
+    transcript.clearThinkingStatus();
+    expect(list.querySelectorAll("button").filter(button => button.getAttribute("aria-label") === "Regenerate")).toHaveLength(0);
+    expect(list.querySelectorAll("button").filter(button => button.getAttribute("aria-label") === "Copy")).toHaveLength(1);
+  });
+
   it("updates the user source label while a previous assistant answer remains visible", () => {
     const { transcript, list } = harness();
     transcript.renderStoredMessage({ role: "user", content: "Summarize", contextSources: ["active note: Original.md"] });

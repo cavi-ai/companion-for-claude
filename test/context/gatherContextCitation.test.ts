@@ -12,7 +12,7 @@ describe("gatherContext — citation rule", () => {
     setActive(app, "Notes/Alpha.md");
     const ctx = await gatherContext(app, DEFAULT_SETTINGS, { ...NO_TOGGLES, activeNote: true }, "when?");
     expect(ctx.text).toContain(CITATION_RULE);
-    expect(CITATION_RULE).toContain("[[Note Name#Heading]]");
+    expect(CITATION_RULE).toContain("[[Folder/Note Name.md#Heading]]");
   });
 
   it("asks for citations after an attached note but not after web pages alone", async () => {

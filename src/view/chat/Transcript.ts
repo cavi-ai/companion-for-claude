@@ -1,5 +1,5 @@
-import { type App, type EventRef, MarkdownView, Notice, setIcon, type TFile } from "obsidian";
-import { renderProvenance } from "./provenanceFooter";
+import { type App, type EventRef, type MarkdownView, Notice, setIcon, type TFile } from "obsidian";
+import { ProvenanceFooters } from "./provenanceFooter";
 import type { TranscriptHost } from "./hosts";
 import type { ChatMessage, ToolTraceEntry } from "../../types";
 import { errorMessage } from "../../records";
@@ -12,6 +12,7 @@ import { TurnRenderer, type TurnRendererHost } from "../turnRenderer";
 import { ARTIFACT_HEIGHT } from "../../artifacts/renderInline";
 import { extractArtifact, saveArtifactNote, saveChatNote, savePlanNote } from "../../artifacts/artifactStore";
 import { contextSnapshot } from "../../artifacts/replyContext";
+import { exportCitationLinks, type CitationTarget } from "../../chat/provenance";
 import { extractTasks, isPlanReply } from "../../build/spec";
 import { errorHint, type ErrorHintProvider } from "../../providers/errorHints";
 import { chipLabel, previewText } from "../toolChipLabel";
@@ -23,6 +24,7 @@ import { removeInterruptedTurnRow, renderInterruptedTurnRow, renderRecoverableEd
 import { renderResearchQuickActions } from "./researchQuickActions";
 import { ThinkingStatus } from "./thinkingStatus";
 import { StickToBottom } from "./stickToBottom";
+import { insertReplyIntoNote } from "./replyInsertion";
 import type { ChatSession, TurnState } from "./chatSession";
 
 export interface TranscriptDeps {
@@ -34,6 +36,7 @@ export interface TranscriptDeps {
   renderMarkdownInto(el: HTMLElement, markdown: string): Promise<void>;
   renderSetupCard(parent: HTMLElement): void;
   renderStreamingArtifactInto(el: HTMLElement, buffer: string): void;
+  resolveMarkdownContextView(): MarkdownView | null;
   resumeInterruptedTurn(conversation: Conversation): Promise<void>;
   reviewLastProposedEdit(conversation: Conversation): Promise<void>;
   discardLastProposedEdit(conversation: Conversation): Promise<void>;
@@ -49,17 +52,18 @@ export class Transcript {
   private list!: HTMLElement;
   private stick: StickToBottom | null = null;
   private workspaceGeneration = 0;
-
+  private readonly provenance: ProvenanceFooters;
   /** The transcript's scroller; it follows the latest message while the reader is at the bottom. */
   get messagesEl(): HTMLElement { return this.list; }
   set messagesEl(el: HTMLElement) {
+    this.provenance.clear();
     this.stick?.destroy();
     this.list = el;
     this.stick = new StickToBottom(el, { ResizeObserver: window.ResizeObserver, MutationObserver: window.MutationObserver });
   }
   /** Rotating "thinking" status word timer + per-turn start offset. */
   private readonly thinking = new ThinkingStatus();
-  constructor(private app: App, private plugin: TranscriptHost, private chat: ChatSession, private deps: TranscriptDeps) {}
+  constructor(private app: App, private plugin: TranscriptHost, private chat: ChatSession, private deps: TranscriptDeps) { this.provenance = new ProvenanceFooters(app, () => this.messagesEl); }
 
   private get turn(): TurnState { return this.chat.turn; }
   private get lastUserText(): string { return this.chat.lastUserText; }
@@ -121,6 +125,7 @@ export class Transcript {
     };
     register(this.app.workspace.on("file-open", refresh));
     register(this.app.workspace.on("active-leaf-change", refresh));
+    this.provenance.watch(register);
   }
 
   private async renderContextualWorkspace(mount: HTMLElement): Promise<void> {
@@ -273,7 +278,7 @@ export class Transcript {
     const full = !keepPrevious && !incompleteArtifact && result.text.trim().length > 0 ? result.text : null;
     if (full) {
       this.messages.push({ role: "assistant", content: full, ...(result.trace.length > 0 ? { toolTrace: result.trace } : {}) });
-      this.addAssistantActions(bubble, full, contextSources);
+      this.addAssistantActions(bubble, full, contextSources, this.plugin.conversations().list().find(c => c.id === conversationId)?.messages.at(-1));
     }
     if (result.error && !full) {
       const providerId = (result.error as Error & { ccProvider?: ErrorHintProvider }).ccProvider ?? "anthropic";
@@ -360,6 +365,8 @@ export class Transcript {
   }
 
   createAssistantBubble(): { bubble: HTMLElement; body: HTMLElement } {
+    // These controls retry the latest question, so they must not remain on earlier turns.
+    for (const selector of [".cc-regenerate", ".cc-error-retry"]) this.messagesEl.querySelectorAll(selector).forEach(button => button.remove());
     const bubble = this.messagesEl.createDiv({ cls: "cc-msg cc-assistant" });
     bubble.createDiv({ cls: "cc-role", text: "Claude" });
     this.addSparkMark(bubble);
@@ -410,7 +417,7 @@ export class Transcript {
       if (stored) this.renderContextNote(bubble, stored.contextSources);
     } else if (stored?.content.trim()) {
       const user = this.messages[this.messages.indexOf(stored) - 1];
-      this.addAssistantActions(bubble, stored.content, user?.role === "user" ? user.contextSources : undefined);
+      this.addAssistantActions(bubble, stored.content, user?.role === "user" ? user.contextSources : undefined, stored, stored === this.messages.at(-1));
     }
     // A send shows the latest message; saved history does not change scroll ownership.
     if (!stored) {
@@ -475,19 +482,19 @@ export class Transcript {
     bubble.createDiv({ cls: "cc-context-note", text: valid ? `+ context: ${sources.join(", ")}` : "Context details unavailable" });
   }
 
-  private addAssistantActions(bubble: HTMLElement, full: string, contextSources?: string[]): void {
+  private addAssistantActions(bubble: HTMLElement, full: string, contextSources?: string[], message?: ChatMessage, latest = true): void {
     const sources = contextSnapshot(contextSources);
     bubble.querySelectorAll(":scope > .cc-actions, :scope > .cc-provenance").forEach((el) => el.remove());
     // Per-code-block copy buttons inside the rendered markdown.
     this.decorateCodeBlocks(bubble);
-    renderProvenance(this.app, bubble, full);
-
+    this.provenance.render(bubble, full, message?.content === full ? message.citationTargets : undefined);
+    const output = () => exportCitationLinks(full, this.provenance.targets(bubble));
     const bar = bubble.createDiv({ cls: "cc-actions" });
     this.actionBtn(bar, "Copy", "copy", () => {
-      void navigator.clipboard.writeText(full);
+      void navigator.clipboard.writeText(output());
       quickNotice("Copied to clipboard");
     });
-    this.actionBtn(bar, "Insert", "text-cursor-input", () => this.insertIntoNote(full));
+    this.actionBtn(bar, "Insert", "text-cursor-input", () => void insertReplyIntoNote(this.deps.resolveMarkdownContextView(), output()));
     // One Save button that adapts to the content: an artifact saves as an inline
     // `claude-html` note (accented to stand out), anything else saves as a plain
     // chat note. (These used to be two separate buttons running the same handler.)
@@ -499,7 +506,7 @@ export class Transcript {
       () => {
         if (saveBtn.disabled) return;
         saveBtn.disabled = true;
-        void this.saveReplyAsNote(full, sources)
+        void this.saveReplyAsNote(output(), sources, this.provenance.targets(bubble))
           .catch((error: unknown) => new Notice(`Couldn't save or open the reply: ${errorMessage(error)}`))
           .finally(() => { saveBtn.disabled = false; });
       },
@@ -511,13 +518,13 @@ export class Transcript {
     if (isPlanReply(full)) {
       const impl = this.actionBtn(bar, "Implement", "play", () => void this.implementFromReply(full));
       impl.addClass("cc-accent");
-      this.actionBtn(bar, "Build", "hammer", () => void this.buildFromReply(full, sources));
+      this.actionBtn(bar, "Build", "hammer", () => void this.buildFromReply(output(), sources, this.provenance.targets(bubble)));
     }
     // Regenerate the last reply (only on the most recent assistant message).
     const tail = this.messages[this.messages.length - 1];
     const isLast = tail?.role === "assistant";
-    if (isLast && this.lastUserText) {
-      this.actionBtn(bar, "Regenerate", "refresh-cw", () => void this.deps.regenerate());
+    if (latest && isLast && this.lastUserText) {
+      this.actionBtn(bar, "Regenerate", "refresh-cw", () => void this.deps.regenerate()).addClass("cc-regenerate");
     }
   }
 
@@ -562,6 +569,7 @@ export class Transcript {
   }
 
   stopFollowing(): void {
+    this.provenance.clear();
     this.workspaceGeneration++;
     this.stick?.destroy();
     this.stick = null;
@@ -594,17 +602,18 @@ export class Transcript {
   }
 
   /** Save a plan reply as a `type: plan` note, then hand it to the build flow. */
-  private async buildFromReply(full: string, contextSources?: string[]): Promise<void> {
-    const file = await this.savePlanReply(full, contextSources);
+  private async buildFromReply(full: string, contextSources?: string[], citationTargets?: CitationTarget[]): Promise<void> {
+    const file = await this.savePlanReply(full, contextSources, citationTargets);
     await this.plugin.research().handoffToBuild(file);
   }
 
-  private async savePlanReply(full: string, contextSources?: string[]) {
+  private async savePlanReply(full: string, contextSources?: string[], citationTargets?: CitationTarget[]) {
     const artifact = extractArtifact(full);
     const { tags, summary, title } = await this.maybeIndex(full);
     const planTitle = title ?? artifact?.title ?? this.fallbackTitle();
     return savePlanNote(this.app, this.plugin.settings.planFolder, planTitle, full, {
       extraTags: tags,
+      ...(citationTargets ? { citationTargets } : {}),
       ...(contextSources ? { contextSources } : {}),
       ...(summary !== undefined ? { summary } : {}),
     });
@@ -647,13 +656,8 @@ export class Transcript {
     return (sentence || "Claude chat").slice(0, 60);
   }
 
-  /**
-   * Save a reply as a durable, indexed note. If the reply contains a
-   * `claude-html` artifact, it's saved as an artifact note (renders inline) —
-   * not a raw fenced dump. Either way it gets auto-tags + a summary in
-   * frontmatter so semantic/query search and Dataview index it correctly.
-   */
-  private async saveReplyAsNote(full: string, contextSources?: string[]): Promise<void> {
+  /** Save an indexed chat, plan, or inline artifact with this reply's source context. */
+  private async saveReplyAsNote(full: string, contextSources?: string[], citationTargets?: CitationTarget[]): Promise<void> {
     const artifact = extractArtifact(full);
     new Notice("Indexing & saving…");
     let file: TFile;
@@ -661,11 +665,12 @@ export class Transcript {
     // A plan reply carries a `## Build tasks` checklist. Save it as a canonical
     // `type: plan` note (artifact renders inline + checklist drives Build).
     if (isPlanReply(full)) {
-      file = await this.savePlanReply(full, contextSources);
+      file = await this.savePlanReply(full, contextSources, citationTargets);
     } else if (artifact) {
       const { tags, summary } = await this.maybeIndex(`${artifact.title}\n\n${full}`);
       file = await saveArtifactNote(this.app, this.plugin.settings.artifactFolder, artifact, {
         height: ARTIFACT_HEIGHT,
+        ...(citationTargets ? { citationTargets } : {}),
         ...(contextSources ? { contextSources } : {}),
         baseTags: this.plugin.settings.artifactBaseTags,
         extraTags: tags,
@@ -676,6 +681,7 @@ export class Transcript {
       const heuristic = full.split("\n").find((l) => l.trim())?.replace(/^#+\s*/, "").slice(0, 60) ?? "Claude reply";
       file = await saveChatNote(this.app, this.plugin.settings.chatFolder, title ?? heuristic, full, {
         baseTags: this.plugin.settings.chatBaseTags,
+        ...(citationTargets ? { citationTargets } : {}),
         ...(contextSources ? { contextSources } : {}),
         extraTags: tags,
         ...(summary !== undefined ? { summary } : {}),
@@ -684,13 +690,4 @@ export class Transcript {
     await this.app.workspace.getLeaf(true).openFile(file);
   }
 
-  private insertIntoNote(text: string): void {
-    const view = this.app.workspace.getActiveViewOfType(MarkdownView);
-    if (!view) {
-      new Notice("Open a note to insert into.");
-      return;
-    }
-    view.editor.replaceSelection(text);
-    quickNotice("Inserted into note");
-  }
 }

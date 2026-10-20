@@ -3,6 +3,7 @@ import { sanitizeFileName, type ExtractedArtifact } from "./parse";
 import { buildFrontmatter, normalizeTags, datedTitleBase, localCalendarDate } from "../indexing/frontmatter";
 import { ensureVaultFolder, uniqueNotePath } from "../vault/vaultFiles";
 import { replyContextSection } from "./replyContext";
+import { resolveCitationPath, type CitationTarget } from "../chat/provenance";
 
 export { extractArtifact, type ExtractedArtifact } from "./parse";
 
@@ -27,6 +28,16 @@ export interface SaveOptions {
   summary?: string;
   /** Snapshot of the inputs recorded for this reply, not the current note. */
   contextSources?: string[];
+  /** Current identities for cited sources; recorded labels remain unchanged. */
+  citationTargets?: CitationTarget[];
+}
+
+function savedContext(app: App, folder: string, opts?: Partial<SaveOptions>): string {
+  return replyContextSection(opts?.contextSources, folder, path => {
+    const target = opts?.citationTargets?.find(item => resolveCitationPath(item.linkpath, [path]).path === path);
+    const current = target ? target.path : path;
+    return current && app.vault.getAbstractFileByPath(current) instanceof TFile ? current : null;
+  });
 }
 
 export async function saveArtifactNote(app: App, folder: string, artifact: ExtractedArtifact, opts: SaveOptions): Promise<TFile> {
@@ -39,7 +50,7 @@ export async function saveArtifactNote(app: App, folder: string, artifact: Extra
     summary: opts.summary,
     tags: normalizeTags([...opts.baseTags, ...(opts.extraTags ?? [])]),
   });
-  const note = [fm, "", `# ${artifact.title}`, "", "```claude-html height=" + opts.height, artifact.html, "```", ""].join("\n") + replyContextSection(opts.contextSources, folder);
+  const note = [fm, "", `# ${artifact.title}`, "", "```claude-html height=" + opts.height, artifact.html, "```", ""].join("\n") + savedContext(app, folder, opts);
   const file = await writeUnique(app, folder, datedTitleBase(created, artifact.title), "md", note);
   new Notice(`Saved artifact → ${file.path}`);
   return file;
@@ -61,7 +72,7 @@ export async function savePlanNote(app: App, folder: string, title: string, mark
     summary: opts?.summary,
     tags: normalizeTags([...(opts?.baseTags ?? ["claude", "plan"]), ...(opts?.extraTags ?? [])]),
   });
-  const note = [fm, "", `# ${title}`, "", markdown, ""].join("\n") + replyContextSection(opts?.contextSources, folder);
+  const note = [fm, "", `# ${title}`, "", markdown, ""].join("\n") + savedContext(app, folder, opts);
   const file = await writeUnique(app, folder, datedTitleBase(created, title), "md", note);
   new Notice(`Saved plan → ${file.path}`);
   return file;
@@ -83,7 +94,7 @@ export async function saveChatNote(app: App, folder: string, title: string, mark
     summary: opts?.summary,
     tags: normalizeTags([...(opts?.baseTags ?? ["claude", "chat"]), ...(opts?.extraTags ?? [])]),
   });
-  const note = [fm, "", `# ${title}`, "", markdown, ""].join("\n") + replyContextSection(opts?.contextSources, folder);
+  const note = [fm, "", `# ${title}`, "", markdown, ""].join("\n") + savedContext(app, folder, opts);
   const file = await writeUnique(app, folder, datedTitleBase(created, title), "md", note);
   new Notice(`Saved chat → ${file.path}`);
   return file;

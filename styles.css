@@ -345,6 +345,17 @@ body:not(.is-mobile) .cc-user {
   font-weight: 600;
   color: var(--text-normal);
 }
+.cc-living-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  font-size: var(--cc-text-sm);
+  color: var(--cc-text-muted);
+}
+.cc-living-source { overflow-wrap: anywhere; }
+.cc-living-state.is-stale { color: var(--text-warning); }
+.cc-living-action { font-size: var(--cc-text-2xs); }
 .cc-context-note {
   font-family: var(--cc-mono);
   font-size: var(--cc-text-2xs);

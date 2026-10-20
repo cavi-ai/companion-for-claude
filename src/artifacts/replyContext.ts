@@ -4,7 +4,7 @@ export function contextSnapshot(value: unknown): string[] | undefined {
 }
 
 /** Preserve recorded context labels without treating them as verified citations. */
-export function replyContextSection(value: string[] | undefined, folder: string): string {
+export function replyContextSection(value: string[] | undefined, folder: string, resolve: (path: string) => string | null = path => path): string {
   const sources = contextSnapshot(value);
   if (!sources?.length) return "";
   const escape = (text: string) => text.replace(/[\\`*_{}[\]<>!|]/g, "\\$&").replace(/[\r\n]+/g, " ");
@@ -12,7 +12,7 @@ export function replyContextSection(value: string[] | undefined, folder: string)
   const lines = [...new Set(sources)].map((source) => {
     const path = /^(?:active note|selection): (.+\.md)$/.exec(source)?.[1];
     const label = escape(source);
-    const url = path?.split("/").map((part) => encodeURIComponent(part).replace(/\(/g, "%28").replace(/\)/g, "%29")).join("/");
+    const url = (path ? resolve(path) : null)?.split("/").map((part) => encodeURIComponent(part).replace(/\(/g, "%28").replace(/\)/g, "%29")).join("/");
     return url ? `- [${label}](${root}${url})` : `- ${label}`;
   });
   return `\n\n## Context provided\n\n${lines.join("\n")}\n`;

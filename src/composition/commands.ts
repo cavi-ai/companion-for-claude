@@ -7,7 +7,7 @@ import type ClaudeCompanionPlugin from "../main";
 export type CommandActionsHost = Pick<
   ClaudeCompanionPlugin,
   | "app" | "browseConversations" | "conversations" | "createPromptTemplate" | "deleteActiveConversation"
-  | "enableVaultSearch" | "enrichment" | "lastMarkdownFile" | "memory" | "noteFlows"
+  | "enableVaultSearch" | "enrichment" | "lastMarkdownFile" | "livingSources" | "memory" | "noteFlows"
   | "onboarding" | "clipperSetup" | "optimize" | "orders" | "organizeClippings"
   | "publish" | "publishing" | "research" | "semantic" | "settings" | "startInlineEdit"
   | "triageClippingsWithPicker" | "views"
@@ -54,6 +54,8 @@ export function buildCommandActions(host: CommandActionsHost): CommandActions {
     openMemoryView: () => void host.views().activateMemoryView(),
     consolidateMemory: () => void host.memory().consolidateMemory(),
     enrichNoteAsSource: (file) => void host.enrichment().runEnrich(file),
+    hasLivingView: (file) => host.livingSources().kindOf(file) !== null,
+    openLivingView: (file) => void host.livingSources().open(file),
     openSourceInbox: () => void host.views().activateInboxView(),
     openSystem: () => void host.views().activateSystem(),
     exportClipperTemplates: () => void host.clipperSetup().exportTemplates(),

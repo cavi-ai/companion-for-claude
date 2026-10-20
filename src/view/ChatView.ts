@@ -205,6 +205,7 @@ export class ChatView extends ItemView {
       renderMarkdownInto: (...args) => this.renderer.renderInto(...args),
       renderSetupCard: (parent) => this.setupCard.render(parent),
       renderStreamingArtifactInto: (...args) => this.renderer.renderStreamingArtifactInto(...args),
+      resolveMarkdownContextView: () => this.resolveMarkdownContextView(),
       resumeInterruptedTurn: (...args) => this.resumeInterruptedTurn(...args),
       reviewLastProposedEdit: (...args) => this.runners.reviewLastProposedEdit(...args),
       discardLastProposedEdit: (...args) => this.runners.discardLastProposedEdit(...args),

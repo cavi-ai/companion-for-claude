@@ -13,6 +13,7 @@ import { buildCommandActions } from "./composition/commands";
 import {
   buildClipperSetup,
   buildDesktopIntegrations,
+  buildLivingSources,
   buildNoteFlows,
   buildOnboarding,
   buildOrders,
@@ -35,6 +36,8 @@ import { listChatProjects } from "./projects/registry";
 import { ProjectPicker } from "./projects/ProjectPicker";
 import { projectSystemPrompt, projectNoteBody, type ChatProject } from "./projects/model";
 import { PROVENANCE_LANGUAGE } from "./research/draftSections";
+import type { LivingSources } from "./living/feature";
+import { LIVING_STATUS_LANGUAGE } from "./living/view";
 import { renderProvenanceReferences } from "./view/research/provenanceReferences";
 import type { ChatTurnService } from "./chat/turnService";
 import type { MemoryController } from "./memory/controller";
@@ -311,6 +314,11 @@ export default class ClaudeCompanionPlugin extends Plugin {
   publishing(): PublishFeature {
     return (this._publishing ??= buildPublishing(this));
   }
+  private _living?: LivingSources;
+  /** Living views bound to typed source notes. */
+  livingSources(): LivingSources {
+    return (this._living ??= buildLivingSources(this));
+  }
   private optimizeState: OptimizeState = { dismissed: [], verdicts: {} };
   private _optimize?: OptimizeFeature;
   /** Lazily-built ontology registry; null while the feature is disabled. */
@@ -449,6 +457,7 @@ export default class ClaudeCompanionPlugin extends Plugin {
     this.registerMarkdownCodeBlockProcessor(PROVENANCE_LANGUAGE, (source, el, ctx) => {
       renderProvenanceReferences(el, source, (path) => void this.app.workspace.openLinkText(path, ctx.sourcePath));
     });
+    this.registerMarkdownCodeBlockProcessor(LIVING_STATUS_LANGUAGE, (_source, el, ctx) => this.livingSources().renderStatus(el, ctx.sourcePath));
   }
 
   /**
@@ -481,6 +490,7 @@ export default class ClaudeCompanionPlugin extends Plugin {
       this.registerEvent(this.app.vault.on("delete", (f) => { if (f instanceof TFile && (f.extension === "md" || f.extension === "pdf")) void this.semantic().indexer()?.removeNote(f.path); }));
       this.registerEvent(this.app.vault.on("rename", (f, oldPath) => { if (f instanceof TFile && (f.extension === "md" || f.extension === "pdf")) void this.semantic().renameNote(oldPath, f.path); }));
       this.registerEvent(this.app.vault.on("rename", (f, oldPath) => { void this.conversations().renameAttachments(oldPath, f.path).catch((error: unknown) => new Notice(`Couldn't save renamed chat attachments: ${error instanceof Error ? error.message : String(error)}`)); }));
+      this.registerEvent(this.app.vault.on("delete", (f) => { void this.conversations().invalidateCitations(f.path).catch((error: unknown) => new Notice(`Couldn't save deleted source references: ${error instanceof Error ? error.message : String(error)}`)); }));
       this.registerEvent(this.app.vault.on("create", (f) => { if (f.path.endsWith(".md")) this.research().scheduleResearchRefresh(f.path); }));
       this.registerEvent(this.app.vault.on("delete", (f) => { if (f.path.endsWith(".md")) this.research().scheduleResearchRefresh(f.path); }));
       this.registerEvent(this.app.vault.on("rename", (f, oldPath) => { if (f.path.endsWith(".md") || oldPath.endsWith(".md")) this.research().scheduleResearchRefresh(f.path, oldPath); }));
@@ -556,6 +566,9 @@ export default class ClaudeCompanionPlugin extends Plugin {
               .setIcon("sparkles")
               .onClick(() => void this.noteFlows().enrichNoteFlow(file)),
           );
+          if (this.livingSources().kindOf(file)) {
+            menu.addItem((item) => item.setTitle("Open living view").setIcon("layout-dashboard").onClick(() => void this.livingSources().open(file)));
+          }
           const published = this.publishing().publishedItems().some((entry) => entry.key === file.path);
           menu.addItem((item) =>
             item

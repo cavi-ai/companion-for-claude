@@ -3,6 +3,7 @@
 import type { ResearchModel } from "./research/researchModel";
 import { DEFAULT_DEVICE_MODEL } from "./device/models";
 import type { TurnMediaReference, TurnContextAttachments } from "./chat/turnSources";
+import type { CitationTarget } from "./chat/provenance";
 
 export type ChatRole = "user" | "assistant";
 
@@ -25,6 +26,8 @@ export interface ChatMessage {
   media?: TurnMediaReference[];
   /** Explicit notes/folders and captured pages selected for this accepted question. */
   contextAttachments?: TurnContextAttachments;
+  /** Resolved cited-note paths; moves update these without rewriting the answer. */
+  citationTargets?: CitationTarget[];
   /**
    * Display-only record of the tool calls behind an assistant turn (agent mode).
    * Used to re-render tool chips on conversation replay; never sent to the model.
