@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { spawn } from "node:child_process";
+import { strFromU8, unzipSync } from "fflate";
 import {
   DesktopRuntime,
   ExecFailure,
@@ -50,6 +51,12 @@ class MemoryFs implements DesktopFsPort {
     this.writes.push({ path, body });
     if (this.failWrite) throw new Error("disk full");
     this.files.set(path, body);
+  }
+
+  readonly binaries = new Map<string, Uint8Array>();
+
+  async writeBinary(path: string, data: Uint8Array): Promise<void> {
+    this.binaries.set(path, data);
   }
 }
 
@@ -318,44 +325,55 @@ describe("DesktopRuntime", () => {
     expect(exec.calls.some(({ args }) => args.join(" ") === "mcp add --scope user --transport http obsidian-vault http://127.0.0.1:22360/mcp --header Authorization: Bearer secret")).toBe(true);
   });
 
-  it("backs up and atomically merges Claude Desktop configuration", async () => {
-    const fs = new MemoryFs();
-    const path = "/Users/test/Library/Application Support/Claude/claude_desktop_config.json";
-    fs.files.set(path, '{"theme":"dark","mcpServers":{"keep":{"command":"keep"}}}\n');
-    const runtime = new DesktopRuntime({ exec: new FakeExec(new Map()), fs, platform: "darwin", homeDir: "/Users/test" });
+  const DESKTOP_CONFIG = "/Users/test/Library/Application Support/Claude/claude_desktop_config.json";
+  const LEGACY_ENTRY = { command: "npx", args: ["-y", "mcp-remote", "http://127.0.0.1:22360/mcp", "--header", "Authorization: Bearer old-token"] };
+  const desktopRuntime = (fs: MemoryFs, openPath: (path: string) => Promise<void>) =>
+    new DesktopRuntime({ exec: new FakeExec(new Map()), fs, platform: "darwin", homeDir: "/Users/test", tempDir: "/tmp/companion/", openPath });
 
-    const result = await runtime.installClaudeDesktop({ port: 22360, token: "bridge-token" });
-    expect(result).toEqual({ configPath: path, backupPath: `${path}.backup`, restartRequired: true });
-    expect(fs.backups).toEqual([`${path}.backup`]);
-    const written = JSON.parse(fs.files.get(path)!);
-    expect(written.theme).toBe("dark");
-    expect(written.mcpServers.keep).toEqual({ command: "keep" });
-    expect(written.mcpServers["obsidian-vault"].args).toContain("Authorization: Bearer bridge-token");
+  const CONNECTION_FILE = "/Users/test/Library/Application Support/Companion for Claude/bridge.json";
+
+  it("writes the connection file and the bundle, opens it, and removes the mcp-remote entry earlier versions wrote", async () => {
+    const fs = new MemoryFs();
+    fs.files.set(DESKTOP_CONFIG, JSON.stringify({ theme: "dark", mcpServers: { keep: { command: "keep" }, "obsidian-vault": LEGACY_ENTRY } }));
+    const opened: string[] = [];
+    const result = await desktopRuntime(fs, async (path) => { opened.push(path); }).installClaudeDesktop({ port: 22360, token: "bridge-token" });
+
+    const bundlePath = "/tmp/companion/companion-obsidian-vault.mcpb";
+    expect(result).toEqual({ bundlePath, connectionPath: CONNECTION_FILE, configPath: DESKTOP_CONFIG, backupPath: `${DESKTOP_CONFIG}.backup`, legacyRemoved: true });
+    expect(opened).toEqual([bundlePath]);
+    expect(JSON.parse(fs.files.get(CONNECTION_FILE)!)).toEqual({ url: "http://127.0.0.1:22360/mcp", token: "bridge-token" });
+    expect(JSON.parse(fs.files.get(DESKTOP_CONFIG)!)).toEqual({ theme: "dark", mcpServers: { keep: { command: "keep" } } });
+    const files = unzipSync(fs.binaries.get(bundlePath)!);
+    expect(Object.keys(files).sort()).toEqual(["manifest.json", "server/index.js"]);
+    expect(Object.values(files).map((data) => strFromU8(data)).join("\n")).not.toContain("bridge-token");
   });
 
-  it("does not back up or write malformed Claude Desktop configuration", async () => {
-    const fs = new MemoryFs();
-    const path = "/Users/test/Library/Application Support/Claude/claude_desktop_config.json";
-    fs.files.set(path, "{");
-    const runtime = new DesktopRuntime({ exec: new FakeExec(new Map()), fs, platform: "darwin", homeDir: "/Users/test" });
-
-    await expect(runtime.installClaudeDesktop({ port: 22360, token: "secret" })).rejects.toThrow("malformed JSON");
-    expect(fs.backups).toEqual([]);
-    expect(fs.writes).toEqual([]);
-    expect(fs.files.get(path)).toBe("{");
+  it("leaves Claude Desktop's config alone when it holds no entry Companion wrote", async () => {
+    for (const original of [null, "{", JSON.stringify({ mcpServers: { keep: { command: "keep" } } })]) {
+      const fs = new MemoryFs();
+      if (original !== null) fs.files.set(DESKTOP_CONFIG, original);
+      const result = await desktopRuntime(fs, async () => undefined).installClaudeDesktop({ port: 22360, token: "secret" });
+      expect(result.legacyRemoved).toBe(false);
+      expect(fs.backups).toEqual([]);
+      expect(fs.writes.map((write) => write.path)).toEqual([CONNECTION_FILE]);
+    }
   });
 
-  it("leaves the original config available when atomic replacement fails", async () => {
+  it("keeps the old entry and says where the bundle is when Claude Desktop cannot open it", async () => {
     const fs = new MemoryFs();
-    const path = "/Users/test/Library/Application Support/Claude/claude_desktop_config.json";
-    const original = '{"mcpServers":{}}\n';
-    fs.files.set(path, original);
-    fs.failWrite = true;
-    const runtime = new DesktopRuntime({ exec: new FakeExec(new Map()), fs, platform: "darwin", homeDir: "/Users/test" });
+    const original = JSON.stringify({ mcpServers: { "obsidian-vault": LEGACY_ENTRY } });
+    fs.files.set(DESKTOP_CONFIG, original);
+    const install = desktopRuntime(fs, async () => { throw new Error("No application knows how to open the file"); })
+      .installClaudeDesktop({ port: 22360, token: "secret" });
+    await expect(install).rejects.toThrow("Open /tmp/companion/companion-obsidian-vault.mcpb with Claude Desktop.");
+    expect(fs.files.get(DESKTOP_CONFIG)).toBe(original);
+    expect(fs.writes.map((write) => write.path)).toEqual([CONNECTION_FILE]);
+  });
 
-    await expect(runtime.installClaudeDesktop({ port: 22360, token: "secret" })).rejects.toThrow("disk full");
-    expect(fs.files.get(path)).toBe(original);
-    expect(fs.files.get(`${path}.backup`)).toBe(original);
+  it("refuses an empty token and a device that cannot open the bundle", async () => {
+    await expect(desktopRuntime(new MemoryFs(), async () => undefined).installClaudeDesktop({ port: 1, token: " " })).rejects.toThrow("token is empty");
+    const noOpener = new DesktopRuntime({ exec: new FakeExec(new Map()), fs: new MemoryFs(), platform: "darwin", homeDir: "/Users/test" });
+    await expect(noOpener.installClaudeDesktop({ port: 1, token: "t" })).rejects.toThrow("cannot write or open");
   });
 
   it("uses platform-specific Claude Desktop config paths", () => {

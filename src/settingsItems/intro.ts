@@ -21,11 +21,6 @@ export function introItems(ctx: IntroItemsContext): SettingGroupItem[] {
   const { plugin } = ctx;
   return [
     {
-      name: "Show advanced settings",
-      desc: "Basic settings are what a first-week user touches. Turn this on to see everything.",
-      control: { type: "toggle", key: "settingsShowAdvanced" },
-    },
-    {
       name: "Credentials are stored in this vault",
       // Credentials fall back to this vault's data.json two ways: no secret-store
       // API, or a backend that refused the write. Both ride vault sync.

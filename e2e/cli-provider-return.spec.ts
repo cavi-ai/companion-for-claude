@@ -1,4 +1,4 @@
-import { dismissSettingsSurface, expect, test, type Rig } from "./fixtures";
+import { dismissSettingsSurface, expect, openSettingsSection, test, type Rig } from "./fixtures";
 import { readFile } from "node:fs/promises";
 import type { ContentBlock } from "../src/providers/types";
 
@@ -11,7 +11,7 @@ type AppWindow = { app: {
 type Input = { message: { content: ContentBlock[] } };
 const text = (input: Input) => input.message.content.filter(block => block.type === "text").map(block => block.text).join("\n");
 async function switchBackend(rig: Rig, value: string) {
-  const settings = await rig.openSettings();
+  const settings = await openSettingsSection(rig, "Provider & model");
   const row = settings.locator(".setting-item").filter({ has: settings.locator(".setting-item-name").getByText("Chat backend", { exact: true }) });
   await row.getByRole("combobox").selectOption(value);
   await expect.poll(() => rig.page.evaluate(() => (window as unknown as AppWindow).app.plugins.plugins["claude-companion"]!.settings.chatBackend)).toBe(value);
@@ -53,7 +53,10 @@ for (const action of ["accepted", "selection", "refused"] as const) {
       await page.evaluate(async () => { const vault = (window as unknown as AppWindow).app.vault; await vault.delete(vault.getAbstractFileByPath("Notes/Refused source.md")); });
       await input.fill("Do not send without the selected source.");
       await send();
-      await expect(page.locator(".notice").filter({ hasText: "Couldn't attach Notes/Refused source.md" })).toBeVisible();
+      await expect.poll(async () => (await Promise.all(rig.windows().map(window => window.locator(".notice:visible").allTextContents()))).flat().join("\n")).toContain("Couldn't attach Notes/Refused source.md");
+      await expect(input).toHaveValue("Do not send without the selected source.");
+      await expect(chat.locator(".cc-user")).toHaveCount(1);
+      expect(await rig.providerRequests()).toBe(0);
       await chat.locator(".cc-context-trigger").click();
       const context = chat.getByRole("dialog", { name: "Message context" });
       await context.getByRole("button", { name: "Remove Refused source", exact: true }).click();

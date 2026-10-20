@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { App, FakeElement, Setting, type ButtonComponent, type SettingDefinitionItem, type TextComponent } from "../fakes/obsidian";
 import { ClaudeCompanionSettingTab } from "../../src/settings";
+import { applyTiers } from "../../src/settingsItems/tiers";
 import { DEFAULT_SETTINGS } from "../../src/types";
 import { hydrate, stripVerifiedSecrets, syncSecrets, type SecretStore } from "../../src/secrets/store";
 import { unavailableStore } from "../../src/secrets/store";
@@ -51,7 +52,7 @@ function stubPlugin(items: PublishedItem[] = []) {
 function publishingPage(plugin: ReturnType<typeof stubPlugin>, showAdvanced = false): { page: Row; rows: Row[] } {
   plugin.settings.settingsShowAdvanced = showAdvanced;
   const tab = new ClaudeCompanionSettingTab(new App() as never, plugin as unknown as ClaudeCompanionPlugin);
-  const groups = tab.getSettingDefinitions() as unknown as Row[];
+  const groups = applyTiers(tab.getSettingsCatalog(), () => showAdvanced, plugin.settings) as unknown as Row[];
   const page = groups.flatMap((g) => (g.items ?? []) as Row[]).find((p) => p.name === "Publishing");
   if (!page) throw new Error("no Publishing page");
   return { page, rows: (page.items ?? []) as Row[] };

@@ -1,10 +1,10 @@
 import { App, TFile, normalizePath } from "obsidian";
-import type { McpToolDef } from "../protocol";
+import type { McpToolDef, ToolResult } from "../protocol";
 import type { ToolRecord } from "../toolRecord";
 import { ensureVaultFolder } from "../../vault/vaultFiles";
 import { hasPathTraversal } from "../../paths";
 
-type Run = (args: Record<string, unknown>) => Promise<string>;
+type Run = (args: Record<string, unknown>) => Promise<ToolResult>;
 
 export const read = (def: McpToolDef, run: Run, unavailable?: string): ToolRecord => ({ def, writes: false, run, ...(unavailable ? { unavailable } : {}) });
 export const write = (def: McpToolDef, run: Run, unavailable?: string): ToolRecord => ({ def, writes: true, run, ...(unavailable ? { unavailable } : {}) });

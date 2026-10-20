@@ -1,4 +1,4 @@
-import type { McpToolDef } from "../mcp/protocol";
+import { resultText, type McpToolDef, type ToolOutput } from "../mcp/protocol";
 import { advertise, type ToolRecord } from "../mcp/toolRecord";
 import { auditProject } from "./audit";
 import type { ResearchRepository } from "./repository";
@@ -33,6 +33,32 @@ const SOURCE_IMPORT_TITLE_RULE = {
   ],
 };
 
+const string = { type: "string" };
+const count = { type: "integer" };
+
+// counts and paths are keyed by record kind: sources, evidence, claims, questions, documents, issues.
+const PROJECT_READ_OUTPUT = {
+  type: "object",
+  properties: {
+    project: { type: "object", properties: { path: string, title: string, question: string, stage: string, status: string }, required: ["path", "title", "question", "stage"] },
+    health: { type: "object", additionalProperties: count },
+    counts: { type: "object", additionalProperties: count },
+    paths: { type: "object", additionalProperties: { type: "object", properties: { items: { type: "array", items: string }, omitted: count }, required: ["items", "omitted"] } },
+  },
+  required: ["project", "health", "counts", "paths"],
+};
+
+const AUDIT_OUTPUT = {
+  type: "object",
+  properties: {
+    findings: {
+      type: "array",
+      items: { type: "object", properties: { rule: string, code: string, severity: string, path: string, explanation: string, repair: string }, required: ["rule", "code", "severity"] },
+    },
+  },
+  required: ["findings"],
+};
+
 export class ResearchTools {
   constructor(
     private readonly repository: Repository,
@@ -48,14 +74,14 @@ export class ResearchTools {
     return [
       { writes: true, run: (args) => this.projectCreate(args), def: { name: "research_project_create", description: "Create a canonical vault-native research project after user confirmation.", inputSchema: object({ title: text("Project title."), question: text("Research question."), folder: text("Vault-relative project folder."), audience: text("Optional audience.") }, ["title", "question", "folder"]) } },
       { writes: true, run: (args) => this.sourceImport(args), def: { name: "research_source_import", description: "Import a canonical text capture or metadata-only source into a research project. Web sources with a url and no captured_text are fetched and reduced to clean readable markdown automatically. Zotero sources with a zotero_key resolve the title and bibliographic metadata from the configured Zotero library when missing. Newly imported sources are enriched with a summary, key claims, and topic tags. Binary sources require an existing vault asset and an adapter-supported path.", inputSchema: object({ ...project, title: text("Source title (optional for zotero sources whose key resolves)."), source_kind: text("pdf, web, doi, arxiv, zotero, or vault."), canonical_id: text("Optional stable identifier."), url: text("Optional source URL."), asset: text("Optional existing vault asset path."), captured_text: text("Optional canonical captured text (omit for web sources to auto-capture the page)."), doi: text("Optional DOI."), arxiv_id: text("Optional arXiv id."), zotero_key: text("Optional Zotero item key."), authors: { type: "array", items: { type: "string" } }, published: text("Optional publication date."), publication: text("Optional publication title."), abstract: text("Optional abstract.") }, ["project", "source_kind"], SOURCE_IMPORT_TITLE_RULE) } },
-      { writes: false, run: (args) => this.projectRead(args), def: { name: "research_project_read", description: "Read a compact research project snapshot with sources, evidence, claims, issues, and health.", inputSchema: object(project, ["project"]) } },
+      { writes: false, run: (args) => this.projectRead(args), def: { name: "research_project_read", description: "Read a compact research project snapshot with sources, evidence, claims, issues, and health.", inputSchema: object(project, ["project"]), outputSchema: PROJECT_READ_OUTPUT } },
       { writes: true, run: (args) => this.evidenceCapture(args), def: { name: "research_evidence_capture", description: "Create a provenance-linked evidence card inside a research project.", inputSchema: object({ ...project, source: text("Source record path in this project."), title: text("Evidence title."), excerpt: text("Exact source excerpt."), locator_kind: text("page, section, paragraph, timestamp, or quote."), locator_value: text("Exact locator text."), interpretation: text("Optional interpretation."), review_state: text("proposed, reviewed, or rejected.") }, ["project", "source", "title", "excerpt"]) } },
       { writes: true, run: (args) => this.evidenceReview(args), def: { name: "research_evidence_review", description: "Mark an evidence card reviewed or rejected. Reviewing re-checks the passage against the current source, which clears a stale warning. Optionally set the locator first.", inputSchema: object({ evidence: text("Evidence record path."), review_state: text("reviewed or rejected."), locator_kind: text("Optional: page, section, paragraph, timestamp, or quote."), locator_value: text("Optional exact locator text; requires locator_kind.") }, ["evidence", "review_state"]) } },
       { writes: true, run: (args) => this.evidenceLocate(args), def: { name: "research_evidence_locate", description: "Record where in the source an evidence card's passage comes from, which clears a missing-locator finding.", inputSchema: object({ evidence: text("Evidence record path."), locator_kind: text("page, section, paragraph, timestamp, or quote."), locator_value: text("Exact locator text, e.g. a page number.") }, ["evidence", "locator_kind", "locator_value"]) } },
       { writes: true, run: (args) => this.claimReview(args), def: { name: "research_claim_review", description: "Mark a claim reviewed or rejected; optionally record a limitation that answers challenging evidence.", inputSchema: object({ claim: text("Claim record path."), review_state: text("proposed, reviewed, or rejected."), limitation: text("Optional limitation to record on the claim.") }, ["claim", "review_state"]) } },
       { writes: true, run: (args) => this.claimCreate(args), def: { name: "research_claim_create", description: "Create a claim with separate supporting, challenging, and contextual evidence relations.", inputSchema: object({ ...project, title: text("Claim title."), proposition: text("Claim proposition."), confidence: text("low, moderate, or high."), review_state: text("proposed, reviewed, or rejected."), supports: { type: "array", items: { type: "string" } }, challenges: { type: "array", items: { type: "string" } }, contextualizes: { type: "array", items: { type: "string" } }, limitations: { type: "array", items: { type: "string" } } }, ["project", "title", "proposition"]) } },
       { writes: true, run: (args) => this.claimLink(args), def: { name: "research_claim_link", description: "Link evidence to a claim as supporting, challenging, or contextualizing.", inputSchema: object({ ...project, claim: text("Claim path."), evidence: text("Evidence path."), relation: text("supports, challenges, or contextualizes.") }, ["project", "claim", "evidence", "relation"]) } },
-      { writes: false, run: (args) => this.audit(args), def: { name: "research_audit", description: "Audit a research project and return actionable JSON findings.", inputSchema: object(project, ["project"]) } },
+      { writes: false, run: (args) => this.audit(args), def: { name: "research_audit", description: "Audit a research project and return actionable JSON findings.", inputSchema: object(project, ["project"]), outputSchema: AUDIT_OUTPUT } },
       { writes: true, run: (args) => this.outlineGenerate(args), def: { name: "research_outline_generate", description: "Create an evidence-backed outline preserving supporting, challenging, and contextual evidence provenance.", inputSchema: object({ ...project, claims: { type: "array", items: { type: "string" } } }, ["project", "claims"]) } },
     ];
   }
@@ -73,7 +99,7 @@ export class ResearchTools {
   async call(name: string, args: Args): Promise<string> {
     const record = this.record(name);
     if (!record) throw new Error(`Unknown research tool: ${name}`);
-    return record.run(args);
+    return resultText(await record.run(args));
   }
 
   private async projectCreate(args: Args): Promise<string> {
@@ -157,12 +183,12 @@ export class ResearchTools {
     return JSON.stringify({ ...result, ...extras });
   }
 
-  private async projectRead(args: Args): Promise<string> {
+  private async projectRead(args: Args): Promise<ToolOutput> {
     const project = requiredString(args.project);
     const snapshot = await this.repository.loadProject(project);
     const document = await documentSections(snapshot, (path) => this.repository.loadDraftSections(path));
     const stage = deriveResearchStage(snapshot, document?.sections.map(({ state }) => state));
-    return JSON.stringify({
+    const structured = {
       project: { path: compactString(snapshot.project.path), title: compactString(snapshot.project.title), question: compactString(snapshot.project.question, 500), stage, status: snapshot.project.status },
       health: snapshot.health,
       counts: { sources: snapshot.sources.length, evidence: snapshot.evidence.length, claims: snapshot.claims.length, questions: snapshot.questions.length, documents: snapshot.documents.length, issues: snapshot.issues.length },
@@ -170,11 +196,13 @@ export class ResearchTools {
         sources: pathSummary(snapshot.sources), evidence: pathSummary(snapshot.evidence), claims: pathSummary(snapshot.claims),
         questions: pathSummary(snapshot.questions), documents: pathSummary(snapshot.documents), issues: pathSummary(snapshot.issues),
       },
-    });
+    };
+    return { text: JSON.stringify(structured), structured };
   }
 
-  private async audit(args: Args): Promise<string> {
-    return JSON.stringify(auditProject(await this.repository.loadProject(requiredString(args.project), { refreshBinaryFingerprints: true })).map((finding) => ({ rule: finding.code, ...finding })));
+  private async audit(args: Args): Promise<ToolOutput> {
+    const findings = auditProject(await this.repository.loadProject(requiredString(args.project), { refreshBinaryFingerprints: true })).map((finding) => ({ rule: finding.code, ...finding }));
+    return { text: JSON.stringify(findings), structured: { findings } };
   }
 
   private async evidenceCapture(args: Args): Promise<string> {

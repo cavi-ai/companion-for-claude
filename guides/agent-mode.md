@@ -94,7 +94,7 @@ metadata).
 
 Companion is the two-way hub: as well as *serving* the vault over the bridge,
 the agent can *consume* tools from external MCP servers — configured under
-*Settings → External tools — MCP client* (HTTP servers work on mobile too;
+*Settings → Companion for Claude → Connect apps & tools → Add tool server* (HTTP servers work on mobile too;
 stdio commands run on desktop). Each server's tools appear to the model as
 `mcp__<server>__<tool>`, so they can never collide with vault tools. External
 calls are confirm-per-call like vault writes (the session grant covers them),
@@ -154,7 +154,7 @@ matter to you:
 
 ## Memory feeds back in
 
-With session memory on (*Settings → Companion for Claude → Session memory*,
+With session memory on (*Settings → Companion for Claude → Advanced settings → Files & privacy → Session memory*,
 desktop only, default folder `Claude/Sessions`), Claude Code session transcripts
 are digested into per-session notes, and those digests are consolidated into one
 evolving **"What Claude Knows"** note.
@@ -170,7 +170,7 @@ characters, oldest dropped first.
 
 ## Settings reference
 
-*Settings → Companion for Claude → Agent (act on your vault)*
+*Settings → Companion for Claude → Advanced settings → Vault access*
 
 | Setting | Default | Effect |
 |---|---|---|

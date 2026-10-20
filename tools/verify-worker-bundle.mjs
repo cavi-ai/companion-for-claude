@@ -28,13 +28,12 @@ try {
   console.error(`verify-worker-bundle: cannot read main.js — ${error instanceof Error ? error.message : String(error)}`);
   process.exit(1);
 }
-// main.js must carry the workers gzipped: a raw slice of either artifact means it was inlined as text again.
-for (const name of ["embed-worker", "pdf-worker"]) {
-  const worker = name === "embed-worker" ? src : await readFile(new URL(`../.build/${name}.txt`, import.meta.url), "utf8");
-  const marker = worker.slice('"use strict";'.length, '"use strict";'.length + 200);
-  if (marker.length < 200) failures.push(`${name} artifact is too short to carry a 200-char marker`);
-  else if (mainSrc.includes(marker)) failures.push(`main.js contains the raw ${name} text; it must be inlined gzipped`);
-}
+// main.js must carry the worker gzipped: a raw slice of the artifact means it was inlined as text again.
+const marker = src.slice('"use strict";'.length, '"use strict";'.length + 200);
+if (marker.length < 200) failures.push("embed-worker artifact is too short to carry a 200-char marker");
+else if (mainSrc.includes(marker)) failures.push("main.js contains the raw embed-worker text; it must be inlined gzipped");
+// PDF extraction uses Obsidian's own pdf.js; a bundled copy would add about 1 MB.
+if (mainSrc.includes("pdfjs-dist") || mainSrc.includes("GlobalWorkerOptions")) failures.push("main.js bundles pdf.js; use Obsidian's loadPdfJs()");
 
 // transformers.js is inlined, not CDN-loaded — the bundle can't be tiny.
 if (src.length <= 400_000) {

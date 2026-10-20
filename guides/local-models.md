@@ -13,7 +13,7 @@ You don't need the first to get the second.
 
 ## On-device GPU chat
 
-1. In *Settings → Companion for Claude → Connection*, choose **On-device GPU**
+1. In *Settings → Companion for Claude → Choose how I chat*, choose **On-device GPU**
    as the chat backend.
 2. Start with **SmolLM2 360M** (about 275 MB, the smaller default), or select
    **Qwen3 0.6B** (about 579 MB).
@@ -48,7 +48,7 @@ the plugin no longer offers the command that launches the helper app.
 
 ## Never lose functionality: the Auto backend
 
-*Settings → Companion for Claude → Connection → Chat backend*
+*Settings → Companion for Claude → Choose how I chat → Chat backend*
 
 | Backend | Behavior |
 |---|---|
@@ -135,7 +135,7 @@ selected at runtime.
 
 ## Semantic search
 
-*Settings → Companion for Claude → Semantic search (local embeddings)*
+*Settings → Companion for Claude → Capture and find knowledge*
 
 On by default. Builds a local vector index so the vault is searchable by
 **meaning**, not just keywords — powering the "Search vault" context chip,

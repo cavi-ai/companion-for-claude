@@ -1,4 +1,4 @@
-import { expect, test } from "./fixtures";
+import { expect, openSettingsSection, test } from "./fixtures";
 
 test("refused sends retain exact drafts and can be sent after correcting credentials", async ({ rig }, testInfo) => {
   const { page } = await rig.reset({
@@ -27,7 +27,7 @@ test("refused sends retain exact drafts and can be sent after correcting credent
   await input.fill(question);
   await page.screenshot({ path: testInfo.outputPath("refused-draft-retained.png") });
 
-  const settings = await rig.openSettings();
+  const settings = await openSettingsSection(rig, "Provider & model");
   const key = settings.locator("input[type='password'][placeholder*='sk-ant-api']");
   await key.fill("e2e-key");
   await key.blur();

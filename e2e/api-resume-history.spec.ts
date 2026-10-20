@@ -1,4 +1,4 @@
-import { dismissSettingsSurface, expect, test } from "./fixtures";
+import { dismissSettingsSurface, expect, openSettingsSection, test } from "./fixtures";
 import type { ContentBlock } from "../src/providers/types";
 
 const PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aS1sAAAAASUVORK5CYII=";
@@ -37,7 +37,7 @@ test("API Resume retains history after a CLI image conversation", async ({ rig }
     await input.fill("Describe the original chart.");
     await chat.getByRole("button", { name: /^Send(?: message)?$/ }).click();
     await expect(chat.locator(".cc-assistant .cc-body").last()).toHaveText("pong from claude code");
-    const settings = await rig.openSettings();
+    const settings = await openSettingsSection(rig, "Provider & model");
     const row = settings.locator(".setting-item").filter({ has: settings.locator(".setting-item-name").getByText("Chat backend", { exact: true }) });
     await row.getByRole("combobox").selectOption("claude");
     await expect.poll(() => page.evaluate(() => (window as unknown as AppWindow).app.plugins.plugins["claude-companion"]!.settings.chatBackend)).toBe("claude");

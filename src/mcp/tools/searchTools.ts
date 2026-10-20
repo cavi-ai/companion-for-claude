@@ -1,5 +1,6 @@
-import { App, TFile, normalizePath, getAllTags } from "obsidian";
+import { App, TFile, getAllTags } from "obsidian";
 import { vaultTagEntries } from "../../tags/vaultTags";
+import type { ToolOutput } from "../protocol";
 import type { ToolRecord } from "../toolRecord";
 import type { VaultToolsOptions } from "../vaultTools";
 import { tokenize } from "../../context/search";
@@ -9,6 +10,24 @@ import { loadedOntology } from "../../optimize/vaultGlue";
 import { assertVaultPath, num, optStr, read, resolveFile, str } from "./context";
 
 export const SEMANTIC_OFF_MESSAGE = "Semantic search is off. Enable it in Companion settings → Semantic search.";
+
+const string = { type: "string" };
+const paths = { type: "array", items: string };
+const list = (property: string, item: Record<string, unknown>, extra: Record<string, unknown> = {}, required: string[] = []) => ({
+  type: "object",
+  properties: { ...extra, [property]: { type: "array", items: item } },
+  required: [...required, property],
+});
+const entry = (properties: Record<string, unknown>, required: string[]) => ({ type: "object", properties, required });
+
+const SEARCH_OUTPUT = list("results", entry({ path: string, snippet: string, metadata: string }, ["path", "snippet"]), { mode: { type: "string", enum: ["keyword", "semantic + keyword"] } });
+const RELATED_OUTPUT = list("results", entry({ path: string, similarity: { type: "number" }, type: string }, ["path", "similarity"]), { path: string }, ["path"]);
+const RECENT_OUTPUT = list("notes", entry({ path: string, modified: { type: "string", format: "date-time" } }, ["path", "modified"]));
+const TAGS_OUTPUT = list("tags", entry({ tag: string, count: { type: "integer" } }, ["tag", "count"]));
+const TITLES_OUTPUT = list("notes", entry({ path: string, title: string }, ["path", "title"]));
+const BACKLINKS_OUTPUT = { type: "object", properties: { path: string, backlinks: paths }, required: ["path", "backlinks"] };
+const OUTGOING_OUTPUT = { type: "object", properties: { path: string, links: paths }, required: ["path", "links"] };
+const FRONTMATTER_OUTPUT = { type: "object", properties: { field: string, value: string, notes: paths }, required: ["field", "notes"] };
 
 export class SearchTools {
   constructor(
@@ -32,6 +51,7 @@ export class SearchTools {
           },
           required: ["query"],
         },
+        outputSchema: SEARCH_OUTPUT,
       }, async (args) => this.search(str(args.query), num(args.limit, 8), parseSearchFilter(args))),
       read({
         name: "related_notes",
@@ -44,6 +64,7 @@ export class SearchTools {
           },
           required: ["path"],
         },
+        outputSchema: RELATED_OUTPUT,
       }, async (args) => this.related(str(args.path), Math.min(Math.max(Math.trunc(num(args.limit, 8)), 1), 25))),
       read({
         name: "list_recent",
@@ -52,16 +73,19 @@ export class SearchTools {
           type: "object",
           properties: { limit: { type: "number", description: "Max results (default 15)." } },
         },
+        outputSchema: RECENT_OUTPUT,
       }, async (args) => this.listRecent(num(args.limit, 15))),
       read({
         name: "vault_tags",
         description: "List existing tags in the vault with usage counts, to reuse consistent tags.",
         inputSchema: { type: "object", properties: {} },
+        outputSchema: TAGS_OUTPUT,
       }, async () => this.tags()),
       read({
         name: "list_titles",
         description: "List every Markdown note in the vault as 'path — title', for link/MOC awareness.",
         inputSchema: { type: "object", properties: {} },
+        outputSchema: TITLES_OUTPUT,
       }, async () => this.listTitles()),
       read({
         name: "get_backlinks",
@@ -71,6 +95,7 @@ export class SearchTools {
           properties: { path: { type: "string", description: "Vault-relative path to the note." } },
           required: ["path"],
         },
+        outputSchema: BACKLINKS_OUTPUT,
       }, async (args) => this.backlinks(str(args.path))),
       read({
         name: "get_outgoing_links",
@@ -80,6 +105,7 @@ export class SearchTools {
           properties: { path: { type: "string", description: "Vault-relative path to the note." } },
           required: ["path"],
         },
+        outputSchema: OUTGOING_OUTPUT,
       }, async (args) => this.outgoingLinks(str(args.path))),
       read({
         name: "frontmatter_query",
@@ -92,11 +118,12 @@ export class SearchTools {
           },
           required: ["field"],
         },
+        outputSchema: FRONTMATTER_OUTPUT,
       }, async (args) => this.frontmatterQuery(str(args.field), optStr(args.value))),
     ];
   }
 
-  private async search(query: string, limit: number, filter: SearchFilter | null): Promise<string> {
+  private async search(query: string, limit: number, filter: SearchFilter | null): Promise<ToolOutput> {
     const terms = tokenize(query);
     const registry = filter?.type !== undefined ? await loadedOntology(this.opts.ontology?.() ?? null) : null;
     const lineageOf = registry ? (type: string) => registry.resolve(type)?.lineage : undefined;
@@ -119,19 +146,17 @@ export class SearchTools {
     }
 
     if (keyword.length === 0 && semantic.length === 0) {
-      if (terms.length === 0 && !this.opts.semantic) return "No searchable terms in query.";
-      return filter ? `No matches for "${query}" (${describeFilter(filter)}).` : `No matches for "${query}".`;
+      if (terms.length === 0 && !this.opts.semantic) return { text: "No searchable terms in query.", structured: { results: [] } };
+      return { text: filter ? `No matches for "${query}" (${describeFilter(filter)}).` : `No matches for "${query}".`, structured: { results: [] } };
     }
 
-    const fused = fuseKeywordAndSemantic(keyword, semantic, limit);
     const mode = semantic.length ? "semantic + keyword" : "keyword";
-    const body = fused
-      .map((f) => {
-        const meta = hitMetadata(this.noteMeta(f.path)?.frontmatter);
-        return `## ${f.path}\n${meta ? `${meta}\n` : ""}${f.snippet}`;
-      })
-      .join("\n\n");
-    return `(${mode} search)\n\n${body}`;
+    const results = fuseKeywordAndSemantic(keyword, semantic, limit).map((f) => {
+      const metadata = hitMetadata(this.noteMeta(f.path)?.frontmatter);
+      return { path: f.path, snippet: f.snippet, ...(metadata ? { metadata } : {}) };
+    });
+    const body = results.map((r) => `## ${r.path}\n${r.metadata ? `${r.metadata}\n` : ""}${r.snippet}`).join("\n\n");
+    return { text: `(${mode} search)\n\n${body}`, structured: { mode, results } };
   }
 
   private noteMeta(path: string): { frontmatter: Record<string, unknown> | undefined; tags: string[] } | null {
@@ -141,67 +166,69 @@ export class SearchTools {
     return { frontmatter: cache?.frontmatter as Record<string, unknown> | undefined, tags: cache ? getAllTags(cache) ?? [] : [] };
   }
 
-  private async related(path: string, limit: number): Promise<string> {
+  private async related(path: string, limit: number): Promise<ToolOutput> {
     if (!this.opts.related) throw new Error(SEMANTIC_OFF_MESSAGE);
     const file = resolveFile(this.app, assertVaultPath(path));
-    const hits = await this.opts.related(file.path, limit);
-    if (hits.length === 0) return `No related notes for ${file.path} (index empty or note not indexed).`;
-    return hits
-      .map((h) => {
-        const type = this.noteMeta(h.path)?.frontmatter?.type;
-        return `- ${h.path} (similarity ${h.score.toFixed(2)})${typeof type === "string" && type ? ` · type: ${type}` : ""}`;
-      })
-      .join("\n");
+    const results = (await this.opts.related(file.path, limit)).map((h) => {
+      const type = this.noteMeta(h.path)?.frontmatter?.type;
+      return { path: h.path, similarity: h.score, ...(typeof type === "string" && type ? { type } : {}) };
+    });
+    const structured = { path: file.path, results };
+    if (results.length === 0) return { text: `No related notes for ${file.path} (index empty or note not indexed).`, structured };
+    return { text: results.map((r) => `- ${r.path} (similarity ${r.similarity.toFixed(2)})${r.type ? ` · type: ${r.type}` : ""}`).join("\n"), structured };
   }
 
-  private async listRecent(limit: number): Promise<string> {
-    const files = this.app.vault
+  private async listRecent(limit: number): Promise<ToolOutput> {
+    const notes = this.app.vault
       .getMarkdownFiles()
       .sort((a, b) => b.stat.mtime - a.stat.mtime)
-      .slice(0, limit);
-    if (files.length === 0) return "Vault has no notes.";
-    return files.map((f) => `- ${f.path} (modified ${new Date(f.stat.mtime).toISOString().slice(0, 16).replace("T", " ")})`).join("\n");
+      .slice(0, limit)
+      .map((f) => ({ path: f.path, modified: new Date(f.stat.mtime).toISOString() }));
+    if (notes.length === 0) return { text: "Vault has no notes.", structured: { notes } };
+    return { text: notes.map((n) => `- ${n.path} (modified ${n.modified.slice(0, 16).replace("T", " ")})`).join("\n"), structured: { notes } };
   }
 
   private resolvedLinks(): Record<string, Record<string, number>> {
     return (this.app.metadataCache as unknown as { resolvedLinks?: Record<string, Record<string, number>> }).resolvedLinks ?? {};
   }
 
-  private async backlinks(target: string): Promise<string> {
-    const t = normalizePath(target);
+  private async backlinks(target: string): Promise<ToolOutput> {
+    const t = resolveFile(this.app, assertVaultPath(target)).path;
     const links = this.resolvedLinks();
     const sources = Object.keys(links).filter((src) => src !== t && links[src] && t in links[src]);
     sources.sort();
-    if (sources.length === 0) return `No backlinks to ${t}.`;
-    return sources.map((s) => `- ${s}`).join("\n");
+    const structured = { path: t, backlinks: sources };
+    if (sources.length === 0) return { text: `No backlinks to ${t}.`, structured };
+    return { text: sources.map((s) => `- ${s}`).join("\n"), structured };
   }
 
-  private async outgoingLinks(source: string): Promise<string> {
-    const s = normalizePath(source);
+  private async outgoingLinks(source: string): Promise<ToolOutput> {
+    const s = resolveFile(this.app, assertVaultPath(source)).path;
     const targets = Object.keys(this.resolvedLinks()[s] ?? {}).sort();
-    if (targets.length === 0) return `${s} has no outgoing links.`;
-    return targets.map((t) => `- ${t}`).join("\n");
+    const structured = { path: s, links: targets };
+    if (targets.length === 0) return { text: `${s} has no outgoing links.`, structured };
+    return { text: targets.map((t) => `- ${t}`).join("\n"), structured };
   }
 
-  private async listTitles(): Promise<string> {
-    const files = this.app.vault.getMarkdownFiles().sort((a, b) => a.path.localeCompare(b.path));
-    if (files.length === 0) return "Vault has no notes.";
-    return files.map((f) => `- ${f.path} — ${f.basename}`).join("\n");
+  private async listTitles(): Promise<ToolOutput> {
+    const notes = this.app.vault.getMarkdownFiles().sort((a, b) => a.path.localeCompare(b.path)).map((f) => ({ path: f.path, title: f.basename }));
+    if (notes.length === 0) return { text: "Vault has no notes.", structured: { notes } };
+    return { text: notes.map((n) => `- ${n.path} — ${n.title}`).join("\n"), structured: { notes } };
   }
 
-  private async tags(): Promise<string> {
+  private async tags(): Promise<ToolOutput> {
     const counts = new Map<string, number>();
     for (const entry of vaultTagEntries(this.app)) {
       for (const tag of entry.tags) counts.set(tag, (counts.get(tag) ?? 0) + 1);
     }
-    if (counts.size === 0) return "No tags in the vault yet.";
-    return Array.from(counts.entries())
+    const tags = Array.from(counts.entries())
       .sort((a, b) => b[1] - a[1])
-      .map(([t, c]) => `- #${t} (${c})`)
-      .join("\n");
+      .map(([tag, count]) => ({ tag, count }));
+    if (tags.length === 0) return { text: "No tags in the vault yet.", structured: { tags } };
+    return { text: tags.map((t) => `- #${t.tag} (${t.count})`).join("\n"), structured: { tags } };
   }
 
-  private async frontmatterQuery(field: string, value: string | undefined): Promise<string> {
+  private async frontmatterQuery(field: string, value: string | undefined): Promise<ToolOutput> {
     const hits: string[] = [];
     for (const file of this.app.vault.getMarkdownFiles()) {
       const fm = this.app.metadataCache.getFileCache(file)?.frontmatter as Record<string, unknown> | undefined;
@@ -214,7 +241,8 @@ export class SearchTools {
       if (Array.isArray(v) ? v.map(String).includes(value) : String(v) === value) hits.push(file.path);
     }
     hits.sort();
-    if (hits.length === 0) return value === undefined ? `No notes have frontmatter field "${field}".` : `No notes where ${field} = "${value}".`;
-    return hits.map((p) => `- ${p}`).join("\n");
+    const structured = { field, ...(value === undefined ? {} : { value }), notes: hits };
+    if (hits.length === 0) return { text: value === undefined ? `No notes have frontmatter field "${field}".` : `No notes where ${field} = "${value}".`, structured };
+    return { text: hits.map((p) => `- ${p}`).join("\n"), structured };
   }
 }

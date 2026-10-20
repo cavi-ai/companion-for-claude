@@ -1,7 +1,7 @@
 // The chat-scoped bridge's registry: the run's tool access over the vault tools, the CLI's permission prompt, and the diff-reviewed edit. Pure; modals are injected.
 
 import { PROPOSE_EDIT_DEF, toolAccess, type ToolAccess, type ToolRunKind } from "../agent/toolAccess";
-import type { McpToolDef } from "../mcp/protocol";
+import { resultText, type McpToolDef, type ToolResult } from "../mcp/protocol";
 import type { ToolRegistry } from "../mcp/server";
 import type { ToolUseBlock } from "../providers/types";
 import { CLI_PERMISSION_TOOL, cliToolName, stripCliToolName } from "./argv";
@@ -63,25 +63,27 @@ export function bridgeTools(base: ToolRegistry, binding: BridgeBinding): ToolReg
     const defs = base.definitions();
     return { defs, access: toolAccess(run, defs) };
   };
+  const output = async (name: string, args: Record<string, unknown>): Promise<ToolResult> => {
+    if (permissionPrompt && name === CLI_PERMISSION_TOOL) {
+      const block = parsePermissionPromptArgs(args);
+      return permissionPromptResult(await deps.confirmWrite(block), block.input);
+    }
+    const decision = current().access.decide(name);
+    if (decision === "deny") throw new Error(binding.unavailable?.(name) ?? `Tool unavailable in this run: ${name}.`);
+    if (decision === "propose") return deps.proposeEdit({ type: "tool_use", id: "cli", name, input: args });
+    if (decision === "confirm" && !permissionPrompt) {
+      const allowed = await deps.confirmWrite({ type: "tool_use", id: "cli", name, input: args });
+      if (!allowed) return WRITE_DECLINED_RESULT;
+    }
+    return base.output ? base.output(name, args) : base.call(name, args);
+  };
   return {
     definitions: () => {
       const { defs, access } = current();
       const offered = access.offered([...defs, PROPOSE_EDIT_DEF]);
       return permissionPrompt ? [...offered, PERMISSION_PROMPT_MCP_DEF] : offered;
     },
-    call: async (name, args) => {
-      if (permissionPrompt && name === CLI_PERMISSION_TOOL) {
-        const block = parsePermissionPromptArgs(args);
-        return permissionPromptResult(await deps.confirmWrite(block), block.input);
-      }
-      const decision = current().access.decide(name);
-      if (decision === "deny") throw new Error(binding.unavailable?.(name) ?? `Tool unavailable in this run: ${name}.`);
-      if (decision === "propose") return deps.proposeEdit({ type: "tool_use", id: "cli", name, input: args });
-      if (decision === "confirm" && !permissionPrompt) {
-        const allowed = await deps.confirmWrite({ type: "tool_use", id: "cli", name, input: args });
-        if (!allowed) return WRITE_DECLINED_RESULT;
-      }
-      return base.call(name, args);
-    },
+    call: async (name, args) => resultText(await output(name, args)),
+    output,
   };
 }

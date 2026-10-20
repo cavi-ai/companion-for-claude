@@ -1,9 +1,9 @@
-import { expect, test } from "./fixtures";
+import { expect, openSettingsSection, test } from "./fixtures";
 
 test("device backend exposes its download controls and fails closed without cached weights", async ({ rig }) => {
   const harness = await rig.reset({ settingsOverride: { chatBackend: "device", deviceChatModel: "smollm2-360m", apiKey: "", agentModeEnabled: false } });
   const page = harness.page;
-  const settings = await harness.openSettings();
+  const settings = await openSettingsSection(harness, "Provider & model");
   const tab = settings.locator(".vertical-tab-content-container .vertical-tab-content").last();
   await expect(tab.getByText("On-device model", { exact: true })).toBeVisible();
   await expect(tab.getByRole("button", { name: "Download model", exact: true })).toBeVisible();

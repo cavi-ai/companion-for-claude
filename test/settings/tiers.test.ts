@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { App, type SettingDefinitionItem } from "../fakes/obsidian";
 import { ClaudeCompanionSettingTab } from "../../src/settings";
+import { applyTiers } from "../../src/settingsItems/tiers";
 import { DEFAULT_SETTINGS } from "../../src/types";
 import { unavailableStore } from "../../src/secrets/store";
 import { fakeSemantic } from "../fakes/semantic";
@@ -37,8 +38,9 @@ function stubPlugin(showAdvanced = false, overrides: Record<string, unknown> = {
 }
 
 function definitionsOf(showAdvanced = false, overrides: Record<string, unknown> = {}): Tiered[] {
-  const tab = new ClaudeCompanionSettingTab(new App() as never, stubPlugin(showAdvanced, overrides));
-  return tab.getSettingDefinitions() as unknown as Tiered[];
+  const plugin = stubPlugin(showAdvanced, overrides);
+  const tab = new ClaudeCompanionSettingTab(new App() as never, plugin);
+  return applyTiers(tab.getSettingsCatalog(), () => showAdvanced, plugin.settings) as unknown as Tiered[];
 }
 
 function isContainerOrPage(item: Tiered): boolean {

@@ -85,6 +85,17 @@ describe("handleRpc", () => {
     expect(r?.result).toMatchObject({ isError: true, content: [{ type: "text", text: "boom" }] });
   });
 
+  it("tools/call refuses arguments that violate the input schema without running the tool", async () => {
+    let ran = false;
+    const typed: McpToolDef[] = [{ name: "list_recent", description: "recent", inputSchema: { type: "object", properties: { limit: { type: "number" } } } }];
+    const run = { ...ctx(async () => { ran = true; return "ran"; }), tools: typed };
+    const wrongType = await handleRpc({ jsonrpc: "2.0", id: 9, method: "tools/call", params: { name: "list_recent", arguments: { limit: "mcpeval" } } }, run);
+    expect(wrongType?.result).toEqual({ isError: true, content: [{ type: "text", text: "Invalid arguments for list_recent: limit must be a number." }] });
+    const notAnObject = await handleRpc({ jsonrpc: "2.0", id: 10, method: "tools/call", params: { name: "list_recent", arguments: ["x"] } }, run);
+    expect(notAnObject?.result).toEqual({ isError: true, content: [{ type: "text", text: "Invalid arguments for list_recent: arguments must be an object." }] });
+    expect(ran).toBe(false);
+  });
+
   it("the initialized notification yields no response", async () => {
     const r = await handleRpc({ jsonrpc: "2.0", method: "notifications/initialized" }, ctx());
     expect(r).toBeNull();

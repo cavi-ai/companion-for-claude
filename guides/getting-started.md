@@ -27,7 +27,7 @@ direct API credential or a local model.
 The simple path on every device is an Anthropic API key:
 
 1. Open the [Anthropic Console → API keys](https://console.anthropic.com/settings/keys) and create a key.
-2. In Obsidian, go to *Settings → Companion for Claude → Connection*.
+2. In Obsidian, go to *Settings → Companion for Claude → Choose how I chat*.
 3. Leave **Authentication** on **API key** and paste the key into **Anthropic API key**.
 4. Click **Save & test connection**. A green result means you're done.
 
@@ -66,7 +66,7 @@ Try: open a note with some substance, toggle **Active note**, and ask
 
 Companion trims attached context to a character budget (default 24,000
 characters, 6 notes) so a big vault can't blow up a request. Both are adjustable
-under *Settings → Companion for Claude → Behavior*.
+under *Settings → Companion for Claude → Advanced settings → Chat & models → Prompts & context*.
 
 
 ## 4. Your first artifact
@@ -105,11 +105,11 @@ step it takes shows up as a tool chip you can expand.
 
 ![Agent mode showing vault search and note read tool calls, with one result expanded](../assets/agent-tool-chips.png)
 
-Under *Settings → Companion for Claude → Agent (act on your vault)*:
+Under *Settings → Companion for Claude → Advanced settings → Vault access*:
 
-- **Let Claude use vault tools** — the read-only loop (search, read, follow links). On by default. Turn it off for plain chat with only pre-attached context.
-- **Allow write tools** — also lets Claude create, edit, and move notes. On by default, and **every single write asks you first**.
-- **Max tool iterations per turn** — how many search/read/write rounds Claude may take before it has to answer. Default 10.
+- **Read and search notes** — the read-only loop (search, read, follow links). On by default. Turn it off for plain chat with only pre-attached context.
+- **Create and edit notes** — also lets Claude create, edit, and move notes. On by default, and **every single write asks you first**.
+- **Max tool iterations per turn** (under **Agent behavior**) — how many search/read/write rounds Claude may take before it has to answer. Default 10.
 
 Note edits are a separate, safer path: Claude proposes exact replacements. If
 the target note is open, you review word-level changes directly in the editor;

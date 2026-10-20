@@ -1,6 +1,6 @@
 import { stat } from "node:fs/promises";
 import { join } from "node:path";
-import { expect, test } from "./fixtures";
+import { expect, openSettingsSection, test } from "./fixtures";
 
 test("a reset starts a clean vault and stock settings, not the previous scenario's", async ({ rig }) => {
   const first = await rig.reset({
@@ -9,7 +9,7 @@ test("a reset starts a clean vault and stock settings, not the previous scenario
   });
   const processId = first.processId;
   await expect.poll(() => stat(join(first.paths.vault, "Transient.md")).then(() => true, () => false)).toBe(true);
-  const firstSettings = await first.openSettings();
+  const firstSettings = await openSettingsSection(first, "Provider & model");
   const firstTab = firstSettings.locator(".vertical-tab-content-container .vertical-tab-content").last();
   const firstCustomModel = firstTab.locator(".setting-item", { has: firstSettings.getByText("Custom model id", { exact: true }) }).locator("input");
   await expect(firstCustomModel).toHaveValue("temporary-e2e-model");
@@ -17,7 +17,7 @@ test("a reset starts a clean vault and stock settings, not the previous scenario
   const second = await rig.reset();
   expect(second.processId).toBe(processId);
   await expect.poll(() => stat(join(second.paths.vault, "Transient.md")).then(() => true, () => false)).toBe(false);
-  const settingsPage = await second.openSettings();
+  const settingsPage = await openSettingsSection(second, "Provider & model");
   const tab = settingsPage.locator(".vertical-tab-content-container .vertical-tab-content").last();
   const customModel = tab.locator(".setting-item", { has: settingsPage.getByText("Custom model id", { exact: true }) }).locator("input");
   await expect(customModel).toHaveValue("");

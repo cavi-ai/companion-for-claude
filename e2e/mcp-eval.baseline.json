@@ -1,0 +1,195 @@
+{
+  "cases": [],
+  "gate": null,
+  "generator": {
+    "name": "mcpeval",
+    "version": "0.7.1"
+  },
+  "manifest_sha256": null,
+  "passed": true,
+  "readiness": {
+    "areas": [
+      {
+        "checks": [],
+        "measurements": {},
+        "name": "protocol",
+        "score": 100,
+        "weight": 15
+      },
+      {
+        "checks": [],
+        "measurements": {},
+        "name": "catalog",
+        "score": 100,
+        "weight": 20
+      },
+      {
+        "checks": [],
+        "measurements": {
+          "catalog_tokens": 1993,
+          "heaviest_tool_tokens": 321
+        },
+        "name": "context",
+        "score": 100,
+        "weight": 15
+      },
+      {
+        "checks": [],
+        "measurements": {},
+        "name": "error-honesty",
+        "score": 100,
+        "weight": 15
+      },
+      {
+        "checks": [
+          {
+            "hint": "make valid read-only calls succeed; consistent tool errors are failures, not evidence of reliability",
+            "id": "reliability.success",
+            "observed": 0,
+            "reason": "reliability-call-failed",
+            "score": 0,
+            "tool": "related_notes"
+          },
+          {
+            "hint": "make valid read-only calls succeed; consistent tool errors are failures, not evidence of reliability",
+            "id": "reliability.success",
+            "observed": 0,
+            "reason": "reliability-call-failed",
+            "score": 0,
+            "tool": "note_read"
+          },
+          {
+            "hint": "make valid read-only calls succeed; consistent tool errors are failures, not evidence of reliability",
+            "id": "reliability.success",
+            "observed": 0,
+            "reason": "reliability-call-failed",
+            "score": 0,
+            "tool": "get_backlinks"
+          },
+          {
+            "hint": "make valid read-only calls succeed; consistent tool errors are failures, not evidence of reliability",
+            "id": "reliability.success",
+            "observed": 0,
+            "reason": "reliability-call-failed",
+            "score": 0,
+            "tool": "get_outgoing_links"
+          },
+          {
+            "hint": "make valid read-only calls succeed; consistent tool errors are failures, not evidence of reliability",
+            "id": "reliability.success",
+            "observed": 0,
+            "reason": "reliability-call-failed",
+            "score": 0,
+            "tool": "research_project_read"
+          },
+          {
+            "hint": "make valid read-only calls succeed; consistent tool errors are failures, not evidence of reliability",
+            "id": "reliability.success",
+            "observed": 0,
+            "reason": "reliability-call-failed",
+            "score": 0,
+            "tool": "research_audit"
+          }
+        ],
+        "measurements": {
+          "rejected_calls": 0,
+          "rpc_errors": 0,
+          "successful_calls": 18,
+          "tool_errors": 18,
+          "transport_errors": 0,
+          "untested_tools": 0
+        },
+        "name": "reliability",
+        "score": 57,
+        "weight": 20
+      },
+      {
+        "checks": [
+          {
+            "hint": "no call succeeded: each returned a tool or JSON-RPC error, timed out, closed the connection, or broke the protocol exchange; a read-only tool must answer valid calls successfully within 15 seconds without ending the session",
+            "id": "coverage.exercised",
+            "observed": null,
+            "reason": "coverage-call-failed",
+            "score": 0,
+            "tool": "related_notes"
+          },
+          {
+            "hint": "no call succeeded: each returned a tool or JSON-RPC error, timed out, closed the connection, or broke the protocol exchange; a read-only tool must answer valid calls successfully within 15 seconds without ending the session",
+            "id": "coverage.exercised",
+            "observed": null,
+            "reason": "coverage-call-failed",
+            "score": 0,
+            "tool": "note_read"
+          },
+          {
+            "hint": "no call succeeded: each returned a tool or JSON-RPC error, timed out, closed the connection, or broke the protocol exchange; a read-only tool must answer valid calls successfully within 15 seconds without ending the session",
+            "id": "coverage.exercised",
+            "observed": null,
+            "reason": "coverage-call-failed",
+            "score": 0,
+            "tool": "get_backlinks"
+          },
+          {
+            "hint": "no call succeeded: each returned a tool or JSON-RPC error, timed out, closed the connection, or broke the protocol exchange; a read-only tool must answer valid calls successfully within 15 seconds without ending the session",
+            "id": "coverage.exercised",
+            "observed": null,
+            "reason": "coverage-call-failed",
+            "score": 0,
+            "tool": "get_outgoing_links"
+          },
+          {
+            "hint": "no call succeeded: each returned a tool or JSON-RPC error, timed out, closed the connection, or broke the protocol exchange; a read-only tool must answer valid calls successfully within 15 seconds without ending the session",
+            "id": "coverage.exercised",
+            "observed": null,
+            "reason": "coverage-call-failed",
+            "score": 0,
+            "tool": "research_project_read"
+          },
+          {
+            "hint": "no call succeeded: each returned a tool or JSON-RPC error, timed out, closed the connection, or broke the protocol exchange; a read-only tool must answer valid calls successfully within 15 seconds without ending the session",
+            "id": "coverage.exercised",
+            "observed": null,
+            "reason": "coverage-call-failed",
+            "score": 0,
+            "tool": "research_audit"
+          }
+        ],
+        "measurements": {},
+        "name": "coverage",
+        "score": 50,
+        "weight": 15
+      }
+    ],
+    "assessment": {
+      "read_only_tools": 12,
+      "scope": "read-only-structural",
+      "semantic_correctness": "requires-reviewed-oracle",
+      "tools_exercised": 6,
+      "writer_tools_excluded": 0
+    },
+    "attested_read_only": false,
+    "badge": "https://img.shields.io/badge/mcpeval-84%2F100-brightgreen",
+    "measurement_profile": {
+      "architecture": "aarch64",
+      "attested_read_only": false,
+      "call_timeout_ms": 15000,
+      "client_capabilities": "none",
+      "evaluator_version": "0.7.1",
+      "platform": "macos",
+      "repeats": 3,
+      "schema": "mcpeval.measurement-profile/v1",
+      "skip_tools": []
+    },
+    "score": 84,
+    "standard": "mcpeval-standard/2",
+    "surface": {
+      "exercised": 6,
+      "read_only": 12,
+      "tools": 12,
+      "writers": 0
+    }
+  },
+  "readiness_error": null,
+  "schema": "mcpeval.probe-report/v2",
+  "server": "claude-companion"
+}

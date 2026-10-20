@@ -1,4 +1,4 @@
-import { dismissSettingsSurface, expect, test } from "./fixtures";
+import { dismissSettingsSurface, expect, openSettingsSection, test } from "./fixtures";
 import { readFile } from "node:fs/promises";
 import type { ContentBlock } from "../src/providers/types";
 
@@ -30,7 +30,7 @@ for (const reload of [false, true]) {
     await chat.getByRole("button", { name: /^Send(?: message)?$/ }).click();
     await expect(chat.locator(".cc-assistant .cc-body").last()).toHaveText("API received the chart.");
     if (reload) await rig.reloadPlugin();
-    const settings = await rig.openSettings();
+    const settings = await openSettingsSection(rig, "Provider & model");
     const backend = settings.locator(".setting-item").filter({ has: settings.locator(".setting-item-name").getByText("Chat backend", { exact: true }) });
     await backend.getByRole("combobox").selectOption("claude-cli");
     await expect.poll(() => page.evaluate(() => (window as unknown as AppWindow).app.plugins.plugins["claude-companion"]!.settings.chatBackend)).toBe("claude-cli");

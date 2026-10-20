@@ -75,11 +75,6 @@ export interface ClaudeCodePluginState {
   enabled: boolean;
 }
 
-export interface ClaudeDesktopServer {
-  command: string;
-  args: string[];
-}
-
 export class DesktopIntegrationError extends Error {
   constructor(
     readonly stage: string,
@@ -184,32 +179,6 @@ export function claudeCodeSetupPlan(state: ClaudeCodeInspection, platform: Deskt
     });
   }
   return commands;
-}
-
-export function mergeClaudeDesktopConfig(source: string | null, server: ClaudeDesktopServer): string {
-  let root: Record<string, unknown> = {};
-  if (source?.trim()) {
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(source) as unknown;
-    } catch {
-      throw new DesktopIntegrationError("Configure Claude Desktop", "Claude Desktop configuration contains malformed JSON.");
-    }
-    if (!isRecord(parsed)) {
-      throw new DesktopIntegrationError("Configure Claude Desktop", "Claude Desktop configuration must be a JSON object.");
-    }
-    root = { ...parsed };
-  }
-
-  const currentServers = root.mcpServers;
-  if (currentServers !== undefined && !isRecord(currentServers)) {
-    throw new DesktopIntegrationError("Configure Claude Desktop", "Claude Desktop mcpServers must be a JSON object.");
-  }
-  root.mcpServers = {
-    ...(currentServers ?? {}),
-    "obsidian-vault": { command: server.command, args: [...server.args] },
-  };
-  return `${JSON.stringify(root, null, 2)}\n`;
 }
 
 export function sanitizeDesktopError(message: string, secrets: string[] = []): string {

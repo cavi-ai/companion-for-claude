@@ -1,14 +1,13 @@
 import { chmod, mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { expect, test } from "./fixtures";
+import { expect, openSettingsSection, test } from "./fixtures";
 
 /** The PATH macOS gives an app launched from the Dock or Finder. */
 const GUI_PATH = "/usr/bin:/bin:/usr/sbin:/sbin";
 
 test("Codex and OpenCode installed on the login-shell PATH are found when Obsidian runs with the GUI PATH", async ({ rig }) => {
-  // The Codex/OpenCode status rows are advanced-tier and hidden by default.
-  const harness = await rig.reset({ settingsOverride: { settingsShowAdvanced: true } });
+  const harness = await rig.reset();
   try {
     const root = await mkdtemp(join(tmpdir(), "cc-cli-discovery-"));
     const bin = join(root, "shellbin");
@@ -38,7 +37,7 @@ esac
     // isn't served from cache.
     await rig.reloadPlugin();
 
-    const settingsPage = await harness.openSettings();
+    const settingsPage = await openSettingsSection(harness, "Provider & model");
     const tab = settingsPage.locator(".vertical-tab-content-container .vertical-tab-content").last();
     // The `has` locator must be page-relative, not re-prefixed with `tab`'s own
     // ancestor chain, or it never matches inside each candidate's subtree.

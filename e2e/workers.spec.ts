@@ -33,7 +33,7 @@ type AppHandle = {
   vault: { createBinary(path: string, data: ArrayBuffer): Promise<unknown>; adapter: { read(path: string): Promise<string> } };
 };
 
-test("the bundled pdf.js worker extracts text from a vault PDF through the semantic index", async ({ rig }) => {
+test("Obsidian's pdf.js extracts text from a vault PDF through the semantic index", async ({ rig }) => {
   const { page } = await rig.reset({ embedStub: true });
   const base64 = textPdf("zebracorn").toString("base64");
   await page.evaluate(async (data) => {

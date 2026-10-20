@@ -1,4 +1,5 @@
 onlyBuiltDependencies:
+  - "@cavi-ai/mcp-eval"
   - esbuild
 
 overrides:

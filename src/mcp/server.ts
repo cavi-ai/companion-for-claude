@@ -1,10 +1,12 @@
-import { handleRpc, validateRequest, err, RPC, SUPPORTED_PROTOCOL_VERSIONS, type JsonRpcResponse, type ServerInfo, type McpToolDef, type ResourceProvider, type PromptProvider } from "./protocol";
+import { handleRpc, validateRequest, err, RPC, SUPPORTED_PROTOCOL_VERSIONS, type JsonRpcResponse, type ServerInfo, type McpToolDef, type ResourceProvider, type PromptProvider, type ToolResult } from "./protocol";
 import { HIDDEN_RESEARCH_TOOL_ALIASES } from "../research/tools";
 
 /** What the bridge serves: VaultTools, or a facade over it. */
 export interface ToolRegistry {
   definitions(): McpToolDef[];
   call(name: string, args: Record<string, unknown>): Promise<string>;
+  /** The full result; a registry whose definitions declare an outputSchema must provide it. */
+  output?(name: string, args: Record<string, unknown>): Promise<ToolResult>;
 }
 
 // The MCP server is desktop-only and reached via a guarded dynamic import (see
@@ -236,7 +238,7 @@ export class McpHttpServer {
       const responses: JsonRpcResponse[] = [];
       let session: string | undefined;
       for (const item of parsed) {
-        const r = await this.dispatch(item);
+        const r = await this.dispatch(item, sessionId);
         if (r.response) responses.push(r.response);
         if (r.session) session = r.session;
       }
@@ -244,7 +246,7 @@ export class McpHttpServer {
       return;
     }
 
-    const { response, session } = await this.dispatch(parsed);
+    const { response, session } = await this.dispatch(parsed, sessionId);
     if (response === null) {
       res.writeHead(202); // notification accepted, no body
       res.end();
@@ -253,7 +255,7 @@ export class McpHttpServer {
     this.send(res, response, session);
   }
 
-  private async dispatch(value: unknown): Promise<{ response: JsonRpcResponse | null; session?: string }> {
+  private async dispatch(value: unknown, sessionId?: string): Promise<{ response: JsonRpcResponse | null; session?: string }> {
     const { req, error } = validateRequest(value);
     if (error || !req) return { response: err((value as { id?: string | number })?.id ?? null, error?.code ?? RPC.INVALID_REQUEST, error?.message ?? "Invalid request") };
     try {
@@ -263,10 +265,11 @@ export class McpHttpServer {
         hiddenTools: this.hiddenTools,
         ...(this.config.resources ? { resources: this.config.resources } : {}),
         ...(this.config.prompts ? { prompts: this.config.prompts } : {}),
-        call: (name, args) => this.tools.call(name, args),
+        call: (name, args) => (this.tools.output ? this.tools.output(name, args) : this.tools.call(name, args)),
       });
       if (req.method === "initialize" && response && !response.error) {
-        const session = window.crypto.randomUUID();
+        // A live session that initializes again keeps its id; a new handshake opens one.
+        const session = sessionId ?? window.crypto.randomUUID();
         this.sessions.add(session);
         return { response, session };
       }

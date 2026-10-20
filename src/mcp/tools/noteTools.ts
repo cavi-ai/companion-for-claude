@@ -1,7 +1,7 @@
 import { App, TFile, parseYaml } from "obsidian";
 import { vaultVocabulary } from "../../tags/vaultTags";
 import { createTagResolver, type ResolvedTag } from "../../tags/resolve";
-import type { McpToolDef } from "../protocol";
+import type { McpToolDef, ToolOutput } from "../protocol";
 import type { ToolRecord } from "../toolRecord";
 import type { VaultToolsOptions } from "../vaultTools";
 import { lookupRelationTargetType } from "../../vault/vaultFiles";
@@ -119,6 +119,7 @@ export class NoteTools {
           properties: { path: { type: "string", description: "Vault-relative path to the note." } },
           required: ["path"],
         },
+        outputSchema: { type: "object", properties: { path: { type: "string" }, content: { type: "string" } }, required: ["path", "content"] },
       }, async (args) => this.read(str(args.path))),
       {
         // The typed-creation fields follow the registry's contents at listing time.
@@ -239,9 +240,10 @@ export class NoteTools {
     ];
   }
 
-  private async read(path: string): Promise<string> {
+  private async read(path: string): Promise<ToolOutput> {
     const file = resolveFile(this.app, path);
-    return this.app.vault.cachedRead(file);
+    const content = await this.app.vault.cachedRead(file);
+    return { text: content, structured: { path: file.path, content } };
   }
 
   private resolveAgentTags(raw: string[]): { tags: string[]; note: string } {

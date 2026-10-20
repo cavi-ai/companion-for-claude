@@ -1,5 +1,5 @@
 import { App, requestUrl } from "obsidian";
-import type { McpToolDef } from "./protocol";
+import { resultText, type McpToolDef, type ToolResult } from "./protocol";
 import type { OntologyRegistry } from "../ontology/registry";
 import type { SemanticSearch } from "../context/hybridSearch";
 import { ResearchRepository } from "../research/repository";
@@ -135,6 +135,11 @@ export class VaultTools {
   }
 
   async call(name: string, args: Record<string, unknown>): Promise<string> {
+    return resultText(await this.output(name, args));
+  }
+
+  /** The full result, with structured data for tools that declare an outputSchema. */
+  async output(name: string, args: Record<string, unknown>): Promise<ToolResult> {
     const record = this.record(name);
     if (!record) throw new Error(name.startsWith("research_") ? `Unknown research tool: ${name}` : `Unknown tool: ${name}`);
     if (record.writes) this.assertWrites();

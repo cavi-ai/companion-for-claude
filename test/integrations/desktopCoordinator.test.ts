@@ -21,7 +21,7 @@ const deferred = <T>() => {
 const runtime = (overrides: Partial<DesktopIntegrationRuntime> = {}): DesktopIntegrationRuntime => ({
   inspectClaudeCode: async () => ready,
   setupClaudeCode: async () => ready,
-  installClaudeDesktop: async () => ({ configPath: "/config.json", backupPath: null, restartRequired: true }),
+  installClaudeDesktop: async () => ({ bundlePath: "/tmp/companion-obsidian-vault.mcpb", connectionPath: "/bridge.json", configPath: "/config.json", backupPath: null, legacyRemoved: false }),
   openTerminalAtVault: async () => ({ opened: true }),
   ...overrides,
 });
@@ -106,25 +106,36 @@ describe("DesktopIntegrationCoordinator", () => {
     expect(coordinator.snapshot().inspection).toBeUndefined();
   });
 
-  it("configures Claude Desktop with a prepared read-only bridge and hides its token", async () => {
+  it("opens the extension with a prepared read-only bridge, asks for no token, and never shows it", async () => {
     let installInput: { port: number; token: string } | undefined;
+    const copied: string[] = [];
     const coordinator = new DesktopIntegrationCoordinator({
       runtime: runtime({
         installClaudeDesktop: async (input) => {
           installInput = input;
-          return { configPath: "/config.json", backupPath: "/config.backup", restartRequired: true };
+          return {
+            bundlePath: "/tmp/companion-obsidian-vault.mcpb",
+            connectionPath: "/bridge.json",
+            configPath: "/config.json",
+            backupPath: "/config.backup",
+            legacyRemoved: true,
+          };
         },
       }),
       providerReady: () => true,
       vaultPath: "/Vault",
       prepareClaudeDesktopBridge: async () => ({ port: 22360, token: "private-bridge-token" }),
-      copy: async () => undefined,
+      copy: async (text) => { copied.push(text); },
     });
 
     await coordinator.connectClaudeDesktop(async () => true);
     expect(installInput).toEqual({ port: 22360, token: "private-bridge-token" });
+    expect(copied).toEqual([]);
     expect(JSON.stringify(coordinator.snapshot())).not.toContain("private-bridge-token");
-    expect(coordinator.snapshot().message).toContain("Restart Claude Desktop");
+    expect(coordinator.snapshot().message).toBe(
+      "Claude Desktop is showing the Obsidian vault extension. Click Install; it connects to this vault on its own."
+      + " The older Claude Desktop config entry was removed and backed up.",
+    );
   });
 
   it("keeps setup errors inline, actionable, and secret-free", async () => {

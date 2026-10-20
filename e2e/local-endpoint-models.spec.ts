@@ -1,4 +1,4 @@
-import { expect, test } from "./fixtures";
+import { expect, openSettingsSection, test } from "./fixtures";
 import { modelLabel } from "../src/claude/models";
 
 const MODELS = ["mlx-community/Qwen3-8B-4bit", "lmstudio/gemma-3-12b"];
@@ -46,14 +46,10 @@ test("Detect fills the endpoint model dropdown in settings", async ({ rig }) => 
   const harness = await rig.reset({ endpointModels: MODELS });
   const { page } = harness;
   try {
-    const settingsPage = await harness.openSettings();
+    const settingsPage = await openSettingsSection(harness, "Local models");
     const tab = settingsPage.locator(".vertical-tab-content-container .vertical-tab-content").last();
     await expect(tab).toBeVisible();
     await expect(tab.locator(".setting-item:visible").first()).toBeVisible({ timeout: 10_000 });
-    // The tab is declarative since 0.27.1: sections are host-rendered pages, so
-    // open the page by its name before reaching for a row inside it.
-    await tab.locator(".setting-item", { hasText: "Local models (Ollama & endpoints)" }).first().click();
-
     const local = tab.locator(".setting-item", { hasText: "Endpoint model" }).first();
     await expect(local).toBeVisible({ timeout: 10_000 });
 

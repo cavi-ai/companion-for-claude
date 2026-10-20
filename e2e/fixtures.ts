@@ -29,6 +29,13 @@ export interface Rig {
   close(options?: { keep?: boolean }): Promise<void>;
 }
 
+/** Reach existing controls through the settings menu's visible search. */
+export async function openSettingsSection(rig: Rig, section: string): Promise<Page> {
+  const settings = await rig.openSettings();
+  await settings.getByRole("searchbox", { name: "Search all settings" }).fill(section);
+  return settings;
+}
+
 async function buildRig(): Promise<Rig> {
   const state = await liveState();
   if (!state) throw new Error("no e2e rig is running — run `pnpm run e2e:rig start` first");

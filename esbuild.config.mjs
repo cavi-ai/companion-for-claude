@@ -32,23 +32,9 @@ await esbuild.build({
   logLevel: "info",
 });
 
-// Pass 1b: the pdf.js worker, likewise inlined and Blob-URL'd at runtime (PDF
-// text extraction for the semantic index).
-await esbuild.build({
-  entryPoints: ["node_modules/pdfjs-dist/legacy/build/pdf.worker.min.mjs"],
-  bundle: true,
-  format: "iife",
-  target: "es2021",
-  platform: "browser",
-  outfile: ".build/pdf-worker.txt",
-  minify: true,
-  logLevel: "info",
-});
-
-// Gzip both worker artifacts for inlining; fflate (not node:zlib) keeps the bytes identical across Node versions and platforms.
-for (const name of ["embed-worker", "pdf-worker"]) {
-  await fs.writeFile(`.build/${name}.txt.gz`, gzipSync(await fs.readFile(`.build/${name}.txt`), { level: 9, mtime: 0 }));
-}
+// Gzip the worker artifact for inlining; fflate (not node:zlib) keeps the bytes identical across Node versions and platforms.
+// PDF text extraction uses the pdf.js Obsidian ships, so no pdf.js worker is built here.
+await fs.writeFile(".build/embed-worker.txt.gz", gzipSync(await fs.readFile(".build/embed-worker.txt"), { level: 9, mtime: 0 }));
 
 const context = await esbuild.context({
   banner: { js: banner },

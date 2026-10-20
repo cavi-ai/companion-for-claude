@@ -71,6 +71,7 @@ pnpm run lint        # eslint src (tests are typechecked, not linted)
 pnpm test            # vitest run
 pnpm run build       # typecheck + production bundle
 pnpm run bundle:check # enforce the production main.js byte budget
+pnpm run test:mcp-eval # mcp-eval readiness of the MCP bridge in real Obsidian, against e2e/mcp-eval.baseline.json
 ```
 
 ## Bundling

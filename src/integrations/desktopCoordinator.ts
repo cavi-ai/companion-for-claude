@@ -121,7 +121,8 @@ export class DesktopIntegrationCoordinator {
         this.setState({
           status: "ready",
           providerReady: this.options.providerReady(),
-          message: "Claude Desktop is configured. Restart Claude Desktop, then ask it to read this vault.",
+          message: "Claude Desktop is showing the Obsidian vault extension. Click Install; it connects to this vault on its own."
+            + (result.legacyRemoved ? " The older Claude Desktop config entry was removed and backed up." : ""),
           claudeDesktopConfigPath: result.configPath,
         });
       } catch (cause) {

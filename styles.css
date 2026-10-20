@@ -1,5 +1,81 @@
 /* Companion for Claude — tokens on body resolve through Obsidian's theme; the clay accent is the one brand color. */
 
+/* Task navigation and the detailed settings view share Obsidian's native controls. */
+.cc-settings-browser { container: cc-settings / inline-size; }
+.cc-settings-browser .cc-settings-grid { display: grid; grid-template-columns: minmax(0, 1fr); border: 0; background: transparent; }
+.cc-settings-grid > .setting-item { min-width: 0; grid-column: 1 / -1; }
+/* Size dropdown rows against their own column, including the narrower Advanced detail pane. */
+.cc-settings-browser .cc-settings-grid > .setting-item:has(.setting-item-control select:not(.is-measuring)) { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr)); align-items: start; gap: var(--cc-space-3) var(--cc-space-4); }
+.cc-settings-browser .cc-settings-grid > .setting-item:has(.setting-item-control select:not(.is-measuring)) .setting-item-info { min-width: 0; margin-inline-end: 0; }
+.cc-settings-browser .cc-settings-grid > .setting-item:has(.setting-item-control select:not(.is-measuring)) .setting-item-control { min-width: 0; max-width: 100%; flex-wrap: wrap; justify-content: flex-start; }
+.cc-settings-browser .cc-settings-grid > .setting-item:has(.setting-item-control select:not(.is-measuring)) .setting-item-control > :is(input, select:not(.is-measuring), textarea) { min-width: 0; max-width: 100%; }
+.cc-settings-browser .cc-settings-grid > .setting-item:has(.setting-item-control select:not(.is-measuring)) > :not(.setting-item-info):not(.setting-item-control) { grid-column: 1 / -1; }
+/* Keep Obsidian's hidden measurement clone at its natural width without expanding the row's scroll area. */
+.cc-settings-browser .cc-settings-grid .setting-item-control select.is-measuring { position: fixed; }
+.cc-settings-grid .cc-settings-header { display: block; padding: 0 0 12px; border: 0; }
+.cc-settings-header h2 { margin: 0 0 16px; padding: 0; font-size: var(--cc-text-xl); }
+.cc-settings-header .cc-settings-home-title { margin: 20px 0 8px; padding: 0; font-size: var(--cc-text-lg); }
+.cc-settings-muted { display: block; color: var(--text-muted); font-size: var(--cc-text-base); font-weight: 400; line-height: 1.5; white-space: normal; }
+.cc-settings-header p, .cc-settings-section-heading p { margin: 8px 0 0; }
+.cc-settings-breadcrumb { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 16px; color: var(--text-muted); font-size: var(--cc-text-base); }
+.cc-settings-breadcrumb:empty { display: none; }
+.cc-settings-back { padding: 4px 0; min-height: 32px; border: 0; box-shadow: none; color: var(--cc-accent-text); background: transparent; }
+.cc-settings-search { display: flex; align-items: center; gap: 12px; border: 1px solid var(--background-modifier-border); border-radius: var(--cc-radius-sm); padding: 0 12px; }
+.cc-settings-search > span { display: flex; color: var(--text-muted); }
+.cc-settings-search input[type="search"] { width: 100%; min-width: 0; height: 44px; border: 0; background: transparent; box-shadow: none; padding-inline: 0; font-size: var(--cc-text-base); }
+.cc-settings-search:focus-within { outline: 2px solid var(--cc-accent); outline-offset: 2px; }
+.cc-settings-setup { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 16px; margin-top: 24px; padding: 20px; border: 1px solid var(--cc-border-hover); border-radius: var(--cc-radius-sm); background: var(--cc-accent-wash); }
+.cc-settings-setup p { margin: 4px 0 0; }
+.cc-settings-setup button { min-height: 44px; }
+.cc-settings-grid .cc-settings-home { display: block; padding: 0; border: 0; }
+button.cc-settings-destination { display: flex; align-items: center; gap: 16px; width: 100%; height: auto; min-height: 64px; padding: 12px 4px; text-align: start; white-space: normal; border: 0; border-bottom: 1px solid var(--background-modifier-border); border-radius: 0; background: transparent; color: var(--text-normal); box-shadow: none; }
+button.cc-settings-destination:hover { background: var(--background-modifier-hover); }
+button.cc-settings-destination:focus-visible, .cc-settings-disclosure:focus-visible { outline: 2px solid var(--cc-accent); outline-offset: -2px; }
+.cc-settings-destination-copy { display: flex; flex: 1; flex-direction: column; gap: 4px; min-width: 0; }
+.cc-settings-destination-title { font-weight: 600; font-size: var(--cc-text-md); }
+.cc-settings-icon { display: flex; flex: 0 0 24px; align-items: center; justify-content: center; }
+.cc-settings-chevron { display: flex; flex: 0 0 20px; color: var(--text-muted); }
+.cc-settings-grid .cc-settings-advanced-link { margin-top: 8px; border-top: 1px solid var(--background-modifier-border); border-bottom: 0; }
+.cc-settings-home > button:nth-last-child(2) { border-bottom: 0; }
+.cc-settings-browser button.mod-cta, .cc-settings-browser .checkbox-container.is-enabled { background-color: var(--cc-accent); color: var(--cc-accent-fg); }
+.cc-settings-grid .cc-settings-category-title { display: block; padding: 12px 0 0; border: 0; }
+.cc-settings-category-title h2 { margin: 0; padding: 0; font-size: var(--cc-text-xl); }
+.cc-settings-browser .cc-settings-grid > .cc-settings-section-heading { display: block; padding-block: var(--cc-space-3) 0; border: 0; }
+.cc-settings-section-heading h3 { font-size: var(--cc-text-md); margin: 0; }
+.cc-settings-browser .cc-settings-grid button.cc-settings-disclosure { display: flex; align-items: center; justify-content: space-between; gap: var(--cc-space-4); width: 100%; height: auto; min-height: 48px; margin: 0; padding: var(--cc-space-3) var(--cc-space-4); text-align: start; background: var(--interactive-normal); border: 0; border-radius: var(--cc-radius-sm); box-shadow: none; font-size: var(--cc-text-md); font-weight: 600; line-height: 1.5; }
+.cc-settings-disclosure > span:first-child { flex: 1; min-width: 0; white-space: normal; }
+.cc-settings-disclosure .cc-settings-chevron { align-items: center; justify-content: center; }
+.cc-settings-grid.is-advanced { grid-template-columns: 180px minmax(0, 1fr); column-gap: 24px; align-items: start; }
+.cc-settings-grid.is-advanced > .setting-item { grid-column: 2; }
+.cc-settings-grid.is-advanced > .cc-settings-header { grid-column: 1 / -1; }
+.cc-settings-grid.is-advanced > .cc-settings-sidebar { display: block; grid-column: 1; grid-row: 2 / span var(--cc-settings-rows); position: sticky; top: 0; padding: 0 16px 0 0; border: 0; border-right: 1px solid var(--background-modifier-border); }
+.cc-settings-sidebar button.cc-settings-destination { min-height: 48px; padding: 12px 8px; gap: 10px; border: 1px solid transparent; border-radius: var(--cc-radius-sm); margin-bottom: 4px; }
+.cc-settings-sidebar .cc-settings-destination-title { font-size: var(--cc-text-base); font-weight: 400; }
+.cc-settings-sidebar .cc-settings-chevron { display: none; }
+.cc-settings-sidebar button.cc-settings-destination.is-selected,
+.cc-settings-sidebar button.cc-settings-destination.is-selected:hover { color: var(--cc-accent-text); background: var(--cc-accent-wash); border-color: var(--cc-border-hover); }
+.cc-settings-sidebar .is-selected .cc-settings-destination-title { font-weight: 600; }
+.cc-settings-grid .cc-settings-connections { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; padding: 8px 0 0; border: 0; }
+.cc-settings-connections > div + div { padding-left: 24px; border-left: 1px solid var(--background-modifier-border); }
+.cc-settings-connections h3 { font-size: var(--cc-text-lg); margin: 0 0 12px; }
+.cc-settings-connections .mod-cta { min-height: 44px; margin-top: 16px; }
+.cc-settings-connections .cc-settings-connection-footer { grid-column: 1 / -1; }
+@container cc-settings (max-width: 600px) {
+  .cc-settings-grid > .setting-item:not(.cc-settings-header):not(.cc-settings-home):not(.cc-settings-sidebar):not(.cc-settings-section-heading):not(.cc-settings-connections) { flex-direction: column; align-items: stretch; }
+  .cc-settings-grid .setting-item-control { max-width: 100%; flex-wrap: wrap; }
+  .cc-settings-grid .setting-item-control input, .cc-settings-grid .setting-item-control select, .cc-settings-grid .setting-item-control textarea { max-width: 100%; }
+  .cc-settings-grid.is-advanced { grid-template-columns: minmax(0, 1fr); column-gap: 0; }
+  .cc-settings-grid.is-advanced > .setting-item { grid-column: 1; }
+  .cc-settings-grid.is-advanced > .cc-settings-sidebar { position: static; grid-row: auto; padding: 0 0 16px; border-right: 0; }
+  .cc-settings-sidebar nav { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--cc-space-1); padding: var(--cc-space-1); border: 1px solid var(--cc-border); border-radius: var(--cc-radius-md); background: var(--cc-surface-raised); }
+  .cc-settings-sidebar button.cc-settings-destination { width: 100%; min-height: var(--cc-touch-min); padding: var(--cc-space-2); margin: 0; }
+  .cc-settings-sidebar button.cc-settings-destination.is-selected,
+  .cc-settings-sidebar button.cc-settings-destination.is-selected:hover { background: var(--cc-surface); }
+  .cc-settings-sidebar .cc-settings-icon { display: none; }
+  .cc-settings-grid .cc-settings-connections { grid-template-columns: minmax(0, 1fr); }
+  .cc-settings-connections > div + div { padding: 24px 0 0; border-left: 0; border-top: 1px solid var(--background-modifier-border); }
+}
+
 body {
   /* --cc-clay/--cc-olive stay here: --cc-accent/--cc-border-hover/--cc-success below reference them, and a descendant selector's var can't reach an ancestor rule. */
   --cc-clay: #d97757;

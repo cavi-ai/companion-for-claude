@@ -1,4 +1,5 @@
 import { App } from "obsidian";
+import type { ToolOutput } from "../protocol";
 import type { ToolRecord } from "../toolRecord";
 import type { VaultToolsOptions } from "../vaultTools";
 import { describeOntology } from "../../ontology/describe";
@@ -9,6 +10,30 @@ import { buildBaseFile, type ProposedBase } from "../../bases/baseFile";
 import { assertVaultPath, ensureFolder, optStr, read, str, uniquePath, write } from "./context";
 
 const ONTOLOGY_OFF_MESSAGE = "The ontology is disabled in Companion for Claude settings.";
+
+const string = { type: "string" };
+const strings = { type: "array", items: string };
+const ONTOLOGY_OUTPUT = {
+  type: "object",
+  properties: {
+    types: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          name: string,
+          lineage: strings,
+          version: { type: "number" },
+          properties: { type: "array", items: { type: "object", properties: { key: string, type: string, required: { type: "boolean" } }, required: ["key", "type", "required"] } },
+          relations: { type: "array", items: { type: "object", properties: { key: string, targets: strings }, required: ["key", "targets"] } },
+        },
+        required: ["name", "lineage", "version", "properties", "relations"],
+      },
+    },
+    note: string,
+  },
+  required: ["types"],
+};
 
 export class StructureTools {
   constructor(
@@ -23,6 +48,7 @@ export class StructureTools {
         name: "ontology_get",
         description: "Read the vault ontology: every type with its lineage, properties and relations, or one type and its ancestors. Call this before creating typed notes or proposing a type.",
         inputSchema: { type: "object", properties: { type: { type: "string", description: "Optional type name to describe." } } },
+        outputSchema: ONTOLOGY_OUTPUT,
       }, async (args) => this.ontologyGet(optStr(args.type)), ontologyOff),
       write(
         {
@@ -132,9 +158,10 @@ export class StructureTools {
     ];
   }
 
-  private ontologyGet(type: string | undefined): string {
+  private ontologyGet(type: string | undefined): ToolOutput {
     const registry = this.opts.ontology?.() ?? null;
-    return JSON.stringify(describeOntology(registry?.resolved() ?? new Map(), type), null, 2);
+    const description = describeOntology(registry?.resolved() ?? new Map(), type);
+    return { text: JSON.stringify(description, null, 2), structured: { ...description } };
   }
 
   private async ontologyPropose(args: Record<string, unknown>): Promise<string> {

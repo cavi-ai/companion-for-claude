@@ -1,5 +1,5 @@
 import type { Locator, Page } from "@playwright/test";
-import { test, expect } from "../fixtures";
+import { test, expect, openSettingsSection } from "../fixtures";
 import type { Rig } from "../fixtures";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -426,11 +426,9 @@ test.describe("README captures", () => {
 
       test("mcp-bridge-settings.png", async () => {
         await resetScene(theme, { mcpEnabled: true, mcpPort: 22360, mcpToken: "3f9c1b7e2a6d4c8f9e0b1a2c3d4e5f60" });
-        const settingsPage = await harness.openSettings();
+        const settingsPage = await openSettingsSection(harness, "Vault bridge (MCP)");
         await settingsPage.setViewportSize({ width: 1000, height: 760 });
         const tab = settingsPage.locator(".vertical-tab-content-container .vertical-tab-content").last();
-        const header = tab.getByText("Agent bridge — MCP server (desktop)", { exact: true });
-        await header.click();
         await expect(tab.getByText(/✓ Running at /)).toBeVisible({ timeout: 15_000 });
         await settingsPage.addStyleTag({ content: "*::-webkit-scrollbar { display: none; }" });
         await prepareCapture(settingsPage);

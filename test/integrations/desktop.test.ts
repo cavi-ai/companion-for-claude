@@ -5,7 +5,6 @@ import {
   MARKETPLACE_REPO,
   OBSIDIAN_AGENT_PLUGIN_ID,
   claudeCodeSetupPlan,
-  mergeClaudeDesktopConfig,
   parseClaudeVersion,
   parseMarketplaceList,
   parsePluginList,
@@ -135,39 +134,6 @@ describe("desktop integration contracts", () => {
       .toThrow("/usr/local/bin/obsidian");
     expect(() => claudeCodeSetupPlan(inspection({ obsidian: { available: false, state: "missing" } }), "linux"))
       .toThrow("~/.local/bin/obsidian");
-  });
-
-  it("preserves unrelated Claude Desktop configuration", () => {
-    const merged = JSON.parse(mergeClaudeDesktopConfig(JSON.stringify({
-      theme: "dark",
-      mcpServers: { zotero: { command: "zotero-mcp" } },
-    }), {
-      command: "npx",
-      args: ["-y", "mcp-remote", "http://127.0.0.1:22360/mcp", "--header", "Authorization: Bearer secret"],
-    }));
-    expect(merged.theme).toBe("dark");
-    expect(merged.mcpServers.zotero).toEqual({ command: "zotero-mcp" });
-    expect(merged.mcpServers["obsidian-vault"].command).toBe("npx");
-  });
-
-  it("creates stable configuration for an absent or empty Claude Desktop file", () => {
-    const server = { command: "npx", args: ["-y", "mcp-remote", "http://127.0.0.1:22360/mcp"] };
-    expect(mergeClaudeDesktopConfig(null, server)).toBe(`${JSON.stringify({ mcpServers: { "obsidian-vault": server } }, null, 2)}\n`);
-    expect(mergeClaudeDesktopConfig("  \n", server)).toBe(mergeClaudeDesktopConfig(null, server));
-  });
-
-  it.each(["{", "null", "[]", "1", "true", "{\"mcpServers\":[]}"])("refuses unsafe Claude Desktop config: %s", (body) => {
-    expect(() => mergeClaudeDesktopConfig(body, { command: "npx", args: [] })).toThrowError(DesktopIntegrationError);
-  });
-
-  it("replaces only the owned Claude Desktop server entry", () => {
-    const merged = JSON.parse(mergeClaudeDesktopConfig(JSON.stringify({
-      mcpServers: { "obsidian-vault": { command: "old" }, keep: { command: "keep" } },
-    }), { command: "npx", args: ["new"] }));
-    expect(merged.mcpServers).toEqual({
-      "obsidian-vault": { command: "npx", args: ["new"] },
-      keep: { command: "keep" },
-    });
   });
 
   it("redacts bearer credentials, supplied secrets, and bounds external errors", () => {

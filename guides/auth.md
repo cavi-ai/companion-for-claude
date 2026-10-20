@@ -4,7 +4,7 @@ Companion can run desktop chat through your installed Claude Code CLI, or talk
 directly to Anthropic with a credential you provide. There is no Companion
 service or account in between.
 
-*Settings → Companion for Claude → Connection*
+*Settings → Companion for Claude → Choose how I chat*
 
 ## Claude Code backend (desktop)
 
@@ -81,7 +81,7 @@ actionable messages rather than raw HTTP errors.
 
 ## Models
 
-*Settings → Companion for Claude → Connection → Model*
+*Settings → Companion for Claude → Choose how I chat → Model*
 
 | Model | When |
 |---|---|

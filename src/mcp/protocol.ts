@@ -2,6 +2,8 @@
 // can be unit-tested in isolation. The transport/server layer feeds raw request
 // objects in and serializes the responses out.
 
+import { argumentError } from "./arguments";
+
 export interface JsonRpcRequest {
   jsonrpc: "2.0";
   id?: string | number | null;
@@ -44,8 +46,22 @@ export interface McpToolDef {
   name: string;
   description: string;
   inputSchema: Record<string, unknown>;
+  /** Shape of `structuredContent` in every successful result; a tool that declares it returns a `ToolOutput`. */
+  outputSchema?: Record<string, unknown>;
   /** MCP tool annotations; `readOnlyHint: true` marks a tool that never changes the vault. */
   annotations?: { readOnlyHint?: boolean };
+}
+
+/** A result a model reads as `text`, with `structured` data matching the tool's outputSchema. */
+export interface ToolOutput {
+  text: string;
+  structured: Record<string, unknown>;
+}
+
+export type ToolResult = string | ToolOutput;
+
+export function resultText(result: ToolResult): string {
+  return typeof result === "string" ? result : result.text;
 }
 
 /** A tool handler receives validated args and returns text content. */
@@ -145,7 +161,7 @@ export async function handleRpc(
     tools: McpToolDef[];
     /** Explicit compatibility calls accepted without exposing them through tools/list. */
     hiddenTools?: ReadonlySet<string>;
-    call: (name: string, args: Record<string, unknown>) => Promise<string>;
+    call: (name: string, args: Record<string, unknown>) => Promise<ToolResult>;
     resources?: ResourceProvider;
     prompts?: PromptProvider;
   },
@@ -178,13 +194,21 @@ export async function handleRpc(
       if (typeof params.name !== "string") {
         return err(req.id, RPC.INVALID_PARAMS, "tools/call requires a string 'name'");
       }
-      if (!ctx.tools.some((t) => t.name === params.name) && !ctx.hiddenTools?.has(params.name)) {
+      const def = ctx.tools.find((t) => t.name === params.name);
+      if (!def && !ctx.hiddenTools?.has(params.name)) {
         return err(req.id, RPC.METHOD_NOT_FOUND, `Unknown tool: ${params.name}`);
       }
-      const args = (params.arguments && typeof params.arguments === "object" ? params.arguments : {}) as Record<string, unknown>;
+      const given = params.arguments ?? {};
+      const invalid = typeof given !== "object" || given === null || Array.isArray(given)
+        ? "arguments must be an object"
+        : def ? argumentError(def.inputSchema, given as Record<string, unknown>) : null;
+      // Refused as a tool error so the model reads which argument to fix.
+      if (invalid) return ok(req.id, { content: [{ type: "text", text: `Invalid arguments for ${params.name}: ${invalid}.` }], isError: true });
+      const args = given as Record<string, unknown>;
       try {
-        const text = await ctx.call(params.name, args);
-        return ok(req.id, { content: [{ type: "text", text }], isError: false });
+        const result = await ctx.call(params.name, args);
+        const structured = typeof result === "string" ? undefined : result.structured;
+        return ok(req.id, { content: [{ type: "text", text: resultText(result) }], ...(structured ? { structuredContent: structured } : {}), isError: false });
       } catch (e) {
         // Tool errors are reported as content with isError, per MCP convention.
         return ok(req.id, { content: [{ type: "text", text: e instanceof Error ? e.message : String(e) }], isError: true });

@@ -32,7 +32,7 @@ function probeLabel(probe: ProbeResult): string {
 }
 
 const CLAUDE_CODE_DISCLOSURE = "Adds cavi-ai/plugins to Claude Code when missing, installs or enables obsidian-agent@cavi-ai at user scope, and registers Companion's loopback vault tools (obsidian-vault) with Claude Code when the MCP bridge is on.";
-const CLAUDE_DESKTOP_DISCLOSURE = "Enables Companion's read-only loopback bridge and merges obsidian-vault into Claude Desktop's local configuration. Obsidian must remain open.";
+const CLAUDE_DESKTOP_DISCLOSURE = "Enables Companion's read-only loopback bridge, saves its address and token to a file only your user account can read, and opens the Obsidian vault extension in Claude Desktop to install. Replaces the obsidian-vault entry earlier versions wrote to Claude Desktop's configuration. Obsidian must remain open.";
 
 export class DesktopIntegrationsModal extends Modal {
   private unsubscribe: (() => void) | null = null;

@@ -1,11 +1,11 @@
-import { expect, test } from "./fixtures";
+import { expect, openSettingsSection, test } from "./fixtures";
 
 test("Desktop integrations opens through Obsidian's real Node runtime boundary", async ({ rig }) => {
   const harness = await rig.reset();
   try {
     // Settings is its own window on Obsidian 1.13+, and the modal mounts in
     // whichever window owns the control that opened it.
-    const settingsPage = await harness.openSettings();
+    const settingsPage = await openSettingsSection(harness, "Desktop integrations");
 
     const settings = settingsPage.locator(".vertical-tab-content");
     const open = settings.getByRole("button", { name: "Set up", exact: true });

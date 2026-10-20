@@ -194,12 +194,20 @@ describe("get_backlinks", () => {
     const out = await linkedTools().call("get_backlinks", { path: "Notes/Alpha.md" });
     expect(out).toMatch(/No backlinks/);
   });
+
+  it("refuses a note that does not exist", async () => {
+    await expect(linkedTools().call("get_backlinks", { path: "Notes/Missing.md" })).rejects.toThrow("Note not found: Notes/Missing.md");
+  });
 });
 
 describe("get_outgoing_links", () => {
   it("lists the notes a note links to", async () => {
     const out = await linkedTools().call("get_outgoing_links", { path: "Notes/Alpha.md" });
     expect(out).toContain("Notes/Beta.md");
+  });
+
+  it("refuses a note that does not exist", async () => {
+    await expect(linkedTools().call("get_outgoing_links", { path: "Notes/Missing.md" })).rejects.toThrow("Note not found: Notes/Missing.md");
   });
 });
 

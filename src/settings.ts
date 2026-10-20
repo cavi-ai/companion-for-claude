@@ -5,7 +5,6 @@ import type { ProviderStatus } from "./providers/types";
 import { offerIndexRebuild } from "./view/rebuildOffer";
 import { CODECS } from "./settingsItems/codecs";
 import { PAGE_DESC } from "./settingsItems/pageDesc";
-import { applyTiers } from "./settingsItems/tiers";
 import { agentItems, type AgentItemsContext } from "./settingsItems/agent";
 import { cloudDesc, cloudItems, repliesItems, type CloudItemsContext } from "./settingsItems/cloud";
 import { connectionItems, type ConnectionItemsContext } from "./settingsItems/connection";
@@ -18,6 +17,7 @@ import { mcpClientItems, type McpClientItemsContext } from "./settingsItems/mcpC
 import { publishItems } from "./settingsItems/publish";
 import { semanticItems, type SemanticItemsContext } from "./settingsItems/semantic";
 import { sourceCaptureItems, type SourceCaptureItemsContext } from "./settingsItems/sourceCapture";
+import { SettingsNavigation } from "./view/SettingsNavigation";
 
 export type { SettingsTier } from "./settingsItems/tiers";
 
@@ -33,6 +33,12 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
   private detectedModels: DetectedModels = { ollama: null, endpoint: null };
   /** Transient (not persisted): reveal the real MCP token in the snippets. */
   private tokenReveal = { shown: false };
+  private navigation = new SettingsNavigation({
+    update: () => this.update(),
+    container: () => this.containerEl,
+    openSetup: () => this.plugin.onboarding().openSetupWizard(),
+    openDesktop: () => this.plugin.desktopIntegrations().open(),
+  });
 
   constructor(
     app: App,
@@ -128,7 +134,12 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
   }
 
   override getSettingDefinitions(): SettingDefinitionItem[] {
-    return applyTiers(this.rawSettingDefinitions(), () => this.plugin.settings.settingsShowAdvanced, this.plugin.settings);
+    return this.navigation.definitions(this.getSettingsCatalog(), this.plugin.settings);
+  }
+
+  /** One canonical catalog supplies the everyday view, advanced view and search. */
+  getSettingsCatalog(): SettingDefinitionItem[] {
+    return this.rawSettingDefinitions();
   }
 
   private rawSettingDefinitions(): SettingDefinitionItem[] {

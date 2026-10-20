@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { App, FakeElement, openSettingTab, Platform, Setting, type ButtonComponent, type SettingDefinitionItem } from "./fakes/obsidian";
 import { ClaudeCompanionSettingTab } from "../src/settings";
 import { DEFAULT_SETTINGS } from "../src/types";
+import { settingsSections } from "../src/settingsItems/navigation";
 import { unavailableStore } from "../src/secrets/store";
 import type ClaudeCompanionPlugin from "../src/main";
 import { fakeSemantic } from "./fakes/semantic";
@@ -30,7 +31,7 @@ function stubPlugin(): ClaudeCompanionPlugin & { settings: Record<string, unknow
     ontology: () => undefined,
     clipperSetup: () => ({ templatesStale: () => false }),
     refreshViews: () => {},
-    onboarding: () => ({ loadOntologyOnStart: async () => {} }),
+    onboarding: () => ({ loadOntologyOnStart: async () => {}, openSetupWizard: vi.fn() }),
     desktopIntegrations: () => ({ open: () => {} }),
     publishing: () => ({
       publishedItems: () => [],
@@ -48,10 +49,19 @@ function flatten(items: SettingDefinitionItem[]): SettingDefinitionItem[] {
 
 function definitionsOf(plugin: ReturnType<typeof stubPlugin> = stubPlugin()): SettingDefinitionItem[] {
   const tab = new ClaudeCompanionSettingTab(new App() as never, plugin);
-  return tab.getSettingDefinitions() as unknown as SettingDefinitionItem[];
+  return tab.getSettingsCatalog() as unknown as SettingDefinitionItem[];
 }
 
 describe("settings definitions", () => {
+  it("keeps every available control in the shared navigation catalog", () => {
+    const catalog = definitionsOf();
+    const keys = (items: SettingDefinitionItem[]): string[] => items.flatMap((item) => {
+      if (typeof item.visible === "function" ? !item.visible() : item.visible === false) return [];
+      return item.items ? keys(item.items) : item.control && item.control.key !== "settingsShowAdvanced" ? [item.control.key] : [];
+    });
+    const sections = settingsSections(catalog as never);
+    expect(keys(sections.flatMap((section) => section.items) as unknown as SettingDefinitionItem[]).sort()).toEqual(keys(catalog).sort());
+  });
   it("declares a name on every searchable row", () => {
     const rows = flatten(definitionsOf()).filter((item) => item.type !== "group");
     expect(rows.length).toBeGreaterThan(50);
@@ -72,7 +82,7 @@ describe("settings definitions", () => {
 
   it("gates every desktop-only page behind a visibility predicate", () => {
     const pages = flatten(definitionsOf()).filter((item) => item.type === "page");
-    const desktopOnly = ["Agent bridge — MCP server (desktop)", "Local models (Ollama & endpoints)", "Session memory"];
+    const desktopOnly = ["Agent bridge — MCP server (desktop)", "Session memory"];
     for (const name of desktopOnly) {
       const page = pages.find((p) => p.name === name);
       expect(page, `missing page: ${name}`).toBeDefined();
@@ -155,12 +165,12 @@ describe("settings definitions", () => {
     for (const old of ["Agent in the cloud (mobile-friendly)", "Cloud replies (pull from repo)", "Storage", "Indexing & tags"]) expect(names).not.toContain(old);
   });
 
-  it("keeps the cloud page hidden in basic view until cloud dispatch is on", () => {
+  it("keeps cloud controls in the full catalog regardless of the old advanced toggle", () => {
     const cloudPage = (plugin: ReturnType<typeof stubPlugin>) =>
       flatten(definitionsOf(plugin)).find((i) => i.type === "page" && i.name === "Cloud (experimental)") as { visible?: boolean | (() => boolean) };
     const visible = (page: { visible?: boolean | (() => boolean) }) => (typeof page.visible === "function" ? page.visible() : page.visible ?? true);
     const off = stubPlugin();
-    expect(visible(cloudPage(off))).toBe(false);
+    expect(visible(cloudPage(off))).toBe(true);
     const on = stubPlugin();
     on.settings.cloudDispatchEnabled = true;
     expect(visible(cloudPage(on))).toBe(true);
@@ -199,7 +209,44 @@ describe("Research Desk & discovery page", () => {
 });
 
 describe("settings tab render", () => {
-  it("renders every row, including the imperative ones", () => {
+  function click(container: FakeElement, text: string): void {
+    const button = container.querySelectorAll("button").find((element) => element.textContent === text || element.querySelectorAll("span").some((span) => span.textContent === text));
+    expect(button, text).toBeDefined();
+    button!.dispatchEvent({ type: "click" });
+  }
+
+  it("uses the same persisted permissions in everyday and advanced views", async () => {
+    const plugin = stubPlugin();
+    const tab = new ClaudeCompanionSettingTab(new App() as never, plugin);
+    const container = tab.containerEl as unknown as FakeElement;
+    openSettingTab(tab);
+    click(container, "Control access to my notes");
+    expect(container.querySelectorAll(".setting-item-name").map((el) => el.textContent)).toEqual(expect.arrayContaining(["Read and search notes", "Create and edit notes"]));
+    await tab.setControlValue("agentAllowWrites", true);
+    click(container, "More vault access settings");
+    expect(tab.getControlValue("agentAllowWrites")).toBe(true);
+    expect(container.querySelectorAll("nav")).toHaveLength(1);
+    expect(container.querySelectorAll(".setting-item-name").map((el) => el.textContent)).not.toContain("Max tool iterations per turn");
+    click(container, "Agent behavior");
+    expect(container.querySelectorAll(".setting-item-name").map((el) => el.textContent)).toContain("Max tool iterations per turn");
+    click(container, "Everyday settings");
+    expect(container.querySelectorAll(".cc-settings-home")).toHaveLength(1);
+    expect(plugin.settings.agentAllowWrites).toBe(true);
+  });
+
+  it("finds a control in a collapsed advanced section from the home search", () => {
+    const plugin = stubPlugin();
+    const tab = new ClaudeCompanionSettingTab(new App() as never, plugin);
+    const container = tab.containerEl as unknown as FakeElement;
+    openSettingTab(tab);
+    const input = container.querySelectorAll("input")[0]!;
+    input.value = "agentMaxIterations";
+    input.dispatchEvent({ type: "input" });
+    expect(container.querySelectorAll(".setting-item-name").map((el) => el.textContent)).toContain("Max tool iterations per turn");
+    expect(container.querySelectorAll(".cc-settings-home")).toHaveLength(0);
+  });
+
+  it("opens the everyday task menu even for an existing advanced user", () => {
     const plugin = stubPlugin();
     plugin.settings.settingsShowAdvanced = true;
     const tab = new ClaudeCompanionSettingTab(new App() as never, plugin);
@@ -207,11 +254,13 @@ describe("settings tab render", () => {
     const container = tab.containerEl as unknown as FakeElement;
 
     const items = container.querySelectorAll(".setting-item");
-    expect(items.length).toBeGreaterThan(50);
+    expect(items.length).toBeLessThan(10);
 
     const controls = container.querySelectorAll(".setting-item-control");
-    expect(controls.filter((c) => c.children.length > 0).length).toBeGreaterThan(30);
-    expect(container.querySelectorAll("button").some((b) => b.textContent === "Set up")).toBe(true);
+    expect(controls.filter((c) => c.children.length > 0)).toHaveLength(0);
+    expect(container.querySelectorAll(".cc-settings-destination-title").map((b) => b.textContent)).toEqual([
+      "Choose how I chat", "Control access to my notes", "Connect apps & tools", "Capture and find knowledge", "Advanced settings",
+    ]);
   });
 
   it("renders on mobile with the desktop-only pages withheld", () => {
@@ -226,12 +275,12 @@ describe("settings tab render", () => {
         .querySelectorAll(".setting-item-name")
         .map((el) => el.textContent);
       expect(names).not.toContain("Enable MCP server");
-      expect(names).toContain("Ollama host");
+      expect(names).not.toContain("Ollama host");
       const backend = flatten(definitionsOf(stubPlugin())).find((d) => (d.control as { key?: string } | undefined)?.key === "chatBackend");
       expect(Object.keys((backend?.control as { options: Record<string, string> }).options)).not.toContain("claude-cli");
       expect(names).not.toContain("Codex model");
       expect(names).not.toContain("OpenCode model");
-      expect(names).toContain("Let Claude use vault tools");
+      expect(names).not.toContain("Let Claude use vault tools");
     } finally {
       Platform.isMobile = false;
       Platform.isDesktop = true;

@@ -1,6 +1,6 @@
 // One tool, declared once: what it advertises, whether it changes the vault, why it may be unavailable, and how it runs. Pure.
 
-import type { McpToolDef } from "./protocol";
+import type { McpToolDef, ToolResult } from "./protocol";
 
 export interface ToolRecord {
   def: McpToolDef;
@@ -8,7 +8,7 @@ export interface ToolRecord {
   writes: boolean;
   /** Why the tool is not offered right now (a setting is off); absent while it is offered. */
   unavailable?: string | undefined;
-  run(args: Record<string, unknown>): Promise<string>;
+  run(args: Record<string, unknown>): Promise<ToolResult>;
 }
 
 /** The definition a client sees, with its write flag as the MCP read-only annotation. */
