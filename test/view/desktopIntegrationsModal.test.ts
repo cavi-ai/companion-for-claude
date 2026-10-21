@@ -1,5 +1,6 @@
 import { App, FakeElement } from "obsidian";
 import { describe, expect, it, vi } from "vitest";
+import type { CliHost } from "../../src/integrations/cliHosts";
 import type { DesktopIntegrationViewState } from "../../src/integrations/desktopCoordinator";
 import type { DesktopPlatform, ProbeResult } from "../../src/integrations/desktop";
 import {
@@ -13,6 +14,7 @@ class Controller implements DesktopIntegrationsController {
   refresh = vi.fn(async () => undefined);
   setupClaudeCode = vi.fn(async (_confirm: () => Promise<boolean>) => undefined);
   connectClaudeDesktop = vi.fn(async (_confirm: () => Promise<boolean>) => undefined);
+  connectCliHost = vi.fn(async (_host: CliHost, _confirm: () => Promise<boolean>) => undefined);
   openTerminal = vi.fn(async () => undefined);
   dispose = vi.fn();
 
@@ -341,5 +343,49 @@ describe("DesktopIntegrationsModal CLI setup shortcut", () => {
   it("hides the shortcut on mobile, which has no CLI", () => {
     const { modal } = open({ available: false, state: "missing" }, true);
     expect(button(modal, "Open Obsidian CLI settings")).toBeUndefined();
+  });
+});
+
+describe("DesktopIntegrationsModal agent CLIs", () => {
+  const available: ProbeResult = { available: true, state: "available", version: "1.4.3" };
+  const open = (hosts: DesktopIntegrationViewState["hosts"], error?: DesktopIntegrationViewState["error"]) => {
+    const controller = new Controller({ status: error ? "error" : "ready", providerReady: true, ...(hosts ? { hosts } : {}), ...(error ? { error } : {}) });
+    const confirm = vi.fn(async () => true);
+    const modal = new DesktopIntegrationsModal(new App(), {
+      controller,
+      mobile: false,
+      platform: "darwin",
+      openConnectionSettings: vi.fn(),
+      openBridgeSettings: vi.fn(),
+      openObsidianCliSettings: vi.fn(),
+      confirm,
+    });
+    modal.onOpen();
+    return { modal, controller, confirm };
+  };
+
+  it("lists each CLI with its state and connects the one clicked after confirming what it changes", async () => {
+    const { modal, controller, confirm } = open([
+      { host: "codex", probe: { available: true, state: "available", version: "0.162.1" }, registered: true },
+      { host: "agy", probe: available, registered: false },
+    ]);
+    const text = visibleText(modal);
+    expect(text).toContain("Codex: 0.162.1 · vault tools connected");
+    expect(text).toContain("Antigravity: 1.4.3");
+    expect(button(modal, "Reconnect Codex")).toBeDefined();
+    button(modal, "Connect Antigravity")?.dispatchEvent({ type: "click" });
+    expect(controller.connectCliHost).toHaveBeenCalledWith("agy", expect.any(Function));
+    await controller.connectCliHost.mock.calls[0]![1]();
+    expect(confirm).toHaveBeenCalledWith("agy", expect.stringContaining("agy mcp add"));
+  });
+
+  it("offers no connect button for a CLI that is not installed, and retries the CLI that failed", () => {
+    const { modal } = open([
+      { host: "codex", probe: { available: false, state: "missing" }, registered: false },
+      { host: "agy", probe: available, registered: false },
+    ], { message: "Codex did not list obsidian-vault after it was added.", recovery: "retry-codex" });
+    expect(visibleText(modal)).toContain("Codex: not found");
+    expect(button(modal, "Connect Codex")).toBeUndefined();
+    expect(button(modal, "Retry Codex")).toBeDefined();
   });
 });

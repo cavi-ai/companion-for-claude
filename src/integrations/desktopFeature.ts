@@ -9,6 +9,7 @@ import type { PluginSettings } from "../types";
 import { ChoiceModal } from "../view/ChoiceModal";
 import { DesktopIntegrationsModal, type DesktopIntegrationsController } from "../view/DesktopIntegrationsModal";
 import type { ManagedProcessPort } from "../build/desktopExecutor";
+import { CLI_HOST_LABELS, type CliHost } from "./cliHosts";
 import { claudeDesktopConfigPath, type DesktopPlatform } from "./desktop";
 import { DesktopIntegrationCoordinator, type DesktopIntegrationRuntime } from "./desktopCoordinator";
 import type { BridgeSetupInput } from "./desktopRuntime";
@@ -78,17 +79,17 @@ export class DesktopFeature {
   }
 
   /**
-   * Keep Claude Desktop's extension pointed at this vault's bridge after a port
-   * or token change. Only a connection file Connect Claude Desktop wrote for
-   * this vault is touched.
+   * Keep Claude Desktop's extension and the agent CLIs' connector pointed at
+   * this vault's bridge after a port or token change. Only a connection file a
+   * Connect action wrote for this vault is touched.
    */
-  async refreshClaudeDesktopConnection(port: number, token: string): Promise<void> {
+  async refreshConnection(port: number, token: string): Promise<void> {
     if (Platform.isMobile) return;
     const { adapter, platform, env, homeDir } = this.desktopEnvironment();
     if (platform !== "darwin" && platform !== "win32") return;
     const module = await this.deps.runtimeLoader();
     const runtime = await module.createNodeDesktopRuntime(platform, homeDir, { APPDATA: env.APPDATA });
-    await runtime.refreshClaudeDesktopConnection?.({ port, token, vault: { name: this.app.vault.getName(), path: adapter.getBasePath() } });
+    await runtime.refreshConnection?.({ port, token, vault: { name: this.app.vault.getName(), path: adapter.getBasePath() } });
   }
 
   private desktopEnvironment(): { adapter: FileSystemAdapter; platform: DesktopPlatform; env: Record<string, string | undefined>; homeDir: string } {
@@ -159,15 +160,19 @@ export class DesktopFeature {
       refresh: async () => undefined,
       setupClaudeCode: async () => undefined,
       connectClaudeDesktop: async () => undefined,
+      connectCliHost: async () => undefined,
       openTerminal: async () => undefined,
       dispose: () => undefined,
     };
   }
 
-  private confirmDesktopIntegration(target: "claude-code" | "claude-desktop", message: string): Promise<boolean> {
+  private confirmDesktopIntegration(target: "claude-code" | "claude-desktop" | CliHost, message: string): Promise<boolean> {
+    const title = target === "claude-code"
+      ? "Set up Claude Code?"
+      : target === "claude-desktop" ? "Connect Claude Desktop?" : `Connect ${CLI_HOST_LABELS[target]}?`;
     return new Promise((resolve) => {
       new ChoiceModal(this.app, {
-        title: target === "claude-code" ? "Set up Claude Code?" : "Connect Claude Desktop?",
+        title,
         message,
         buttons: [
           { label: "Cancel", value: "cancel" as const },

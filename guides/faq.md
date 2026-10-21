@@ -127,4 +127,4 @@ Use the community store — that's the released, reviewed build. Use
 
 
 Bugs and feature requests: a GitHub issue. Suspected vulnerabilities: **not** a
-public issue — follow [`SECURITY.md`](https://github.com/cavi-ai/claude-obsidian/blob/bd9df2e0562b744fdd2b75168cf1343e92d76566/SECURITY.md).
+public issue — follow [`SECURITY.md`](https://github.com/cavi-ai/claude-obsidian/blob/3b642845a88df8daabc0fc7fcbc303ed2d124353/SECURITY.md).

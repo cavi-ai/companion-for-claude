@@ -11,6 +11,7 @@ import {
   type ExecFilePort,
   type ExecResult,
 } from "../../src/integrations/desktopRuntime";
+import { PROXY_SOURCE } from "../../src/integrations/desktopExtension";
 
 class FakeExec implements ExecFilePort {
   readonly calls: Array<{ executable: string; args: string[]; options: ExecFileOptions }> = [];
@@ -331,6 +332,7 @@ describe("DesktopRuntime", () => {
     new DesktopRuntime({ exec: new FakeExec(new Map()), fs, platform: "darwin", homeDir: "/Users/test", tempDir: "/tmp/companion/", openPath });
 
   const CONNECTION_FILE = "/Users/test/Library/Application Support/Companion for Claude/bridge.json";
+  const CONNECTOR_SCRIPT = "/Users/test/Library/Application Support/Companion for Claude/server/index.js";
 
   it("writes the connection file and the bundle, opens it, and removes the mcp-remote entry earlier versions wrote", async () => {
     const fs = new MemoryFs();
@@ -381,15 +383,78 @@ describe("DesktopRuntime", () => {
     const fs = new MemoryFs();
     fs.files.set(CONNECTION_FILE, JSON.stringify({ url: "http://127.0.0.1:22360/mcp", token: "old", vault: "Notes", vaultPath: "/v/Notes" }));
     const runtime = desktopRuntime(fs, async () => undefined);
-    expect(await runtime.refreshClaudeDesktopConnection({ port: 22361, token: "new", vault })).toBe(true);
+    expect(await runtime.refreshConnection({ port: 22361, token: "new", vault })).toBe(true);
     expect(JSON.parse(fs.files.get(CONNECTION_FILE)!)).toEqual({ url: "http://127.0.0.1:22361/mcp", token: "new", vault: "Notes", vaultPath: "/v/Notes" });
-    expect(await runtime.refreshClaudeDesktopConnection({ port: 22361, token: "new", vault })).toBe(false);
-    expect(await runtime.refreshClaudeDesktopConnection({ port: 1, token: "other", vault: { name: "Other", path: "/v/Other" } })).toBe(false);
+    expect(await runtime.refreshConnection({ port: 22361, token: "new", vault })).toBe(false);
+    expect(await runtime.refreshConnection({ port: 1, token: "other", vault: { name: "Other", path: "/v/Other" } })).toBe(false);
     expect(fs.writes).toHaveLength(1);
     const unclaimed = new MemoryFs();
     unclaimed.files.set(CONNECTION_FILE, JSON.stringify({ url: "http://127.0.0.1:22360/mcp", token: "old" }));
-    expect(await desktopRuntime(unclaimed, async () => undefined).refreshClaudeDesktopConnection({ port: 1, token: "new", vault })).toBe(false);
-    expect(await desktopRuntime(new MemoryFs(), async () => undefined).refreshClaudeDesktopConnection({ port: 1, token: "new", vault })).toBe(false);
+    expect(await desktopRuntime(unclaimed, async () => undefined).refreshConnection({ port: 1, token: "new", vault })).toBe(false);
+    expect(await desktopRuntime(new MemoryFs(), async () => undefined).refreshConnection({ port: 1, token: "new", vault })).toBe(false);
+  });
+
+  it("replaces a connector script an earlier version wrote, and writes none that was never installed", async () => {
+    const vault = { name: "Notes", path: "/v/Notes" };
+    const connection = JSON.stringify({ url: "http://127.0.0.1:22360/mcp", token: "tok", vault: "Notes", vaultPath: "/v/Notes" });
+    const fs = new MemoryFs();
+    fs.files.set(CONNECTION_FILE, connection);
+    fs.files.set(CONNECTOR_SCRIPT, "// an earlier connector");
+    expect(await desktopRuntime(fs, async () => undefined).refreshConnection({ port: 22360, token: "tok", vault })).toBe(true);
+    expect(fs.files.get(CONNECTOR_SCRIPT)).toBe(PROXY_SOURCE);
+    const fresh = new MemoryFs();
+    fresh.files.set(CONNECTION_FILE, connection);
+    expect(await desktopRuntime(fresh, async () => undefined).refreshConnection({ port: 22360, token: "tok", vault })).toBe(false);
+    expect(fresh.files.has(CONNECTOR_SCRIPT)).toBe(false);
+  });
+
+  describe("agent CLIs", () => {
+    const vault = { name: "Notes", path: "/v/Notes" };
+    const installed = (registered: { codex: boolean; agy: boolean }) => new Map<string, ExecResult | Error | ExecResult[]>([
+      [key("codex", "--version"), ok("codex-cli 0.162.1\n")],
+      [key("agy", "--version"), ok("1.4.3\n")],
+      [key("codex", "mcp", "get", "obsidian-vault"), registered.codex ? ok("obsidian-vault\n  enabled: true\n") : new ExecFailure("No MCP server named 'obsidian-vault' found.")],
+      [key("agy", "mcp", "list"), ok(registered.agy ? "NAME            TYPE   STATUS   COMMAND/URL\nobsidian-vault  stdio  enabled  node /x/index.js\n" : "No MCP servers configured.\n")],
+    ]);
+    const hostRuntime = (exec: FakeExec, fs = new MemoryFs()) => new DesktopRuntime({ exec, fs, platform: "darwin", homeDir: "/Users/test" });
+
+    it("reports each CLI's version and whether obsidian-vault is registered with it", async () => {
+      expect(await hostRuntime(new FakeExec(installed({ codex: true, agy: false }))).inspectCliHosts()).toEqual([
+        { host: "codex", probe: { available: true, state: "available", version: "0.162.1" }, registered: true },
+        { host: "agy", probe: { available: true, state: "available", version: "1.4.3" }, registered: false },
+      ]);
+      expect((await hostRuntime(new FakeExec(new Map())).inspectCliHosts()).map(({ host, probe, registered }) => [host, probe.state, registered]))
+        .toEqual([["codex", "missing", false], ["agy", "missing", false]]);
+    });
+
+    it("writes the connection file and connector, registers it with the CLI's own mcp add, and checks the CLI lists it", async () => {
+      const responses = installed({ codex: false, agy: false });
+      responses.set(key("agy", "mcp", "list"), [ok("No MCP servers configured.\n"), ok("obsidian-vault  stdio  enabled  node /x/index.js\n")]);
+      responses.set(key("agy", "mcp", "add", "obsidian-vault", "node", CONNECTOR_SCRIPT), ok('Added MCP server "obsidian-vault" (stdio)\n'));
+      const exec = new FakeExec(responses);
+      const fs = new MemoryFs();
+      const result = await hostRuntime(exec, fs).connectCliHost("agy", { port: 22360, token: "bridge-token", vault });
+      expect(result).toEqual({ host: "agy", probe: { available: true, state: "available", version: "1.4.3" }, registered: true });
+      expect(JSON.parse(fs.files.get(CONNECTION_FILE)!)).toEqual({ url: "http://127.0.0.1:22360/mcp", token: "bridge-token", vault: "Notes", vaultPath: "/v/Notes" });
+      expect(fs.files.get(CONNECTOR_SCRIPT)).toBe(PROXY_SOURCE);
+      expect(exec.calls.map(({ args }) => args.join(" "))).toContain(`mcp add obsidian-vault node ${CONNECTOR_SCRIPT}`);
+      expect(exec.calls.flatMap(({ args }) => args).join(" ")).not.toContain("bridge-token");
+    });
+
+    it("registers Codex through `codex mcp add <name> -- node <script>`", async () => {
+      const responses = installed({ codex: false, agy: false });
+      responses.set(key("codex", "mcp", "get", "obsidian-vault"), [new ExecFailure("not found"), ok("obsidian-vault\n")]);
+      responses.set(key("codex", "mcp", "add", "obsidian-vault", "--", "node", CONNECTOR_SCRIPT), ok("Added global MCP server 'obsidian-vault'.\n"));
+      const result = await hostRuntime(new FakeExec(responses)).connectCliHost("codex", { port: 22360, token: "t", vault });
+      expect(result.registered).toBe(true);
+    });
+
+    it("says what to install when the CLI is missing, and reports a registration the CLI does not list", async () => {
+      await expect(hostRuntime(new FakeExec(new Map())).connectCliHost("codex", { port: 1, token: "t", vault })).rejects.toThrow("Codex was not found");
+      const responses = installed({ codex: false, agy: false });
+      responses.set(key("agy", "mcp", "add", "obsidian-vault", "node", CONNECTOR_SCRIPT), ok("Added\n"));
+      await expect(hostRuntime(new FakeExec(responses)).connectCliHost("agy", { port: 1, token: "t", vault })).rejects.toThrow("did not list obsidian-vault");
+    });
   });
 
   it("refuses an empty token and a device that cannot open the bundle", async () => {

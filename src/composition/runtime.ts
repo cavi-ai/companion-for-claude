@@ -89,7 +89,7 @@ export function buildMcpBridge(host: McpBridgeHost, wiring: McpBridgeWiring): Mc
       );
     },
     notice: (msg) => new Notice(msg),
-    started: (port, token) => host.desktopIntegrations().refreshClaudeDesktopConnection(port, token),
+    started: (port, token) => host.desktopIntegrations().refreshConnection(port, token),
   });
 }
 

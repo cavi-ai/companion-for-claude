@@ -95,7 +95,7 @@ self-contained and consistent with the CSP.
 That aesthetic is an **original reformulation** of the look in Thariq Shihipar's
 ["unreasonable effectiveness of HTML"](https://github.com/ThariqS/html-effectiveness)
 gallery — not a copy of his HTML. The gallery is vendored here only as a pinned,
-unmodified submodule. Full attribution is in [`NOTICE`](https://github.com/cavi-ai/claude-obsidian/blob/bd9df2e0562b744fdd2b75168cf1343e92d76566/NOTICE).
+unmodified submodule. Full attribution is in [`NOTICE`](https://github.com/cavi-ai/claude-obsidian/blob/3b642845a88df8daabc0fc7fcbc303ed2d124353/NOTICE).
 
 ## Settings reference
 

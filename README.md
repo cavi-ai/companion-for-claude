@@ -11,7 +11,7 @@ source of truth.
 
 [**Install from the Obsidian community store**](https://obsidian.md/plugins?id=claude-companion)
 · [Getting started](guides/getting-started.md)
-· [All guides](https://github.com/cavi-ai/claude-obsidian/blob/bd9df2e0562b744fdd2b75168cf1343e92d76566/README.md#guides)
+· [All guides](https://github.com/cavi-ai/claude-obsidian/blob/3b642845a88df8daabc0fc7fcbc303ed2d124353/README.md#guides)
 
 ![Companion in Obsidian: onboarding interviews connected to a finding, proposal, and next research session beside Claude Opus 5.5 chat](assets/canvas-output.png)
 
@@ -52,7 +52,7 @@ source of truth.
 - **Optional integrations**: a loopback MCP bridge for live-vault tools, and an
   MCP client for servers you explicitly configure.
 
-The product overview stays in the [repository README](https://github.com/cavi-ai/claude-obsidian/blob/bd9df2e0562b744fdd2b75168cf1343e92d76566/README.md). Detailed
+The product overview stays in the [repository README](https://github.com/cavi-ai/claude-obsidian/blob/3b642845a88df8daabc0fc7fcbc303ed2d124353/README.md). Detailed
 behavior and setup live in the guides:
 
 - [Agent mode, edits, and guardrails](guides/agent-mode.md)
@@ -158,7 +158,7 @@ To install a development build, copy `main.js`, `manifest.json`, and
 **Companion for Claude** in Community plugins. `pnpm run dev` watches and
 rebuilds `main.js` for active development.
 
-See [`CONTRIBUTING.md`](https://github.com/cavi-ai/claude-obsidian/blob/bd9df2e0562b744fdd2b75168cf1343e92d76566/CONTRIBUTING.md) for the full gate and release
+See [`CONTRIBUTING.md`](https://github.com/cavi-ai/claude-obsidian/blob/3b642845a88df8daabc0fc7fcbc303ed2d124353/CONTRIBUTING.md) for the full gate and release
 workflow.
 
 ## Releases
@@ -172,4 +172,4 @@ workflow.
 ## License
 
 MIT — see [`LICENSE`](LICENSE). Third-party attribution is in
-[`NOTICE`](https://github.com/cavi-ai/claude-obsidian/blob/bd9df2e0562b744fdd2b75168cf1343e92d76566/NOTICE).
+[`NOTICE`](https://github.com/cavi-ai/claude-obsidian/blob/3b642845a88df8daabc0fc7fcbc303ed2d124353/NOTICE).

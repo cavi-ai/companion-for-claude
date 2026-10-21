@@ -12,6 +12,7 @@ import {
   buildExtensionBundle,
   connectionFileBody,
   connectionFilePath,
+  connectorScriptPath,
   extensionManifest,
   refreshedConnectionBody,
   withoutLegacyBridgeEntry,
@@ -38,6 +39,8 @@ describe("Claude Desktop extension bundle", () => {
     expect(connectionFilePath("win32", "C:\\Users\\me", { APPDATA: "C:\\Users\\me\\AppData\\Roaming\\" }))
       .toBe("C:\\Users\\me\\AppData\\Roaming\\Companion for Claude\\bridge.json");
     expect(connectionFilePath("win32", "C:\\Users\\me", {})).toBe("C:\\Users\\me\\AppData\\Roaming\\Companion for Claude\\bridge.json");
+    expect(connectorScriptPath("darwin", "/Users/me", {})).toBe("/Users/me/Library/Application Support/Companion for Claude/server/index.js");
+    expect(connectorScriptPath("win32", "C:\\Users\\me", {})).toBe("C:\\Users\\me\\AppData\\Roaming\\Companion for Claude\\server\\index.js");
     expect(JSON.parse(connectionFileBody("http://127.0.0.1:1/mcp", "t"))).toEqual({ url: "http://127.0.0.1:1/mcp", token: "t" });
     expect(JSON.parse(connectionFileBody("http://127.0.0.1:1/mcp", "t", { name: "Notes", path: "/v/Notes" })))
       .toEqual({ url: "http://127.0.0.1:1/mcp", token: "t", vault: "Notes", vaultPath: "/v/Notes" });

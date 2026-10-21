@@ -17,13 +17,27 @@ import type { ManagedProcessPort } from "../build/desktopExecutor";
 import {
   EXTENSION_FILE_NAME,
   EXTENSION_VERSION,
+  PROXY_SOURCE,
   buildExtensionBundle,
   connectionFileBody,
   connectionFilePath,
+  connectionOwnedBy,
+  connectorScriptPath,
   refreshedConnectionBody,
   withoutLegacyBridgeEntry,
   type ConnectionVault,
 } from "./desktopExtension";
+import {
+  CLI_HOSTS,
+  CLI_HOST_LABELS,
+  cliHostCandidates,
+  cliHostRegisterArgs,
+  cliHostRegistered,
+  cliHostStatusArgs,
+  parseCliVersion,
+  type CliHost,
+  type CliHostInspection,
+} from "./cliHosts";
 
 export interface ExecResult {
   stdout: string;
@@ -190,7 +204,8 @@ export interface ClaudeDesktopInstallInput {
   configPath?: string;
 }
 
-export interface ClaudeDesktopRefreshInput {
+/** This vault's running bridge, as the connection file records it. */
+export interface BridgeConnectionInput {
   port: number;
   token: string;
   vault: ConnectionVault;
@@ -242,6 +257,7 @@ export function claudeExecutableCandidates(platform: DesktopPlatform, homeDir: s
 
 export class DesktopRuntime {
   private claudeExecutable = "claude";
+  private readonly cliExecutables = new Map<CliHost, string>();
 
   constructor(private readonly options: DesktopRuntimeOptions) {}
 
@@ -397,17 +413,65 @@ export class DesktopRuntime {
   }
 
   /**
-   * Keep the extension's connection file on this vault's running bridge: when
-   * the file names this vault and its address or token is out of date, write
-   * the current ones. True when the file was written.
+   * Keep the connectors on this vault's running bridge: when the connection
+   * file names this vault, write the current address and token if they changed,
+   * and replace a connector script an earlier version wrote. True when anything
+   * was written.
    */
-  async refreshClaudeDesktopConnection(input: ClaudeDesktopRefreshInput): Promise<boolean> {
+  async refreshConnection(input: BridgeConnectionInput): Promise<boolean> {
     if (!input.token.trim()) return false;
-    const connectionPath = connectionFilePath(this.options.platform, this.options.homeDir, this.options.env ?? {});
-    const body = refreshedConnectionBody(await this.options.fs.read(connectionPath), `http://127.0.0.1:${input.port}/mcp`, input.token, input.vault);
-    if (body === null) return false;
-    await this.options.fs.atomicWrite(connectionPath, body);
-    return true;
+    const env = this.options.env ?? {};
+    const connectionPath = connectionFilePath(this.options.platform, this.options.homeDir, env);
+    const source = await this.options.fs.read(connectionPath);
+    if (!connectionOwnedBy(source, input.vault)) return false;
+    const body = refreshedConnectionBody(source, `http://127.0.0.1:${input.port}/mcp`, input.token, input.vault);
+    if (body !== null) await this.options.fs.atomicWrite(connectionPath, body);
+    const scriptPath = connectorScriptPath(this.options.platform, this.options.homeDir, env);
+    const script = await this.options.fs.read(scriptPath);
+    const staleScript = script !== null && script !== PROXY_SOURCE;
+    if (staleScript) await this.options.fs.atomicWrite(scriptPath, PROXY_SOURCE);
+    return body !== null || staleScript;
+  }
+
+  /** Each agent CLI Companion can connect: whether it is installed and whether obsidian-vault is registered with it. */
+  async inspectCliHosts(): Promise<CliHostInspection[]> {
+    return Promise.all(CLI_HOSTS.map(async (host) => {
+      const { result, executable } = await this.probe(cliHostCandidates(host, this.options.platform, this.options.homeDir), ["--version"], parseCliVersion);
+      if (!result.available || !executable) return { host, probe: result, registered: false };
+      this.cliExecutables.set(host, executable);
+      try {
+        const status = await this.options.exec.run(executable, cliHostStatusArgs(host), COMMAND_OPTIONS);
+        return { host, probe: result, registered: cliHostRegistered(host, status.stdout) };
+      } catch {
+        return { host, probe: result, registered: false };
+      }
+    }));
+  }
+
+  /**
+   * Connect an agent CLI to this vault: write the connection file and the
+   * connector script beside it, register the script as obsidian-vault with the
+   * CLI's own `mcp add`, then check the CLI lists it.
+   */
+  async connectCliHost(host: CliHost, input: BridgeConnectionInput): Promise<CliHostInspection> {
+    const label = CLI_HOST_LABELS[host];
+    const stage = `Connect ${label}`;
+    if (!input.token.trim()) throw new DesktopIntegrationError(stage, "The MCP bridge token is empty.");
+    const before = (await this.inspectCliHosts()).find((entry) => entry.host === host);
+    const executable = this.cliExecutables.get(host);
+    if (!before?.probe.available || !executable) throw new DesktopIntegrationError(stage, `${label} was not found. Install its command-line tool, then check again.`);
+    const env = this.options.env ?? {};
+    const scriptPath = connectorScriptPath(this.options.platform, this.options.homeDir, env);
+    await this.options.fs.atomicWrite(connectionFilePath(this.options.platform, this.options.homeDir, env), connectionFileBody(`http://127.0.0.1:${input.port}/mcp`, input.token, input.vault));
+    await this.options.fs.atomicWrite(scriptPath, PROXY_SOURCE);
+    try {
+      await this.options.exec.run(executable, cliHostRegisterArgs(host, scriptPath), { ...COMMAND_OPTIONS, timeoutMs: 30_000 });
+    } catch (cause) {
+      throw commandError(stage, cause, [input.token]);
+    }
+    const after = (await this.inspectCliHosts()).find((entry) => entry.host === host);
+    if (!after?.registered) throw new DesktopIntegrationError(stage, `${label} did not list obsidian-vault after it was added.`);
+    return after;
   }
 
   async openTerminalAtVault(vaultPath: string): Promise<TerminalLaunchResult> {

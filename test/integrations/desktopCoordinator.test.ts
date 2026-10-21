@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { DesktopIntegrationCoordinator, type DesktopIntegrationRuntime } from "../../src/integrations/desktopCoordinator";
 import type { ClaudeCodeInspection } from "../../src/integrations/desktop";
+import type { CliHostInspection } from "../../src/integrations/cliHosts";
 
 const ready: ClaudeCodeInspection = {
   claude: { available: true, version: "2.1.226" },
@@ -184,5 +185,61 @@ describe("DesktopIntegrationCoordinator", () => {
     await coordinator.openTerminal();
     expect(copied).toEqual(["cd '/Vault' && claude"]);
     expect(coordinator.snapshot().message).toContain("copied");
+  });
+});
+
+describe("DesktopIntegrationCoordinator agent CLIs", () => {
+  const codex: CliHostInspection = { host: "codex", probe: { available: true, state: "available", version: "0.162.1" }, registered: false };
+  const agy: CliHostInspection = { host: "agy", probe: { available: true, state: "available", version: "1.4.3" }, registered: false };
+
+  it("checks the agent CLIs with Claude Code and keeps their list through other actions", async () => {
+    const coordinator = new DesktopIntegrationCoordinator({
+      runtime: runtime({ inspectCliHosts: async () => [codex, agy] }),
+      providerReady: () => true,
+      vaultPath: "/Vault",
+      prepareClaudeDesktopBridge: async () => ({ port: 22360, token: "secret" }),
+      copy: async () => undefined,
+    });
+    await coordinator.refresh();
+    expect(coordinator.snapshot().hosts).toEqual([codex, agy]);
+    await coordinator.openTerminal();
+    expect(coordinator.snapshot().hosts).toEqual([codex, agy]);
+  });
+
+  it("connects a CLI on a prepared read-only bridge for this vault and never shows the token", async () => {
+    let input: unknown;
+    const coordinator = new DesktopIntegrationCoordinator({
+      runtime: runtime({
+        inspectCliHosts: async () => [codex, agy],
+        connectCliHost: async (host, bridge) => { input = { host, ...bridge }; return { ...agy, registered: true }; },
+      }),
+      providerReady: () => true,
+      vaultPath: "/Vault",
+      vaultName: "Vault",
+      prepareClaudeDesktopBridge: async () => ({ port: 22360, token: "private-bridge-token" }),
+      copy: async () => undefined,
+    });
+    await coordinator.refresh();
+    await coordinator.connectCliHost("agy", async () => true);
+    expect(input).toEqual({ host: "agy", port: 22360, token: "private-bridge-token", vault: { name: "Vault", path: "/Vault" } });
+    const state = coordinator.snapshot();
+    expect(state.hosts).toEqual([codex, { ...agy, registered: true }]);
+    expect(state.message).toContain("Antigravity has the vault tools as obsidian-vault");
+    expect(JSON.stringify(state)).not.toContain("private-bridge-token");
+  });
+
+  it("does nothing when the confirmation is declined, and offers a retry for the CLI that failed", async () => {
+    let calls = 0;
+    const coordinator = new DesktopIntegrationCoordinator({
+      runtime: runtime({ connectCliHost: async () => { calls += 1; throw new Error("Codex did not list obsidian-vault after it was added."); } }),
+      providerReady: () => true,
+      vaultPath: "/Vault",
+      prepareClaudeDesktopBridge: async () => ({ port: 22360, token: "secret" }),
+      copy: async () => undefined,
+    });
+    await coordinator.connectCliHost("codex", async () => false);
+    expect(calls).toBe(0);
+    await coordinator.connectCliHost("codex", async () => true);
+    expect(coordinator.snapshot().error).toEqual({ message: "Codex did not list obsidian-vault after it was added.", recovery: "retry-codex" });
   });
 });

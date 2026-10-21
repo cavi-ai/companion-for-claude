@@ -37,6 +37,13 @@ export function connectionFilePath(platform: DesktopPlatform, homeDir: string, e
   return `${homeDir.replace(/\/+$/, "")}/Library/Application Support/${CONNECTION_FOLDER}/${CONNECTION_FILE}`;
 }
 
+/** Where Companion writes the connector script (PROXY_SOURCE) that agent CLIs run as `node <path>`, beside the connection file. */
+export function connectorScriptPath(platform: DesktopPlatform, homeDir: string, env: Record<string, string | undefined>): string {
+  const connection = connectionFilePath(platform, homeDir, env);
+  const separator = platform === "win32" ? "\\" : "/";
+  return `${connection.slice(0, connection.length - CONNECTION_FILE.length)}server${separator}index.js`;
+}
+
 /** The connection file's body: the bridge's MCP endpoint, its bearer token, and the vault that serves it. */
 export function connectionFileBody(url: string, token: string, vault?: ConnectionVault): string {
   const body = vault ? { url, token, vault: vault.name, vaultPath: vault.path } : { url, token };
@@ -44,12 +51,11 @@ export function connectionFileBody(url: string, token: string, vault?: Connectio
 }
 
 /**
- * The connection file brought up to date with this vault's running bridge, or
- * null when it needs no write: it is missing or unreadable, belongs to another
- * vault (or to none, written before files named their vault), or already holds
- * this address and token. Only Connect Claude Desktop claims a file for a vault.
+ * The connection file when it names this vault, else null: missing, unreadable,
+ * another vault's, or written before files named their vault. Only a Connect
+ * action claims a file for a vault.
  */
-export function refreshedConnectionBody(source: string | null, url: string, token: string, vault: ConnectionVault): string | null {
+function ownedConnection(source: string | null, vault: ConnectionVault): Record<string, unknown> | null {
   if (!source?.trim()) return null;
   let current: unknown;
   try {
@@ -57,7 +63,22 @@ export function refreshedConnectionBody(source: string | null, url: string, toke
   } catch {
     return null;
   }
-  if (!isRecord(current) || current.vaultPath !== vault.path) return null;
+  return isRecord(current) && current.vaultPath === vault.path ? current : null;
+}
+
+/** Whether the connection file belongs to this vault. */
+export function connectionOwnedBy(source: string | null, vault: ConnectionVault): boolean {
+  return ownedConnection(source, vault) !== null;
+}
+
+/**
+ * The connection file brought up to date with this vault's running bridge, or
+ * null when it needs no write: it is not this vault's, or it already holds this
+ * address and token.
+ */
+export function refreshedConnectionBody(source: string | null, url: string, token: string, vault: ConnectionVault): string | null {
+  const current = ownedConnection(source, vault);
+  if (!current) return null;
   if (current.url === url && current.token === token && current.vault === vault.name) return null;
   return connectionFileBody(url, token, vault);
 }

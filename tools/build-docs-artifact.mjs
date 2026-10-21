@@ -5,6 +5,7 @@
 import { createHash } from "node:crypto";
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { repositoryUrl, rewriteMarkdownLinks } from "./docs-links.mjs";
 
 const SLUG = "companion-for-claude";
 const VERSION_RE = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
@@ -95,20 +96,16 @@ for (const [name, file] of available) {
 // The artifact must be self-contained: a relative target that isn't a shipped
 // page becomes an absolute repository URL at this commit.
 const repoRoot = path.resolve(guidesDir, "..");
-const blobBase = `https://github.com/cavi-ai/claude-obsidian/blob/${commit}`;
+const repository = path.resolve(readme) === path.join(repoRoot, "README.md") ? "cavi-ai/companion-for-claude" : "cavi-ai/claude-obsidian";
+const shipped = new Map([...sources].map(([target, source]) => [path.resolve(source), target]));
 for (const [file, body] of pages) {
   const from = path.dirname(sources.get(file));
-  pages.set(file, body.replace(/(!?\[[^\]]*\]\()([^)\s]+)(\))/g, (whole, open, target, close) => {
-    if (/^(https?:|mailto:|#|obsidian:)/.test(target)) return whole;
+  pages.set(file, rewriteMarkdownLinks(body, (target, link) => {
     const [pathPart, hash = ""] = target.split(/(?=#)/);
-    if (pathPart === "") return whole;
-    const resolved = path.resolve(from, pathPart);
-    const name = path.basename(resolved).replace(/\.md$/, "");
-    if (placement.has(name) && path.dirname(resolved) === path.resolve(guidesDir)) {
-      // Rewrite to the artifact-relative path of the target page.
-      return `${open}${path.relative(path.dirname(file), placement.get(name))}${hash}${close}`;
-    }
-    return `${open}${blobBase}/${path.relative(repoRoot, resolved)}${hash}${close}`;
+    if (!pathPart) return target;
+    const resolved = path.resolve(from, decodeURIComponent(pathPart));
+    const page = shipped.get(resolved);
+    return (page ? path.relative(path.dirname(file), page).split(path.sep).join("/") : repositoryUrl(repoRoot, resolved, commit, link.image, repository)) + hash;
   }));
 }
 

@@ -1,4 +1,5 @@
 import { App, Modal } from "obsidian";
+import { CLI_HOSTS, CLI_HOST_LABELS, type CliHost } from "../integrations/cliHosts";
 import type { DesktopIntegrationViewState } from "../integrations/desktopCoordinator";
 import { OBSIDIAN_CLI_UNREACHABLE, obsidianCliInstallHint, type DesktopPlatform, type ProbeResult } from "../integrations/desktop";
 
@@ -8,6 +9,7 @@ export interface DesktopIntegrationsController {
   refresh(): Promise<void>;
   setupClaudeCode(confirm: () => Promise<boolean>): Promise<void>;
   connectClaudeDesktop(confirm: () => Promise<boolean>): Promise<void>;
+  connectCliHost(host: CliHost, confirm: () => Promise<boolean>): Promise<void>;
   openTerminal(): Promise<void>;
   dispose(): void;
 }
@@ -19,7 +21,7 @@ export interface DesktopIntegrationsModalDependencies {
   openBridgeSettings(): void;
   /** Opens Obsidian's own General settings, where the CLI switch lives. */
   openObsidianCliSettings(): void;
-  confirm(target: "claude-code" | "claude-desktop", message: string): Promise<boolean>;
+  confirm(target: "claude-code" | "claude-desktop" | CliHost, message: string): Promise<boolean>;
   claudeDesktopConfigPath?: string;
   platform: DesktopPlatform;
   closed?(): void;
@@ -32,7 +34,9 @@ function probeLabel(probe: ProbeResult): string {
 }
 
 const CLAUDE_CODE_DISCLOSURE = "Adds cavi-ai/plugins to Claude Code when missing, installs or enables obsidian-agent@cavi-ai at user scope, and registers Companion's loopback vault tools (obsidian-vault) with Claude Code when the MCP bridge is on.";
-const CLAUDE_DESKTOP_DISCLOSURE = "Enables Companion's read-only loopback bridge, saves its address and token to a file only your user account can read, and opens the Obsidian vault extension in Claude Desktop to install. Replaces the obsidian-vault entry earlier versions wrote to Claude Desktop's configuration. Obsidian must remain open.";
+const CLAUDE_DESKTOP_DISCLOSURE = "Enables Companion's read-only loopback bridge, saves its address and token to a file only your user account can read, and opens the Obsidian vault extension in Claude Desktop to install. Replaces the obsidian-vault entry earlier versions wrote to Claude Desktop's configuration. Calling a vault tool opens Obsidian when it is closed.";
+const cliHostDisclosure = (host: CliHost): string =>
+  `Enables Companion's read-only loopback bridge, saves its address and token to a file only your user account can read, writes a small connector beside it, and registers that connector as obsidian-vault with ${CLI_HOST_LABELS[host]} (${host} mcp add). Runs with Node.js; calling a vault tool opens Obsidian when it is closed.`;
 
 export class DesktopIntegrationsModal extends Modal {
   private unsubscribe: (() => void) | null = null;
@@ -143,6 +147,25 @@ export class DesktopIntegrationsModal extends Modal {
       void this.deps.controller.connectClaudeDesktop(() => this.deps.confirm("claude-desktop", desktopDisclosure));
     });
 
+    const agents = root.createEl("section", { cls: "cc-desktop-integration-card" });
+    agents.createEl("h3", { text: "Codex and Antigravity" });
+    agents.createEl("p", { text: "Gives the Codex and Antigravity command-line agents Companion's vault tools." });
+    for (const host of CLI_HOSTS) {
+      const label = CLI_HOST_LABELS[host];
+      const entry = state.hosts?.find((candidate) => candidate.host === host);
+      if (entry) {
+        agents.createDiv({
+          cls: `cc-desktop-integration-state ${entry.registered ? "is-ready" : ""}`.trim(),
+          text: `${label}: ${probeLabel(entry.probe)}${entry.registered ? " · vault tools connected" : ""}`,
+        });
+      }
+      if (entry?.probe.available) {
+        this.action(agents, entry.registered ? `Reconnect ${label}` : `Connect ${label}`, state.status === "loading" && state.operation === host, () => {
+          this.connectHost(host);
+        });
+      }
+    }
+
     if (state.message) {
       root.createDiv({
         cls: "cc-desktop-integration-status",
@@ -164,12 +187,19 @@ export class DesktopIntegrationsModal extends Modal {
         this.action(error, "Retry Claude Code", false, () => {
           void this.deps.controller.setupClaudeCode(() => this.deps.confirm("claude-code", CLAUDE_CODE_DISCLOSURE));
         });
+      } else if (state.error.recovery === "retry-codex" || state.error.recovery === "retry-agy") {
+        const host: CliHost = state.error.recovery === "retry-codex" ? "codex" : "agy";
+        this.action(error, `Retry ${CLI_HOST_LABELS[host]}`, false, () => this.connectHost(host));
       } else {
         this.action(error, "Retry Claude Desktop", false, () => {
           void this.deps.controller.connectClaudeDesktop(() => this.deps.confirm("claude-desktop", desktopDisclosure));
         });
       }
     }
+  }
+
+  private connectHost(host: CliHost): void {
+    void this.deps.controller.connectCliHost(host, () => this.deps.confirm(host, cliHostDisclosure(host)));
   }
 
   private action(parent: HTMLElement, label: string, disabled: boolean, action: () => void): HTMLButtonElement {
