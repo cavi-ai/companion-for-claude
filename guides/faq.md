@@ -47,7 +47,7 @@ The complete list of hosts the plugin can ever contact:
 | `huggingface.co` + `cdn.jsdelivr.net` | One-time embedding-model download, only after you click **Download** |
 | `api.openalex.org`, `api.crossref.org`, `export.arxiv.org` | Scholarly Discover searches, only on an explicit action |
 | `api.zotero.org` | Resolving a Zotero source on an explicit import, only if you configured a user id |
-| `api.github.com` | Cloud replies, only if you configure a vault repo |
+| `api.github.com` | Cloud replies from your configured vault repo, or Gist publishing when you request it |
 | `html.duckduckgo.com` or `api.search.brave.com` | Agent web search, only on an explicit search and only if you enabled the tool |
 | The page a web-fetch tool call names | Agent web fetch, only on an explicit tool call and only if you enabled the tool |
 | A page you asked to capture or fetch | Web-source capture, attach-page, or the agent's web fetch tool |
@@ -56,7 +56,7 @@ The complete list of hosts the plugin can ever contact:
 On desktop, two optional features touch files outside the vault: session capture
 reads Claude Code transcripts from your Claude projects folder, and "open artifact
 in browser" writes a temp HTML file. Semantic search reads every note in your vault
-to build a local index. All filesystem access is disabled on mobile.
+to build a local index. Desktop filesystem integrations are disabled on mobile.
 
 ## API key or subscription?
 
@@ -96,9 +96,9 @@ More in [claude-code-bridge.md](claude-code-bridge.md#troubleshooting).
 
 ## Which models can I use?
 
-Claude Opus 5, Claude Opus 4.8, **Claude Sonnet 5** (the default), Claude Haiku
-4.5, and Claude Fable 5 from the dropdown, switchable per message from the
-composer.
+Claude Opus 5.5, Claude Opus 4.8, Claude Opus 4.6, **Claude Sonnet 5.5**
+(the default), Claude Haiku 4.5, and Claude Fable 5.1 from the dropdown,
+switchable per message from the composer.
 
 A **Custom model id** field overrides the dropdown for anything newer than this
 build knows about, or a gateway-specific name. Connection tests always use Haiku
@@ -127,4 +127,4 @@ Use the community store — that's the released, reviewed build. Use
 
 
 Bugs and feature requests: a GitHub issue. Suspected vulnerabilities: **not** a
-public issue — follow [`SECURITY.md`](../SECURITY.md).
+public issue — follow [`SECURITY.md`](https://github.com/cavi-ai/claude-obsidian/blob/bd9df2e0562b744fdd2b75168cf1343e92d76566/SECURITY.md).
