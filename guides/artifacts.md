@@ -5,7 +5,7 @@ dashboard, or a diagram, Claude can reply with a self-contained HTML page that
 Companion renders **live inside your note** — a real interactive page, not a
 screenshot of one.
 
-![A claude-html artifact rendered inline](../obsidian-plugin/assets/artifact-inline.png)
+![A claude-html artifact rendered inline](../assets/artifact-inline.png)
 
 ## How to get one
 
@@ -95,7 +95,7 @@ self-contained and consistent with the CSP.
 That aesthetic is an **original reformulation** of the look in Thariq Shihipar's
 ["unreasonable effectiveness of HTML"](https://github.com/ThariqS/html-effectiveness)
 gallery — not a copy of his HTML. The gallery is vendored here only as a pinned,
-unmodified submodule. Full attribution is in [`NOTICE`](../NOTICE).
+unmodified submodule. Full attribution is in [`NOTICE`](https://github.com/cavi-ai/claude-obsidian/blob/bd9df2e0562b744fdd2b75168cf1343e92d76566/NOTICE).
 
 ## Settings reference
 

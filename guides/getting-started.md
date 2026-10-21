@@ -43,7 +43,7 @@ and for pointing direct API traffic at a gateway.
 Open the panel from the sparkles ribbon icon (*Open Companion for Claude*) or the
 command palette (*Open chat panel*).
 
-![The Companion chat panel with a completed vault-grounded answer](../obsidian-plugin/assets/chat-panel.png)
+![The Companion chat panel with a completed vault-grounded answer](../assets/chat-panel.png)
 
 Above the composer is a row of **Context** chips. Toggle one on and its content
 rides along with your next message:
@@ -78,7 +78,7 @@ Pick **`/artifact`** with a note open. Claude replies with a fenced
 `claude-html` block, and Companion renders it **inline in the chat, inside a
 sandboxed iframe** — a real interactive page, not a picture of one.
 
-![A claude-html artifact rendered inline](../obsidian-plugin/assets/artifact-inline.png)
+![A claude-html artifact rendered inline](../assets/artifact-inline.png)
 
 From there you can open it in your real browser or save it as a portable note.
 See [artifacts.md](artifacts.md) for the sandbox rules and the design system.
