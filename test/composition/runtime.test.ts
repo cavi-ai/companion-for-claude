@@ -238,6 +238,7 @@ describe("buildMcpBridge", () => {
       saveSettings: vi.fn(async () => undefined),
       memoryNotePath: vi.fn(() => "Claude/memory.md"),
       promptTemplates: vi.fn(() => [{ name: "t" }]),
+      refreshClaudeDesktopConnection: vi.fn(async () => undefined),
     };
     const host = {
       app: { app: true },
@@ -246,6 +247,7 @@ describe("buildMcpBridge", () => {
       saveSettings: m.saveSettings,
       memoryNotePath: m.memoryNotePath,
       promptTemplates: m.promptTemplates,
+      desktopIntegrations: () => ({ refreshClaudeDesktopConnection: m.refreshClaudeDesktopConnection }),
     } as unknown as McpBridgeHost;
     const wiring = { isLifecycleEnded: vi.fn(() => true), lifecycleGeneration: vi.fn(() => 7) };
     buildMcpBridge(host, wiring);
@@ -275,6 +277,12 @@ describe("buildMcpBridge", () => {
     rig();
     call(captured.bridge, "notice", "m");
     expect(getNoticeMessages()).toEqual(["m"]);
+  });
+
+  it("keeps Claude Desktop's connection on the bridge's port and token once it starts", async () => {
+    const { m } = rig();
+    await call(captured.bridge, "started", 22361, "tok");
+    expect(m.refreshClaudeDesktopConnection).toHaveBeenCalledWith(22361, "tok");
   });
 
   it("builds tool options from the write gate", () => {

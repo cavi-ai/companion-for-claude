@@ -30,8 +30,8 @@ importers:
         specifier: ^2.1.2
         version: 2.1.2
       '@cavi-ai/mcp-eval':
-        specifier: 0.7.1
-        version: 0.7.1
+        specifier: 0.8.0
+        version: 0.8.0
       '@codemirror/state':
         specifier: 6.7.6
         version: 6.7.6
@@ -120,8 +120,8 @@ packages:
   '@cacheable/utils@2.5.0':
     resolution: {integrity: sha512-buipgOVDkkPXNR5+xBpDw7Zk2n1EvU7qBJCNUcL7rhQ//kfpOXPAvQ511Os0vpLYJ1pZnvudNytkQt2hst3wqA==}
 
-  '@cavi-ai/mcp-eval@0.7.1':
-    resolution: {integrity: sha512-V1DmFU+Bn8v4SavyHnZp9d+aWHDbU9CrBFmSkinY0hCOsQIRFjLkywwvqfjuyyrYLR3SYLWoFrTjxYXxWZQQTQ==}
+  '@cavi-ai/mcp-eval@0.8.0':
+    resolution: {integrity: sha512-Bf+BvWixe0gw+908yLcAbxxVuIhU+cuu0DWcu0FmkPmNAka3O3xvuuYpq59sk14Xa+XNacD+4xJPnwdTAF9zTg==}
     engines: {node: '>=20'}
     cpu: [arm64, x64]
     os: [darwin, linux, win32]
@@ -2653,7 +2653,7 @@ snapshots:
       hashery: 1.5.1
       keyv: 5.6.0
 
-  '@cavi-ai/mcp-eval@0.7.1': {}
+  '@cavi-ai/mcp-eval@0.8.0': {}
 
   '@codemirror/state@6.7.6':
     dependencies:

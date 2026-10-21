@@ -2,7 +2,7 @@
 // construction, the discovery coordinators, refresh scheduling, and the
 // plan-note Build action.
 
-import { MarkdownView, normalizePath, Notice, requestUrl, TFile, type App, type WorkspaceLeaf } from "obsidian";
+import { MarkdownView, normalizePath, Notice, Platform, requestUrl, TFile, type App, type WorkspaceLeaf } from "obsidian";
 import type { ActivityStore } from "../activity/store";
 import { PLANNING_INSTRUCTION } from "../artifacts/designSystem";
 import { beginActivity } from "../activity/progress";
@@ -197,7 +197,7 @@ export class ResearchFeature {
 
   private async openResearchPath(path: string): Promise<void> {
     const file = this.app.vault.getAbstractFileByPath(path);
-    if (file instanceof TFile) await this.app.workspace.getLeaf(false).openFile(file);
+    if (file instanceof TFile) await this.app.workspace.getLeaf(Platform.isMobile ? false : "tab").openFile(file);
     else new Notice(`Research note not found: ${path}`);
   }
 
@@ -357,7 +357,7 @@ export class ResearchFeature {
     const { workspace } = this.app;
     let leaf: WorkspaceLeaf | null = workspace.getLeavesOfType(RESEARCH_DESK_VIEW_TYPE)[0] ?? null;
     if (!leaf) {
-      leaf = workspace.getRightLeaf(false) ?? workspace.getLeaf(true);
+      leaf = Platform.isMobile ? workspace.getRightLeaf(false) ?? workspace.getLeaf(true) : workspace.getLeaf("tab");
       if (leaf) await leaf.setViewState({ type: RESEARCH_DESK_VIEW_TYPE, active: true });
     }
     if (leaf?.view instanceof ResearchView) {

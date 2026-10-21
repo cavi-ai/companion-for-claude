@@ -20,7 +20,9 @@ import {
   buildExtensionBundle,
   connectionFileBody,
   connectionFilePath,
+  refreshedConnectionBody,
   withoutLegacyBridgeEntry,
+  type ConnectionVault,
 } from "./desktopExtension";
 
 export interface ExecResult {
@@ -183,7 +185,15 @@ export function managedProcessPortFromSpawn(spawn: SpawnPort, timers: ProcessTim
 export interface ClaudeDesktopInstallInput {
   port: number;
   token: string;
+  /** The vault the extension connects to; the connection file names it so the extension can open it. */
+  vault?: ConnectionVault;
   configPath?: string;
+}
+
+export interface ClaudeDesktopRefreshInput {
+  port: number;
+  token: string;
+  vault: ConnectionVault;
 }
 
 export interface ClaudeDesktopInstallResult {
@@ -368,7 +378,7 @@ export class DesktopRuntime {
     const { tempDir, openPath } = this.options;
     if (!tempDir || !openPath) throw new DesktopIntegrationError(stage, "This device cannot write or open the extension file.");
     const connectionPath = connectionFilePath(this.options.platform, this.options.homeDir, env);
-    await this.options.fs.atomicWrite(connectionPath, connectionFileBody(`http://127.0.0.1:${input.port}/mcp`, input.token));
+    await this.options.fs.atomicWrite(connectionPath, connectionFileBody(`http://127.0.0.1:${input.port}/mcp`, input.token, input.vault));
     const separator = this.options.platform === "win32" ? "\\" : "/";
     const bundlePath = `${tempDir.replace(/[\\/]+$/, "")}${separator}${EXTENSION_FILE_NAME}`;
     await this.options.fs.writeBinary(bundlePath, buildExtensionBundle(EXTENSION_VERSION));
@@ -384,6 +394,20 @@ export class DesktopRuntime {
       await this.options.fs.atomicWrite(configPath, cleaned);
     }
     return { bundlePath, connectionPath, configPath, backupPath, legacyRemoved: cleaned !== null };
+  }
+
+  /**
+   * Keep the extension's connection file on this vault's running bridge: when
+   * the file names this vault and its address or token is out of date, write
+   * the current ones. True when the file was written.
+   */
+  async refreshClaudeDesktopConnection(input: ClaudeDesktopRefreshInput): Promise<boolean> {
+    if (!input.token.trim()) return false;
+    const connectionPath = connectionFilePath(this.options.platform, this.options.homeDir, this.options.env ?? {});
+    const body = refreshedConnectionBody(await this.options.fs.read(connectionPath), `http://127.0.0.1:${input.port}/mcp`, input.token, input.vault);
+    if (body === null) return false;
+    await this.options.fs.atomicWrite(connectionPath, body);
+    return true;
   }
 
   async openTerminalAtVault(vaultPath: string): Promise<TerminalLaunchResult> {

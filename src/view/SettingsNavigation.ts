@@ -1,4 +1,5 @@
 import { setIcon, type SettingDefinitionItem, type SettingGroupItem } from "obsidian";
+import { REPOSITORY_URL } from "../project";
 import type { PluginSettings } from "../types";
 import { searchSettings, settingsSections, settingVisible, type SettingsCategory } from "../settingsItems/navigation";
 
@@ -117,6 +118,13 @@ export class SettingsNavigation {
         this.destination(setting.settingEl, `More ${CATEGORIES.find((category) => category.id === this.category)?.title.toLowerCase()} settings`, "Open all controls in Advanced settings", "settings", () => this.showAdvanced(this.category ?? "vault"));
       } });
     }
+    if (home) items.push({ name: "Open source", searchable: false, render: (setting) => {
+      setting.settingEl.empty(); setting.settingEl.addClass("cc-settings-open-source");
+      const p = setting.settingEl.createEl("p", { text: "Companion is free and open source. ", cls: "cc-settings-muted" });
+      p.createEl("a", { text: "Star on GitHub", attr: { href: REPOSITORY_URL } });
+      p.appendText(" · ");
+      p.createEl("a", { text: "Report an issue", attr: { href: `${REPOSITORY_URL}/issues` } });
+    } });
     return [{ type: "group", cls: "cc-settings-browser", items }];
   }
 

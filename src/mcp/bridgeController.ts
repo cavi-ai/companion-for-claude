@@ -27,6 +27,8 @@ export interface McpBridgeControllerDeps {
   createServer: (tools: ToolRegistryLike, port: number, token: string) => Promise<ServerLike>;
 
   notice: (msg: string) => void;
+  /** Runs once the bridge is listening on a new port or token. */
+  started?: (port: number, token: string) => Promise<void>;
 }
 
 export class McpBridgeController {
@@ -114,6 +116,9 @@ export class McpBridgeController {
       }
       this.server = server;
       this.signature = desired;
+      void this.deps.started?.(s.mcpPort, this.resolvedToken()).catch((e: unknown) => {
+        console.debug("Claude Companion: bridge start follow-up failed", e);
+      });
     } catch (e) {
       this.deps.notice(`MCP bridge failed to start on port ${s.mcpPort}: ${e instanceof Error ? e.message : String(e)}`);
     }

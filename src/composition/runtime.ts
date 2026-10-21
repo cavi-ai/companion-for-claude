@@ -55,7 +55,7 @@ export function buildBuildController(host: BuildHost, wiring: BuildWiring): Buil
   });
 }
 
-export type McpBridgeHost = VaultToolsHost & Pick<ClaudeCompanionPlugin, "app" | "manifest" | "memoryNotePath" | "promptTemplates" | "saveSettings" | "settings">;
+export type McpBridgeHost = VaultToolsHost & Pick<ClaudeCompanionPlugin, "app" | "desktopIntegrations" | "manifest" | "memoryNotePath" | "promptTemplates" | "saveSettings" | "settings">;
 
 export interface McpBridgeWiring {
   isLifecycleEnded: McpBridgeControllerDeps["isLifecycleEnded"];
@@ -89,6 +89,7 @@ export function buildMcpBridge(host: McpBridgeHost, wiring: McpBridgeWiring): Mc
       );
     },
     notice: (msg) => new Notice(msg),
+    started: (port, token) => host.desktopIntegrations().refreshClaudeDesktopConnection(port, token),
   });
 }
 

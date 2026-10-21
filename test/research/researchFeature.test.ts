@@ -174,6 +174,17 @@ describe("ResearchFeature chat hand-off", () => {
 });
 
 describe("ResearchFeature desk activation", () => {
+  it("opens a new desk in a central tab without replacing side chat", async () => {
+    const { app, feature } = rig();
+    const leaf = { setViewState: vi.fn(async () => undefined), view: {} };
+    const getLeaf = vi.fn(() => leaf);
+    const getRightLeaf = vi.fn();
+    workspace(app, {}, { getLeaf, getRightLeaf, revealLeaf: vi.fn() });
+    await feature.activateResearchDesk();
+    expect(getLeaf).toHaveBeenCalledWith("tab");
+    expect(getRightLeaf).not.toHaveBeenCalled();
+    expect(leaf.setViewState).toHaveBeenCalledWith({ type: RESEARCH_DESK_VIEW_TYPE, active: true });
+  });
   it("selects the requested project on the open Research Desk and reveals it", async () => {
     const { app, feature } = rig();
     const setProjectPath = vi.fn(async () => undefined);

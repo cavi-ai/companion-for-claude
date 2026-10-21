@@ -67,7 +67,7 @@ export class LivingSources {
       const binding = view ? readBinding(await this.app.vault.read(view)) : null;
       if (!view || binding?.hash !== current) {
         if (kind !== "dataset-explorer") new Notice(`Building the ${KIND_LABEL[kind]} for ${source.basename}…`);
-        view = await this.rebuild(source, kind, view);
+        view = await this.rebuild(source, kind, view, current);
       }
       await this.app.workspace.getLeaf(false).openFile(view, { state: { mode: "preview" } });
     } catch (error) {
@@ -136,7 +136,7 @@ export class LivingSources {
     }
     state.setText("Source changed · rebuilding…");
     try {
-      await this.rebuild(source, binding.kind, view);
+      await this.rebuild(source, binding.kind, view, current);
       this.refresh(row, view.path);
     } catch (error) {
       this.failed.set(view.path, { hash: current, message: errorMessage(error) });
@@ -158,12 +158,16 @@ export class LivingSources {
     return null;
   }
 
-  /** Build the view and write it; concurrent rebuilds of one source share a run. */
-  private rebuild(source: TFile, kind: LivingKind, existing: TFile | null): Promise<TFile> {
+  /**
+   * Build the view and write it; concurrent rebuilds of one source share a run. With `unlessHash`, a view
+   * already bound to that source fingerprint is kept, so a staleness check that raced a finished rebuild costs no model call.
+   */
+  private rebuild(source: TFile, kind: LivingKind, existing: TFile | null, unlessHash?: string): Promise<TFile> {
     const key = `${source.path}\u0000${kind}`;
     const running = this.building.get(key);
     if (running) return running;
     const run = (async () => {
+      if (existing && unlessHash !== undefined && readBinding(await this.app.vault.read(existing))?.hash === unlessHash) return existing;
       const note = await this.build(source, kind);
       if (existing && this.app.vault.getAbstractFileByPath(existing.path) === existing) {
         await this.app.vault.modify(existing, note);

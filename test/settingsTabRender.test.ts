@@ -263,6 +263,19 @@ describe("settings tab render", () => {
     ]);
   });
 
+  it("links the open-source repository from the settings home only", () => {
+    const tab = new ClaudeCompanionSettingTab(new App() as never, stubPlugin());
+    const container = tab.containerEl as unknown as FakeElement;
+    openSettingTab(tab);
+    const links = container.querySelectorAll(".cc-settings-open-source").flatMap((el) => el.querySelectorAll("a"));
+    expect(links.map((a) => [a.textContent, a.getAttribute("href")])).toEqual([
+      ["Star on GitHub", "https://github.com/cavi-ai/companion-for-claude"],
+      ["Report an issue", "https://github.com/cavi-ai/companion-for-claude/issues"],
+    ]);
+    click(container, "Control access to my notes");
+    expect(container.querySelectorAll(".cc-settings-open-source")).toHaveLength(0);
+  });
+
   it("renders on mobile with the desktop-only pages withheld", () => {
     Platform.isMobile = true;
     Platform.isDesktop = false;

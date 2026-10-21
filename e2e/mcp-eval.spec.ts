@@ -12,6 +12,8 @@ let port = 0;
 
 const MCPEVAL = join(PLUGIN_ROOT, "node_modules", ".bin", "mcpeval");
 const BASELINE = join(PLUGIN_ROOT, "e2e", "mcp-eval.baseline.json");
+/** Working paths for the lookup tools: notes this spec seeds and the rig vault's research project. */
+const ARGUMENTS = join(PLUGIN_ROOT, "e2e", "mcp-eval.arguments.json");
 
 interface Report {
   readiness: { score: number; standard: string; areas: { name: string; score: number; checks: { id: string; tool: string | null; reason: string }[] }[] };
@@ -69,7 +71,7 @@ test("the read-only MCP bridge holds its mcp-eval readiness baseline", async () 
   });
 
   const env = { ...process.env, MCPEVAL_HOME: test.info().outputPath("mcpeval-home"), MCPEVAL_HTTP_AUTHORIZATION: `Bearer ${bearer}` };
-  const run = await mcpeval(["score", "--server", "claude-companion", "--url", `http://127.0.0.1:${port}/mcp`, "--format", "json"], env);
+  const run = await mcpeval(["score", "--server", "claude-companion", "--url", `http://127.0.0.1:${port}/mcp`, "--arguments", ARGUMENTS, "--format", "json"], env);
   const reportPath = test.info().outputPath("mcpeval.report.json");
   await writeFile(reportPath, run.stdout);
   await test.info().attach("mcpeval.report.json", { path: reportPath, contentType: "application/json" });

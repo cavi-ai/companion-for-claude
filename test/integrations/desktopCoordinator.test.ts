@@ -124,12 +124,13 @@ describe("DesktopIntegrationCoordinator", () => {
       }),
       providerReady: () => true,
       vaultPath: "/Vault",
+      vaultName: "Vault",
       prepareClaudeDesktopBridge: async () => ({ port: 22360, token: "private-bridge-token" }),
       copy: async (text) => { copied.push(text); },
     });
 
     await coordinator.connectClaudeDesktop(async () => true);
-    expect(installInput).toEqual({ port: 22360, token: "private-bridge-token" });
+    expect(installInput).toEqual({ port: 22360, token: "private-bridge-token", vault: { name: "Vault", path: "/Vault" } });
     expect(copied).toEqual([]);
     expect(JSON.stringify(coordinator.snapshot())).not.toContain("private-bridge-token");
     expect(coordinator.snapshot().message).toBe(

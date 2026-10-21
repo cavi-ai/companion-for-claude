@@ -49,6 +49,7 @@ export class ResearchView extends ItemView {
   private restoreFocus: { start: number; end: number } | undefined;
   private rendering = false;
   private readonly expanded = new Set<string>();
+  private expandFirstClaim = true;
   private readonly draftPanel: ResearchDraftPanel | undefined;
 
   constructor(leaf: WorkspaceLeaf, private readonly repository: ResearchViewRepository, private readonly deps: ResearchViewDependencies) {
@@ -69,6 +70,7 @@ export class ResearchView extends ItemView {
       this.draftPanel?.dispose();
       this.sectionsOpen = false;
       this.expanded.clear();
+      this.expandFirstClaim = true;
       this.askFocus = undefined;
       this.restoreFocus = undefined;
       this.instructionInput = undefined;
@@ -108,27 +110,31 @@ export class ResearchView extends ItemView {
     this.rendering = true;
     root.empty();
     root.addClass("cc-research-desk");
+    const chromeHost = snapshot ? this.renderHeader(root, snapshot, projects) : undefined;
     if (this.deps.chrome) {
       const chrome = this.deps.chrome;
       this.disposeChrome = renderCompanionChrome(root, "research-desk", "Research Desk", {
         ...chrome,
         snapshot: () => ({ ...chrome.snapshot(), ...(snapshot ? { activeProject: snapshot.project.title } : {}) }),
-      });
+      }, chromeHost ? { host: chromeHost, compact: true } : {});
     }
     if (!snapshot) { this.renderEmpty(root, projects, loadError); this.rendering = false; return; }
     const audit = auditProject(snapshot);
     const argument = buildArgument(snapshot, audit, analyzeProjectIntelligence(snapshot), document?.sections);
     const steps = nextSteps({ snapshot, audit, ...(document ? { sections: document.sections } : {}), webSearch: this.deps.webSearchEnabled() });
-    this.renderHeader(root, snapshot, projects);
+    if (argument.cards[0] && this.expandFirstClaim) {
+      this.expanded.add(argument.cards[0].path);
+      this.expandFirstClaim = false;
+    }
     this.renderFixFirst(root, argument.fixFirst);
-    this.renderAsk(root, snapshot, steps, document);
     this.renderArgument(root, snapshot, argument);
     this.renderDocument(root, snapshot, document);
+    this.renderAsk(root, snapshot, steps, document);
     this.renderSources(root, snapshot);
     this.rendering = false;
   }
 
-  private renderHeader(root: HTMLElement, snapshot: ProjectSnapshot, projects: Array<{ path: string; title: string }>): void {
+  private renderHeader(root: HTMLElement, snapshot: ProjectSnapshot, projects: Array<{ path: string; title: string }>): HTMLElement {
     const header = root.createEl("header", { cls: "cc-desk-header" });
     const row = header.createDiv({ cls: "cc-desk-header-row" });
     const select = row.createEl("select", { cls: "cc-desk-project", attr: { "aria-label": "Active research project" } });
@@ -147,6 +153,7 @@ export class ResearchView extends ItemView {
     }
     header.createEl("h2", { text: snapshot.project.title });
     header.createEl("p", { cls: "cc-desk-question", text: snapshot.project.question });
+    return row;
   }
 
   private renderFixFirst(root: HTMLElement, findings: AuditFinding[]): void {
@@ -249,13 +256,28 @@ export class ResearchView extends ItemView {
     for (const note of card.notes) article.createDiv({ cls: "cc-desk-card-note", text: note });
     if (!open) return;
     article.createEl("p", { cls: "cc-desk-card-proposition", text: card.proposition });
-    const rows = article.createEl("ul", { cls: "cc-desk-passages" });
-    for (const row of card.passages) {
-      const item = rows.createEl("li");
+    const rows = article.createEl("ul", { cls: "cc-desk-passages", attr: { "aria-label": "Claim evidence" } });
+    for (const [index, row] of card.passages.entries()) {
+      const evidence = snapshot.evidence.find(({ path }) => path === row.path);
+      const item = rows.createEl("li", { cls: `cc-desk-evidence is-${row.relation}` });
       const relation = row.relation === "supports" ? "Supports" : row.relation === "challenges" ? "Challenges" : "Context";
       const link = item.createEl("button", { cls: "cc-desk-passage", text: `${relation}: ${row.title}` });
       link.addEventListener("click", () => void this.deps.openPath(row.path));
-      item.createSpan({ cls: "cc-desk-passage-meta", text: [row.sourceTitle, row.locator, row.flag].filter(Boolean).join(" · ") });
+      const meta = item.createDiv({ cls: "cc-desk-passage-meta" });
+      if (evidence && snapshot.sources.some(({ path }) => path === evidence.source)) {
+        const source = meta.createEl("button", { cls: "cc-desk-source-link", text: row.sourceTitle });
+        source.addEventListener("click", () => void this.deps.openPath(evidence.source));
+      } else meta.createSpan({ text: row.sourceTitle });
+      if (row.locator) meta.createSpan({ cls: "cc-desk-locator", text: ` · ${row.locator}` });
+      if (evidence?.excerpt) {
+        const excerpt = index === 0 ? item : item.createEl("details", { cls: "cc-desk-passage-preview" });
+        if (index > 0) excerpt.createEl("summary", { text: "Read passage" });
+        excerpt.createEl("blockquote", { cls: "cc-desk-excerpt", text: evidence.excerpt });
+      }
+      item.createDiv({
+        cls: `cc-desk-evidence-state${row.trusted ? " is-trusted" : ""}`,
+        text: row.trusted ? "Reviewed · Source current" : row.flag === "stale" ? "Source changed · Re-check passage" : row.flag === "no locator" ? "Missing source locator" : row.flag === "missing" ? "Missing passage" : "Not trusted · Review passage",
+      });
     }
     const actions = article.createDiv({ cls: "cc-desk-card-actions" });
     const check = actions.createEl("button", { text: "Check claim" });

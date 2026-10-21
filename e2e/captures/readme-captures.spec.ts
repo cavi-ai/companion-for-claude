@@ -101,6 +101,12 @@ ul{list-style:none;margin:0;padding:0}li{display:flex;gap:8px;align-items:center
 const PROJECT_STATUS = `A snapshot of the Continuity research project.\n\n\`\`\`claude-html height=370\n${DASHBOARD_HTML}\n\`\`\`\n`;
 
 const SCENE_FILES: Record<string, string> = {
+  "Demo/Onboarding/Interview — Maya.md": "*18 Oct · first-time user*\n\n> I copied the key, but couldn't tell whether it connected.\n\nNeeded a clear success state.\n",
+  "Demo/Onboarding/Interview — Leon.md": "*19 Oct · returning user*\n\n> I got it working, then lost the settings page.\n\nNeeded one place to return to.\n",
+  "Demo/Onboarding/Finding — first connection.md": "**Two different points of friction**\n\n- Maya: did the connection work?\n- Leon: where do I return to it?\n\nKeep confirmation and discoverability separate.\n",
+  "Demo/Onboarding/Question — returning users.md": "**Still unresolved**\n\nWould experienced users prefer a quick form over guided setup?\n\nCompare both experience levels.\n",
+  "Demo/Onboarding/Proposal — connection check.md": "**Proposed, not validated**\n\nConfirm the connection before closing setup.\n\nKeep a direct route back to settings.\n",
+  "Demo/Onboarding/Next — observe setup.md": "**Next research session**\n\nWatch a new user connect without help.\n\nNote hesitation and what signals success.\n\nCompare with a returning user.\n",
   "Build plan.md": ORIGINAL_PLAN,
   "Weekly review.md": WEEKLY_REVIEW,
   "Notes/Project status.md": PROJECT_STATUS,
@@ -124,6 +130,8 @@ function outputPath(name: string, theme: "dark" | "light", assetRoot = ASSETS): 
 
 async function prepareCapture(target: Locator | Page): Promise<Page> {
   const targetPage = "page" in target && typeof (target as Locator).page === "function" ? (target as Locator).page() : (target as Page);
+  await targetPage.mouse.move(0, 0);
+  await expect(targetPage.locator(".tooltip")).toBeHidden();
   await targetPage.evaluate(() => {
     document.querySelectorAll(".notice, .cc-turn-complete-status").forEach((n) => n.remove());
     // A wide row (e.g. the usage bar) can leave an ancestor mid-horizontal-scroll;
@@ -170,6 +178,15 @@ async function captureClip(page: Page, clip: { x: number; y: number; width: numb
   } finally {
     await cdp.detach();
   }
+  await verifyCapture(path, name);
+}
+
+async function captureShowcase(page: Page, name: string, theme: "dark" | "light"): Promise<void> {
+  await prepareCapture(page);
+  const path = outputPath(name, theme);
+  await mkdir(dirname(path), { recursive: true });
+  // Whole-workspace scenes keep the 1600px layout readable rather than enlarging a narrow crop.
+  await page.screenshot({ path, scale: "css" });
   await verifyCapture(path, name);
 }
 
@@ -234,7 +251,7 @@ async function resetScene(theme: "dark" | "light", settings: Record<string, unkn
     Object.assign(plugin.settings, defaults, nextSettings);
     await plugin.saveSettings();
     await plugin.conversations().startNew();
-    for (const type of ["claude-companion-chat", "claude-research-desk", "claude-system", "markdown"]) {
+    for (const type of ["claude-companion-chat", "claude-research-desk", "claude-system", "markdown", "canvas"]) {
       for (const leaf of app.workspace.getLeavesOfType(type)) leaf.detach();
     }
     for (const [path, content] of Object.entries(restore)) {
@@ -275,11 +292,12 @@ async function openNote(page: Page, link: string, mode: "source" | "preview" = "
 interface SeedMessage {
   role: "user" | "assistant";
   content: string;
+  contextSources?: string[];
   toolTrace?: Array<{ name: string; argsSummary: string; resultPreview: string; ok: boolean }>;
 }
 
-async function seedConversation(page: Page, messages: SeedMessage[], proposal?: { path: string; description: string; edits: Array<{ old_str: string; new_str: string }> }): Promise<void> {
-  await page.evaluate(async ({ seed, edit }) => {
+async function seedConversation(page: Page, messages: SeedMessage[], proposal?: { path: string; description: string; edits: Array<{ old_str: string; new_str: string }> }, model = "claude-sonnet-5-5"): Promise<void> {
+  await page.evaluate(async ({ seed, edit, selectedModel }) => {
     const app = (window as unknown as { app: { plugins: { plugins: Record<string, {
       conversations(): {
         beginTurn(id: string | null, messages: unknown[], input: { backend: string; model: string; mode: string }): Promise<{ conversationId: string; turnId: string }>;
@@ -288,10 +306,10 @@ async function seedConversation(page: Page, messages: SeedMessage[], proposal?: 
       };
     }> } } }).app;
     const plugin = app.plugins.plugins["claude-companion"]!;
-    const turn = await plugin.conversations().beginTurn(null, seed.slice(0, 1), { backend: "anthropic", model: "claude-sonnet-5-5", mode: "act" });
+    const turn = await plugin.conversations().beginTurn(null, seed.slice(0, 1), { backend: "anthropic", model: selectedModel, mode: "act" });
     await plugin.conversations().completeTurn(turn.conversationId, turn.turnId, seed);
     if (edit) await plugin.conversations().saveEditProposal(turn.conversationId, edit);
-  }, { seed: messages, edit: proposal ?? null });
+  }, { seed: messages, edit: proposal ?? null, selectedModel: model });
 }
 
 // Widen the right sidebar past the `.cc-controls` 360px container-query
@@ -404,12 +422,18 @@ test.describe("README captures", () => {
       });
 
       test("research-desk.png", async () => {
-        await resetScene(theme);
+        await resetScene(theme, { model: "claude-opus-5-5" });
+        await harness.page.setViewportSize({ width: 1600, height: 1000 });
+        await collapseSidebars(harness.page, ["left"]);
+        await seedConversation(harness.page, [
+          { role: "user", content: "What should I work on next?", contextSources: ["Research/Alpha/Project.md"] },
+          { role: "assistant", content: "Address the challenging passage before extending the draft.\n\nThe two reviewed passages support [[Continuity claim]]. The remaining passage points to a limitation that still needs review.\n\nOpen [[Research/Alpha/Evidence/Challenge|the challenge on page 8]] to inspect the source.", toolTrace: [{ name: "research_project_read", argsSummary: "Continuity research", resultPreview: "1 claim, 3 passages, 1 document", ok: true }] },
+        ], undefined, "claude-opus-5-5");
+        const chat = await openChat(harness);
+        await widen(harness.page, 500);
         await run(harness.page, "claude-companion:open-research-desk");
         await expect(harness.page.getByRole("heading", { name: "Continuity research" })).toBeVisible();
         const desk = harness.page.locator('.workspace-leaf-content[data-type="claude-research-desk"]');
-        await setRightSidebarWidth(harness.page, 760);
-        await expect.poll(async () => (await desk.boundingBox())?.width ?? 0).toBeCloseTo(760, 0);
         const progress = desk.locator(".cc-desk-document-progress");
         await expect(progress).toBeVisible();
         if (/^0 of/.test(await progress.innerText())) {
@@ -421,7 +445,59 @@ test.describe("README captures", () => {
         if (await hide.count()) await hide.click();
         await expect(desk).not.toContainText("No tracked sections");
         await expect(desk).not.toContainText("Unsupported");
-        await shootThrough(desk, desk.locator(".cc-desk-sources"), 658, "research-desk.png", theme);
+        await expect(desk.locator(".cc-desk-excerpt").first()).toBeVisible();
+        await expect(chat.locator(".cc-model")).toContainText("Claude Opus 5.5");
+        const source = desk.locator(".cc-desk-source-link").first();
+        await expect(source).toBeVisible();
+        await desk.locator(".cc-research-desk").evaluate(element => { element.scrollTop = 0; });
+        await expect(desk.getByRole("heading", { name: "Continuity research" })).toBeInViewport();
+        await captureShowcase(harness.page, "research-desk.png", theme);
+      });
+
+      test("canvas-output.png", async () => {
+        await resetScene(theme, { model: "claude-opus-5-5", agentAllowWrites: true });
+        const page = harness.page;
+        await page.setViewportSize({ width: 1600, height: 1000 });
+        await collapseSidebars(page, ["left"]);
+        const result = await page.evaluate(async () => {
+          const plugin = (window as unknown as { app: { plugins: { plugins: Record<string, { agentTools(): { call(name: string, args: Record<string, unknown>): Promise<string> } }> } } }).app.plugins.plugins["claude-companion"]!;
+          return plugin.agentTools().call("canvas_create", {
+            title: "First connection study", folder: "Demo/Onboarding",
+            nodes: [
+              { id: "maya", file: "Demo/Onboarding/Interview — Maya.md", x: 0, y: 0, width: 340, height: 250 },
+              { id: "leon", file: "Demo/Onboarding/Interview — Leon.md", x: 0, y: 380, width: 340, height: 250 },
+              { id: "finding", file: "Demo/Onboarding/Finding — first connection.md", x: 440, y: 150, width: 360, height: 280, color: "4" },
+              { id: "question", file: "Demo/Onboarding/Question — returning users.md", x: 440, y: 560, width: 360, height: 240 },
+              { id: "proposal", file: "Demo/Onboarding/Proposal — connection check.md", x: 900, y: 0, width: 360, height: 270, color: "2" },
+              { id: "next", file: "Demo/Onboarding/Next — observe setup.md", x: 900, y: 430, width: 360, height: 290 },
+            ],
+            edges: [
+              { from: "maya", to: "finding", label: "reports" },
+              { from: "leon", to: "finding", label: "reports" },
+              { from: "finding", to: "proposal", label: "suggests" },
+              { from: "finding", to: "question", label: "leaves open" },
+              { from: "proposal", to: "next", label: "test next" },
+              { from: "question", to: "next", label: "compare" },
+            ],
+          });
+        });
+        expect(result).toMatch(/^Created canvas: Demo\/Onboarding\/First connection study.*\.canvas/);
+        await seedConversation(page, [
+          { role: "user", content: "Map the onboarding interviews. What did we learn, and what should we test next?", contextSources: ["Demo/Onboarding"] },
+          { role: "assistant", content: "Maya couldn't tell whether the connection worked. Leon lost the route back to settings. Those are different problems.\n\nI linked both interviews to [[Demo/Onboarding/Finding — first connection|the finding]], then separated [[Demo/Onboarding/Proposal — connection check|the proposed change]] from the open question about returning users.\n\nNext: observe a new user connecting without help, then compare with a returning user. The proposal still needs validation.", toolTrace: [{ name: "canvas_create", argsSummary: "First connection study · 6 notes", resultPreview: result, ok: true }] },
+        ], undefined, "claude-opus-5-5");
+        const chat = await openChat(harness);
+        await widen(page, 500);
+        await chat.getByRole("button", { name: "Open Canvas", exact: true }).click();
+        const canvas = page.locator('.workspace-leaf-content[data-type="canvas"]');
+        await expect(canvas).toBeVisible();
+        await expect(canvas.locator(".canvas-node")).toHaveCount(6);
+        await run(page, "canvas:zoom-to-fit");
+        await expect(canvas).toContainText("I copied the key");
+        await expect(canvas).toContainText("Proposed, not validated");
+        await expect(canvas).toContainText("Next research session");
+        await expect(chat.locator(".cc-model")).toContainText("Claude Opus 5.5");
+        await captureShowcase(page, "canvas-output.png", theme);
       });
 
       test("mcp-bridge-settings.png", async () => {

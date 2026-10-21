@@ -78,6 +78,35 @@ describe("LivingSources", () => {
     expect(t.complete).toHaveBeenCalledTimes(3);
   });
 
+  it("does not rebuild again for a status render that read the view before the last rebuild wrote it", async () => {
+    const t = setup([map("First."), map("Second."), map("Third.")]);
+    await t.living.open(t.source);
+    t.indexView();
+    const before = await t.viewText();
+    await t.app.vault.modify(t.source, `${ARTICLE}\n\nSpring tides happen at new and full moon.`);
+
+    const first = element();
+    t.living.renderStatus(first, VIEW);
+    await vi.waitFor(() => expect(state(first)).toContain("Up to date"));
+    expect(t.complete).toHaveBeenCalledTimes(2);
+
+    // The late render reads the view as it was before the rebuild above wrote it.
+    const read = t.app.vault.read.bind(t.app.vault);
+    let stale = true;
+    t.app.vault.read = (async (file: { path: string }) => {
+      if (file.path === VIEW && stale) {
+        stale = false;
+        return before;
+      }
+      return read(file as never);
+    }) as typeof t.app.vault.read;
+    const late = element();
+    t.living.renderStatus(late, VIEW);
+    await vi.waitFor(() => expect(state(late)).toContain("Up to date"));
+    expect(t.complete).toHaveBeenCalledTimes(2);
+    expect(await t.viewText()).toContain("Second.");
+  });
+
   it("maps a video's chapters from the transcript in its note, links each chapter, and fills the video's fields", async () => {
     const chapters = JSON.stringify({ summary: "Tides and waves.", chapters: [{ start: "0:00", title: "Welcome", summary: "" }, { start: "2:09", title: "Waves", summary: "Wind." }], key_moments: [{ time: "2:10", moment: "Wind makes waves" }] });
     const transcript = vi.fn(async () => null);

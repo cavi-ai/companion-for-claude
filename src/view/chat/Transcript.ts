@@ -1,5 +1,6 @@
 import { type App, type EventRef, type MarkdownView, Notice, setIcon, type TFile } from "obsidian";
 import { ProvenanceFooters } from "./provenanceFooter";
+import { renderCanvasResult } from "./canvasResult";
 import type { TranscriptHost } from "./hosts";
 import type { ChatMessage, ToolTraceEntry } from "../../types";
 import { errorMessage } from "../../records";
@@ -326,6 +327,7 @@ export class Transcript {
         chip.removeClass("is-running");
         if (result.is_error) chip.addClass("is-error");
         chip.createEl("pre", { cls: "cc-tool-chip-result", text: previewText(result.content) });
+        renderCanvasResult(this.app, bubble, block.name, previewText(result.content), !result.is_error);
       },
     };
   }
@@ -338,6 +340,7 @@ export class Transcript {
       const chip = container.createEl("details", { cls: `cc-tool-chip${t.ok ? "" : " is-error"}` });
       chip.createEl("summary", { cls: "cc-tool-chip-summary", text: chipLabel(t.name, t.argsSummary) });
       chip.createEl("pre", { cls: "cc-tool-chip-result", text: t.resultPreview });
+      renderCanvasResult(this.app, bubble, t.name, t.resultPreview, t.ok);
     }
   }
 

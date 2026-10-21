@@ -1,0 +1,8 @@
+{
+  "note_read": { "path": "Notes/Pelican.md" },
+  "related_notes": { "path": "Notes/Pelican.md" },
+  "get_backlinks": { "path": "Notes/Heron.md" },
+  "get_outgoing_links": { "path": "Notes/Pelican.md" },
+  "research_project_read": { "project": "Research/Alpha/Project.md" },
+  "research_audit": { "project": "Research/Alpha/Project.md" }
+}

@@ -76,6 +76,9 @@ test("04 cards: a claim card shows its status and expands to its passages", asyn
   await openDesk();
   const card = deskLocator().locator(".cc-desk-card", { hasText: "Continuity claim" });
   await expect(card.locator(".cc-desk-chip")).toBeVisible();
+  await expect(card.locator(".cc-desk-card-head")).toHaveAttribute("aria-expanded", "true");
+  await card.locator(".cc-desk-card-head").click();
+  await expect(card.locator(".cc-desk-passage")).toHaveCount(0);
   await card.locator(".cc-desk-card-head").click();
   await expect(deskLocator().locator(".cc-desk-card", { hasText: "Continuity claim" })).toContainText("Supports: Stale result");
   await expect(deskLocator().locator(".cc-desk-card", { hasText: "Continuity claim" })).toContainText("Challenges: Challenge");
@@ -89,12 +92,24 @@ test("05 no implicit work: switching projects sends no request and the desk fits
   await desk.getByLabel("Active research project").selectOption("Research/Beta/Project.md");
   await expect(desk.getByRole("heading", { name: "Empty project" })).toBeVisible();
   await expect(desk.locator(".cc-desk-step")).toContainText("Add a first source");
-  await harness.page.locator(".workspace-split.mod-right-split").evaluate((element) => { (element as HTMLElement).style.width = "390px"; });
+  await desk.evaluate((element) => { (element as HTMLElement).style.width = "390px"; });
+  await expect.poll(async () => await desk.evaluate(element => element.clientWidth)).toBe(390);
   await expect.poll(async () => await desk.evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1);
   await desk.getByLabel("Active research project").selectOption("Research/Alpha/Project.md");
   await expect(desk.getByRole("heading", { name: "Continuity research" })).toBeVisible();
   await expect.poll(async () => await desk.evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1);
   expect(await harness.providerRequests()).toBe(before);
+  await desk.evaluate((element) => { (element as HTMLElement).style.removeProperty("width"); });
+});
+
+test("05b source navigation keeps the Research Desk available", async () => {
+  await openDesk();
+  const head = deskLocator().locator(".cc-desk-card-head").first();
+  if (await head.getAttribute("aria-expanded") !== "true") await head.click();
+  await deskLocator().locator(".cc-desk-source-link").first().click();
+  await expect.poll(async () => await harness.page.evaluate(() => (window as unknown as { app: { workspace: { getActiveFile(): { path: string } | null } } }).app.workspace.getActiveFile()?.path)).toBe("Research/Alpha/Sources/Study.md");
+  expect(await harness.page.locator('.workspace-leaf-content[data-type="claude-research-desk"]').count()).toBe(1);
+  await openDesk();
 });
 
 test("06 PDF source import: a 10 MiB document stays in the live renderer", async () => {

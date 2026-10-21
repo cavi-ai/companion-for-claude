@@ -1,9 +1,139 @@
 {
   "cases": [],
+  "catalog": {
+    "tools": [
+      {
+        "class": "read-only",
+        "name": "frontmatter_query",
+        "output_schema": "6c35f3ef55716968",
+        "parameters": {
+          "c0d2856b74d0df05": "00404e686415370f",
+          "cd42404d52ad55cc": "00404e686415370f"
+        },
+        "required": [
+          "c0d2856b74d0df05"
+        ]
+      },
+      {
+        "class": "read-only",
+        "name": "get_backlinks",
+        "output_schema": "b609d011325aaa86",
+        "parameters": {
+          "a0af9f865bf637e6": "00404e686415370f"
+        },
+        "required": [
+          "a0af9f865bf637e6"
+        ]
+      },
+      {
+        "class": "read-only",
+        "name": "get_outgoing_links",
+        "output_schema": "d6e635f2bffa77cb",
+        "parameters": {
+          "a0af9f865bf637e6": "00404e686415370f"
+        },
+        "required": [
+          "a0af9f865bf637e6"
+        ]
+      },
+      {
+        "class": "read-only",
+        "name": "list_recent",
+        "output_schema": "aaf88638a43e39fe",
+        "parameters": {
+          "55ea09e5715d0a8d": "cddf8275afa15408"
+        },
+        "required": []
+      },
+      {
+        "class": "read-only",
+        "name": "list_titles",
+        "output_schema": "bcfe06a0f0ab69b6",
+        "parameters": {},
+        "required": []
+      },
+      {
+        "class": "read-only",
+        "name": "note_read",
+        "output_schema": "3f4ea9aef3ff7c58",
+        "parameters": {
+          "a0af9f865bf637e6": "00404e686415370f"
+        },
+        "required": [
+          "a0af9f865bf637e6"
+        ]
+      },
+      {
+        "class": "read-only",
+        "name": "ontology_get",
+        "output_schema": "2946c7e5eb6e70bf",
+        "parameters": {
+          "1303c06b0b014d0c": "00404e686415370f"
+        },
+        "required": []
+      },
+      {
+        "class": "read-only",
+        "name": "related_notes",
+        "output_schema": "a99325e9965c6c08",
+        "parameters": {
+          "55ea09e5715d0a8d": "cddf8275afa15408",
+          "a0af9f865bf637e6": "00404e686415370f"
+        },
+        "required": [
+          "a0af9f865bf637e6"
+        ]
+      },
+      {
+        "class": "read-only",
+        "name": "research_audit",
+        "output_schema": "ed82e3077bd5e28c",
+        "parameters": {
+          "244210e48437b655": "00404e686415370f"
+        },
+        "required": [
+          "244210e48437b655"
+        ]
+      },
+      {
+        "class": "read-only",
+        "name": "research_project_read",
+        "output_schema": "a7c1ebb715ce8382",
+        "parameters": {
+          "244210e48437b655": "00404e686415370f"
+        },
+        "required": [
+          "244210e48437b655"
+        ]
+      },
+      {
+        "class": "read-only",
+        "name": "vault_search",
+        "output_schema": "ac23819ae90d63bd",
+        "parameters": {
+          "1303c06b0b014d0c": "00404e686415370f",
+          "244210e48437b655": "00404e686415370f",
+          "2a1073a6e67f0e5f": "00404e686415370f",
+          "55ea09e5715d0a8d": "cddf8275afa15408",
+          "a8b771920b8319e4": "00404e686415370f"
+        },
+        "required": [
+          "a8b771920b8319e4"
+        ]
+      },
+      {
+        "class": "read-only",
+        "name": "vault_tags",
+        "output_schema": "72217cb34a96aa6d",
+        "parameters": {},
+        "required": []
+      }
+    ]
+  },
   "gate": null,
   "generator": {
     "name": "mcpeval",
-    "version": "0.7.1"
+    "version": "0.8.0"
   },
   "manifest_sha256": null,
   "passed": true,
@@ -41,122 +171,25 @@
         "weight": 15
       },
       {
-        "checks": [
-          {
-            "hint": "make valid read-only calls succeed; consistent tool errors are failures, not evidence of reliability",
-            "id": "reliability.success",
-            "observed": 0,
-            "reason": "reliability-call-failed",
-            "score": 0,
-            "tool": "related_notes"
-          },
-          {
-            "hint": "make valid read-only calls succeed; consistent tool errors are failures, not evidence of reliability",
-            "id": "reliability.success",
-            "observed": 0,
-            "reason": "reliability-call-failed",
-            "score": 0,
-            "tool": "note_read"
-          },
-          {
-            "hint": "make valid read-only calls succeed; consistent tool errors are failures, not evidence of reliability",
-            "id": "reliability.success",
-            "observed": 0,
-            "reason": "reliability-call-failed",
-            "score": 0,
-            "tool": "get_backlinks"
-          },
-          {
-            "hint": "make valid read-only calls succeed; consistent tool errors are failures, not evidence of reliability",
-            "id": "reliability.success",
-            "observed": 0,
-            "reason": "reliability-call-failed",
-            "score": 0,
-            "tool": "get_outgoing_links"
-          },
-          {
-            "hint": "make valid read-only calls succeed; consistent tool errors are failures, not evidence of reliability",
-            "id": "reliability.success",
-            "observed": 0,
-            "reason": "reliability-call-failed",
-            "score": 0,
-            "tool": "research_project_read"
-          },
-          {
-            "hint": "make valid read-only calls succeed; consistent tool errors are failures, not evidence of reliability",
-            "id": "reliability.success",
-            "observed": 0,
-            "reason": "reliability-call-failed",
-            "score": 0,
-            "tool": "research_audit"
-          }
-        ],
+        "checks": [],
         "measurements": {
           "rejected_calls": 0,
           "rpc_errors": 0,
-          "successful_calls": 18,
-          "tool_errors": 18,
+          "score_without_latency": 100,
+          "successful_calls": 36,
+          "tool_errors": 0,
           "transport_errors": 0,
           "untested_tools": 0
         },
         "name": "reliability",
-        "score": 57,
+        "score": 100,
         "weight": 20
       },
       {
-        "checks": [
-          {
-            "hint": "no call succeeded: each returned a tool or JSON-RPC error, timed out, closed the connection, or broke the protocol exchange; a read-only tool must answer valid calls successfully within 15 seconds without ending the session",
-            "id": "coverage.exercised",
-            "observed": null,
-            "reason": "coverage-call-failed",
-            "score": 0,
-            "tool": "related_notes"
-          },
-          {
-            "hint": "no call succeeded: each returned a tool or JSON-RPC error, timed out, closed the connection, or broke the protocol exchange; a read-only tool must answer valid calls successfully within 15 seconds without ending the session",
-            "id": "coverage.exercised",
-            "observed": null,
-            "reason": "coverage-call-failed",
-            "score": 0,
-            "tool": "note_read"
-          },
-          {
-            "hint": "no call succeeded: each returned a tool or JSON-RPC error, timed out, closed the connection, or broke the protocol exchange; a read-only tool must answer valid calls successfully within 15 seconds without ending the session",
-            "id": "coverage.exercised",
-            "observed": null,
-            "reason": "coverage-call-failed",
-            "score": 0,
-            "tool": "get_backlinks"
-          },
-          {
-            "hint": "no call succeeded: each returned a tool or JSON-RPC error, timed out, closed the connection, or broke the protocol exchange; a read-only tool must answer valid calls successfully within 15 seconds without ending the session",
-            "id": "coverage.exercised",
-            "observed": null,
-            "reason": "coverage-call-failed",
-            "score": 0,
-            "tool": "get_outgoing_links"
-          },
-          {
-            "hint": "no call succeeded: each returned a tool or JSON-RPC error, timed out, closed the connection, or broke the protocol exchange; a read-only tool must answer valid calls successfully within 15 seconds without ending the session",
-            "id": "coverage.exercised",
-            "observed": null,
-            "reason": "coverage-call-failed",
-            "score": 0,
-            "tool": "research_project_read"
-          },
-          {
-            "hint": "no call succeeded: each returned a tool or JSON-RPC error, timed out, closed the connection, or broke the protocol exchange; a read-only tool must answer valid calls successfully within 15 seconds without ending the session",
-            "id": "coverage.exercised",
-            "observed": null,
-            "reason": "coverage-call-failed",
-            "score": 0,
-            "tool": "research_audit"
-          }
-        ],
+        "checks": [],
         "measurements": {},
         "name": "coverage",
-        "score": 50,
+        "score": 100,
         "weight": 15
       }
     ],
@@ -164,32 +197,35 @@
       "read_only_tools": 12,
       "scope": "read-only-structural",
       "semantic_correctness": "requires-reviewed-oracle",
-      "tools_exercised": 6,
+      "tools_exercised": 12,
       "writer_tools_excluded": 0
     },
     "attested_read_only": false,
-    "badge": "https://img.shields.io/badge/mcpeval-84%2F100-brightgreen",
+    "badge": "https://img.shields.io/badge/mcpeval-100%2F100-brightgreen",
     "measurement_profile": {
       "architecture": "aarch64",
+      "arguments_sha256": "13c2b777d74d4568ba4e6428fa8c8f8095f5ad07cf363f6f3f4108df9c070641",
       "attested_read_only": false,
       "call_timeout_ms": 15000,
       "client_capabilities": "none",
-      "evaluator_version": "0.7.1",
+      "evaluator_version": "0.8.0",
       "platform": "macos",
       "repeats": 3,
       "schema": "mcpeval.measurement-profile/v1",
       "skip_tools": []
     },
-    "score": 84,
+    "score": 100,
+    "score_without_latency": 100,
     "standard": "mcpeval-standard/2",
     "surface": {
-      "exercised": 6,
+      "exercised": 12,
       "read_only": 12,
       "tools": 12,
       "writers": 0
     }
   },
   "readiness_error": null,
+  "readiness_gate": null,
   "schema": "mcpeval.probe-report/v2",
   "server": "claude-companion"
 }

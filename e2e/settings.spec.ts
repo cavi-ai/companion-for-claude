@@ -107,6 +107,17 @@ test("everyday settings and advanced controls share persisted values", async ({ 
   } finally { harness.page.off("pageerror", onError); await harness.close(); }
 });
 
+test("the settings home links the open-source repository", async ({ rig }) => {
+  const harness = await rig.reset({ settingsOverride: { setupWizardDone: true }, theme: "dark" });
+  try {
+    const tab = await openSettingsTab(harness);
+    const footer = tab.locator(".cc-settings-open-source");
+    await expect(footer.getByRole("link", { name: "Star on GitHub", exact: true })).toHaveAttribute("href", "https://github.com/cavi-ai/companion-for-claude");
+    await expect(footer.getByRole("link", { name: "Report an issue", exact: true })).toHaveAttribute("href", "https://github.com/cavi-ai/companion-for-claude/issues");
+    await tab.screenshot({ path: test.info().outputPath("settings-home-open-source.png") });
+  } finally { await harness.close(); }
+});
+
 test("the first-time shortcut opens the existing setup wizard", async ({ rig }) => {
   const harness = await rig.reset({ settingsOverride: { setupWizardDone: true }, theme: "dark" });
   try {

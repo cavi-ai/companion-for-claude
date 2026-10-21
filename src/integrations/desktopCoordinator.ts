@@ -2,6 +2,7 @@ import { sanitizeDesktopError, type ClaudeCodeInspection } from "./desktop";
 import type {
   ClaudeDesktopInstallInput,
   ClaudeDesktopInstallResult,
+  ClaudeDesktopRefreshInput,
   TerminalLaunchResult,
 } from "./desktopRuntime";
 
@@ -9,6 +10,7 @@ export interface DesktopIntegrationRuntime {
   inspectClaudeCode(): Promise<ClaudeCodeInspection>;
   setupClaudeCode(): Promise<ClaudeCodeInspection>;
   installClaudeDesktop(input: ClaudeDesktopInstallInput): Promise<ClaudeDesktopInstallResult>;
+  refreshClaudeDesktopConnection?(input: ClaudeDesktopRefreshInput): Promise<boolean>;
   openTerminalAtVault(path: string): Promise<TerminalLaunchResult>;
   resolveClaudeCodeExecutable?(): Promise<string>;
 }
@@ -30,6 +32,8 @@ export interface DesktopIntegrationCoordinatorOptions {
   runtime: DesktopIntegrationRuntime;
   providerReady(): boolean;
   vaultPath: string;
+  /** The vault's name; the Claude Desktop extension opens the vault by it when Obsidian is closed. */
+  vaultName?: string;
   prepareClaudeDesktopBridge(): Promise<{ port: number; token: string }>;
   copy(text: string): Promise<void>;
 }
@@ -116,7 +120,8 @@ export class DesktopIntegrationCoordinator {
         return;
       }
       try {
-        const result = await this.options.runtime.installClaudeDesktop(bridge);
+        const vault = { name: this.options.vaultName ?? "", path: this.options.vaultPath };
+        const result = await this.options.runtime.installClaudeDesktop({ ...bridge, vault });
         if (!this.isCurrent(generation)) return;
         this.setState({
           status: "ready",

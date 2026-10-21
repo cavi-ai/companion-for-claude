@@ -65,10 +65,12 @@ test("fallback generation stays truthful after reload and supports recovery to a
   await desk.getByRole("button", { name: "Sections", exact: true }).click();
   await expect(section.locator(".cc-draft-status")).toHaveText("Accepted fallback");
   await page.evaluate(async (path) => {
-    const app = (window as unknown as { app: { vault: { getAbstractFileByPath(path: string): unknown }; workspace: { getLeaf(value: boolean): { openFile(file: unknown, state: unknown): Promise<void> } } } }).app;
-    await app.workspace.getLeaf(false).openFile(app.vault.getAbstractFileByPath(path), { state: { mode: "preview" } });
+    const app = (window as unknown as { app: { vault: { getAbstractFileByPath(path: string): unknown }; workspace: { getLeaf(value: "tab"): { openFile(file: unknown, state: unknown): Promise<void> } } } }).app;
+    await app.workspace.getLeaf("tab").openFile(app.vault.getAbstractFileByPath(path), { state: { mode: "preview" } });
   }, documentPath);
   await expect(page.locator(".markdown-reading-view .cc-provenance")).toContainText("Companion fallback");
+  await openGamma(page);
+  await expect(section.locator(".cc-draft-status")).toHaveText("Accepted fallback");
   await section.getByRole("button", { name: "Revise section", exact: true }).click();
   await section.locator(".cc-revision-intent").selectOption("custom");
   await section.locator(".cc-revision-instruction").fill("Make the scope clear.");

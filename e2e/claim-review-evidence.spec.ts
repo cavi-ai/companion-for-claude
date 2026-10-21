@@ -9,7 +9,8 @@ test("claim review explains stale evidence and opens the passage for re-checking
   });
   const desk = page.locator(".cc-research-desk");
   const card = desk.locator(".cc-desk-card").filter({ hasText: "Continuity claim" });
-  await card.locator(".cc-desk-card-head").click();
+  if (await card.locator(".cc-desk-card-head").getAttribute("aria-expanded") !== "true")
+    await card.locator(".cc-desk-card-head").click();
   await card.getByRole("button", { name: "Check claim", exact: true }).click();
   const modal = page.locator(".modal-container").last();
   await expect(modal.getByText("Continuity study · page 4", { exact: true })).toBeVisible();
@@ -39,7 +40,8 @@ test("claim review shows saved limitations and adds to them without replacing th
     await (window as unknown as { app: { commands: { executeCommandById(id: string): Promise<void> } } }).app.commands.executeCommandById("claude-companion:open-research-desk");
   });
   const card = page.locator(".cc-research-desk .cc-desk-card").filter({ hasText: "Continuity claim" });
-  await card.locator(".cc-desk-card-head").click();
+  if (await card.locator(".cc-desk-card-head").getAttribute("aria-expanded") !== "true")
+    await card.locator(".cc-desk-card-head").click();
   await card.getByRole("button", { name: "Check claim", exact: true }).click();
   const modal = page.locator(".modal-container").last();
   const limitations = modal.getByRole("region", { name: "Saved limitations", exact: true });
@@ -66,7 +68,8 @@ test("unsupported claims guide stale support candidates through re-checking befo
     await (window as unknown as { app: { commands: { executeCommandById(id: string): Promise<void> } } }).app.commands.executeCommandById("claude-companion:open-research-desk");
   });
   const card = page.locator(".cc-research-desk .cc-desk-card").filter({ hasText: "Continuity claim" });
-  await card.locator(".cc-desk-card-head").click();
+  if (await card.locator(".cc-desk-card-head").getAttribute("aria-expanded") !== "true")
+    await card.locator(".cc-desk-card-head").click();
   await card.getByRole("button", { name: "Check claim", exact: true }).click();
   const modal = page.locator(".modal-container").last();
   await expect(modal.getByLabel("Link Earlier follow-up", { exact: true })).toBeDisabled();

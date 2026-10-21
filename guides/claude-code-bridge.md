@@ -55,31 +55,23 @@ CLI is installed.
 
 ## 2. Connect Claude Desktop
 
-Open **Desktop integrations → Connect Claude Desktop**. The confirmation names
-the local configuration change and read-only bridge. Companion then:
+Open **Desktop integrations → Connect Claude Desktop** (macOS and Windows).
+Companion then:
 
 1. enables its token-required loopback server with writes off;
-2. backs up an existing Claude Desktop configuration;
-3. atomically merges the `obsidian-vault` server without removing other keys;
-4. verifies that the bridge started.
+2. writes the bridge address, token and vault name to a user-only file outside
+   the vault (`Companion for Claude/bridge.json` in the system's application
+   data folder);
+3. opens the **Obsidian vault (Companion for Claude)** extension in Claude
+   Desktop. Click **Install**; it asks for no settings;
+4. removes, with a backup, the `obsidian-vault` entry earlier versions wrote to
+   `claude_desktop_config.json`.
 
-Restart Claude Desktop after the configuration changes. Obsidian must remain
-open while Claude Desktop uses the bridge.
-
-Manual recovery (`claude_desktop_config.json`, via `mcp-remote`):
-
-```json
-{
-  "mcpServers": {
-    "obsidian-vault": {
-      "command": "npx",
-      "args": ["-y", "mcp-remote", "http://127.0.0.1:22360/mcp", "--header", "Authorization: Bearer <token>"]
-    }
-  }
-}
-```
-
-Obsidian has to be open — the bridge only runs while the app does.
+Claude Desktop starts the extension for its chats and for its Cowork and Code
+sessions. It stays connected while Obsidian is closed: calling a vault
+tool opens the vault in Obsidian and answers once the bridge is up. When the
+port or token changes, Companion updates the file the next time the bridge
+starts, so the extension never needs reinstalling.
 
 ## 3. Advanced bridge settings
 

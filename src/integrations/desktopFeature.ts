@@ -77,7 +77,21 @@ export class DesktopFeature {
     return { enabled: true, url: bridgeUrl(this.settings.mcpPort), headerValue: bridgeHeaderValue(resolved) };
   }
 
-  private async createDesktopIntegrationController(): Promise<DesktopIntegrationCoordinator> {
+  /**
+   * Keep Claude Desktop's extension pointed at this vault's bridge after a port
+   * or token change. Only a connection file Connect Claude Desktop wrote for
+   * this vault is touched.
+   */
+  async refreshClaudeDesktopConnection(port: number, token: string): Promise<void> {
+    if (Platform.isMobile) return;
+    const { adapter, platform, env, homeDir } = this.desktopEnvironment();
+    if (platform !== "darwin" && platform !== "win32") return;
+    const module = await this.deps.runtimeLoader();
+    const runtime = await module.createNodeDesktopRuntime(platform, homeDir, { APPDATA: env.APPDATA });
+    await runtime.refreshClaudeDesktopConnection?.({ port, token, vault: { name: this.app.vault.getName(), path: adapter.getBasePath() } });
+  }
+
+  private desktopEnvironment(): { adapter: FileSystemAdapter; platform: DesktopPlatform; env: Record<string, string | undefined>; homeDir: string } {
     const adapter = this.app.vault.adapter;
     if (!(adapter instanceof FileSystemAdapter)) throw new Error("This vault does not expose a desktop filesystem path.");
     const processLike = (window as { process?: { platform?: string; env?: Record<string, string | undefined> } }).process;
@@ -87,12 +101,18 @@ export class DesktopFeature {
     const env = processLike?.env ?? {};
     const homeDir = env.HOME || env.USERPROFILE || "";
     if (!homeDir) throw new Error("The desktop home directory is unavailable.");
+    return { adapter, platform, env, homeDir };
+  }
+
+  private async createDesktopIntegrationController(): Promise<DesktopIntegrationCoordinator> {
+    const { adapter, platform, env, homeDir } = this.desktopEnvironment();
     const module = await this.deps.runtimeLoader();
     const runtime = await module.createNodeDesktopRuntime(platform, homeDir, { APPDATA: env.APPDATA }, this.claudeCodeBridgeInput(env));
     return new DesktopIntegrationCoordinator({
       runtime,
       providerReady: () => this.deps.router().anthropic.hasCredentials() || this.settings.chatBackend !== "claude",
       vaultPath: adapter.getBasePath(),
+      vaultName: this.app.vault.getName(),
       prepareClaudeDesktopBridge: () => this.configureClaudeDesktopBridge(),
       copy: async (text) => {
         if (!navigator.clipboard?.writeText) throw new Error("Clipboard access is unavailable.");

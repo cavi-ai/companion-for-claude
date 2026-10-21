@@ -370,6 +370,28 @@ describe("DesktopRuntime", () => {
     expect(fs.writes.map((write) => write.path)).toEqual([CONNECTION_FILE]);
   });
 
+  it("names the vault in the connection file so the extension can open it", async () => {
+    const fs = new MemoryFs();
+    await desktopRuntime(fs, async () => undefined).installClaudeDesktop({ port: 22360, token: "t", vault: { name: "Notes", path: "/v/Notes" } });
+    expect(JSON.parse(fs.files.get(CONNECTION_FILE)!)).toEqual({ url: "http://127.0.0.1:22360/mcp", token: "t", vault: "Notes", vaultPath: "/v/Notes" });
+  });
+
+  it("moves this vault's connection file to the bridge's new port and token and leaves any other alone", async () => {
+    const vault = { name: "Notes", path: "/v/Notes" };
+    const fs = new MemoryFs();
+    fs.files.set(CONNECTION_FILE, JSON.stringify({ url: "http://127.0.0.1:22360/mcp", token: "old", vault: "Notes", vaultPath: "/v/Notes" }));
+    const runtime = desktopRuntime(fs, async () => undefined);
+    expect(await runtime.refreshClaudeDesktopConnection({ port: 22361, token: "new", vault })).toBe(true);
+    expect(JSON.parse(fs.files.get(CONNECTION_FILE)!)).toEqual({ url: "http://127.0.0.1:22361/mcp", token: "new", vault: "Notes", vaultPath: "/v/Notes" });
+    expect(await runtime.refreshClaudeDesktopConnection({ port: 22361, token: "new", vault })).toBe(false);
+    expect(await runtime.refreshClaudeDesktopConnection({ port: 1, token: "other", vault: { name: "Other", path: "/v/Other" } })).toBe(false);
+    expect(fs.writes).toHaveLength(1);
+    const unclaimed = new MemoryFs();
+    unclaimed.files.set(CONNECTION_FILE, JSON.stringify({ url: "http://127.0.0.1:22360/mcp", token: "old" }));
+    expect(await desktopRuntime(unclaimed, async () => undefined).refreshClaudeDesktopConnection({ port: 1, token: "new", vault })).toBe(false);
+    expect(await desktopRuntime(new MemoryFs(), async () => undefined).refreshClaudeDesktopConnection({ port: 1, token: "new", vault })).toBe(false);
+  });
+
   it("refuses an empty token and a device that cannot open the bundle", async () => {
     await expect(desktopRuntime(new MemoryFs(), async () => undefined).installClaudeDesktop({ port: 1, token: " " })).rejects.toThrow("token is empty");
     const noOpener = new DesktopRuntime({ exec: new FakeExec(new Map()), fs: new MemoryFs(), platform: "darwin", homeDir: "/Users/test" });

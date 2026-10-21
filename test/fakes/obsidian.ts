@@ -94,6 +94,10 @@ class FakeVault extends FakeEventSource {
   /** path -> inline tags with offsets (tag without #) */
   inlineTags = new Map<string, Array<{ tag: string; start: number; end: number }>>();
 
+  getName(): string {
+    return "Test Vault";
+  }
+
   /** Test helper: seed a note. */
   seed(path: string, content: string, opts: { mtime?: number; tags?: string[]; frontmatter?: Record<string, unknown>; inlineTags?: Array<{ tag: string; start: number; end: number }> } = {}): TFile {
     const p = normalizePath(path);

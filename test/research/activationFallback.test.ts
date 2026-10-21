@@ -1,4 +1,5 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { Platform } from "obsidian";
 import { buildPlugin } from "../fakes/plugin";
 
 function pluginWithNoRightLeaf() {
@@ -18,7 +19,9 @@ function pluginWithNoRightLeaf() {
 }
 
 describe("research view activation fallback", () => {
-  it("creates and reveals a new leaf for Research Desk when no right leaf exists", async () => {
+  afterEach(() => { Platform.isMobile = false; });
+  it("keeps the mobile fallback when no right leaf exists", async () => {
+    Platform.isMobile = true;
     const { plugin, workspace, fallbackLeaf } = pluginWithNoRightLeaf();
 
     await plugin.research().activateResearchDesk();

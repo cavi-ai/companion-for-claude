@@ -1,14 +1,16 @@
 import { expect, test } from "./fixtures";
 import type ClaudeCompanionPlugin from "../src/main";
 const PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aS1sAAAAASUVORK5CYII=";
+const REPLIES = [{ match: String.raw`/"type"\s*:\s*"image"/`, replies: ["Chart received."] }, { match: "/./", replies: ["No image."] }];
 for (const move of ["file", "folder", "running"] as const) {
   test(`Regenerate follows a ${move} image rename and preserves it after reload`, async ({ rig }, testInfo) => {
     const oldPath = move === "folder" ? "Charts/ChartBefore.png" : "ChartBefore.png";
     const newPath = move === "folder" ? "Figures/ChartBefore.png" : "ChartAfter.png";
     const { page } = await rig.reset({
       settingsOverride: { agentModeEnabled: false, context: { activeNote: false, selection: false, linkedNotes: false, searchVault: false } },
-      providerDelayMs: move === "running" ? 1000 : 0,
-      providerReply: [{ match: String.raw`/"type"\s*:\s*"image"/`, replies: ["Chart received."] }, { match: "/./", replies: ["No image."] }],
+      // The running case holds the reply long enough to outlast the Send click and the rename on a slow runner.
+      providerDelayMs: move === "running" ? 5000 : 0,
+      providerReply: REPLIES,
     });
     const errors: string[] = [];
     const onError = (error: Error) => errors.push(error.message);
@@ -36,8 +38,14 @@ for (const move of ["file", "folder", "running"] as const) {
       const movedItem = move === "folder" ? '.nav-folder-title[data-path="Figures"]' : `.nav-file-title[data-path="${newPath}"]`;
       await expect(page.locator(movedItem)).toBeVisible();
       await expect(chat.getByRole("button", { name: "Regenerate", exact: true })).toBeVisible();
+      // Regenerations answer at once; replacing the stubs restarts the request count.
+      let sent = 1;
+      if (move === "running") {
+        await rig.control.setStubs({ providerReply: REPLIES });
+        sent = 0;
+      }
       await chat.getByRole("button", { name: "Regenerate", exact: true }).click();
-      await expect.poll(() => rig.providerRequests()).toBe(2);
+      await expect.poll(() => rig.providerRequests()).toBe(sent + 1);
       await expect(chat.getByRole("button", { name: "Send message", exact: true })).toBeVisible();
       await expect(chat.locator(".cc-assistant .cc-body").last()).toHaveText("Chart received.");
       const refs = await page.evaluate(() => {
@@ -47,7 +55,7 @@ for (const move of ["file", "folder", "running"] as const) {
       expect(refs).toEqual([newPath]);
       await rig.reloadPlugin();
       await chat.getByRole("button", { name: "Regenerate", exact: true }).click();
-      await expect.poll(() => rig.providerRequests()).toBe(3);
+      await expect.poll(() => rig.providerRequests()).toBe(sent + 2);
       await expect(chat.getByRole("button", { name: "Send message", exact: true })).toBeVisible();
       await expect(chat.locator(".cc-assistant .cc-body").last()).toHaveText("Chart received.");
       await page.screenshot({ path: testInfo.outputPath("renamed-original-image-regenerates-after-reload.png") });

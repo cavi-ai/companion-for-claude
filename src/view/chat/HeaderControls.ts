@@ -72,6 +72,9 @@ export class HeaderControls {
     this.headerEl = header;
     const title = header.createDiv({ cls: "cc-title" });
     title.createSpan({ cls: "cc-eyebrow", text: "COMPANION FOR CLAUDE" });
+    const brand = title.createDiv({ cls: "cc-brand" });
+    setIcon(brand.createSpan({ cls: "cc-brand-icon", attr: { "aria-hidden": "true" } }), "sparkles");
+    brand.createSpan({ text: "Companion" });
     this.projectLabelEl = title.createSpan({ cls: "cc-project-label" });
     this.modelLabelEl = title.createSpan({ cls: "cc-model" });
     this.backendPillEl = title.createSpan({ cls: "cc-backend-pill", attr: { "aria-label": "Chat backend / connectivity" } });

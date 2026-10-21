@@ -13,7 +13,7 @@ source of truth.
 · [Getting started](../guides/getting-started.md)
 · [All guides](../README.md#guides)
 
-![Companion in Obsidian: a note with pending inline edits and the chat that proposed them](assets/hero.png)
+![Companion in Obsidian: onboarding interviews connected to a finding, proposal, and next research session beside Claude Opus 5.5 chat](../assets/canvas-output.png)
 
 ## Install
 

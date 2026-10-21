@@ -51,7 +51,7 @@ describe("ResearchView", () => {
     await view.setProjectPath(P);
     expect(all(view, "h2")[0]?.textContent).toBe("Audio");
     for (const selector of [".cc-desk-ask", ".cc-desk-argument", ".cc-desk-document", ".cc-desk-sources"]) expect(all(view, selector)).toHaveLength(1);
-    const indices = [".cc-desk-header", ".cc-desk-ask", ".cc-desk-argument", ".cc-desk-document", ".cc-desk-sources"].map((selector) => childIndex(view, selector.slice(1)));
+    const indices = [".cc-desk-header", ".cc-desk-argument", ".cc-desk-document", ".cc-desk-ask", ".cc-desk-sources"].map((selector) => childIndex(view, selector.slice(1)));
     expect(indices.every((index) => index >= 0)).toBe(true);
     expect(indices).toEqual([...indices].sort((a, b) => a - b));
     for (const selector of [".cc-desk-fix", ".cc-research-tabs", ".cc-desk-stage", ".cc-desk-next"]) expect(all(view, selector)).toHaveLength(0);
@@ -60,12 +60,33 @@ describe("ResearchView", () => {
     expect(all(view, ".cc-desk-counts")[0]?.textContent).toBe("1 source · 2 passages · 1 claim");
   });
 
+  it("shows the first claim's excerpt and source locator without hiding untrusted evidence", async () => {
+    const { view, openPath } = make();
+    await view.setProjectPath(P);
+    expect(all(view, ".cc-desk-card-head")[0]?.getAttribute("aria-expanded")).toBe("true");
+    expect(all(view, ".cc-desk-excerpt")[0]?.textContent).toBe("a");
+    expect(all(view, ".cc-desk-locator")[0]?.textContent).toContain("page 1");
+    expect(all(view, ".cc-desk-evidence-state")[0]?.textContent).toBe("Reviewed · Source current");
+    click(all(view, ".cc-desk-source-link")[0]);
+    expect(openPath).toHaveBeenCalledWith("Research/A/Sources/S.md");
+    click(all(view, ".cc-desk-card-head")[0]);
+    await flush();
+    expect(all(view, ".cc-desk-excerpt")).toHaveLength(0);
+  });
+
   it("sends a chat step to Claude with the project prompt", async () => {
     const { view, askResearch } = make();
     await view.setProjectPath(P);
     click(button(view, 'Look for evidence against "Codecs dominate"'));
     await flush();
     expect(askResearch).toHaveBeenCalledWith(P, expect.stringContaining(`Research project: [[${P}]]`), 'Look for evidence against "Codecs dominate"');
+  });
+
+  it("does not label an unchecked passage as reviewed", async () => {
+    const unchecked = buildProjectSnapshot(P, records.map(record => record.path.endsWith("E1.md") ? { ...record, reviewState: "proposed" } as ResearchRecord : record), []);
+    const { view } = make({ snapshot: unchecked });
+    await view.setProjectPath(P);
+    expect(all(view, ".cc-desk-evidence-state")[0]?.textContent).toBe("Not trusted · Review passage");
   });
 
   it("sends a typed instruction", async () => {
@@ -223,6 +244,9 @@ describe("ResearchView", () => {
   it("expands a card to its passages", async () => {
     const { view } = make();
     await view.setProjectPath(P);
+    click(all(view, ".cc-desk-card-head")[0]);
+    await flush();
+    expect(all(view, ".cc-desk-passage")).toHaveLength(0);
     click(all(view, ".cc-desk-card-head")[0]);
     await flush();
     expect(all(view, ".cc-desk-passage").map(({ textContent }) => textContent)).toEqual(["Supports: E1", "Supports: E2"]);
