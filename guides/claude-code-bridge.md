@@ -240,7 +240,7 @@ This is the security-sensitive part of the plugin, and it's deliberately narrow:
   session receives its own ephemeral port and token, so its approval callback,
   agent mode, and Plan Mode cannot be rebound by another conversation.
 
-Reporting policy and boundaries: [`SECURITY.md`](https://github.com/cavi-ai/claude-obsidian/blob/3b642845a88df8daabc0fc7fcbc303ed2d124353/SECURITY.md).
+Reporting policy and boundaries: [`SECURITY.md`](https://github.com/cavi-ai/claude-obsidian/blob/08cf0ec63cc0acc6ec74a90199df01266e6d251f/SECURITY.md).
 
 ## Troubleshooting
 

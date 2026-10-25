@@ -1,4 +1,4 @@
-import { App, requestUrl } from "obsidian";
+import { App, htmlToMarkdown, requestUrl } from "obsidian";
 import { resultText, type McpToolDef, type ToolResult } from "./protocol";
 import type { OntologyRegistry } from "../ontology/registry";
 import type { SemanticSearch } from "../context/hybridSearch";
@@ -7,6 +7,7 @@ import { createResearchRepository } from "../research/repositoryFactory";
 import { RESEARCH_TOOL_ALIASES, ResearchTools, type ZoteroResolve } from "../research/tools";
 import { advertise, type ToolRecord } from "./toolRecord";
 import { captureWebSource, type WebCapture } from "../research/webCapture";
+import { requestUrlCaptureIo } from "../web/requestFetch";
 import { ZoteroAdapter, type ZoteroLibrary } from "../discovery/adapters/zotero";
 import { createObsidianDiscoveryHttp } from "../discovery/adapters/obsidianHttp";
 import { assertVaultPath, ensureFolder } from "./tools/context";
@@ -170,14 +171,7 @@ export class VaultTools {
   /** Readable-markdown web capture for research_source_import (renderer only). */
   private webCapture(): WebCapture | undefined {
     if (typeof DOMParser === "undefined") return undefined;
-    return (url) => captureWebSource(url, {
-      fetchHtml: async (target) => {
-        const response = await requestUrl({ url: target, method: "GET", throw: false });
-        if (response.status >= 400) throw new Error(`Fetch failed with status ${response.status}`);
-        return response.text;
-      },
-      parseHtml: (html) => new DOMParser().parseFromString(html, "text/html"),
-    });
+    return (url) => captureWebSource(url, requestUrlCaptureIo(requestUrl, htmlToMarkdown));
   }
 
   private researchRepository(): ResearchRepository {

@@ -2,6 +2,7 @@ import { ItemView, WorkspaceLeaf, TFile, setIcon, Platform } from "obsidian";
 import type ClaudeCompanionPlugin from "../main";
 import { inboxItems, typedInboxItems, type InboxFileEntry, type InboxItem } from "../sources/inbox";
 import { ExtractError } from "../sources/extract";
+import { SourcePropertiesError } from "../sources/sourceMarkdown";
 import { wireUpItems, type WireUpEntry } from "../links/wireUp";
 import type { BatchLinkApplyResult } from "../links/batch";
 import { createInboxRefreshController, type InboxRefreshController } from "./inboxRefresh";
@@ -535,6 +536,7 @@ export class InboxView extends ItemView {
     let failed = 0;
     let completed = 0;
     let notAttempted = 0;
+    let providerFailure = false;
     try {
       await this.renderSafely();
       for (const item of items) {
@@ -551,6 +553,7 @@ export class InboxView extends ItemView {
           });
         } else {
           failed++;
+          if (outcome.status !== "failed" || !(outcome.error instanceof SourcePropertiesError)) providerFailure = true;
           const detail = safeActivityDetail(outcome.status === "failed" ? outcome.error.message : outcome.reason);
           this.plugin.activity.update(activityId, {
             completed,
@@ -589,7 +592,7 @@ export class InboxView extends ItemView {
           ...(notAttempted > 0 ? { technicalDetails: `${notAttempted} note${notAttempted === 1 ? " was" : "s were"} not attempted after repeated invalid model output.` } : {}),
           recovery: [
             { id: "review-inbox-failures", label: "Review failed notes", kind: "retry" },
-            { id: "utility-settings", label: "Open utility settings", kind: "settings" },
+            ...(providerFailure ? [{ id: "utility-settings", label: "Open utility settings", kind: "settings" as const }] : []),
             ...(this.plugin.settings.enrichmentDiagnostics
               ? [{ id: "copy-diagnostics", label: "Copy enrichment log", kind: "copy-details" as const }]
               : []),

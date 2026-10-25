@@ -77,6 +77,33 @@ afterEach(() => {
 });
 
 describe("enrichment lifecycle", () => {
+  it("coalesces a manual source command with Inbox enrichment through the real extraction and write", async () => {
+    const app = new App();
+    const file = app.vault.seed("Clippings/shared.md", "An article body.");
+    const release = deferred<void>();
+    let calls = 0;
+    const controller = new SourceEnrichmentController(testControllerDeps({
+      enrichApp: app as never,
+      vault: { cachedRead: async () => app.vault.read(file) },
+      router: () => ({
+        utilitySelection: async () => ({ provider: { id: "claude" } }),
+        completeResolved: async () => {
+          calls++;
+          await release.promise;
+          return { text: JSON.stringify({ title: "An article", site: "Example", summary: "An article summary." }) };
+        },
+      }) as never,
+    }));
+    const manual = controller.runEnrich(file, false);
+    const inbox = controller.enrichFile(file, false);
+    await vi.waitFor(() => expect(calls).toBeGreaterThan(0));
+    release.resolve();
+    expect(await Promise.all([manual, inbox])).toEqual([{ status: "enriched" }, { status: "enriched" }]);
+    expect(calls).toBe(1);
+    expect(await app.vault.read(file)).toContain("source_enriched: true");
+    controller.destroy();
+  });
+
   it("single-flights the same clip across automatic and Inbox enrichment", async () => {
     vi.useFakeTimers();
     const app = new App();
@@ -89,7 +116,7 @@ describe("enrichment lifecycle", () => {
       enrichApp: app as never,
       vault: { cachedRead: async (path) => { const f = app.vault.getAbstractFileByPath(path); return f ? await app.vault.cachedRead(f as TFile) : ""; } },
     }));
-    vi.spyOn(controller, "runEnrich").mockImplementation(async (candidate) => {
+    vi.spyOn(controller as unknown as { performEnrich: SourceEnrichmentController["runEnrich"] }, "performEnrich").mockImplementation(async (candidate) => {
       started.push(candidate.path);
       active++;
       maxActive = Math.max(maxActive, active);
@@ -127,7 +154,7 @@ describe("enrichment lifecycle", () => {
       enrichApp: app as never,
       vault: { cachedRead: async (path) => { const f = app.vault.getAbstractFileByPath(path); return f ? await app.vault.cachedRead(f as TFile) : ""; } },
     }));
-    vi.spyOn(controller, "runEnrich").mockImplementation(async (candidate) => {
+    vi.spyOn(controller as unknown as { performEnrich: SourceEnrichmentController["runEnrich"] }, "performEnrich").mockImplementation(async (candidate) => {
       started.push(candidate.path);
       active++;
       maxActive = Math.max(maxActive, active);

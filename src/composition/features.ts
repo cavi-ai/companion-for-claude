@@ -1,11 +1,11 @@
 // Wires the feature objects: utility routing, clipper, onboarding, note flows, views, shell, research, desktop integrations, orders, publishing and living views.
 
-import { Platform, requestUrl } from "obsidian";
+import { htmlToMarkdown, Platform, requestUrl } from "obsidian";
 import { NoteFlows } from "../enrich/noteFlows";
 import { DesktopFeature, type DesktopFeatureDeps } from "../integrations/desktopFeature";
 import { LivingSources } from "../living/feature";
 import { fetchVideoTranscript } from "../living/youtube";
-import { requestUrlFetch } from "../web/requestFetch";
+import { requestUrlCaptureIo } from "../web/requestFetch";
 import type ClaudeCompanionPlugin from "../main";
 import { Onboarding } from "../onboarding/onboarding";
 import { OrdersFeature, type OrdersFeatureDeps } from "../orders/ordersFeature";
@@ -218,15 +218,7 @@ export function buildLivingSources(host: LivingSourcesHost): LivingSources {
     selection: () => host.utilityRouting().resolveSession(),
     // Page parsing needs a DOM; without one, video notes must carry their transcript.
     ...(typeof DOMParser === "undefined" ? {} : {
-      transcript: (url: string) => fetchVideoTranscript(url, {
-        fetchHtml: async (target) => {
-          const response = await requestUrl({ url: target, method: "GET", throw: false });
-          if (response.status >= 400) throw new Error(`Fetch failed with status ${response.status}`);
-          return response.text;
-        },
-        parseHtml: (html) => new DOMParser().parseFromString(html, "text/html"),
-        fetch: requestUrlFetch(requestUrl),
-      }),
+      transcript: (url: string) => fetchVideoTranscript(url, requestUrlCaptureIo(requestUrl, htmlToMarkdown)),
     }),
   });
 }

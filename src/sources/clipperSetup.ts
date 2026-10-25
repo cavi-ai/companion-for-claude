@@ -1,6 +1,7 @@
 import {
   clipperFingerprint,
   clipperTemplateFor,
+  clipperTemplateFileName,
   serializeClipperTemplate,
 } from "./clipperTemplate";
 import type { SourceType, SourceTypeSchema } from "./types";
@@ -23,10 +24,13 @@ export interface ClipperSetupViewModel {
   companionFields: string[];
   fingerprint: string;
   json: string;
+  fileName: string;
+  mimeType: "application/json";
+  templateFingerprint: string;
   instructions: string;
 }
 
-const templateMetadata = new Set(["type", "source", "schema_version", "clipped", "tags"]);
+const templateMetadata = new Set(["type", "source", "schema_version", "clipped", "tags", "clipper_template"]);
 
 export function clipperSetupFor(
   type: SourceType,
@@ -63,12 +67,17 @@ export function clipperSetupFor(
     companionFields,
     fingerprint,
     json: serializeClipperTemplate(template),
+    fileName: clipperTemplateFileName(template),
+    mimeType: "application/json",
+    templateFingerprint: template.properties.find(({ name }) => name === "clipper_template")!.value,
     instructions: [
-      "1. Save this template as a .json file (button below), or copy it to a file yourself.",
-      "2. Open the official Obsidian Web Clipper → Settings → Templates → Import (top right) and pick that .json file — drag-and-drop onto the template list works too. Import the file; never paste it into a template's fields, which turns the JSON into clip content.",
+      "1. Save JSON file to your device (on mobile, choose Save to Files in the share sheet), or copy template JSON.",
+      "2. Open Web Clipper → Settings → Templates → Import. Choose the .json file, or choose JSON and paste the copied template into the import dialog, not into a template field. Drag-and-drop of the .json file works too.",
       template.triggers
         ? "3. Nothing else to order — this template triggers itself on YouTube URLs."
-        : `3. Drag “${template.name}” to the top of the template list. Web Clipper uses the first template whose triggers match, and this one has none, so it only applies while it is first.`,
+        : type === "dataset"
+          ? "3. In Web Clipper, select Companion: dataset when clipping a dataset page."
+          : `3. Drag “${template.name}” to the top of the template list to make it the fallback for pages without a matching trigger.`,
       `4. Return to a matching ${type} page and create one test clip into ${settings.inboxFolder}.`,
       "5. Return to Companion. It will verify the arriving note before marking this setup verified.",
     ].join("\n"),

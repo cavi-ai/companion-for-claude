@@ -6,8 +6,7 @@
 import type { SourceTypeSchema } from "../sources/types";
 import { extractFields, type ExtractDeps } from "../sources/extract";
 import { sanitize } from "../memory/sanitize";
-import { readFrontmatter, stripFrontmatter } from "../markdown/frontmatter";
-import { parseYaml } from "obsidian";
+import { prepareSourceMarkdown } from "../sources/sourceMarkdown";
 
 export interface ResearchSourceEnrichment {
   summary: string;
@@ -42,9 +41,10 @@ export function capturedTextFromBody(body: string): string | null {
 
 /** The text worth summarizing: captured page content, else the abstract. */
 export function researchSourceText(content: string): string | null {
-  const captured = capturedTextFromBody(stripFrontmatter(content))?.trim();
+  const prepared = prepareSourceMarkdown(content);
+  const captured = capturedTextFromBody(prepared.body)?.trim();
   if (captured && captured.length >= MIN_SOURCE_TEXT) return captured;
-  const abstract = readFrontmatter(content, (yaml) => parseYaml(yaml) as unknown)?.abstract;
+  const abstract = prepared.properties.abstract;
   if (typeof abstract === "string" && abstract.trim().length >= MIN_SOURCE_TEXT) return abstract.trim();
   return null;
 }
@@ -63,7 +63,7 @@ export async function extractResearchSourceEnrichment(
   input: { content: string },
   deps: ExtractDeps,
 ): Promise<ResearchSourceEnrichment | null> {
-  const frontmatter = readFrontmatter(input.content, (yaml) => parseYaml(yaml) as unknown);
+  const frontmatter = prepareSourceMarkdown(input.content).properties;
   const existing = frontmatter?.summary;
   if (typeof existing === "string" && existing.trim().length > 0) return null;
   const text = researchSourceText(input.content);

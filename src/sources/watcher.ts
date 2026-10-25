@@ -1,10 +1,11 @@
-import { frontmatterBlock } from "../markdown/frontmatter";
+import { prepareSourceMarkdown } from "./sourceMarkdown";
 
 const SUPPORTED = new Set(["md", "csv"]);
 
 /** Whether the note's frontmatter (not its body) carries `source_enriched: true`. */
 export function isSourceEnriched(content: string): boolean {
-  return /^source_enriched:\s*true\s*$/m.test(frontmatterBlock(content)?.yaml ?? "");
+  try { return prepareSourceMarkdown(content).properties.source_enriched === true; }
+  catch { return false; } // Invalid input stays eligible so the preparation error can be shown.
 }
 
 export interface EnrichGuardInput {

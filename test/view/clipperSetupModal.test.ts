@@ -21,7 +21,7 @@ describe("ClipperSetupModal", () => {
 
     expect(root.querySelectorAll(".cc-clipper-tab")).toHaveLength(3);
     expect(root.querySelector(".cc-clipper-instructions")?.textContent).toContain("Import");
-    expect(root.querySelector(".cc-clipper-instructions")?.textContent).toContain("never paste it into a template's fields");
+    expect(root.querySelector(".cc-clipper-instructions")?.textContent).toContain("not into a template field");
     expect(root.querySelector(".cc-clipper-verification")?.textContent).toBe("Waiting for a test clip after you copy this template.");
 
     root.querySelectorAll("button").find(({ textContent }) => textContent === "Copy template JSON")

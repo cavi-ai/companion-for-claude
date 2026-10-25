@@ -36,8 +36,8 @@ describe("clipperTemplateFor", () => {
 
   it("gives the video template YouTube triggers matching detectType's family", () => {
     const t = clipperTemplateFor(getSchema("video"), OPTS);
-    expect(t.triggers?.some((x) => x.includes("youtube\\.com/watch"))).toBe(true);
-    expect(t.triggers?.some((x) => x.includes("youtu\\.be"))).toBe(true);
+    expect(t.triggers?.some((x) => x.includes("youtube\\.com"))).toBe(true);
+    expect(t.triggers?.some((x) => x.includes("youtu.be"))).toBe(true);
     expect(t.triggers?.some((x) => x.includes("shorts"))).toBe(true);
     expect(t.properties.find((p) => p.name === "channel")).toMatchObject({ value: "{{author}}" });
   });

@@ -1,6 +1,6 @@
 import type { FieldType, SourceRecord, SourceTypeSchema } from "./types";
 import { sanitize } from "../memory/sanitize";
-import { stripFrontmatter } from "../markdown/frontmatter";
+import { prepareSourceMarkdown } from "./sourceMarkdown";
 
 const REDACTION_MARKER = "‹REDACTED›";
 const PLACEHOLDER_TITLES = new Set([
@@ -179,7 +179,7 @@ export function validateEnrichment(
   if (errors.length > 0) throw new EnrichmentQualityError(errors);
 }
 
-export const markdownBody = stripFrontmatter;
+export const markdownBody = (content: string): string => prepareSourceMarkdown(content).body;
 
 export function assertBodyPreserved(before: string, after: string): void {
   if (markdownBody(before) !== markdownBody(after)) {

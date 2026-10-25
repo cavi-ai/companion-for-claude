@@ -1,4 +1,6 @@
-import { App, TFile, type FakeElement } from "obsidian";
+import { clipperTemplateFor } from "../../src/sources/clipperTemplate";
+import { getSchema } from "../../src/sources/registry";
+import { App, type FakeElement } from "obsidian";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ActivityStore } from "../../src/activity/store";
 import { ClipperFeature } from "../../src/sources/clipperFeature";
@@ -16,11 +18,13 @@ function setup(over: Partial<PluginSettings> = {}) {
   const persist = vi.fn(async () => undefined);
   const saveSettings = vi.fn(async () => undefined);
   const activity = new ActivityStore({ successRetentionMs: 60_000 });
-  const feature = new ClipperFeature({ app, settings: () => settings, persist, saveSettings, activity: () => activity });
-  return { app, settings, persist, saveSettings, activity, feature };
+  const exported: Array<{ fileName: string; mimeType: string; json: string }> = [];
+  const exportJson = vi.fn(async (artifact) => { exported.push(artifact); return true; });
+  const feature = new ClipperFeature({ app, settings: () => settings, persist, saveSettings, activity: () => activity, exportJson });
+  return { app, settings, persist, saveSettings, activity, feature, exported, exportJson };
 }
 
-const stamped = { type: "article", schema_version: 1, source: "https://example.com", tags: ["source"] };
+const stamped = { type: "article", schema_version: 1, clipper_template: clipperTemplateFor(getSchema("article"), { path: "Clippings", tags: ["source"] }).properties.find(({ name }) => name === "clipper_template")!.value, source: "https://example.com", tags: ["source"] };
 
 describe("ClipperFeature.exportTemplates", () => {
   it("writes one template per source type, stores the fingerprint and saves settings", async () => {
@@ -40,6 +44,23 @@ describe("ClipperFeature.exportTemplates", () => {
     await feature.exportTemplates();
     await feature.exportTemplates();
     expect(app.vault.getFiles().filter((f) => f.path.startsWith("Claude/Clipper templates/"))).toHaveLength(3);
+  });
+
+  it("keeps the fingerprint unchanged if the host changes a JSON file to Markdown", async () => {
+    const { app, settings, feature } = setup();
+    const create = app.vault.create.bind(app.vault);
+    vi.spyOn(app.vault, "create").mockImplementation((path, content) => create(`${path}.md`, content));
+    await expect(feature.exportTemplates()).rejects.toThrow(/intact .json file/);
+    expect(settings.clipperTemplateFingerprint).toBe("");
+  });
+
+  it("does not mark a partial export current when one file cannot be written", async () => {
+    const { app, settings, feature } = setup();
+    const create = app.vault.create.bind(app.vault);
+    vi.spyOn(app.vault, "create").mockImplementation((path, content) => path.includes("video") ? Promise.reject(new Error("Write failed")) : create(path, content));
+    await expect(feature.exportTemplates()).rejects.toThrow("Write failed");
+    expect(settings.clipperTemplateFingerprint).toBe("");
+    expect(feature.setupNeeded()).toBe(true);
   });
 });
 
@@ -62,7 +83,7 @@ describe("ClipperFeature status", () => {
     const fingerprintOf = (): string => (feature as unknown as { setups(): Array<{ fingerprint: string }> }).setups()[0]!.fingerprint;
     settings.clipperVerification.article = { fingerprint: fingerprintOf(), state: "verified", startedAt: 1, verifiedAt: 2, mismatches: [] };
     expect(feature.setupNeeded()).toBe(false);
-    expect(feature.status()).toBe("not-set-up");
+    expect(feature.status()).toBe("current");
   });
 });
 
@@ -108,14 +129,32 @@ describe("ClipperFeature.openSetup", () => {
     vi.unstubAllGlobals();
   });
 
-  it("saves the template JSON into the vault with a notice", async () => {
-    const { app, feature } = setup();
+  it("exports the same JSON artifact to the device and waits for a test clip", async () => {
+    const { feature, exported, settings } = setup();
     await press(openModal(feature), "Save JSON file");
-    expect(app.vault.getAbstractFileByPath("Claude/Clipper templates/companion-article-clipper.json")).toBeInstanceOf(TFile);
+    expect(exported).toHaveLength(1);
+    expect(exported[0]).toMatchObject({ fileName: "companion-article-clipper.json", mimeType: "application/json" });
+    expect(JSON.parse(exported[0]!.json)).toMatchObject({ name: "Companion: article" });
+    expect(settings.clipperVerification.article?.state).toBe("waiting");
+  });
+
+  it("does not wait for a test clip when file export is cancelled", async () => {
+    const { feature, exportJson, settings } = setup();
+    exportJson.mockResolvedValueOnce(false);
+    await press(openModal(feature), "Save JSON file");
+    expect(settings.clipperVerification.article).toBeUndefined();
   });
 });
 
 describe("ClipperFeature.queueVerification", () => {
+  it("does not verify a note whose source metadata was added by enrichment alone", async () => {
+    vi.useFakeTimers();
+    const { app, settings, feature } = setup();
+    const { clipper_template: _stamp, ...enriched } = stamped;
+    feature.queueVerification(app.vault.seed("Clippings/enriched.md", "body", { frontmatter: { ...enriched, source_enriched: true } }));
+    await vi.advanceTimersByTimeAsync(600);
+    expect(settings.clipperVerification.article).toBeUndefined();
+  });
   it("ignores notes outside the inbox when nothing is waiting", async () => {
     vi.useFakeTimers();
     const { app, feature } = setup();

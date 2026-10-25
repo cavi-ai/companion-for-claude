@@ -24,6 +24,9 @@ export const requestUrl = async (): Promise<never> => {
   throw new Error("requestUrl is not available in tests — inject a fake HTTP adapter instead.");
 };
 
+/** Identity stand-in: tests assert on the converted text, not Obsidian's markdown rules. */
+export const htmlToMarkdown = (html: string): string => html;
+
 export class TFile {
   path: string;
   basename: string;

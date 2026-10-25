@@ -1,3 +1,5 @@
+import { clipperTemplateFor } from "../../src/sources/clipperTemplate";
+import { getSchema } from "../../src/sources/registry";
 import { App } from "obsidian";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type ClaudeCompanionPlugin from "../../src/main";
@@ -24,7 +26,7 @@ describe("Clipper first-note verification wiring", () => {
     vi.useFakeTimers();
     const app = new App();
     const file = app.vault.seed("Clippings/Test.md", "A large clipped body that must not be persisted in settings.", {
-      frontmatter: { type: "article", schema_version: 1, source: "https://example.com", tags: ["source"] },
+      frontmatter: { type: "article", schema_version: 1, clipper_template: clipperTemplateFor(getSchema("article"), { path: "Clippings", tags: ["source"] }).properties.find(({ name }) => name === "clipper_template")!.value, source: "https://example.com", tags: ["source"] },
     });
     const plugin = harnessPlugin(app, (settings) => {
       settings.sourceBaseTags = ["source"];
@@ -105,7 +107,7 @@ describe("Clipper first-note verification wiring", () => {
     vi.useFakeTimers();
     const app = new App();
     const file = app.vault.seed("Clippings/Stamped.md", "body", {
-      frontmatter: { type: "article", schema_version: 1, source: "https://example.com", tags: ["source"] },
+      frontmatter: { type: "article", schema_version: 1, clipper_template: clipperTemplateFor(getSchema("article"), { path: "Clippings", tags: ["source"] }).properties.find(({ name }) => name === "clipper_template")!.value, source: "https://example.com", tags: ["source"] },
     });
     const plugin = passivePlugin(app);
     expect(plugin.clipperSetup().setupNeeded()).toBe(true);

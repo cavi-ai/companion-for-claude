@@ -77,6 +77,7 @@ for (const theme of ["light", "dark"] as const) {
     const manager = chat.getByRole("dialog", { name: "Message context" });
     await expect(manager.getByLabel("Selection", { exact: true })).toBeChecked();
     await expect(manager).toContainText("No text selected");
+    await page.screenshot({ path: test.info().outputPath("empty-selection.png"), timeout: 5000 });
     await manager.getByRole("button", { name: "Close message context" }).click();
     await chat.locator("textarea").fill("Summarize my note.");
     await chat.getByRole("button", { name: /^Send(?: message)?$/ }).click();
@@ -107,9 +108,12 @@ for (const theme of ["light", "dark"] as const) {
       return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
     });
     expect(contrast).toBeGreaterThanOrEqual(3);
+    await page.screenshot({ path: test.info().outputPath("reply-actions.png"), timeout: 5000 });
     await save.click();
     await expect.poll(() => page.evaluate(() => (window as unknown as { app: { workspace: { getActiveFile(): { path: string } | null } } }).app.workspace.getActiveFile()?.path)).toMatch(/^Claude\/Chats\//);
+    await page.screenshot({ path: test.info().outputPath("saved-note-open.png"), timeout: 5000 });
     await rig.reloadPlugin();
     await expect(page.locator(".cc-chat-root .cc-user .cc-context-note")).toContainText("active note: UX Source.md");
+    await page.screenshot({ path: test.info().outputPath("resumed-context.png"), timeout: 5000 });
   });
 }

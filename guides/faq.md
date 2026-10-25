@@ -51,6 +51,8 @@ The complete list of hosts the plugin can ever contact:
 | `html.duckduckgo.com` or `api.search.brave.com` | Agent web search, only on an explicit search and only if you enabled the tool |
 | The page a web-fetch tool call names | Agent web fetch, only on an explicit tool call and only if you enabled the tool |
 | A page you asked to capture or fetch | Web-source capture, attach-page, or the agent's web fetch tool |
+| The source page of a clip that arrives empty | Source enrichment, only for an inbox clip with no body and only after you allow automatic enrichment or enrich it yourself |
+| `www.reddit.com`, `old.reddit.com` | Reading a Reddit post from Reddit's own feed when one of the pages above is a Reddit post |
 | Any MCP server URL you configure | External MCP client tools, on explicit agent tool calls |
 
 On desktop, two optional features touch files outside the vault: session capture
@@ -127,4 +129,4 @@ Use the community store — that's the released, reviewed build. Use
 
 
 Bugs and feature requests: a GitHub issue. Suspected vulnerabilities: **not** a
-public issue — follow [`SECURITY.md`](https://github.com/cavi-ai/claude-obsidian/blob/3b642845a88df8daabc0fc7fcbc303ed2d124353/SECURITY.md).
+public issue — follow [`SECURITY.md`](https://github.com/cavi-ai/claude-obsidian/blob/08cf0ec63cc0acc6ec74a90199df01266e6d251f/SECURITY.md).

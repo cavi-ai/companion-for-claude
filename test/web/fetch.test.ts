@@ -15,6 +15,7 @@ function io(html: string): WebCaptureIo {
   return {
     fetchHtml: async () => html,
     parseHtml: (value: string) => parseHTML(value).document as unknown as Document,
+    toMarkdown: (value: string) => value,
   };
 }
 

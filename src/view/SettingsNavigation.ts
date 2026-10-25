@@ -13,6 +13,31 @@ const CATEGORIES: Array<{ id: SettingsCategory; title: string; icon: string; tas
 const COMMON_KEYS = new Set(["authMode", "oauthToken", "chatBackend", "model", "customModel", "deviceChatModel", "agentModeEnabled", "agentAllowWrites", "semanticEnabled", "discoveryEnabled", "researchModel", "sourceCaptureEnabled", "ontologyEnabled"]);
 const COMMON_NAMES = new Set(["Anthropic API key", "OAuth token", "Environment credential", "Save & test connection", "Codex model", "OpenCode model", "On-device model download", "Embedding model"]);
 
+/** A row holding a real dropdown (not Obsidian's transient width-measuring clone). */
+const DROPDOWN = ".setting-item-control select:not(.is-measuring)";
+const watchedLists = new WeakSet<HTMLElement>();
+
+/** Tag direct rows that hold a dropdown so the stylesheet can lay them out without a relational selector. */
+export function markDropdownRows(listEl: HTMLElement): void {
+  for (const row of Array.from(listEl.children)) {
+    if (row.classList.contains("setting-item")) row.classList.toggle("cc-dropdown-row", row.querySelector(DROPDOWN) !== null);
+  }
+}
+
+/** Rows render after the header and can re-render in place, so retag on structural changes, at most once per frame. */
+export function watchDropdownRows(listEl: HTMLElement): void {
+  markDropdownRows(listEl);
+  if (watchedLists.has(listEl)) return;
+  watchedLists.add(listEl);
+  const view = listEl.ownerDocument.defaultView ?? activeWindow;
+  let queued = false;
+  new MutationObserver(() => {
+    if (queued) return;
+    queued = true;
+    view.requestAnimationFrame(() => { queued = false; markDropdownRows(listEl); });
+  }).observe(listEl, { childList: true, subtree: true });
+}
+
 export interface SettingsNavigationHost {
   update(): void;
   container(): HTMLElement;
@@ -45,6 +70,7 @@ export class SettingsNavigation {
       setting.settingEl.addClass("cc-settings-header");
       group?.listEl.addClass("cc-settings-grid");
       group?.listEl.toggleClass("is-advanced", this.advanced && !searching);
+      if (group) watchDropdownRows(group.listEl);
       this.renderHeader(setting.settingEl, settings, home, searching);
     } }];
     // The storage warning is independent of navigation and must never be hidden by a task filter.

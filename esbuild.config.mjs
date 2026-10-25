@@ -39,7 +39,20 @@ await fs.writeFile(".build/embed-worker.txt.gz", gzipSync(await fs.readFile(".bu
 const context = await esbuild.context({
   banner: { js: banner },
   entryPoints: ["src/main.ts"],
-  plugins: [compressedSkillRegistry()],
+  plugins: [compressedSkillRegistry(), {
+    name: "yaml-tokenizer-tree-shaking",
+    setup(build) {
+      // YAML's barrel otherwise retains unused document/schema initializers.
+      // Only its syntax tokenizer is used here; its modules have no external effects.
+      build.onResolve({ filter: /^(?:yaml$|\.\.?\/)/ }, async (args) => {
+        if (args.pluginData?.yamlResolved || (args.path !== "yaml" && !/[/\\]node_modules[/\\]yaml[/\\]/.test(args.importer))) return;
+        const resolved = await build.resolve(args.path, {
+          kind: args.kind, resolveDir: args.resolveDir, pluginData: { yamlResolved: true },
+        });
+        return { ...resolved, sideEffects: false };
+      });
+    },
+  }],
   bundle: true,
   external: [
     "obsidian",

@@ -6,11 +6,12 @@ import type { ActivityStore } from "../activity/store";
 import type { PluginSettings } from "../types";
 import { ensureVaultFolder, writeOrReplaceFile } from "../vault/vaultFiles";
 import { ClipperSetupModal } from "../view/ClipperSetupModal";
-import { clipperFingerprint, clipperTemplateFileName, clipperTemplateFor, serializeClipperTemplate } from "./clipperTemplate";
+import { clipperFingerprint } from "./clipperTemplate";
 import { clipperSetupFor, type ClipperSetupViewModel } from "./clipperSetup";
 import { verifyClipperNote } from "./clipperVerification";
 import { getSchema } from "./registry";
 import type { SourceType } from "./types";
+import { saveClipperJson, type ClipperJsonFile } from "./clipperJsonFile";
 
 export interface ClipperFeatureDeps {
   app: App;
@@ -18,6 +19,7 @@ export interface ClipperFeatureDeps {
   saveSettings: () => Promise<void>;
   persist: () => Promise<void>;
   activity: () => ActivityStore;
+  exportJson?: (artifact: ClipperJsonFile) => Promise<boolean>;
 }
 
 export class ClipperFeature {
@@ -50,10 +52,7 @@ export class ClipperFeature {
     const types: SourceType[] = ["article", "video", "dataset"];
     const schemas = types.map((t) => getSchema(t, this.settings.sourceSchemaOverrides));
     await ensureVaultFolder(this.app, folder);
-    for (const schema of schemas) {
-      const template = clipperTemplateFor(schema, opts);
-      await writeOrReplaceFile(this.app, normalizePath(`${folder}/${clipperTemplateFileName(template)}`), serializeClipperTemplate(template));
-    }
+    for (const setup of this.setups()) await this.writeTemplate(folder, setup);
     this.settings.clipperTemplateFingerprint = clipperFingerprint(schemas, opts);
     await this.deps.saveSettings();
     new Notice(
@@ -61,6 +60,14 @@ export class ClipperFeature {
       10000,
     );
     return { folder, count: types.length };
+  }
+
+  private async writeTemplate(folder: string, artifact: ClipperJsonFile): Promise<void> {
+    const path = normalizePath(`${folder}/${artifact.fileName}`);
+    const file = await writeOrReplaceFile(this.app, path, artifact.json);
+    if (file.path !== path || file.extension !== "json" || await this.app.vault.read(file) !== artifact.json) {
+      throw new Error("The template was not saved as an intact .json file. Copy template JSON and use Web Clipper → Import → JSON.");
+    }
   }
 
   private setups(): ClipperSetupViewModel[] {
@@ -80,7 +87,7 @@ export class ClipperFeature {
 
   status(): "not-set-up" | "current" | "update-available" {
     const statuses = this.setups().map(({ status }) => status);
-    return statuses.includes("update-available") ? "update-available" : statuses.every((status) => status === "current") ? "current" : "not-set-up";
+    return statuses.includes("update-available") ? "update-available" : statuses.some((status) => status === "verified") || statuses.every((status) => status === "current") ? "current" : "not-set-up";
   }
 
   openSetup(): void {
@@ -104,12 +111,7 @@ export class ClipperFeature {
           title: `Waiting for a ${type} test clip`,
         });
       },
-      saveJson: async (setup) => {
-        const folder = "Claude/Clipper templates";
-        await ensureVaultFolder(this.app, folder);
-        await writeOrReplaceFile(this.app, normalizePath(`${folder}/companion-${setup.type}-clipper.json`), setup.json);
-        new Notice(`Saved ${setup.templateName} JSON to ${folder}.`, 4000);
-      },
+      saveJson: (setup) => (this.deps.exportJson ?? saveClipperJson)(setup),
     }).open();
   }
 
@@ -163,6 +165,7 @@ export class ClipperFeature {
       destination: this.settings.sourceInboxFolder,
       fingerprint: setup.fingerprint,
       baseTags: this.settings.sourceBaseTags,
+      templateFingerprint: setup.templateFingerprint,
     });
     if (result.state !== "verified") return;
     const now = Date.now();
@@ -180,6 +183,7 @@ export class ClipperFeature {
       destination: this.settings.sourceInboxFolder,
       fingerprint: metadata.fingerprint,
       baseTags: this.settings.sourceBaseTags,
+      templateFingerprint: this.setups().find((setup) => setup.type === type)!.templateFingerprint,
     });
     this.settings.clipperVerification[type] = {
       fingerprint: metadata.fingerprint,

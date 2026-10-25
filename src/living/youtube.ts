@@ -7,7 +7,7 @@ import { safeWebUrl } from "../discovery/safeUrl";
 import type { WebCaptureIo } from "../research/webCapture";
 import { parseTranscript, youtubeId, type Transcript } from "./transcript";
 
-export interface VideoTranscriptIo extends WebCaptureIo {
+export interface VideoTranscriptIo extends Pick<WebCaptureIo, "fetchHtml" | "parseHtml"> {
   /** Fetch for the extractor's own requests (e.g. Obsidian's requestUrl behind the fetch API). */
   fetch: typeof fetch;
 }

@@ -9,6 +9,9 @@ import { sourceFrontmatter, buildSidecarNote } from "./sourceNote";
 import { applySourceFrontmatter, sourceProperties } from "./frontmatterMerge";
 import { sanitizeFileName } from "../artifacts/parse";
 import { validateEnrichment, validateMergedSourceProvenance } from "./enrichmentQuality";
+import { stripFrontmatter } from "../markdown/frontmatter";
+import { prepareSourceMarkdown } from "./sourceMarkdown";
+import type { WebCapture } from "../research/webCapture";
 
 export interface EnrichDeps {
   app: App;
@@ -20,12 +23,44 @@ export interface EnrichDeps {
   now: () => string;
   /** Last-moment lifecycle gate: a completed model result may outlive the plugin. */
   assertActive?: () => void;
+  /** Reads the source page of a clip that arrived with an empty body. */
+  captureWeb?: WebCapture | undefined;
 }
 
 export interface EnrichResult {
   file: TFile;
   type: SourceType;
   record: SourceRecord;
+  /** The clip arrived empty and was enriched from its source page, which fills its body. */
+  readFromPage: boolean;
+}
+
+/** The source page of an empty clip could not be fetched; the note is left untouched for a retry. */
+export class ClipPageError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ClipPageError";
+  }
+}
+
+/**
+ * Web Clipper saves some pages with no content (a Reddit post can arrive as a
+ * blank note), so an empty clip is read from its source URL instead.
+ * Undefined when the clip has a body, carries no URL, or the page has nothing
+ * readable.
+ */
+async function emptyClipBody(deps: EnrichDeps, capture: Extract<RawCapture, { kind: "markdown" }>): Promise<string | undefined> {
+  if (!deps.captureWeb || stripFrontmatter(capture.content).trim()) return undefined;
+  const url = capture.url ?? parseClipUrl(capture.content);
+  if (!url) return undefined;
+  try {
+    return (await deps.captureWeb(url))?.markdown;
+  } catch (e) {
+    let host = url;
+    try { host = new URL(url).hostname; } catch { /* keep the raw URL */ }
+    const reason = e instanceof Error ? e.message : String(e);
+    throw new ClipPageError(`This clip arrived empty and its page at ${host} could not be read (${reason}). Retry from the Source Inbox, or paste the page's text into the note.`);
+  }
 }
 
 function csvPreview(text: string): string {
@@ -92,11 +127,13 @@ export function prefilledFields(schema: SourceTypeSchema, frontmatter: Record<st
 
 /** Run a capture through the pipeline and write the typed result. */
 export async function enrichCapture(deps: EnrichDeps, capture: RawCapture): Promise<EnrichResult> {
+  if (capture.kind === "markdown") capture = { ...capture, content: prepareSourceMarkdown(capture.content).content };
   const type = detectType(capture);
   const schema = getSchema(type, deps.overrides);
 
   const derived: Record<string, FieldValue> = {};
-  let content = capture.content;
+  const pageBody = capture.kind === "markdown" ? await emptyClipBody(deps, capture) : undefined;
+  let content = pageBody ? `${capture.content.trimEnd()}\n\n${pageBody}` : capture.content;
   if (capture.kind === "datafile" && capture.ext === "csv") {
     const meta = parseCsvMeta(capture.content);
     if (meta) {
@@ -154,8 +191,9 @@ export async function enrichCapture(deps: EnrichDeps, capture: RawCapture): Prom
           );
         }
       },
+      pageBody,
     );
-    return { file, type, record };
+    return { file, type, record, readFromPage: pageBody !== undefined };
   }
   const dir = capture.path.includes("/") ? capture.path.slice(0, capture.path.lastIndexOf("/")) : "";
   const base = sanitizeFileName(String(record.fields.title ?? capture.basename));
@@ -171,5 +209,5 @@ export async function enrichCapture(deps: EnrichDeps, capture: RawCapture): Prom
   } else {
     file = await deps.app.vault.create(path, noteContent);
   }
-  return { file, type, record };
+  return { file, type, record, readFromPage: false };
 }

@@ -2,7 +2,7 @@
 // construction, the discovery coordinators, refresh scheduling, and the
 // plan-note Build action.
 
-import { MarkdownView, normalizePath, Notice, Platform, requestUrl, TFile, type App, type WorkspaceLeaf } from "obsidian";
+import { htmlToMarkdown, MarkdownView, normalizePath, Notice, Platform, requestUrl, TFile, type App, type WorkspaceLeaf } from "obsidian";
 import type { ActivityStore } from "../activity/store";
 import { PLANNING_INSTRUCTION } from "../artifacts/designSystem";
 import { beginActivity } from "../activity/progress";
@@ -43,6 +43,7 @@ import { createResearchRepository } from "./repositoryFactory";
 import { researchCoordinatorMode, researchModelChip } from "./researchModel";
 import { RevisionCoordinator } from "./revisionCoordinator";
 import { captureWebSource } from "./webCapture";
+import { requestUrlCaptureIo } from "../web/requestFetch";
 import { inferResearchProjectPath, projectPathForActivation } from "./workbenchRouting";
 
 export interface ResearchFeatureDeps {
@@ -157,14 +158,7 @@ export class ResearchFeature {
         },
       }),
       ...(typeof DOMParser === "undefined" ? {} : {
-        captureWeb: (url: string) => captureWebSource(url, {
-          fetchHtml: async (target) => {
-            const response = await requestUrl({ url: target, method: "GET", throw: false });
-            if (response.status >= 400) throw new Error(`Fetch failed with status ${response.status}`);
-            return response.text;
-          },
-          parseHtml: (html) => new DOMParser().parseFromString(html, "text/html"),
-        }),
+        captureWeb: (url: string) => captureWebSource(url, requestUrlCaptureIo(requestUrl, htmlToMarkdown)),
       }),
       saveAsset: async (projectPath, name, data) => {
         const folder = `${projectPath.slice(0, -"/Project.md".length)}/Sources/assets`;

@@ -1,15 +1,17 @@
 import type { RawCapture, SourceType } from "./types";
+import { prepareSourceMarkdown } from "./sourceMarkdown";
 
 /** Read the URL the Web Clipper stamps into frontmatter (`source:` or `url:`). */
 export function parseClipUrl(content: string): string | undefined {
-  const m = /^(?:source|url):\s*["']?(\S+?)["']?\s*$/m.exec(content);
-  return m ? m[1] : undefined;
+  const properties = prepareSourceMarkdown(content).properties;
+  const url = properties.source ?? properties.url;
+  return typeof url === "string" && url.trim() ? url.trim() : undefined;
 }
 
 /** A `type:` stamp from a Companion-generated clipper template wins outright. */
 export function parseStampedType(content: string): SourceType | undefined {
-  const m = /^type:\s*["']?(article|video|dataset)["']?\s*$/m.exec(content);
-  return m ? (m[1] as SourceType) : undefined;
+  const type = prepareSourceMarkdown(content).properties.type;
+  return type === "article" || type === "video" || type === "dataset" ? type : undefined;
 }
 
 /** Classify a capture into a source type. Extension wins; then a stamped type;

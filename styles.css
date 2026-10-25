@@ -4,12 +4,13 @@
 .cc-settings-browser { container: cc-settings / inline-size; }
 .cc-settings-browser .cc-settings-grid { display: grid; grid-template-columns: minmax(0, 1fr); border: 0; background: transparent; }
 .cc-settings-grid > .setting-item { min-width: 0; grid-column: 1 / -1; }
-/* Size dropdown rows against their own column, including the narrower Advanced detail pane. */
-.cc-settings-browser .cc-settings-grid > .setting-item:has(.setting-item-control select:not(.is-measuring)) { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr)); align-items: start; gap: var(--cc-space-3) var(--cc-space-4); }
-.cc-settings-browser .cc-settings-grid > .setting-item:has(.setting-item-control select:not(.is-measuring)) .setting-item-info { min-width: 0; margin-inline-end: 0; }
-.cc-settings-browser .cc-settings-grid > .setting-item:has(.setting-item-control select:not(.is-measuring)) .setting-item-control { min-width: 0; max-width: 100%; flex-wrap: wrap; justify-content: flex-start; }
-.cc-settings-browser .cc-settings-grid > .setting-item:has(.setting-item-control select:not(.is-measuring)) .setting-item-control > :is(input, select:not(.is-measuring), textarea) { min-width: 0; max-width: 100%; }
-.cc-settings-browser .cc-settings-grid > .setting-item:has(.setting-item-control select:not(.is-measuring)) > :not(.setting-item-info):not(.setting-item-control) { grid-column: 1 / -1; }
+/* Size dropdown rows against their own column, including the narrower Advanced detail pane.
+   SettingsNavigation tags these rows with .cc-dropdown-row; a relational selector here forced broad style invalidation. */
+.cc-settings-browser .cc-settings-grid > .setting-item.cc-dropdown-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr)); align-items: start; gap: var(--cc-space-3) var(--cc-space-4); }
+.cc-settings-browser .cc-settings-grid > .setting-item.cc-dropdown-row .setting-item-info { min-width: 0; margin-inline-end: 0; }
+.cc-settings-browser .cc-settings-grid > .setting-item.cc-dropdown-row .setting-item-control { min-width: 0; max-width: 100%; flex-wrap: wrap; justify-content: flex-start; }
+.cc-settings-browser .cc-settings-grid > .setting-item.cc-dropdown-row .setting-item-control > :is(input, select:not(.is-measuring), textarea) { min-width: 0; max-width: 100%; }
+.cc-settings-browser .cc-settings-grid > .setting-item.cc-dropdown-row > :not(.setting-item-info):not(.setting-item-control) { grid-column: 1 / -1; }
 /* Keep Obsidian's hidden measurement clone at its natural width without expanding the row's scroll area. */
 .cc-settings-browser .cc-settings-grid .setting-item-control select.is-measuring { position: fixed; }
 .cc-settings-grid .cc-settings-header { display: block; padding: 0 0 12px; border: 0; }
@@ -47,10 +48,11 @@ button.cc-settings-destination:focus-visible, .cc-settings-disclosure:focus-visi
 .cc-settings-browser .cc-settings-grid button.cc-settings-disclosure { display: flex; align-items: center; justify-content: space-between; gap: var(--cc-space-4); width: 100%; height: auto; min-height: 48px; margin: 0; padding: var(--cc-space-3) var(--cc-space-4); text-align: start; background: var(--interactive-normal); border: 0; border-radius: var(--cc-radius-sm); box-shadow: none; font-size: var(--cc-text-md); font-weight: 600; line-height: 1.5; }
 .cc-settings-disclosure > span:first-child { flex: 1; min-width: 0; white-space: normal; }
 .cc-settings-disclosure .cc-settings-chevron { align-items: center; justify-content: center; }
-.cc-settings-grid.is-advanced { grid-template-columns: 180px minmax(0, 1fr); column-gap: 24px; align-items: start; }
+/* The 24px track gap is the sidebar's end margin: column-gap is flagged as partially supported multicolumn. */
+.cc-settings-grid.is-advanced { grid-template-columns: 204px minmax(0, 1fr); align-items: start; }
 .cc-settings-grid.is-advanced > .setting-item { grid-column: 2; }
 .cc-settings-grid.is-advanced > .cc-settings-header { grid-column: 1 / -1; }
-.cc-settings-grid.is-advanced > .cc-settings-sidebar { display: block; grid-column: 1; grid-row: 2 / span var(--cc-settings-rows); position: sticky; top: 0; padding: 0 16px 0 0; border: 0; border-right: 1px solid var(--background-modifier-border); }
+.cc-settings-grid.is-advanced > .cc-settings-sidebar { display: block; grid-column: 1; grid-row: 2 / span var(--cc-settings-rows); position: sticky; top: 0; margin-inline-end: 24px; padding: 0 16px 0 0; border: 0; border-right: 1px solid var(--background-modifier-border); }
 .cc-settings-sidebar button.cc-settings-destination { min-height: 48px; padding: 12px 8px; gap: 10px; border: 1px solid transparent; border-radius: var(--cc-radius-sm); margin-bottom: 4px; }
 .cc-settings-sidebar .cc-settings-destination-title { font-size: var(--cc-text-base); font-weight: 400; }
 .cc-settings-sidebar .cc-settings-chevron { display: none; }
@@ -66,9 +68,9 @@ button.cc-settings-destination:focus-visible, .cc-settings-disclosure:focus-visi
   .cc-settings-grid > .setting-item:not(.cc-settings-header):not(.cc-settings-home):not(.cc-settings-sidebar):not(.cc-settings-section-heading):not(.cc-settings-connections) { flex-direction: column; align-items: stretch; }
   .cc-settings-grid .setting-item-control { max-width: 100%; flex-wrap: wrap; }
   .cc-settings-grid .setting-item-control input, .cc-settings-grid .setting-item-control select, .cc-settings-grid .setting-item-control textarea { max-width: 100%; }
-  .cc-settings-grid.is-advanced { grid-template-columns: minmax(0, 1fr); column-gap: 0; }
+  .cc-settings-grid.is-advanced { grid-template-columns: minmax(0, 1fr); }
   .cc-settings-grid.is-advanced > .setting-item { grid-column: 1; }
-  .cc-settings-grid.is-advanced > .cc-settings-sidebar { position: static; grid-row: auto; padding: 0 0 16px; border-right: 0; }
+  .cc-settings-grid.is-advanced > .cc-settings-sidebar { position: static; grid-row: auto; margin-inline-end: 0; padding: 0 0 16px; border-right: 0; }
   .cc-settings-sidebar nav { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--cc-space-1); padding: var(--cc-space-1); border: 1px solid var(--cc-border); border-radius: var(--cc-radius-md); background: var(--cc-surface-raised); }
   .cc-settings-sidebar button.cc-settings-destination { width: 100%; min-height: var(--cc-touch-min); padding: var(--cc-space-2); margin: 0; }
   .cc-settings-sidebar button.cc-settings-destination.is-selected,

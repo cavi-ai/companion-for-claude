@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { App, TFile } from "obsidian";
-import { enrichCapture } from "../../src/sources/enrich";
+import { ClipPageError, enrichCapture } from "../../src/sources/enrich";
 import type { EnrichDeps } from "../../src/sources/enrich";
 import { markdownBody } from "../../src/sources/enrichmentQuality";
 import { parse as parseYaml } from "yaml";
@@ -12,7 +12,7 @@ function deps(app: App, complete: EnrichDeps["complete"]): EnrichDeps {
 }
 
 describe("enrichCapture — markdown clip", () => {
-  it.each(["\n## Introduction\n\nArticle text\n\nMore article text", "title: [broken", "- list item"])("rejects invalid properties before requesting extraction: %s", async (yaml) => {
+  it.each(["title: [broken", "- list item"])("rejects invalid properties before requesting extraction: %s", async (yaml) => {
     const app = new App();
     const before = `---\n${yaml}\n---\n\nBody.  \n`;
     const file = app.vault.seed("Clippings/invalid.md", before, { frontmatter: { title: "Stale cached title" } });
@@ -417,5 +417,80 @@ describe("enrichCapture — re-enriching a CSV", () => {
     expect(r2.file.path).toBe(r1.file.path);
     const sidecars = app.vault.getMarkdownFiles().filter((f) => f.path.startsWith("Clippings/") && f.path.endsWith(".md"));
     expect(sidecars).toHaveLength(1);
+  });
+});
+
+describe("enrichCapture — clip that arrived empty", () => {
+  const EMPTY = "---\ntitle: Run it locally\nsource: https://www.reddit.com/r/unsloth/s/3rCTTgaPdB\n---\n";
+  const PAGE = "The post explains how to run the model on one GPU.\n\n## Comments\n\nA reply about quantization.";
+  const reply = JSON.stringify({ site: "Reddit", summary: "Running the model on one GPU." });
+
+  it("reads the source page, enriches from it, and fills the body", async () => {
+    const app = new App();
+    app.vault.seed("Clippings/empty.md", EMPTY);
+    const captureWeb = vi.fn(async () => ({ markdown: PAGE }));
+    const complete = vi.fn(async () => reply);
+
+    const res = await enrichCapture({ ...deps(app, complete), captureWeb }, { kind: "markdown", path: "Clippings/empty.md", basename: "empty", content: EMPTY });
+
+    expect(captureWeb).toHaveBeenCalledWith("https://www.reddit.com/r/unsloth/s/3rCTTgaPdB");
+    expect(complete.mock.calls[0]?.[1]).toContain("run the model on one GPU");
+    expect(res.readFromPage).toBe(true);
+    const out = await app.vault.cachedRead(res.file);
+    expect(markdownBody(out)).toBe(`${PAGE}\n`);
+    expect(out).toContain("source_enriched: true");
+    expect(out).toContain("summary: Running the model on one GPU.");
+  });
+
+  it("leaves a clip that has a body to the clip", async () => {
+    const app = new App();
+    const withBody = `${EMPTY}\nClipped text.\n`;
+    app.vault.seed("Clippings/full.md", withBody);
+    const captureWeb = vi.fn(async () => ({ markdown: PAGE }));
+
+    const res = await enrichCapture({ ...deps(app, async () => reply), captureWeb }, { kind: "markdown", path: "Clippings/full.md", basename: "full", content: withBody });
+
+    expect(captureWeb).not.toHaveBeenCalled();
+    expect(res.readFromPage).toBe(false);
+    expect(markdownBody(await app.vault.cachedRead(res.file))).toBe("\nClipped text.\n");
+  });
+
+  it("keeps text written into the note while the page was being read", async () => {
+    const app = new App();
+    const file = app.vault.seed("Clippings/typed.md", EMPTY);
+    const captureWeb = vi.fn(async () => {
+      await app.vault.modify(file as TFile, `${EMPTY}\nMy own notes.\n`);
+      return { markdown: PAGE };
+    });
+
+    const res = await enrichCapture({ ...deps(app, async () => reply), captureWeb }, { kind: "markdown", path: "Clippings/typed.md", basename: "typed", content: EMPTY });
+
+    expect(markdownBody(await app.vault.cachedRead(res.file))).toBe("\nMy own notes.\n");
+  });
+
+  it("enriches the empty clip as before when the page has nothing readable", async () => {
+    const app = new App();
+    app.vault.seed("Clippings/blank.md", EMPTY);
+
+    const res = await enrichCapture({ ...deps(app, async () => reply), captureWeb: async () => undefined }, { kind: "markdown", path: "Clippings/blank.md", basename: "blank", content: EMPTY });
+
+    expect(res.readFromPage).toBe(false);
+    const out = await app.vault.cachedRead(res.file);
+    expect(markdownBody(out)).toBe("");
+    expect(out).toContain("source_enriched: true");
+  });
+
+  it("names the page when it cannot be read and leaves the note for a retry", async () => {
+    const app = new App();
+    app.vault.seed("Clippings/blocked.md", EMPTY);
+    const complete = vi.fn(async () => reply);
+    const captureWeb = async () => { throw new Error("Fetch failed with status 403"); };
+
+    const pending = enrichCapture({ ...deps(app, complete), captureWeb }, { kind: "markdown", path: "Clippings/blocked.md", basename: "blocked", content: EMPTY });
+
+    await expect(pending).rejects.toBeInstanceOf(ClipPageError);
+    await expect(pending).rejects.toThrow("its page at www.reddit.com could not be read (Fetch failed with status 403)");
+    expect(complete).not.toHaveBeenCalled();
+    expect(await app.vault.cachedRead(app.vault.getAbstractFileByPath("Clippings/blocked.md") as TFile)).toBe(EMPTY);
   });
 });

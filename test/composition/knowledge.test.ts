@@ -301,6 +301,19 @@ describe("buildEnrichment", () => {
     expect(captured.enrichment!.isMobile).toBe(true);
   });
 
+  it("reads an empty clip's page only where a DOMParser exists", () => {
+    try {
+      vi.stubGlobal("DOMParser", undefined);
+      rig();
+      expect(captured.enrichment!.captureWeb).toBeUndefined();
+      vi.stubGlobal("DOMParser", class {});
+      rig();
+      expect(captured.enrichment!.captureWeb).toBeTypeOf("function");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("shows notices", () => {
     rig();
     call(captured.enrichment, "notice", "m", 5);

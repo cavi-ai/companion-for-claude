@@ -1,12 +1,13 @@
 // Builds the VaultTools options shared by the MCP bridge and the in-chat agent.
 
-import { requestUrl, TFile } from "obsidian";
+import { htmlToMarkdown, requestUrl, TFile } from "obsidian";
 import { createObsidianDiscoveryHttp } from "../discovery/adapters/obsidianHttp";
 import type { ZoteroLibrary } from "../discovery/adapters/zotero";
 import type ClaudeCompanionPlugin from "../main";
 import { SEMANTIC_OFF_MESSAGE, type VaultToolsOptions } from "../mcp/vaultTools";
 import { renderMemoryNote } from "../memory/consolidate";
 import { webFetch as webFetchPage } from "../web/fetch";
+import { requestUrlCaptureIo } from "../web/requestFetch";
 import { braveSearch, duckDuckGoSearch, formatSearchResults } from "../web/search";
 
 export type VaultToolsHost = Pick<ClaudeCompanionPlugin, "app" | "enrichment" | "memoryNotePath" | "ontology" | "semantic" | "settings">;
@@ -77,15 +78,7 @@ export function webToolImpls(host: Pick<VaultToolsHost, "settings">): Pick<Vault
     };
   }
   if (s.webFetchEnabled && typeof DOMParser !== "undefined") {
-    out.webFetch = (url) =>
-      webFetchPage(url, {
-        fetchHtml: async (target) => {
-          const response = await requestUrl({ url: target, method: "GET", throw: false });
-          if (response.status >= 400) throw new Error(`Fetch failed with status ${response.status}`);
-          return response.text;
-        },
-        parseHtml: (html) => new DOMParser().parseFromString(html, "text/html"),
-      });
+    out.webFetch = (url) => webFetchPage(url, requestUrlCaptureIo(requestUrl, htmlToMarkdown));
   }
   return out;
 }

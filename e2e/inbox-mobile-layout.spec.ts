@@ -54,7 +54,7 @@ test("the Inbox enrichment rows keep their own fills and fit a phone-width sideb
 
 test("invalid clip properties stay readable and can be corrected before retry", async ({ rig }) => {
   const path = `Clippings/${LONG}.md`;
-  const malformed = "---\n\n## Introduction\n\nArticle text\nwith: invalid: YAML\n---\n\nBody.  \n";
+  const malformed = "---\ntitle: [broken\n---\n\nBody.  \n";
   const { page } = await rig.reset({
     settingsOverride: { sourceCaptureEnabled: true, sourceEnrichOnCreate: false, sourceCaptureConsent: "allow" },
     extraFiles: { [path]: malformed },

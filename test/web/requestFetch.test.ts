@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { requestUrlFetch } from "../../src/web/requestFetch";
+import { requestUrlCaptureIo, requestUrlFetch } from "../../src/web/requestFetch";
 import { fetchVideoTranscript } from "../../src/living/youtube";
 
 const reply = (status: number, text: string) => ({ status, text, headers: { "content-type": "application/json" }, arrayBuffer: new TextEncoder().encode(text).buffer, json: null });
@@ -31,6 +31,19 @@ describe("requestUrlFetch", () => {
     const pending = requestUrlFetch(() => new Promise(() => undefined))("https://x.test", { signal: controller.signal });
     controller.abort();
     await expect(pending).rejects.toThrow("aborted");
+  });
+});
+
+describe("requestUrlCaptureIo", () => {
+  it("reads a page with GET, refuses error statuses, and passes markdown conversion through", async () => {
+    const request = vi.fn(async ({ url }: { url: string }) => reply(url.endsWith("/gone") ? 410 : 200, "<p>page</p>"));
+    const toMarkdown = (html: string) => `md:${html}`;
+    const io = requestUrlCaptureIo(request as never, toMarkdown);
+    expect(await io.fetchHtml("https://x.test/page")).toBe("<p>page</p>");
+    expect(request).toHaveBeenCalledWith({ url: "https://x.test/page", method: "GET", throw: false });
+    await expect(io.fetchHtml("https://x.test/gone")).rejects.toThrow("Fetch failed with status 410");
+    expect(io.toMarkdown).toBe(toMarkdown);
+    expect((await io.fetch("https://x.test/feed")).status).toBe(200);
   });
 });
 

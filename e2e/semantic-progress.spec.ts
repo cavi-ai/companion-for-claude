@@ -31,6 +31,8 @@ test("rebuild settings show batch progress, elapsed time, and an estimate", asyn
   await expect(status).toContainText("Estimated remaining: Estimating…");
   await expect(status).toContainText("Estimated remaining: ~", { timeout: 15_000 });
   await expect(row.locator("button")).toBeDisabled();
+  await settings.setViewportSize({ width: 390, height: 844 });
+  await row.screenshot({ path: test.info().outputPath("progress-settings.png") });
   await expect(status).toContainText("Index ready", { timeout: 15_000 });
   await expect(row.getByRole("button", { name: "Rebuild", exact: true })).toBeEnabled();
 });

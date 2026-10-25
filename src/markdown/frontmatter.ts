@@ -24,7 +24,7 @@ function lineEnd(content: string, from: number, nextLf: number): number {
 
 export function frontmatterBlock(content: string): FrontmatterBlock | null {
   const firstLf = content.indexOf("\n");
-  if (firstLf === -1 || !FENCE.test(content.slice(0, lineEnd(content, 0, firstLf)))) return null;
+  if (firstLf === -1 || !FENCE.test(content.slice(content.startsWith("\uFEFF") ? 1 : 0, lineEnd(content, 0, firstLf)))) return null;
   const eol = content[firstLf - 1] === "\r" ? "\r\n" : "\n";
   let offset = firstLf + 1;
   let line = 1;

@@ -12,6 +12,7 @@ export interface ClipperVerificationExpected {
   fingerprint: string;
   baseTags: string[];
   pageKnownValues?: Record<string, string>;
+  templateFingerprint?: string;
 }
 
 export interface ClipperVerificationMismatch {
@@ -88,6 +89,9 @@ export function verifyClipperNote(
     if (mismatches.length < 12) mismatches.push({ field, expected: wanted, observed: text(observed) });
   };
   if (entry.frontmatter.type !== expected.type) add("type", expected.type, entry.frontmatter.type);
+  if (expected.templateFingerprint !== undefined && entry.frontmatter.clipper_template !== expected.templateFingerprint) {
+    add("clipper_template", expected.templateFingerprint, entry.frontmatter.clipper_template);
+  }
   if (Number(entry.frontmatter.schema_version) !== expected.schemaVersion) {
     add("schema_version", String(expected.schemaVersion), entry.frontmatter.schema_version);
   }

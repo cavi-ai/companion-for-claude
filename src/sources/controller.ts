@@ -1,6 +1,6 @@
 import type { PluginSettings } from "../types";
 import type { EnrichDeps } from "./enrich";
-import { enrichCapture } from "./enrich";
+import { ClipPageError, enrichCapture } from "./enrich";
 import { shouldEnrich } from "./watcher";
 import { parseClipUrl } from "./detect";
 import { KeyedSerialQueue } from "./keyedSerialQueue";
@@ -9,7 +9,9 @@ import { UtilityUnavailableError } from "../providers/endpointPolicy";
 import type { EnrichDiagnostics } from "./enrichDiagnostics";
 import { TFile } from "obsidian";
 import { applySourceFrontmatter, sourceProperties } from "./frontmatterMerge";
+import { prepareSourceMarkdown, SourcePropertiesError } from "./sourceMarkdown";
 import { extractResearchSourceEnrichment } from "../research/enrichSource";
+import type { WebCapture } from "../research/webCapture";
 
 export interface FileRef {
   path: string;
@@ -47,6 +49,8 @@ export interface SourceEnrichmentControllerDeps {
   mobileSourceNoteMaxBytes: number;
 
   enrichApp: EnrichDeps["app"];
+  /** Reads the source page of a clip that arrived empty; absent where no DOM is available. */
+  captureWeb?: WebCapture | undefined;
   vault: {
     cachedRead: (path: string) => Promise<string>;
   };
@@ -162,7 +166,7 @@ export class SourceEnrichmentController {
             details: [{ label: path, message: detail, state: "error" }],
             recovery: [
               { id: "review-inbox-failures", label: "Open Source Inbox", kind: "retry" },
-              { id: "utility-settings", label: "Open utility settings", kind: "settings" },
+              ...(error instanceof SourcePropertiesError ? [] : [{ id: "utility-settings", label: "Open utility settings", kind: "settings" }]),
             ],
           });
         }
@@ -233,7 +237,7 @@ export class SourceEnrichmentController {
       total: 1,
     });
     try {
-      const content = await this.deps.vault.cachedRead(file.path);
+      const content = prepareSourceMarkdown(await this.deps.vault.cachedRead(file.path)).content;
       sourceProperties(content);
       const selection = await this.deps.router().utilitySelection();
       const enrichDeps = this.buildEnrichDeps(selection, lifecycleGeneration);
@@ -273,7 +277,9 @@ export class SourceEnrichmentController {
         failed: 1,
         technicalDetails: detail,
         details: [{ label: file.path, message: detail, state: "error" }],
-        recovery: [{ id: "utility-settings", label: "Open utility settings", kind: "settings" }],
+        recovery: e instanceof SourcePropertiesError
+          ? [{ id: "review-inbox-failures", label: "Review failed notes", kind: "retry" }]
+          : [{ id: "utility-settings", label: "Open utility settings", kind: "settings" }],
       });
       return { status: "failed", error: e instanceof Error ? e : new Error(String(e)) };
     }
@@ -292,7 +298,7 @@ export class SourceEnrichmentController {
     if (this.deps.settings().sourceCaptureConsent !== "allow" && !(await this.askSourceCaptureConsent())) {
       return { status: "skipped", reason: "automatic source enrichment was not approved." };
     }
-    return this.runEnrich(file, notify, file.extension === "md" ? content : undefined);
+    return this.performEnrich(file, notify, file.extension === "md" ? content : undefined);
   }
 
   mobileSourceSizeFailure(file: FileRef): Extract<EnrichRunOutcome, { status: "failed" }> | null {
@@ -315,7 +321,8 @@ export class SourceEnrichmentController {
         title: "Enrich clips automatically?",
         message:
           `Source capture can type each new file in ${this.deps.settings().sourceInboxFolder}/ into a schema-validated source note. ` +
-          "This sends the file's content to your utility model (Claude, unless you enable the local model in settings).",
+          "This sends the file's content to your utility model (Claude, unless you enable the local model in settings). " +
+          "A clip that arrives empty is first read from its source page.",
         buttons: [
           { label: "Enrich automatically", value: "allow", cta: true },
           { label: "Manual only", value: "deny" },
@@ -348,7 +355,15 @@ export class SourceEnrichmentController {
     return consent;
   }
 
-  async runEnrich(file: FileRef, notify = true, prefetchedContent?: string): Promise<EnrichRunOutcome> {
+  runEnrich(file: FileRef, notify = true, prefetchedContent?: string): Promise<EnrichRunOutcome> {
+    const generation = this.deps.utilityLifecycleGeneration();
+    const coordinator = this._coordinator ??= new KeyedSerialQueue<string, EnrichRunOutcome>();
+    return coordinator.run(file.path, () => this.deps.isUtilityLifecycleActive(generation)
+      ? this.performEnrich(file, notify, prefetchedContent)
+      : Promise.resolve({ status: "failed", error: new Error("Companion unloaded before source enrichment started; no content was sent.") }));
+  }
+
+  private async performEnrich(file: FileRef, notify = true, prefetchedContent?: string): Promise<EnrichRunOutcome> {
     const sizeFailure = this.mobileSourceSizeFailure(file);
     if (sizeFailure) return sizeFailure;
     let selection: ProviderSelection | undefined;
@@ -362,7 +377,8 @@ export class SourceEnrichmentController {
         })
       : undefined;
     try {
-      const raw = prefetchedContent ?? await this.deps.vault.cachedRead(file.path);
+      const original = prefetchedContent ?? await this.deps.vault.cachedRead(file.path);
+      const raw = file.extension === "md" ? prepareSourceMarkdown(original).content : original;
       this.deps.enrichDiagnostics().log("item-start", { path: file.path, bytes: raw.length });
       const capture =
         file.extension === "md"
@@ -379,7 +395,7 @@ export class SourceEnrichmentController {
           completed: 1,
           total: 1,
           succeeded: 1,
-          details: [{ label: res.file.path, message: `Typed as ${res.type}`, state: "success" }],
+          details: [{ label: res.file.path, message: res.readFromPage ? `Typed as ${res.type}, read from its page` : `Typed as ${res.type}`, state: "success" }],
         });
       }
       return { status: "enriched" };
@@ -389,7 +405,8 @@ export class SourceEnrichmentController {
       }
       if (!(e instanceof UtilityUnavailableError)) console.warn("[companion] source enrichment failed", e);
       const message = e instanceof Error ? e.message : String(e);
-      const detail = e instanceof UtilityUnavailableError
+      // A page-read failure is not the model's: provider hints would misattribute it.
+      const detail = e instanceof UtilityUnavailableError || e instanceof ClipPageError
         ? message
         : selection
           ? errorHint(message, selection.provider.id, selection.endpoint) ?? message
@@ -404,7 +421,7 @@ export class SourceEnrichmentController {
           details: [{ label: file.path, message: safeDetail, state: "error" }],
           recovery: [
             { id: "review-inbox-failures", label: "Open Source Inbox", kind: "retry" },
-            { id: "utility-settings", label: "Open utility settings", kind: "settings" },
+            ...(e instanceof SourcePropertiesError ? [] : [{ id: "utility-settings", label: "Open utility settings", kind: "settings" }]),
           ],
         });
       }
@@ -455,6 +472,7 @@ export class SourceEnrichmentController {
       enrichedBy: selection.provider.id === "anthropic" ? "claude" : "local",
       now: () => new Date().toISOString(),
       assertActive: () => this.deps.assertUtilityLifecycleActive(lifecycleGeneration),
+      captureWeb: this.deps.captureWeb,
     };
   }
 }

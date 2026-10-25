@@ -6,7 +6,7 @@ export interface ClipperSetupModalDependencies {
   setups(): ClipperSetupViewModel[];
   copyText(text: string): void | Promise<void>;
   onCopied(type: SourceType, fingerprint: string): void | Promise<void>;
-  saveJson?(setup: ClipperSetupViewModel): void | Promise<void>;
+  saveJson?(setup: ClipperSetupViewModel): boolean | void | Promise<boolean | void>;
 }
 
 export class ClipperSetupModal extends Modal {
@@ -44,7 +44,7 @@ export class ClipperSetupModal extends Modal {
 
     const status = setup.status === "verified"
       ? "Verified — a clip matched this template"
-      : setup.status === "not-set-up" ? "Not set up" : setup.status === "update-available" ? "Update available" : "Current template copied";
+      : setup.status === "not-set-up" ? "Not set up" : setup.status === "update-available" ? "Update available" : "Template exported — import and create a test clip";
     this.contentEl.createDiv({ cls: "cc-clipper-status", text: status });
     const summary = this.contentEl.createDiv({ cls: "cc-clipper-summary" });
     summary.createDiv({ text: `Template: ${setup.templateName}` });
@@ -65,8 +65,7 @@ export class ClipperSetupModal extends Modal {
       attr: { role: "status", "aria-live": "polite" },
     });
     const actions = this.contentEl.createDiv({ cls: "cc-clipper-actions" });
-    // The clipper imports a .json file, so the file is the primary action —
-    // a copied template invites pasting it into a field, which breaks clips.
+    // File export and text import use the same validated JSON artifact.
     if (this.deps.saveJson) {
       const save = actions.createEl("button", { cls: "mod-cta", text: "Save JSON file" });
       save.addEventListener("click", () => void this.save(setup, verification));
@@ -79,7 +78,10 @@ export class ClipperSetupModal extends Modal {
 
   private async save(setup: ClipperSetupViewModel, status: HTMLElement): Promise<void> {
     try {
-      await this.deps.saveJson?.(setup);
+      if (await this.deps.saveJson?.(setup) === false) {
+        status.setText("File export cancelled. You can save again or copy template JSON.");
+        return;
+      }
       await this.deps.onCopied(setup.type, setup.fingerprint);
       status.setText("Saved. Import that file in Web Clipper — waiting for a matching test clip.");
     } catch (error) {
@@ -91,7 +93,7 @@ export class ClipperSetupModal extends Modal {
     try {
       await this.deps.copyText(value);
       await this.deps.onCopied(setup.type, setup.fingerprint);
-      status.setText("Copied. Waiting for a matching test clip in the Inbox.");
+      status.setText("Copied. In Web Clipper → Import → JSON, paste this template, then create a test clip.");
     } catch (error) {
       status.setText(error instanceof Error ? error.message : "The template could not be copied.");
     }

@@ -1,9 +1,10 @@
 // Wires the knowledge cluster: semantic index, source enrichment, session memory and clippings.
 
-import { Notice, Platform, TFile, normalizePath } from "obsidian";
+import { htmlToMarkdown, Notice, Platform, requestUrl, TFile, normalizePath } from "obsidian";
 import { cliSessionIds } from "../conversations/store";
 import type ClaudeCompanionPlugin from "../main";
 import { MemoryController } from "../memory/controller";
+import { captureWebSource } from "../research/webCapture";
 import { SemanticController } from "../semantic/controller";
 import { ClippingsController } from "../sources/clippings";
 import { SourceEnrichmentController } from "../sources/controller";
@@ -11,6 +12,7 @@ import { resolveTags } from "../tags/resolve";
 import { vaultVocabulary } from "../tags/vaultTags";
 import { ChoiceModal } from "../view/ChoiceModal";
 import { SessionPicker } from "../view/SessionPicker";
+import { requestUrlCaptureIo } from "../web/requestFetch";
 
 /**
  * Mobile's native vault bridge expands a full-file read/write into several
@@ -78,6 +80,7 @@ export function buildEnrichment(host: EnrichmentHost): SourceEnrichmentControlle
     isMobile: Platform.isMobile,
     mobileSourceNoteMaxBytes: MOBILE_SOURCE_NOTE_MAX_BYTES,
     enrichApp: host.app,
+    ...(typeof DOMParser === "undefined" ? {} : { captureWeb: (url: string) => captureWebSource(url, requestUrlCaptureIo(requestUrl, htmlToMarkdown)) }),
     vault: {
       cachedRead: (path) => {
         const f = host.app.vault.getAbstractFileByPath(path);

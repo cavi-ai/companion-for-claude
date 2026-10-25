@@ -50,9 +50,8 @@ function clipperPropertyType(t: FieldType): string {
 
 /** URL triggers must mirror detectType's YouTube family so both sides agree. */
 const VIDEO_TRIGGERS = [
-  "https://(www\\.)?youtube\\.com/watch.*",
-  "https://youtu\\.be/.*",
-  "https://(www\\.)?youtube\\.com/shorts/.*",
+  String.raw`/^https:\/\/(?:www\.)?youtube\.com\/(?:watch\?|shorts\/)/`,
+  "https://youtu.be/",
 ];
 
 export interface ClipperTemplateOptions {
@@ -80,7 +79,7 @@ export function clipperTemplateFor(schema: SourceTypeSchema, opts: ClipperTempla
   }
   properties.push({ name: "clipped", value: "{{date}}", type: "date" });
   if (opts.tags.length > 0) {
-    properties.push({ name: "tags", value: opts.tags.join(","), type: "multitext" });
+    properties.push({ name: "tags", value: [...opts.tags].sort().join(","), type: "multitext" });
   }
   const template: ClipperTemplate = {
     schemaVersion: "0.1.0",
@@ -92,6 +91,7 @@ export function clipperTemplateFor(schema: SourceTypeSchema, opts: ClipperTempla
     properties,
   };
   if (schema.type === "video") template.triggers = [...VIDEO_TRIGGERS];
+  template.properties.push({ name: "clipper_template", value: fingerprint(serializeClipperTemplate(template)), type: "text" });
   return template;
 }
 
@@ -102,6 +102,13 @@ export function clipperTemplateFileName(template: ClipperTemplate): string {
 
 /** Serialize in the exact shape the clipper's own exporter emits (tab indent). */
 export function serializeClipperTemplate(template: ClipperTemplate): string {
+  const names = new Set<string>();
+  const types = new Set(["text", "multitext", "number", "checkbox", "date", "datetime"]);
+  for (const property of template.properties) {
+    if (names.has(property.name)) throw new Error(`Duplicate Web Clipper property: ${property.name}`);
+    if (!property.name || typeof property.value !== "string" || !types.has(property.type)) throw new Error("Invalid Web Clipper property");
+    names.add(property.name);
+  }
   const ordered: Record<string, unknown> = {
     schemaVersion: template.schemaVersion,
     name: template.name,
@@ -132,8 +139,13 @@ export function clipperFingerprint(schemas: SourceTypeSchema[], opts: ClipperTem
       .sort((a, b) => a.type.localeCompare(b.type)),
     path: opts.path,
     tags: [...opts.tags].sort(),
+    templates: [...schemas].sort((a, b) => a.type.localeCompare(b.type)).map((schema) => serializeClipperTemplate(clipperTemplateFor(schema, { ...opts, tags: [...opts.tags].sort() }))),
   });
-  // djb2 — tiny, deterministic, collision-good-enough for drift detection.
+  return fingerprint(canonical);
+}
+
+function fingerprint(canonical: string): string {
+  // djb2 — deterministic drift detection, not an authentication token.
   let h = 5381;
   for (let i = 0; i < canonical.length; i++) {
     h = ((h << 5) + h + canonical.charCodeAt(i)) | 0;

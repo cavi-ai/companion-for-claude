@@ -3,7 +3,7 @@ import { registerDeviceGpuCheck } from "./device/controller";
 import { DeviceChatClient } from "./device/client";
 import { DeviceProvider } from "./providers/device";
 import { createEmbedWorker } from "./semantic/transformers/workerSource";
-import { FileSystemAdapter, MarkdownView, Notice, parseYaml, Platform, Plugin, requestUrl, WorkspaceLeaf } from "obsidian";
+import { FileSystemAdapter, htmlToMarkdown, MarkdownView, Notice, parseYaml, Platform, Plugin, requestUrl, WorkspaceLeaf } from "obsidian";
 import { ChatView, CHAT_VIEW_TYPE } from "./view/ChatView";
 import { MemoryView, MEMORY_VIEW_TYPE } from "./view/MemoryView";
 import { InboxView, INBOX_VIEW_TYPE } from "./view/InboxView";
@@ -110,6 +110,7 @@ import { normalizePath, TFile, TFolder, type Editor } from "obsidian";
 import type { SourceEnrichmentController } from "./sources/controller";
 import { OntologyRegistry } from "./ontology/registry";
 import { captureWebSource } from "./research/webCapture";
+import { requestUrlCaptureIo } from "./web/requestFetch";
 import type { WebCapture } from "./context/webCapture";
 import { ActivityStore } from "./activity/store";
 import { beginActivity } from "./activity/progress";
@@ -1105,15 +1106,7 @@ export default class ClaudeCompanionPlugin extends Plugin {
    */
   captureWebPage(): WebCapture | undefined {
     if (typeof DOMParser === "undefined") return undefined;
-    return (url: string) =>
-      captureWebSource(url, {
-        fetchHtml: async (target) => {
-          const response = await requestUrl({ url: target, method: "GET", throw: false });
-          if (response.status >= 400) throw new Error(`Fetch failed with status ${response.status}`);
-          return response.text;
-        },
-        parseHtml: (html) => new DOMParser().parseFromString(html, "text/html"),
-      });
+    return (url: string) => captureWebSource(url, requestUrlCaptureIo(requestUrl, htmlToMarkdown));
   }
 
   // ---------- standing orders ----------
