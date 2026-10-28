@@ -302,6 +302,34 @@ describe("settings tab render", () => {
 });
 
 describe("semantic settings action feedback", () => {
+  it.each([
+    { state: "succeeded", label: "Index ready" },
+    { state: "failed", label: "Index stopped" },
+    { state: "cancelled", label: "Index stopped" },
+  ] as const)("keeps a $state rebuild result when reopened index statistics arrive", async ({ state, label }) => {
+    const plugin = stubPlugin();
+    plugin.settings.semanticEnabled = true;
+    let finishStats!: (stats: { notes: number; chunks: number }) => void;
+    const stats = new Promise<{ notes: number; chunks: number }>((resolve) => { finishStats = resolve; });
+    plugin.semantic().indexer = () => ({ stats: () => stats }) as never;
+    plugin.semantic().subscribeBuildProgress = (listener) => {
+      listener({ state, phase: "saving", startedAt: 0, finishedAt: 1000,
+        filesCompleted: 1, totalFiles: 1, chunksEmbedded: 2, completedFileChunks: 2,
+        currentFileChunksCompleted: 2, currentFileChunksTotal: 2 });
+      return () => {};
+    };
+    const row = flatten(definitionsOf(plugin)).find((item) => item.name === "Rebuild index")!;
+    const setting = new Setting(new FakeElement() as unknown as HTMLElement);
+    const cleanup = row.render!(setting, undefined) as () => void;
+    const status = setting.settingEl.querySelectorAll(".cc-semantic-index-status")[0]!;
+    expect(status.textContent).toContain(label);
+
+    finishStats({ notes: 9, chunks: 99 });
+    await stats;
+    expect(status.textContent).toContain(label);
+    cleanup();
+  });
+
   it("shows live chunks, elapsed time, and ETA when reopened, and cleans up on close", async () => {
     vi.useFakeTimers();
     try {

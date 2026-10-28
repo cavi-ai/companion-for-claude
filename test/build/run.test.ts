@@ -8,9 +8,9 @@ import {
 } from "../../src/build/run";
 
 class Deferred<T> {
-  promise = new Promise<T>((resolve, reject) => { this.resolve = resolve; this.reject = reject; });
   resolve!: (value: T) => void;
   reject!: (reason?: unknown) => void;
+  promise = new Promise<T>((resolve, reject) => { this.resolve = resolve; this.reject = reject; });
 }
 
 function harness(cancelMode: "immediate" | "after-current" = "immediate") {

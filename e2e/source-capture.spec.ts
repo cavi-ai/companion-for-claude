@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { expect, test } from "./fixtures";
+import { assertClipperImportContracts } from "./clipper/importContract";
 
 const article = "---\n\n## Introduction\n\nA study compares several sources of evidence.\n\nThe task: evaluate their findings.\n\n---\n\n## Methods\n\nPreserve tables, equations, and code examples.  \n";
 
@@ -26,24 +27,42 @@ test("Inbox enrichment prepares an article with a leading separator without losi
   await page.screenshot({ path: testInfo.outputPath("enriched-article.png") });
 });
 
-test("Clipper setup copies and downloads the same importable JSON and exports .json vault files", async ({ rig }, testInfo) => {
+test("Clipper setup exports the correct contract for Templates and Properties import", async ({ rig }, testInfo) => {
+  test.setTimeout(120_000);
   const { page } = await rig.reset({ settingsOverride: { sourceCaptureEnabled: true, semanticEnabled: false } });
   await page.evaluate(() => {
     const plugin = (window as unknown as { app: { plugins: { plugins: Record<string, { clipperSetup(): { openSetup(): void } }> } } }).app.plugins.plugins["claude-companion"]!;
     plugin.clipperSetup().openSetup();
   });
   const modal = page.locator(".cc-clipper-setup-modal");
-  const shown = await modal.locator(".cc-clipper-json").textContent();
+  const shown = await modal.locator(".cc-clipper-template-json").textContent();
   expect(JSON.parse(shown!)).toMatchObject({ schemaVersion: "0.1.0", name: "Companion: article", behavior: "create" });
   await modal.getByRole("button", { name: "Copy template JSON", exact: true }).click();
   await expect(modal.locator(".cc-clipper-verification")).toContainText("Copied.");
-  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(shown);
+  const copiedTemplate = await page.evaluate(() => navigator.clipboard.readText());
+  expect(copiedTemplate).toBe(shown);
   const [download] = await Promise.all([
     page.waitForEvent("download"),
     modal.getByRole("button", { name: "Save JSON file", exact: true }).click(),
   ]);
   expect(download.suggestedFilename()).toBe("companion-article-clipper.json");
-  expect(await readFile((await download.path())!, "utf8")).toBe(shown);
+  const savedTemplate = await readFile((await download.path())!, "utf8");
+  expect(savedTemplate).toBe(shown);
+  await modal.locator("summary", { hasText: "Properties → Import" }).click();
+  await modal.getByRole("button", { name: "Copy property types JSON", exact: true }).click();
+  await expect(modal.locator(".cc-clipper-properties-status")).toContainText("Copied property types");
+  const copiedProperties = await page.evaluate(() => navigator.clipboard.readText());
+  const [propertiesDownload] = await Promise.all([
+    page.waitForEvent("download"),
+    modal.getByRole("button", { name: "Save property types JSON", exact: true }).click(),
+  ]);
+  expect(propertiesDownload.suggestedFilename()).toBe("companion-article-properties.json");
+  const savedProperties = await readFile((await propertiesDownload.path())!, "utf8");
+  expect(savedProperties).toBe(copiedProperties);
+  await assertClipperImportContracts(
+    { copied: copiedTemplate, saved: savedTemplate, fileName: download.suggestedFilename() },
+    { copied: copiedProperties, saved: savedProperties, fileName: propertiesDownload.suggestedFilename() },
+  );
   await page.evaluate(async () => {
     const plugin = (window as unknown as { app: { plugins: { plugins: Record<string, { clipperSetup(): { exportTemplates(): Promise<unknown> } }> } } }).app.plugins.plugins["claude-companion"]!;
     await plugin.clipperSetup().exportTemplates();

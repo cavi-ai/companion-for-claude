@@ -12,6 +12,38 @@ const setups = () => {
 };
 
 describe("ClipperSetupModal", () => {
+  it("copies Properties import JSON without starting template verification", async () => {
+    let copied = "";
+    const onCopied = vi.fn();
+    const modal = new ClipperSetupModal(new App(), { setups, copyText: (text) => { copied = text; }, onCopied });
+    modal.onOpen();
+    const root = modal.contentEl as unknown as FakeElement;
+    const button = root.querySelectorAll("button").find(({ textContent }) => textContent === "Copy property types JSON");
+    expect(button).toBeDefined();
+    button!.dispatchEvent({ type: "click" });
+    await Promise.resolve();
+    expect(JSON.parse(copied)).toMatchObject({ types: { schema_version: "number", source: "text" } });
+    expect(onCopied).not.toHaveBeenCalled();
+    expect(root.querySelector(".cc-clipper-properties-status")?.textContent).toContain("Properties → Import");
+  });
+
+  it("saves the Properties artifact rather than the template shown above it", async () => {
+    let saved: { json: string; fileName: string } | undefined;
+    const onCopied = vi.fn();
+    const modal = new ClipperSetupModal(new App(), { setups, copyText: vi.fn(), onCopied,
+      saveJson: async (artifact) => { saved = artifact; return true; } });
+    modal.onOpen();
+    const root = modal.contentEl as unknown as FakeElement;
+    const button = root.querySelectorAll("button").find(({ textContent }) => textContent === "Save property types JSON");
+    expect(button).toBeDefined();
+    button!.dispatchEvent({ type: "click" });
+    await Promise.resolve();
+    expect(saved?.fileName).toBe("companion-article-properties.json");
+    expect(JSON.parse(saved!.json)).toMatchObject({ types: { tags: "multitext", author: "text" } });
+    expect(onCopied).not.toHaveBeenCalled();
+    expect(root.querySelector(".cc-clipper-properties-status")?.textContent).toContain("Properties → Import");
+  });
+
   it("copies import JSON, shows exact instructions, and starts waiting without claiming success", async () => {
     const copyText = vi.fn().mockResolvedValue(undefined);
     const onCopied = vi.fn().mockResolvedValue(undefined);

@@ -85,6 +85,7 @@ export function renderIndexRebuild(setting: Setting, plugin: Pick<SemanticItemsC
       renderProgress();
       if (timer === null) timer = window.setInterval(renderProgress, 1000);
     } else if (next) {
+      started = true;
       running = false;
       stopTimer();
       if (rebuildButton) setSemanticActionBusy(rebuildButton, false, "Rebuild");

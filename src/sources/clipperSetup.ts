@@ -3,7 +3,9 @@ import {
   clipperTemplateFor,
   clipperTemplateFileName,
   serializeClipperTemplate,
+  serializeClipperPropertyTypes,
 } from "./clipperTemplate";
+import type { ClipperJsonFile } from "./clipperJsonFile";
 import type { SourceType, SourceTypeSchema } from "./types";
 
 export interface ClipperSetupSettings {
@@ -27,6 +29,7 @@ export interface ClipperSetupViewModel {
   fileName: string;
   mimeType: "application/json";
   templateFingerprint: string;
+  propertyTypesFile: ClipperJsonFile;
   instructions: string;
 }
 
@@ -70,9 +73,14 @@ export function clipperSetupFor(
     fileName: clipperTemplateFileName(template),
     mimeType: "application/json",
     templateFingerprint: template.properties.find(({ name }) => name === "clipper_template")!.value,
+    propertyTypesFile: {
+      fileName: `companion-${type}-properties.json`,
+      mimeType: "application/json",
+      json: serializeClipperPropertyTypes(template),
+    },
     instructions: [
       "1. Save JSON file to your device (on mobile, choose Save to Files in the share sheet), or copy template JSON.",
-      "2. Open Web Clipper → Settings → Templates → Import. Choose the .json file, or choose JSON and paste the copied template into the import dialog, not into a template field. Drag-and-drop of the .json file works too.",
+      "2. Open Web Clipper → Settings → Templates → Import (not Properties → Import). Choose the .json file, or choose JSON and paste the copied template into the import dialog, not into a template field. Drag-and-drop of the .json file works too.",
       template.triggers
         ? "3. Nothing else to order — this template triggers itself on YouTube URLs."
         : type === "dataset"

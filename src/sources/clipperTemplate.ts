@@ -122,6 +122,12 @@ export function serializeClipperTemplate(template: ClipperTemplate): string {
   return JSON.stringify(ordered, null, "\t") + "\n";
 }
 
+/** Properties → Import accepts a type map, not a clipping template. */
+export function serializeClipperPropertyTypes(template: ClipperTemplate): string {
+  serializeClipperTemplate(template); // Apply the same property validation to both exports.
+  return JSON.stringify({ types: Object.fromEntries(template.properties.map(({ name, type }) => [name, type])) }, null, "\t") + "\n";
+}
+
 /**
  * A stable fingerprint of everything that shapes the exported templates:
  * resolved schemas (type, version, field shape) + inbox path + tags. Stored at

@@ -10,6 +10,16 @@ const matches = (pattern: string, url: string) => pattern.startsWith("/") && pat
   ? new RegExp(pattern.slice(1, -1)).test(url) : url.startsWith(pattern);
 
 describe("Web Clipper export contract", () => {
+  it.each(["article", "video", "dataset"] as const)("exports %s property types separately from a clipping template", (type) => {
+    const setup = clipperSetupFor(type, schemas(), { inboxFolder: "Clippings", baseTags: ["source"], savedFingerprint: "" });
+    expect(setup.propertyTypesFile).toMatchObject({ fileName: `companion-${type}-properties.json`, mimeType: "application/json" });
+    const properties = JSON.parse(setup.propertyTypesFile.json);
+    expect(properties).toMatchObject({ types: { type: "text", source: "text", schema_version: "number", title: "text", clipped: "date", tags: "multitext", clipper_template: "text" } });
+    expect(properties).not.toHaveProperty("properties");
+    expect(properties).not.toHaveProperty("noteContentFormat");
+    expect(JSON.parse(setup.json)).not.toHaveProperty("types");
+  });
+
   it.each([
     ["https://www.youtube.com/watch?v=one", true],
     ["https://youtube.com/watch?v=one", true],

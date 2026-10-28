@@ -126,14 +126,14 @@ export function quickOptionsFor(page: CompanionPage, state: QuickOptionsState): 
     case "system":
       return [{ id: "refresh-system", label: "Refresh system status", kind: "action" }, ...(state.isMobile ? [] : [desktopIntegrations()]), allSettings()];
     case "inbox": {
-      const clipperLabel = state.clipperStatus === "not-set-up" ? "Set up schemas" : state.clipperStatus === "update-available" ? "Update schemas" : "View schemas";
+      const clipperLabel = state.clipperStatus === "not-set-up" ? "Set up templates" : state.clipperStatus === "update-available" ? "Update templates" : "View templates";
       const clipperValue = state.clipperStatus === "not-set-up" ? "Not set up" : state.clipperStatus === "update-available" ? "Update available" : "Current";
       return [
         utilityBackend(state),
         { id: "auto-enrich", label: "Auto-enrich new clips", kind: "toggle", value: state.sourceEnrichOnCreate },
         { id: "inbox-folder", label: "Inbox folder", kind: "text", value: state.sourceInboxFolder },
         { id: "source-capture", label: "Source capture", kind: "toggle", value: state.sourceCaptureEnabled },
-        { id: "clipper-schemas", label: "Clipper schemas", kind: "status", value: clipperValue, actionLabel: clipperLabel },
+        { id: "clipper-schemas", label: "Web Clipper templates", kind: "status", value: clipperValue, actionLabel: clipperLabel },
         { id: "embedding-health", label: "Embedding health", kind: "status", value: state.embeddingHealth, actionLabel: "Review" },
         ...(state.isMobile ? [] : [desktopIntegrations()]),
         allSettings(),

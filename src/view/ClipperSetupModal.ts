@@ -1,12 +1,13 @@
 import { App, Modal } from "obsidian";
 import type { ClipperSetupViewModel } from "../sources/clipperSetup";
 import type { SourceType } from "../sources/types";
+import type { ClipperJsonFile } from "../sources/clipperJsonFile";
 
 export interface ClipperSetupModalDependencies {
   setups(): ClipperSetupViewModel[];
   copyText(text: string): void | Promise<void>;
   onCopied(type: SourceType, fingerprint: string): void | Promise<void>;
-  saveJson?(setup: ClipperSetupViewModel): boolean | void | Promise<boolean | void>;
+  saveJson?(artifact: ClipperJsonFile): boolean | void | Promise<boolean | void>;
 }
 
 export class ClipperSetupModal extends Modal {
@@ -49,7 +50,7 @@ export class ClipperSetupModal extends Modal {
     const summary = this.contentEl.createDiv({ cls: "cc-clipper-summary" });
     summary.createDiv({ text: `Template: ${setup.templateName}` });
     summary.createDiv({ text: `Destination: ${setup.destination}` });
-    summary.createDiv({ text: `Schema version: ${setup.schemaVersion}` });
+    summary.createDiv({ text: `Source schema version: ${setup.schemaVersion}` });
 
     const fields = this.contentEl.createDiv({ cls: "cc-clipper-fields" });
     fields.createEl("h3", { text: "Web Clipper stamps" });
@@ -57,7 +58,9 @@ export class ClipperSetupModal extends Modal {
     fields.createEl("h3", { text: "Companion enriches" });
     fields.createEl("p", { text: setup.companionFields.join(", ") || "No additional fields" });
 
-    this.contentEl.createEl("pre", { cls: "cc-clipper-json", text: setup.json });
+    this.contentEl.createEl("h3", { text: "Templates → Import" });
+    this.contentEl.createEl("p", { text: "Install this clipping template in Templates. The Properties importer requires the separate property types file below." });
+    this.contentEl.createEl("pre", { cls: "cc-clipper-json cc-clipper-template-json", text: setup.json });
     this.contentEl.createEl("p", { cls: "cc-clipper-instructions", text: setup.instructions });
     const verification = this.contentEl.createDiv({
       cls: "cc-clipper-verification",
@@ -74,26 +77,43 @@ export class ClipperSetupModal extends Modal {
     copyJson.addEventListener("click", () => void this.copy(setup, setup.json, verification));
     const copyInstructions = actions.createEl("button", { text: "Copy instructions" });
     copyInstructions.addEventListener("click", () => void this.copyInstructions(setup.instructions, verification));
+
+    const properties = this.contentEl.createEl("details");
+    properties.createEl("summary", { text: "Property types — Properties → Import" });
+    properties.createEl("p", { text: "Optional: import these property types in Web Clipper → Settings → Properties → Import. This sets property types only; install the template above to clip pages. Web Clipper asks before changing conflicting property types." });
+    properties.createEl("pre", { cls: "cc-clipper-json cc-clipper-properties-json", text: setup.propertyTypesFile.json });
+    const propertyStatus = properties.createDiv({ cls: "cc-clipper-properties-status", attr: { role: "status", "aria-live": "polite" } });
+    const propertyActions = properties.createDiv({ cls: "cc-clipper-actions" });
+    if (this.deps.saveJson) {
+      propertyActions.createEl("button", { text: "Save property types JSON" })
+        .addEventListener("click", () => void this.save(setup, propertyStatus, "Properties"));
+    }
+    propertyActions.createEl("button", { text: "Copy property types JSON" })
+      .addEventListener("click", () => void this.copy(setup, setup.propertyTypesFile.json, propertyStatus, "Properties"));
   }
 
-  private async save(setup: ClipperSetupViewModel, status: HTMLElement): Promise<void> {
+  private async save(setup: ClipperSetupViewModel, status: HTMLElement, target: "Templates" | "Properties" = "Templates"): Promise<void> {
     try {
-      if (await this.deps.saveJson?.(setup) === false) {
+      if (await this.deps.saveJson?.(target === "Properties" ? setup.propertyTypesFile : setup) === false) {
         status.setText("File export cancelled. You can save again or copy template JSON.");
         return;
       }
-      await this.deps.onCopied(setup.type, setup.fingerprint);
-      status.setText("Saved. Import that file in Web Clipper — waiting for a matching test clip.");
+      if (target === "Templates") await this.deps.onCopied(setup.type, setup.fingerprint);
+      status.setText(target === "Properties"
+        ? "Saved property types. Import this file in Properties → Import; install the clipping template separately."
+        : "Saved. Import that file in Templates → Import — waiting for a matching test clip.");
     } catch (error) {
       status.setText(error instanceof Error ? error.message : "The JSON file could not be saved.");
     }
   }
 
-  private async copy(setup: ClipperSetupViewModel, value: string, status: HTMLElement): Promise<void> {
+  private async copy(setup: ClipperSetupViewModel, value: string, status: HTMLElement, target: "Templates" | "Properties" = "Templates"): Promise<void> {
     try {
       await this.deps.copyText(value);
-      await this.deps.onCopied(setup.type, setup.fingerprint);
-      status.setText("Copied. In Web Clipper → Import → JSON, paste this template, then create a test clip.");
+      if (target === "Templates") await this.deps.onCopied(setup.type, setup.fingerprint);
+      status.setText(target === "Properties"
+        ? "Copied property types. Paste in Properties → Import; install the clipping template separately."
+        : "Copied. In Web Clipper → Templates → Import → JSON, paste this template, then create a test clip.");
     } catch (error) {
       status.setText(error instanceof Error ? error.message : "The template could not be copied.");
     }
