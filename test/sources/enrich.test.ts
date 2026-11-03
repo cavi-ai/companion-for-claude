@@ -442,6 +442,56 @@ describe("enrichCapture — clip that arrived empty", () => {
     expect(out).toContain("summary: Running the model on one GPU.");
   });
 
+  it("recovers a clip whose blank source property accompanies a valid url", async () => {
+    const app = new App();
+    const before = '---\ntitle: Run it locally\nsource: " "\nurl: https://example.com/post\n---\n';
+    const file = app.vault.seed("Clippings/blank-source.md", before);
+    const captureWeb = async (url: string) => {
+      expect(url).toBe("https://example.com/post");
+      return { markdown: PAGE };
+    };
+    const res = await enrichCapture({ ...deps(app, async () => reply), captureWeb }, {
+      kind: "markdown", path: file.path, basename: file.basename, content: before,
+    });
+    expect(res.readFromPage).toBe(true);
+    expect(markdownBody(await app.vault.read(res.file))).toBe(`${PAGE}\n`);
+    expect(res.record.provenance.url).toBe("https://example.com/post");
+  });
+
+  it("recovers from an explicit capture URL when the note has no URL property", async () => {
+    const app = new App();
+    const before = "---\ntitle: Run it locally\n---\n";
+    const file = app.vault.seed("Clippings/explicit-url.md", before);
+    const res = await enrichCapture({ ...deps(app, async () => reply), captureWeb: async () => ({ markdown: PAGE }) }, {
+      kind: "markdown", path: file.path, basename: file.basename, content: before, url: "https://example.com/post",
+    });
+    expect(markdownBody(await app.vault.read(res.file))).toBe(`${PAGE}\n`);
+    expect(res.record.provenance.url).toBe("https://example.com/post");
+  });
+
+  it.each([
+    ["source", "page"], ["url", "page"], ["source", "model"], ["url", "model"],
+  ])("keeps a changed %s URL untouched when it changes during the %s request", async (key, phase) => {
+    const app = new App();
+    const before = `---\ntitle: Run it locally\n${key}: https://example.com/old\n---\n`;
+    const changed = before.replace("https://example.com/old", "https://example.com/new");
+    const file = app.vault.seed("Clippings/changed-source.md", before);
+    const captureWeb = async () => {
+      if (phase === "page") await app.vault.modify(file as TFile, changed);
+      return { markdown: PAGE };
+    };
+    const complete = async () => {
+      if (phase === "model") await app.vault.modify(file as TFile, changed);
+      return reply;
+    };
+    const pending = enrichCapture({ ...deps(app, complete), captureWeb }, {
+      kind: "markdown", path: file.path, basename: file.basename, content: before,
+    });
+    await expect(pending).rejects.toBeInstanceOf(ClipPageError);
+    await expect(pending).rejects.toThrow("source URL changed");
+    expect(await app.vault.read(file as TFile)).toBe(changed);
+  });
+
   it("leaves a clip that has a body to the clip", async () => {
     const app = new App();
     const withBody = `${EMPTY}\nClipped text.\n`;
@@ -468,16 +518,17 @@ describe("enrichCapture — clip that arrived empty", () => {
     expect(markdownBody(await app.vault.cachedRead(res.file))).toBe("\nMy own notes.\n");
   });
 
-  it("enriches the empty clip as before when the page has nothing readable", async () => {
+  it.each([undefined, { markdown: "" }, { markdown: "  \n" }])("leaves an empty clip retryable when its page has nothing readable: %j", async (page) => {
     const app = new App();
-    app.vault.seed("Clippings/blank.md", EMPTY);
+    const file = app.vault.seed("Clippings/blank.md", EMPTY);
+    const complete = vi.fn(async () => reply);
 
-    const res = await enrichCapture({ ...deps(app, async () => reply), captureWeb: async () => undefined }, { kind: "markdown", path: "Clippings/blank.md", basename: "blank", content: EMPTY });
+    const pending = enrichCapture({ ...deps(app, complete), captureWeb: async () => page }, { kind: "markdown", path: "Clippings/blank.md", basename: "blank", content: EMPTY });
 
-    expect(res.readFromPage).toBe(false);
-    const out = await app.vault.cachedRead(res.file);
-    expect(markdownBody(out)).toBe("");
-    expect(out).toContain("source_enriched: true");
+    await expect(pending).rejects.toBeInstanceOf(ClipPageError);
+    await expect(pending).rejects.toThrow("no readable content");
+    expect(complete).not.toHaveBeenCalled();
+    expect(await app.vault.cachedRead(file as TFile)).toBe(EMPTY);
   });
 
   it("names the page when it cannot be read and leaves the note for a retry", async () => {

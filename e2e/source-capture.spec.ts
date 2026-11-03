@@ -1,8 +1,86 @@
 import { readFile } from "node:fs/promises";
+import { createServer } from "node:http";
+import type { App } from "obsidian";
 import { expect, test } from "./fixtures";
 import { assertClipperImportContracts } from "./clipper/importContract";
 
 const article = "---\n\n## Introduction\n\nA study compares several sources of evidence.\n\nThe task: evaluate their findings.\n\n---\n\n## Methods\n\nPreserve tables, equations, and code examples.  \n";
+
+async function sourcePage(hold = false) {
+  let started!: () => void;
+  const requested = new Promise<void>((resolve) => { started = resolve; });
+  let respond: (() => void) | undefined;
+  const release = () => { const send = respond; respond = undefined; send?.(); };
+  const server = createServer((_request, response) => {
+    respond = () => {
+      response.writeHead(200, { "content-type": "text/html" });
+      response.end("<html><head><title>Evidence study</title></head><body><article><h1>Evidence study</h1><p>Captured evidence compares calibrated measurements across several independent cohorts. This passage records the study methods and results for later review.</p><p>The second passage explains how repeated measurements help distinguish stable observations from sampling noise.</p></article></body></html>");
+    };
+    started();
+    if (!hold) release();
+  });
+  await new Promise<void>((resolve, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", resolve); });
+  const address = server.address();
+  if (!address || typeof address === "string") throw new Error("Source page server did not bind");
+  return {
+    url: `http://127.0.0.1:${address.port}/article`,
+    requested,
+    release,
+    close: () => new Promise<void>((resolve, reject) => { server.close((error) => error ? reject(error) : resolve()); server.closeAllConnections(); }),
+  };
+}
+
+test("Inbox recovery uses url when the source property is blank", async ({ rig }) => {
+  const source = await sourcePage();
+  const path = "Clippings/Empty source property.md";
+  try {
+    const { page } = await rig.reset({
+      extraFiles: { [path]: `---\ntitle: Evidence study\nsource: " "\nurl: ${source.url}\n---\n` },
+      settingsOverride: { sourceCaptureEnabled: true, sourceEnrichOnCreate: false, sourceCaptureConsent: "allow", semanticEnabled: false },
+      providerReply: [{ match: ".", replies: [JSON.stringify({ site: "Example", summary: "A study compares calibrated measurements." })] }],
+    });
+    await page.evaluate(async () => { await (window as unknown as { app: App }).app.commands.executeCommandById("claude-companion:open-source-inbox"); });
+    const inbox = page.locator(".cc-inbox-view:visible").first();
+    await inbox.getByRole("button", { name: "Enrich Empty source property", exact: true }).click();
+    await expect(inbox.locator(".cc-inbox-typed")).toContainText("Empty source property");
+    const saved = await readFile(`${rig.paths.vault}/${path}`, "utf8");
+    expect(saved).toContain("Captured evidence compares calibrated measurements");
+    expect(saved).toContain("source_enriched: true");
+    expect(await rig.providerRequests()).toBe(1);
+  } finally {
+    await source.close();
+  }
+});
+
+test("Inbox recovery preserves the note when its source URL changes during the page request", async ({ rig }) => {
+  const source = await sourcePage(true);
+  const path = "Clippings/Changed source URL.md";
+  const initial = `---\ntitle: Evidence study\nsource: ${source.url}\n---\n`;
+  const changed = initial.replace(source.url, "https://example.com/new-source");
+  try {
+    const { page } = await rig.reset({
+      extraFiles: { [path]: initial },
+      settingsOverride: { sourceCaptureEnabled: true, sourceEnrichOnCreate: false, sourceCaptureConsent: "allow", semanticEnabled: false },
+      providerReply: [{ match: ".", replies: [JSON.stringify({ site: "Example", summary: "A study compares calibrated measurements." })] }],
+    });
+    await page.evaluate(async () => { await (window as unknown as { app: App }).app.commands.executeCommandById("claude-companion:open-source-inbox"); });
+    const inbox = page.locator(".cc-inbox-view:visible").first();
+    await inbox.getByRole("button", { name: "Enrich Changed source URL", exact: true }).click();
+    await source.requested;
+    await page.evaluate(async ({ path, changed }) => {
+      const app = (window as unknown as { app: App }).app;
+      const file = app.vault.getFileByPath(path);
+      if (!file) throw new Error("Source note missing");
+      await app.vault.modify(file, changed);
+    }, { path, changed });
+    source.release();
+    await expect(inbox.locator(".cc-inbox-enrichment-error")).toContainText("source URL changed");
+    expect(await readFile(`${rig.paths.vault}/${path}`, "utf8")).toBe(changed);
+  } finally {
+    source.release();
+    await source.close();
+  }
+});
 
 test("Inbox enrichment prepares an article with a leading separator without losing its body", async ({ rig }, testInfo) => {
   const input = process.env.CC_SOURCE_FIXTURE ? await readFile(process.env.CC_SOURCE_FIXTURE, "utf8") : article;

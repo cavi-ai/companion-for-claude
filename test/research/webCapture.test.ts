@@ -122,6 +122,23 @@ function redditIo(page: string, feed: () => Response): WebCaptureIo & { fetch: R
 }
 
 describe("captureWebSource on Reddit", () => {
+  it("reads a share link's feed when Reddit serves its JavaScript challenge instead of the post", async () => {
+    // Reduced to the URL-bearing markup returned for a shared Reddit post.
+    const page = `<html><head><title>Reddit</title></head><body>
+      <form hidden method="GET" action="/r/TopologyAI/comments/1xmjx3a/new_best_local_imageto3d_model_now_runs_natively/">
+        <input type="hidden" name="js_challenge" value="1">
+      </form>
+    </body></html>`;
+    const target = redditIo(page, () => new Response(POST_FEED));
+    const result = await captureWebSource("https://www.reddit.com/r/TopologyAI/s/HkMEDupuNK", target);
+
+    expect(result?.markdown).toContain("run the model on one GPU");
+    expect(result?.markdown).toContain("quantization settings");
+    expect(target.fetch.mock.calls.map(([input]) => String(input))).toContain(
+      "https://www.reddit.com/r/TopologyAI/comments/1xmjx3a/new_best_local_imageto3d_model_now_runs_natively/.rss",
+    );
+  });
+
   it("follows a share link to its post and reads the post and replies from Reddit's feed", async () => {
     const target = redditIo(SHARE_PAGE, () => new Response(POST_FEED));
     const result = await captureWebSource("https://www.reddit.com/r/unsloth/s/3rCTTgaPdB", target);
@@ -161,6 +178,18 @@ describe("redditPostUrl", () => {
   it("takes a share link's post from the page it redirected to", () => {
     expect(redditPostUrl("https://www.reddit.com/r/unsloth/s/3rCTTgaPdB", doc(SHARE_PAGE)))
       .toBe("https://www.reddit.com/r/unsloth/comments/1abc23/run_it_locally/");
+  });
+
+  it.each([
+    ["/r/TopologyAI/comments/1xmjx3a/post/", "https://www.reddit.com/r/TopologyAI/comments/1xmjx3a/post/"],
+    ["https://www.reddit.com/r/TopologyAI/comments/1xmjx3a/post/?tracking=1#fragment", "https://www.reddit.com/r/TopologyAI/comments/1xmjx3a/post/"],
+    ["https://evil.test/r/TopologyAI/comments/1xmjx3a/post/", undefined],
+    ["https://reddit.com.evil.test/r/TopologyAI/comments/1xmjx3a/post/", undefined],
+    ["http://www.reddit.com/r/TopologyAI/comments/1xmjx3a/post/", undefined],
+    ["/login", undefined],
+  ])("resolves only an HTTPS Reddit post from a challenge form: %s", (action, expected) => {
+    const page = doc(`<form action="${action}"><input name="js_challenge" value="1"></form>`);
+    expect(redditPostUrl("https://www.reddit.com/r/TopologyAI/s/HkMEDupuNK", page)).toBe(expected);
   });
 
   it("ignores pages that are not Reddit posts and canonicals that leave Reddit", () => {

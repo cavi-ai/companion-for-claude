@@ -49,6 +49,9 @@ export function redditPostUrl(url: string, doc: Document): string | undefined {
     doc.querySelector('link[rel="canonical"]')?.getAttribute("href"),
     doc.querySelector('meta[property="og:url"]')?.getAttribute("content"),
     doc.querySelector("shreddit-post")?.getAttribute("permalink"),
+    // A share redirect may return Reddit's JS challenge with no canonical
+    // metadata. Its form still names the post; read that URL, not the script.
+    doc.querySelector('input[name="js_challenge"]')?.closest("form")?.getAttribute("action"),
   ];
   for (const candidate of candidates) {
     if (!candidate) continue;

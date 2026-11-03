@@ -7,6 +7,10 @@ describe("parseClipUrl", () => {
     expect(parseClipUrl('---\nurl: "https://youtu.be/abc"\n---')).toBe("https://youtu.be/abc");
     expect(parseClipUrl("no frontmatter")).toBeUndefined();
   });
+
+  it.each(['""', '"  "', '[]', 'false'])("falls back to url when source has no URL string: %s", (source) => {
+    expect(parseClipUrl(`---\nsource: ${source}\nurl: https://example.com/article\n---\n`)).toBe("https://example.com/article");
+  });
 });
 
 describe("detectType", () => {
@@ -15,6 +19,22 @@ describe("detectType", () => {
   });
   it("classifies a youtube url as video", () => {
     expect(detectType({ kind: "markdown", path: "Clippings/v.md", basename: "v", content: "---\nsource: https://www.youtube.com/watch?v=1\n---" })).toBe("video");
+  });
+  it.each([
+    "https://notyoutube.com/watch?v=1",
+    "https://example.com/youtube.com/watch?v=1",
+    "https://example.com/?next=https://youtu.be/abc",
+    "https://www.youtube.com/watchlist",
+    "ftp://www.youtube.com/watch?v=1",
+  ])("does not classify a non-video source as YouTube: %s", (url) => {
+    expect(detectType({ kind: "markdown", path: "Clippings/a.md", basename: "a", content: "", url })).toBe("article");
+  });
+  it.each([
+    "https://www.youtube.com/watch?v=1",
+    "https://m.youtube.com/shorts/abc",
+    "https://youtu.be/abc",
+  ])("recognizes supported YouTube source URLs: %s", (url) => {
+    expect(detectType({ kind: "markdown", path: "Clippings/v.md", basename: "v", content: "", url })).toBe("video");
   });
   it("uses an explicit capture.url over frontmatter", () => {
     expect(detectType({ kind: "markdown", path: "Clippings/v.md", basename: "v", content: "no fm", url: "https://youtu.be/xyz" })).toBe("video");
