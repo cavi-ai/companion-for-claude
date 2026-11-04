@@ -40,6 +40,12 @@ export async function prepareReleaseDocs(root, out, ref = "main") {
     });
     await writeFile(target, body);
   }
+  const testInputs = ["native-ios/Resources/Model.json", ".github/workflows/release-obsidian-plugin.yml"];
+  for (const input of testInputs) {
+    const target = path.join(out, "test/fixtures/source-layout", input);
+    await mkdir(path.dirname(target), { recursive: true });
+    await cp(path.join(root, input), target);
+  }
   return [...placement.values()].filter((file) => file.endsWith(".md"));
 }
 
