@@ -1,0 +1,231 @@
+name: Release Obsidian plugin
+
+# Mirrors obsidian-plugin/ to cavi-ai/companion-for-claude and pushes the tag.
+# That repo's release.yml builds, attests, and publishes.
+# CONSUMER_DISPATCH_TOKEN needs contents:write on the release and CAVI Home repos.
+
+on:
+  push:
+    tags:
+      - "obsidian-v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to publish (must match manifest.json, e.g. 0.5.0)"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    # Tagging the monorepo needs write; the GITHUB_TOKEN push can't re-trigger this workflow.
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout monorepo
+        uses: actions/checkout@v7
+
+      # `skip` covers the mirror side only. An already-published community-store
+      # release is a backfill, not a re-cut, so the run continues and finishes
+      # the CAVI artifact and its dispatch — both are idempotent.
+      - name: Resolve release state
+        id: state
+        env:
+          GH_TOKEN: ${{ secrets.CONSUMER_DISPATCH_TOKEN }}
+        run: |
+          set -euo pipefail
+          VERSION="$(node -p "require('./obsidian-plugin/manifest.json').version")"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TRIGGER="${{ github.event.inputs.version }}"
+          else
+            TRIGGER="${GITHUB_REF_NAME#obsidian-v}"
+          fi
+          echo "version=$TRIGGER" >> "$GITHUB_OUTPUT"
+          if ! gh release view "$TRIGGER" --repo cavi-ai/companion-for-claude >/dev/null 2>&1; then
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "::notice::Release $TRIGGER already published; nothing to mirror for this tag."
+          echo "skip=true" >> "$GITHUB_OUTPUT"
+          if [ "$TRIGGER" != "$VERSION" ]; then
+            echo "::notice::Tag version $TRIGGER predates the current manifest version $VERSION."
+          fi
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v6.1.0
+        with:
+          version: 10.32.1
+
+      - name: Use Node 22
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22.x"
+          cache: pnpm
+          cache-dependency-path: obsidian-plugin/pnpm-lock.yaml
+
+      - name: Install, verify, build
+        working-directory: obsidian-plugin
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm run typecheck
+          pnpm run lint
+          pnpm test
+          pnpm run build
+          test -f main.js
+
+      # manifest, package.json, versions.json, and CHANGELOG must agree with the trigger.
+      - name: Verify version lockstep
+        working-directory: obsidian-plugin
+        run: pnpm run verify:version "${{ steps.state.outputs.version }}"
+
+      - name: Mirror source into the release repo
+        if: steps.state.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.CONSUMER_DISPATCH_TOKEN }}
+        run: |
+          set -euo pipefail
+          VERSION="$(node -p "require('./obsidian-plugin/manifest.json').version")"
+          git clone "https://x-access-token:${GH_TOKEN}@github.com/cavi-ai/companion-for-claude.git" release-repo
+          # .github/ excluded: token has no workflow scope.
+          # tools/ carries the release-facts generator the release repo's workflow runs.
+          for dir in src test e2e tools; do
+            rsync -a --delete "obsidian-plugin/$dir/" "release-repo/$dir/"
+          done
+          # guides/ becomes the docs member of the release artifact; cavi-home's
+          # release ingest requires it and serves it as the product's docs.
+          node obsidian-plugin/tools/prepare-release-docs.mjs . release-repo
+          cp obsidian-plugin/package.json       release-repo/package.json
+          cp obsidian-plugin/pnpm-lock.yaml     release-repo/pnpm-lock.yaml
+          cp obsidian-plugin/pnpm-workspace.yaml release-repo/pnpm-workspace.yaml
+          cp obsidian-plugin/tsconfig.json      release-repo/tsconfig.json
+          cp obsidian-plugin/vitest.config.ts   release-repo/vitest.config.ts
+          cp obsidian-plugin/esbuild.config.mjs release-repo/esbuild.config.mjs
+          cp obsidian-plugin/eslint.config.mjs  release-repo/eslint.config.mjs
+          cp obsidian-plugin/main.js            release-repo/main.js
+          cp obsidian-plugin/manifest.json      release-repo/manifest.json
+          cp obsidian-plugin/styles.css         release-repo/styles.css
+          cp obsidian-plugin/versions.json      release-repo/versions.json
+          cp LICENSE                            release-repo/LICENSE
+          printf 'node_modules/\n*.js.map\n.DS_Store\n.build/\n' > release-repo/.gitignore
+          cd release-repo
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No changes to mirror."
+          else
+            git commit -m "release: v${VERSION}"
+          fi
+          git push origin HEAD:main
+
+      # The tag triggers release.yml on the release repo.
+      - name: Tag the release repo
+        if: steps.state.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.CONSUMER_DISPATCH_TOKEN }}
+        run: |
+          set -euo pipefail
+          VERSION="$(node -p "require('./obsidian-plugin/manifest.json').version")"
+          cd release-repo
+          if gh release view "$VERSION" --repo cavi-ai/companion-for-claude >/dev/null 2>&1; then
+            echo "::error::Release $VERSION already exists on cavi-ai/companion-for-claude. Delete the release and tag to re-cut it."
+            exit 1
+          fi
+          git tag "$VERSION"
+          git push origin "refs/tags/$VERSION"
+
+      - name: Wait for the release repo to publish
+        if: steps.state.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.CONSUMER_DISPATCH_TOKEN }}
+        run: |
+          set -euo pipefail
+          VERSION="$(node -p "require('./obsidian-plugin/manifest.json').version")"
+          for _ in $(seq 30); do
+            if gh release view "$VERSION" --repo cavi-ai/companion-for-claude >/dev/null 2>&1; then
+              echo "Release $VERSION published."
+              exit 0
+            fi
+            sleep 20
+          done
+          echo "::error::Release $VERSION never appeared. Check the Release workflow on cavi-ai/companion-for-claude."
+          exit 1
+
+      # Dispatch-cut releases left the monorepo untagged; a GITHUB_TOKEN push can't re-trigger this workflow.
+      - name: Tag the monorepo
+        run: |
+          set -euo pipefail
+          TAG="obsidian-v${{ steps.state.outputs.version }}"
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
+            echo "::notice::$TAG already exists."
+            exit 0
+          fi
+          git tag "$TAG"
+          git push origin "refs/tags/$TAG"
+
+      # The CAVI release artifact belongs to this development repository; the
+      # Obsidian community release carries only main.js, manifest.json, styles.css.
+      - name: Publish the CAVI release artifact
+        id: cavi
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.state.outputs.version }}
+        run: |
+          set -euo pipefail
+          TAG="obsidian-v${VERSION}"
+          COMMIT="$(git rev-parse HEAD)"
+          SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)"
+          NAME="companion-for-claude-cavi-release-${VERSION}.tar.gz"
+          STAGING="$RUNNER_TEMP/cavi-release"
+          ARTIFACT="$RUNNER_TEMP/$NAME"
+          rm -rf "$STAGING"; mkdir -p "$STAGING"
+          # Asset names are recorded verbatim, so generate from the plugin dir.
+          ( cd obsidian-plugin && node tools/cavi-release.mjs manifest \
+            --version "$VERSION" --tag "$TAG" --repository "$GITHUB_REPOSITORY" \
+            --commit "$COMMIT" --source-date-epoch "$SOURCE_DATE_EPOCH" \
+            --asset main.js --asset manifest.json --asset styles.css ) > "$STAGING/cavi-release.json"
+          DOCS_ROOT="$(node obsidian-plugin/tools/build-docs-artifact.mjs \
+            --version "$VERSION" --tag "$TAG" --commit "$COMMIT" \
+            --guides guides --readme obsidian-plugin/README.md \
+            --out "$STAGING" --source-date-epoch "$SOURCE_DATE_EPOCH")"
+          node obsidian-plugin/tools/verify-docs-artifact.mjs "$STAGING/$DOCS_ROOT"
+          tar --sort=name --mtime="@${SOURCE_DATE_EPOCH}" --owner=0 --group=0 \
+            --numeric-owner -czf "$ARTIFACT" -C "$STAGING" cavi-release.json docs
+          SHA256="$(sha256sum "$ARTIFACT" | cut -d' ' -f1)"
+          printf '%s  %s\n' "$SHA256" "$NAME" > "$ARTIFACT.sha256"
+          node obsidian-plugin/tools/cavi-release.mjs envelope \
+            --version "$VERSION" --tag "$TAG" --repository "$GITHUB_REPOSITORY" \
+            --commit "$COMMIT" \
+            --artifact-url "https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/${NAME}" \
+            --artifact-sha256 "$SHA256" > "$RUNNER_TEMP/cavi-release-envelope.json"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$ARTIFACT" "$ARTIFACT.sha256" --clobber
+          else
+            gh release create "$TAG" "$ARTIFACT" "$ARTIFACT.sha256" \
+              --title "$TAG" \
+              --notes "Companion for Claude ${VERSION}. Full notes: https://github.com/${GITHUB_REPOSITORY}/blob/main/CHANGELOG.md"
+          fi
+          echo "envelope=$RUNNER_TEMP/cavi-release-envelope.json" >> "$GITHUB_OUTPUT"
+
+      # cavi-home ingests the artifact from this repository's release.
+      - name: Dispatch verified release facts to CAVI Home
+        env:
+          CONSUMER_DISPATCH_TOKEN: ${{ secrets.CONSUMER_DISPATCH_TOKEN }}
+          ENVELOPE: ${{ steps.cavi.outputs.envelope }}
+        run: |
+          set -euo pipefail
+          if [ -z "$CONSUMER_DISPATCH_TOKEN" ]; then
+            echo "::error::CONSUMER_DISPATCH_TOKEN is not configured"
+            exit 1
+          fi
+          jq -n --slurpfile payload "$ENVELOPE" \
+            '{event_type:"cavi-oss-release", client_payload:$payload[0]}' > "$RUNNER_TEMP/dispatch.json"
+          curl --fail-with-body --silent --show-error \
+            --request POST \
+            --header "Accept: application/vnd.github+json" \
+            --header "Authorization: Bearer $CONSUMER_DISPATCH_TOKEN" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/cavi-ai/cavi-home/dispatches" \
+            --data-binary "@$RUNNER_TEMP/dispatch.json"

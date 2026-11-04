@@ -1,0 +1,33 @@
+{
+  "name": "Qwen3.5 0.8B \u00b7 4-bit",
+  "repo": "mlx-community/Qwen3.5-0.8B-4bit",
+  "revision": "da28692b5f139cb0ec58a356b437486b7dac7462",
+  "license": "Apache-2.0",
+  "assets": [
+    {
+      "path": "config.json",
+      "bytes": 3112,
+      "sha256": "ba7770da23eae5ebd6827571f086e331956b33f4442a9e876fb4aa10969a6772"
+    },
+    {
+      "path": "tokenizer_config.json",
+      "bytes": 1139,
+      "sha256": "e98f1901ac6f0adff67b1d540bfa0c36ac1a0cf59eb72ed78146ef89aafa1182"
+    },
+    {
+      "path": "chat_template.jinja",
+      "bytes": 7755,
+      "sha256": "273d8e0e683b885071fb17e08d71e5f2a5ddfb5309756181681de4f5a1822d80"
+    },
+    {
+      "path": "tokenizer.json",
+      "bytes": 19989343,
+      "sha256": "87a7830d63fcf43bf241c3c5242e96e62dd3fdc29224ca26fed8ea333db72de4"
+    },
+    {
+      "path": "model.safetensors",
+      "bytes": 625229487,
+      "sha256": "f5a0d9dd3efa73510542a8023d610ff26be2b4b020d181cfc4bedaa1fcc5dd9e"
+    }
+  ]
+}

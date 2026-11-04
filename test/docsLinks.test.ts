@@ -18,6 +18,8 @@ async function fixture() {
   await put("README.md", "# Overview\n\n## Guides\n");
   await put("LICENSE", "MIT\n");
   await put("SECURITY.md", "# Security\n\n## Reporting\n");
+  await put("native-ios/Resources/Model.json", '{"repo":"example/model","revision":"fixed-revision"}\n');
+  await put(".github/workflows/release-obsidian-plugin.yml", "name: Mirror\non: workflow_dispatch\n");
   await put("assets/research.png", "research image");
   await put("obsidian-plugin/assets/chat.png", "chat image");
   await put("obsidian-plugin/README.md", "# Companion\n\n[![MIT](https://example.org/badge.svg)](../LICENSE)\n\n[FAQ](../guides/faq.md#answers)\n[Guides](../README.md#guides)\n![Research](../assets/research.png)\n![Chat](assets/chat.png)\n");
@@ -26,6 +28,18 @@ async function fixture() {
 }
 
 describe("documentation links", () => {
+  it("exports source-only test inputs byte for byte and refreshes them", async () => {
+    const { root, put } = await fixture();
+    const mirror = path.join(root, "mirror");
+    const inputs = ["native-ios/Resources/Model.json", ".github/workflows/release-obsidian-plugin.yml"];
+    await prepareReleaseDocs(root, mirror, "main");
+    for (const input of inputs) {
+      expect(await readFile(path.join(mirror, "test/fixtures/source-layout", input))).toEqual(await readFile(path.join(root, input)));
+    }
+    await put(inputs[0], '{"repo":"example/model","revision":"updated-revision"}\n');
+    await prepareReleaseDocs(root, mirror, "main");
+    expect(await readFile(path.join(mirror, "test/fixtures/source-layout", inputs[0]))).toEqual(await readFile(path.join(root, inputs[0])));
+  });
   it("reads nested badges, references, angle destinations, and HTML while ignoring code", () => {
     const body = '[![MIT](badge.svg)](LICENSE)\n![Screen][shot]\n[FAQ](<guides/my faq.md> "Help")\n<img src="chat.png">\n\n[shot]: screen.png\n\n`[sample](missing.md)`\n\n```md\n[example](absent.md)\n```\n';
     expect(markdownLinks(body).map((link) => link.url)).toEqual(["LICENSE", "badge.svg", "guides/my faq.md", "chat.png", "screen.png"]);

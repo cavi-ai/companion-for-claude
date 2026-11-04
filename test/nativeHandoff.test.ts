@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
+import { sourceInput } from "./releaseLayout";
 import { NATIVE_MODEL, nativeRequestURL, validateNativeRequest, validateNativeResult, type NativeRequest } from "../src/native/handoff";
 
 const id = "11111111-2222-4333-8444-555555555555";
@@ -9,7 +10,7 @@ const result = { version: 1, id, model: "mlx-community/Qwen3.5-0.8B-4bit", revis
 
 describe("native MLX handoff", () => {
   it("keeps native download pins aligned with the accepted result contract", () => {
-    const model = JSON.parse(readFileSync(new URL("../../native-ios/Resources/Model.json", import.meta.url), "utf8")) as typeof NATIVE_MODEL;
+    const model = JSON.parse(readFileSync(sourceInput("native-ios/Resources/Model.json"), "utf8")) as typeof NATIVE_MODEL;
     expect({ repo: model.repo, revision: model.revision }).toEqual(NATIVE_MODEL);
   });
   it("opens only the matching job and keeps passage content out of the URL", () => {
