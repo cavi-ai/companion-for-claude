@@ -15,6 +15,31 @@ source of truth.
 
 ![Companion in Obsidian: onboarding interviews connected to a finding, proposal, and next research session beside Claude Opus 5.5 chat](assets/canvas-output.png)
 
+## Try one note edit you control
+
+Create a sample project note:
+
+```markdown
+# Reading list
+Goal: Build a personal reading list.
+Constraint: Keep it single-user; do not add account registration.
+Next step: Choose the smallest useful first screen.
+```
+
+After [setup](https://github.com/cavi-ai/companion-for-claude/blob/main/guides/getting-started.md), open the note and enable the **Note**
+context chip. Select **Act** and keep **Allow write tools** enabled. Ask:
+
+> Propose a clearer next step for this project. Keep its constraints unchanged
+> and show the note edit for review.
+
+Review the proposed hunks. Accept a useful change and reject any change to your
+meaning, then inspect the note: did the next step improve while the constraint
+stayed intact? The model may propose one hunk or several; rejecting the entire
+proposal is a valid outcome.
+
+Model access is separate. Attached context is sent through the backend you
+select. See [edit review and guardrails](https://github.com/cavi-ai/companion-for-claude/blob/main/guides/agent-mode.md).
+
 ## Install
 
 1. Open **Settings → Community plugins → Browse**.
