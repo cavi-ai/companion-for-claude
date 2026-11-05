@@ -96,17 +96,7 @@ jobs:
           # guides/ becomes the docs member of the release artifact; cavi-home's
           # release ingest requires it and serves it as the product's docs.
           node obsidian-plugin/tools/prepare-release-docs.mjs . release-repo
-          cp obsidian-plugin/package.json       release-repo/package.json
-          cp obsidian-plugin/pnpm-lock.yaml     release-repo/pnpm-lock.yaml
-          cp obsidian-plugin/pnpm-workspace.yaml release-repo/pnpm-workspace.yaml
-          cp obsidian-plugin/tsconfig.json      release-repo/tsconfig.json
-          cp obsidian-plugin/vitest.config.ts   release-repo/vitest.config.ts
-          cp obsidian-plugin/esbuild.config.mjs release-repo/esbuild.config.mjs
-          cp obsidian-plugin/eslint.config.mjs  release-repo/eslint.config.mjs
-          cp obsidian-plugin/main.js            release-repo/main.js
-          cp obsidian-plugin/manifest.json      release-repo/manifest.json
-          cp obsidian-plugin/styles.css         release-repo/styles.css
-          cp obsidian-plugin/versions.json      release-repo/versions.json
+          node obsidian-plugin/tools/prepare-release-package.mjs obsidian-plugin release-repo
           cp LICENSE                            release-repo/LICENSE
           printf 'node_modules/\n*.js.map\n.DS_Store\n.build/\n' > release-repo/.gitignore
           cd release-repo

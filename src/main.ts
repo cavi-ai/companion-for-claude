@@ -1,3 +1,4 @@
+import { ConnectionController } from "./providers/connection";
 import { registerNativeResultImport } from "./native/controller";
 import { registerDeviceGpuCheck } from "./device/controller";
 import { DeviceChatClient } from "./device/client";
@@ -272,8 +273,23 @@ export default class ClaudeCompanionPlugin extends Plugin {
   clipperSetup(): ClipperFeature {
     return (this._clipperSetup ??= buildClipperSetup(this));
   }
+  private _connection?: ConnectionController;
+  connection(): ConnectionController {
+    return (this._connection ??= new ConnectionController({
+      settings: () => this.settings,
+      store: this.secrets(),
+      save: () => this.saveSettings(),
+      test: (candidate) => {
+        const backend = candidate.chatBackend;
+        if (backend === "claude-cli") return this.router().claudeCli.test();
+        if (backend === "codex-cli") return this.router().codexCli.test();
+        if (backend === "opencode-cli") return this.router().opencodeCli.test();
+        return new ProviderRouter(candidate).resolve("chat").provider.test();
+      },
+    }));
+  }
   private _onboarding?: Onboarding;
-  /** Setup wizard, first-run prompts, and ontology seeding. */
+  /** Optional feature setup and ontology seeding. */
   onboarding(): Onboarding {
     return (this._onboarding ??= buildOnboarding(this));
   }
@@ -696,6 +712,8 @@ export default class ClaudeCompanionPlugin extends Plugin {
   }
 
   override onunload(): void {
+    this._connection?.dispose();
+    this._noteFlows?.dispose();
     this._deviceChat?.cancel();
     for (const dispose of [...(this.disposables ?? [])].reverse()) dispose();
     this.disposables = [];

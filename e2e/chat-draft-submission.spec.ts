@@ -30,7 +30,8 @@ test("refused sends retain exact drafts and can be sent after correcting credent
   const settings = await openSettingsSection(rig, "Provider & model");
   const key = settings.locator("input[type='password'][placeholder*='sk-ant-api']");
   await key.fill("e2e-key");
-  await key.blur();
+  await settings.locator(".setting-item").filter({ has: key }).getByRole("button", { name: "Connect", exact: true }).click();
+  await expect.poll(() => rig.providerRequests()).toBe(1);
   await settings.keyboard.press("Escape").catch((error: unknown) => {
     if (!settings.isClosed()) throw error;
   });
@@ -40,5 +41,5 @@ test("refused sends retain exact drafts and can be sent after correcting credent
   await expect(input).toHaveValue("");
   await expect(chat.locator(".cc-user")).toHaveCount(1);
   await expect(chat.locator(".cc-user .cc-body")).toContainText("Compare the pilot.");
-  expect(await rig.providerRequests()).toBe(1);
+  expect(await rig.providerRequests()).toBe(2);
 });

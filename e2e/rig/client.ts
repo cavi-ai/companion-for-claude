@@ -3,7 +3,7 @@
 
 import { execFileSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
-import { dirname, join, relative } from "node:path";
+import { dirname, isAbsolute, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { GithubRequest, RigState, ScenarioOptions, StubPorts } from "./types.ts";
 
@@ -20,7 +20,9 @@ function git(args: string[]): string | null {
 }
 
 const toplevel = git(["rev-parse", "--show-toplevel"]);
-export const RIG_ROOT = rigRootFor(git(["rev-parse", "--path-format=absolute", "--git-common-dir"]), toplevel ? relative(toplevel, PLUGIN_ROOT) : null, PLUGIN_ROOT);
+const configuredRoot = process.env.CC_E2E_ROOT;
+if (configuredRoot && !isAbsolute(configuredRoot)) throw new Error("CC_E2E_ROOT must be absolute.");
+export const RIG_ROOT = configuredRoot ?? rigRootFor(git(["rev-parse", "--path-format=absolute", "--git-common-dir"]), toplevel ? relative(toplevel, PLUGIN_ROOT) : null, PLUGIN_ROOT);
 export const STATE_PATH = join(RIG_ROOT, "state.json");
 
 /** Roots of running rigs, read from each rig Obsidian main process's `--user-data-dir=<root>/profile`. */
@@ -46,6 +48,7 @@ export async function isPidAlive(pid: number): Promise<boolean> {
 export async function liveState(): Promise<RigState | null> {
   const own = await readState();
   if (own && await isPidAlive(own.pid)) return own;
+  if (configuredRoot) return null;
   let ps = "";
   try { ps = execFileSync("ps", ["-Ao", "command"], { encoding: "utf8" }); } catch { return null; }
   for (const root of rigRootsFromPs(ps)) {

@@ -120,6 +120,7 @@ export class Composer {
       },
     });
     this.inputEl.addEventListener("keydown", (e) => {
+      if (e.isComposing) return;
       // The "@" picker intercepts navigation keys while open.
       if (this.atMenu.isOpen()) {
         if (e.key === "ArrowDown") { e.preventDefault(); this.atMenu.move(1); return; }

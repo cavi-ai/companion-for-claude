@@ -383,7 +383,7 @@ describe("source enrichment wiring", () => {
       .resolves.toEqual({ status: "enriched" });
 
     expect(read).toHaveBeenCalledTimes(1);
-    const sidecar = app.vault.getAbstractFileByPath("Clippings/Sales.md");
+    const sidecar = app.vault.getAbstractFileByPath("Clippings/sales.md");
     expect(sidecar).toBeInstanceOf(TFile);
     const written = await app.vault.cachedRead(sidecar as TFile);
     expect(written).toContain("columns:");

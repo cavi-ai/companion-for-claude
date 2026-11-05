@@ -144,7 +144,7 @@ describe("resolveSettings with legacy configs", () => {
     expect(() => openSettingTab(tab)).not.toThrow();
     await new Promise((r) => setTimeout(r, 0));
     const container = tab.containerEl as unknown as FakeElement;
-    expect(container.querySelectorAll(".cc-settings-home")).toHaveLength(1);
+    expect(container.querySelectorAll(".setting-item-name").map((element) => element.textContent)).toContain("Chat backend");
     // The migrated engine selection is what the dropdown shows.
     expect((plugin.settings as { embeddingEngine: string }).embeddingEngine).toBe("ollama");
   });

@@ -19,15 +19,8 @@ const ui = vi.hoisted(() => ({
   frontmatter: [] as Array<{ basename: string; proposal: Record<string, unknown>; label: string }>,
 }));
 const tagger = vi.hoisted(() => ({ summarizeAndTag: vi.fn() }));
-const lint = vi.hoisted(() => ({ parseLintResponse: vi.fn() }));
 
 vi.mock("../../src/indexing/autoTagger", () => tagger);
-vi.mock("../../src/enrich/noteEnrich", () => ({
-  LINT_SYSTEM: "lint-system",
-  buildLintUser: (body: string) => `lint:${body}`,
-  lintMaxTokens: () => 111,
-  parseLintResponse: lint.parseLintResponse,
-}));
 vi.mock("../../src/view/EnrichModal", () => ({
   EnrichOptionsModal: class {
     constructor(_app: unknown, private count: number, private resolve: (value: unknown) => void) {}
@@ -77,7 +70,7 @@ function rig(over: { ontology?: string[] } = {}): Rig {
   setActive(app, null);
   const settings = structuredClone(DEFAULT_SETTINGS);
   const activity = new ActivityStore();
-  const complete = vi.fn(async () => ({ text: "TYPE: -\nTAGS: alpha, beta\nSUMMARY: A note.", provider: { label: "Utility" } }));
+  const complete = vi.fn(async (requestRole: string, request: { system: string }) => ({ text: request.system.includes("meticulous markdown copyeditor") ? JSON.stringify({ complete: true, edits: [] }) : "TYPE: -\nTAGS: alpha, beta\nSUMMARY: A note.", provider: { label: "Utility" } }));
   const flows = new NoteFlows({
     app,
     settings: () => settings,
@@ -98,7 +91,6 @@ beforeEach(() => {
   ui.onReview = null; ui.onFrontmatter = null;
   ui.optionCounts.length = 0; ui.proposals.length = 0; ui.diffs.length = 0; ui.frontmatter.length = 0;
   tagger.summarizeAndTag.mockReset();
-  lint.parseLintResponse.mockReset();
 });
 
 describe("NoteFlows links", () => {
@@ -234,7 +226,6 @@ describe("NoteFlows enrichNoteFlow", () => {
   it("reports no changes when copyediting completed with an unchanged reply", async () => {
     const { app, flows, activity } = rig();
     const note = app.vault.seed("Doc.md", "Original body.");
-    lint.parseLintResponse.mockReturnValue(null);
     await flows.enrichNoteFlow(note, { ...OPTIONS, lint: true });
     expect(getNoticeMessages()).toEqual(["Doc is already in good shape."]);
     expect(activity.snapshot().records[0]?.state).toBe("succeeded");
@@ -270,17 +261,6 @@ describe("NoteFlows enrichNoteFlow", () => {
     expect(note._content).toBe("---\nsummary: Mine\n---\nbody");
   });
 
-  it("applies accepted copyedit and link hunks to the note body", async () => {
-    const { app, flows } = rig();
-    app.vault.seed("Notes/Atlas.md", "");
-    const note = app.vault.seed("Notes/Doc.md", "We met Atlas today.");
-    lint.parseLintResponse.mockImplementation((_text: string, body: string) => body.replace("today", "yesterday"));
-    ui.decision = { accepted: [true], frontmatter: false, rename: false };
-    await flows.enrichNoteFlow(note, { ...OPTIONS, links: true, lint: true });
-    expect(note._content).toBe("We met [[Atlas]] yesterday.");
-    expect(getNoticeMessages()).toEqual(["Tidied Doc."]);
-  });
-
   it("reports a failed copyedit without claiming the note passed its checks", async () => {
     const { app, flows, complete, activity } = rig();
     const note = app.vault.seed("Notes/Doc.md", "text");
@@ -302,7 +282,7 @@ describe("NoteFlows enrichNoteFlow", () => {
     expect(getNoticeMessages()).toEqual([]);
   });
 
-  it("reports a failed tagging pass and stops on an unavailable utility model", async () => {
+  it("reports an unavailable utility model when no supported step was selected", async () => {
     const { app, flows, activity } = rig();
     const note = app.vault.seed("Notes/Doc.md", "body");
     tagger.summarizeAndTag.mockRejectedValueOnce(new Error("bad json"));
@@ -313,15 +293,15 @@ describe("NoteFlows enrichNoteFlow", () => {
     clearNotices();
     tagger.summarizeAndTag.mockRejectedValueOnce(new UtilityUnavailableError("Utility model is not available.", {} as never));
     await flows.enrichNoteFlow(note, { ...OPTIONS, rename: true });
-    expect(getNoticeMessages()).toEqual(["Tidy failed — Utility model is not available."]);
+    expect(getNoticeMessages().join("\n")).toContain("Rename note: Utility model is not available.");
     expect(activity.snapshot().records.some((r) => r.state === "needs-attention")).toBe(true);
   });
 
   it.each([true, false])("keeps valid copyedits reviewable when tagging fails (apply: %s)", async (apply) => {
-    const { app, flows, activity } = rig();
+    const { app, flows, activity, complete } = rig();
     const note = app.vault.seed("Doc.md", "Original body.");
     tagger.summarizeAndTag.mockRejectedValue(new Error("tag service unavailable"));
-    lint.parseLintResponse.mockReturnValue("Corrected body.");
+    complete.mockResolvedValue({ text: JSON.stringify({ complete: true, edits: [{ old_str: "Original", new_str: "Corrected" }] }), provider: { label: "Utility" } });
     ui.decision = apply ? { accepted: [true], frontmatter: false, rename: false } : null;
     await flows.enrichNoteFlow(note, { ...OPTIONS, rename: true, frontmatter: true, lint: true });
     expect(ui.proposals[0]).toMatchObject({ failures: [{ step: "Rename note / Tags & summary", message: "tag service unavailable" }], plan: { hunks: expect.any(Array) } });

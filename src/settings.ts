@@ -1,3 +1,4 @@
+import { settingSection } from "./settingsItems/navigation";
 import { chatBackendForRuntime } from "./providers/runtimeBackend";
 import { App, Platform, PluginSettingTab, type Plugin, type SettingDefinitionItem } from "obsidian";
 import type ClaudeCompanionPlugin from "./main";
@@ -36,8 +37,6 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
   private navigation = new SettingsNavigation({
     update: () => this.update(),
     container: () => this.containerEl,
-    openSetup: () => this.plugin.onboarding().openSetupWizard(),
-    openDesktop: () => this.plugin.desktopIntegrations().open(),
   });
 
   constructor(
@@ -150,38 +149,38 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
     const cloud: CloudItemsContext = { plugin, update, storageBlurb };
     return [
       { type: "group", items: introItems({ plugin, secretStorageWorking: () => this.secretStorageWorking(), storageBlurb }) },
-      { type: "group", heading: "Connection", items: connectionItems({ plugin, storageBlurb, renderStatus }) },
-      { type: "group", heading: "Behavior", items: behaviorItems() },
+      settingSection("connection", { type: "group", heading: "Connection", items: connectionItems({ plugin, storageBlurb, renderStatus }) }),
+      settingSection("context", { type: "group", heading: "Behavior", items: behaviorItems() }),
       {
         type: "group",
         heading: "Agent",
         items: [
-          { type: "page", name: "Agent (act on your vault)", desc: PAGE_DESC.agent, items: agentItems({ plugin, storageBlurb }) },
-          { type: "page", name: "Agent bridge — MCP server (desktop)", visible: () => !Platform.isMobile, desc: PAGE_DESC.mcpBridge, items: mcpItems({ plugin, update, tokenReveal: this.tokenReveal }) },
-          { type: "page", name: "External tools — MCP client", desc: PAGE_DESC.mcpClient, items: mcpClientItems({ plugin, update }) },
-          { type: "page", name: "Cloud (experimental)", desc: cloudDesc(this.storageBlurb()), items: [...cloudItems(cloud), ...repliesItems(cloud)] },
-          { type: "page", name: "Publishing", desc: PAGE_DESC.publishing, items: publishItems({ plugin, update, storageBlurb }) },
+          settingSection("agent", { type: "page", name: "Agent (act on your vault)", desc: PAGE_DESC.agent, items: agentItems({ plugin, storageBlurb }) }),
+          settingSection("bridge", { type: "page", name: "Agent bridge — MCP server (desktop)", visible: () => !Platform.isMobile, desc: PAGE_DESC.mcpBridge, items: mcpItems({ plugin, update, tokenReveal: this.tokenReveal }) }),
+          settingSection("external-tools", { type: "page", name: "External tools — MCP client", desc: PAGE_DESC.mcpClient, items: mcpClientItems({ plugin, update }) }),
+          settingSection("cloud", { type: "page", name: "Cloud (experimental)", desc: cloudDesc(this.storageBlurb()), items: [...cloudItems(cloud), ...repliesItems(cloud)] }),
+          settingSection("publishing", { type: "page", name: "Publishing", desc: PAGE_DESC.publishing, items: publishItems({ plugin, update, storageBlurb }) }),
         ],
       },
       {
         type: "group",
         heading: "Vault intelligence",
         items: [
-          { type: "page", name: "Semantic search (local embeddings)", items: semanticItems({ plugin, update, offerIndexRebuild: (label) => offerIndexRebuild(this.app, label, () => this.plugin.semantic().rebuildSemanticIndex()) }) },
-          { type: "page", name: "Local models (Ollama & endpoints)", desc: `${PAGE_DESC.localModels} ${PAGE_DESC.openaiCompat}`, items: localModelsItems({ plugin, detected: this.detectedModels, update, renderStatus }) },
-          { type: "page", name: "Source capture (typed clips)", desc: PAGE_DESC.sourceCapture, items: sourceCaptureItems({ plugin }) },
-          { type: "page", name: "Vault ontology (typed notes & relations)", items: ontologyItems() },
-          { type: "page", name: "Research Desk & discovery", desc: PAGE_DESC.discovery, items: discoveryItems({ plugin }) },
+          settingSection("semantic", { type: "page", name: "Semantic search (local embeddings)", items: semanticItems({ plugin, update, offerIndexRebuild: (label) => offerIndexRebuild(this.app, label, () => this.plugin.semantic().rebuildSemanticIndex()) }) }),
+          settingSection("local", { type: "page", name: "Local models (Ollama & endpoints)", desc: `${PAGE_DESC.localModels} ${PAGE_DESC.openaiCompat}`, items: localModelsItems({ plugin, detected: this.detectedModels, update, renderStatus }) }),
+          settingSection("capture", { type: "page", name: "Source capture (typed clips)", desc: PAGE_DESC.sourceCapture, items: sourceCaptureItems({ plugin }) }),
+          settingSection("ontology", { type: "page", name: "Vault ontology (typed notes & relations)", items: ontologyItems() }),
+          settingSection("research", { type: "page", name: "Research Desk & discovery", desc: PAGE_DESC.discovery, items: discoveryItems({ plugin }) }),
         ],
       },
       {
         type: "group",
         heading: "Files, memory & privacy",
         items: [
-          { type: "page", name: "Session memory", visible: () => !Platform.isMobile, desc: PAGE_DESC.memory, items: memoryItems() },
-          { type: "page", name: "Files & tags", items: [...storageItems(), ...indexingItems()] },
-          { type: "page", name: "What this plugin accesses (privacy)", items: privacyItems() },
-          { type: "page", name: "Desktop-only features", visible: () => Platform.isMobile, items: desktopOnlyItems() },
+          settingSection("memory", { type: "page", name: "Session memory", visible: () => !Platform.isMobile, desc: PAGE_DESC.memory, items: memoryItems() }),
+          settingSection("files", { type: "page", name: "Files & tags", items: [...storageItems(), ...indexingItems()] }),
+          settingSection("privacy", { type: "page", name: "What this plugin accesses (privacy)", items: privacyItems() }),
+          settingSection("desktop", { type: "page", name: "Desktop-only features", visible: () => Platform.isMobile, items: desktopOnlyItems() }),
         ],
       },
     ];

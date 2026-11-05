@@ -111,6 +111,7 @@ function streamUntilAbort(provider: Provider, req: CompletionRequest, signal: Ab
         },
         onDone: (full) => finish(() => resolve(typeof full === "string" ? full : text)),
         onError: (error) => finish(() => reject(error)),
+        onTruncated: () => finish(() => reject(new Error("The model reply was cut short. Retry with a smaller selection."))),
       })
       .then(
         () => finish(() => resolve(text)),

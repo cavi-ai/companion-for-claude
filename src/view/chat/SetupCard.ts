@@ -19,6 +19,7 @@ export class SetupCard {
   private readonly probeInFlight = new Set<string>();
   /** The card re-renders when a CLI sign-in is detected; a half-typed key survives it. */
   private keyDraft = "";
+  private submitting = false;
 
   constructor(private readonly deps: SetupCardDeps) {}
 
@@ -29,7 +30,7 @@ export class SetupCard {
     for (const { backend, provider } of entries) {
       if (!provider.hasCredentials() && provider.available() && !this.probeInFlight.has(backend.id)) {
         this.probeInFlight.add(backend.id);
-        void provider.refresh().finally(() => {
+        void provider.refresh().catch(() => undefined).finally(() => {
           this.probeInFlight.delete(backend.id);
           if (provider.hasCredentials() && this.deps.messagesEl().querySelector(".cc-setup-card")) this.deps.renderEmptyState();
         });
@@ -38,8 +39,8 @@ export class SetupCard {
     const signedIn = entries.filter((e) => e.provider.hasCredentials());
     const lead = signedIn[0]?.backend;
     const storage = this.deps.plugin.secrets().available()
-      ? "It’s kept in your device’s secret storage, not in this vault — nothing else leaves your machine."
-      : "It’s stored in this vault’s plugin data — nothing else leaves your machine.";
+      ? "The key is kept in device secret storage. Chat sends your message and selected context to the chosen provider."
+      : "Secure key storage is unavailable. Use an existing signed-in connection or repair Obsidian secret storage.";
     card.createDiv({ cls: "cc-setup-title", text: "Connect to Claude" });
     card.createDiv({
       cls: "cc-setup-sub",
@@ -51,13 +52,8 @@ export class SetupCard {
       const cli = card.createDiv({ cls: "cc-setup-cli" });
       for (const { backend } of signedIn) {
         const useCli = cli.createEl("button", { cls: "mod-cta cc-setup-cli-use", text: `Use ${backend.label} sign-in` });
-        useCli.addEventListener("click", () => void (async () => {
-          this.deps.plugin.settings.chatBackend = backend.id;
-          await this.deps.plugin.saveSettings();
-          await this.deps.plugin.onboarding().continueOnboarding();
-          this.deps.renderEmptyState();
-          this.deps.refreshModelLabel();
-        })());
+        useCli.addEventListener("click", () => void this.submit(card, useCli, async () => this.deps.plugin.connection().connect({ backend: backend.id })));
+
       }
       card.createDiv({ cls: "cc-setup-or", text: "or" });
     }
@@ -75,44 +71,39 @@ export class SetupCard {
     });
     input.value = this.keyDraft;
     input.addEventListener("input", () => { this.keyDraft = input.value; });
-    const save = row.createEl("button", { cls: "mod-cta cc-setup-save", text: "Save key" });
+    const save = row.createEl("button", { cls: "mod-cta cc-setup-save", text: "Connect" });
     const status = card.createDiv({ cls: "cc-setup-status" });
-    save.addEventListener("click", () => void (async () => {
-      const key = input.value.trim();
-      if (!key) {
-        input.focus();
-        return;
-      }
-      this.deps.plugin.settings.authMode = "apiKey";
-      this.deps.plugin.settings.apiKey = key;
-      await this.deps.plugin.saveSettings(); // rebuilds the provider router
-      // Verify here rather than letting the first send be the test — a typo'd
-      // key otherwise reads as a broken plugin.
-      save.disabled = true;
-      status.removeClass("is-err");
-      status.setText("Checking your key…");
-      const result = await this.deps.plugin.router().anthropic.test();
-      save.disabled = false;
-      if (!result.ok) {
-        // The key stays saved so it can be corrected rather than retyped.
-        status.addClass("is-err");
-        status.setText(`Couldn’t connect: ${result.detail}`);
-        input.focus();
-        return;
-      }
-      status.setText("");
-      this.keyDraft = "";
-      quickNotice("API key saved — you’re connected.");
-      if (!this.deps.hasMessages()) {
-        this.deps.messagesEl().empty();
-        this.deps.renderEmptyState();
-      } else {
-        card.remove();
-      }
-      // Setup held back while there was no credential can run now.
-      await this.deps.plugin.onboarding().continueOnboarding();
-    })());
-    const settingsBtn = card.createEl("button", { cls: "cc-setup-settings", text: "Other options (OAuth, environment)…" });
+    const connect = (): void => {
+      if (!input.value.trim()) { input.focus(); return; }
+      void this.submit(card, save, () => this.deps.plugin.connection().connect({ backend: "claude", apiKey: input.value }), status);
+    };
+    save.addEventListener("click", connect);
+    input.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" && !event.isComposing) { event.preventDefault(); connect(); }
+    });
+    const settingsBtn = card.createEl("button", { cls: "cc-setup-settings", text: "Other connections…" });
     settingsBtn.addEventListener("click", () => this.deps.openSettings());
   }
+  private async submit(card: HTMLElement, button: HTMLButtonElement, connect: () => Promise<{ ok: boolean; detail: string }>, status = card.createDiv({ cls: "cc-setup-status" })): Promise<void> {
+    if (this.submitting) return;
+    this.submitting = true;
+    button.disabled = true;
+    status.setAttribute("role", "status");
+    status.removeClass("is-err");
+    status.setText("Connecting…");
+    try {
+      const result = await connect();
+      if (!result.ok) { status.addClass("is-err"); status.setText(result.detail); return; }
+      this.keyDraft = "";
+      status.setText(result.detail);
+      quickNotice(result.detail);
+      if (!this.deps.hasMessages()) { this.deps.messagesEl().empty(); this.deps.renderEmptyState(); }
+      else card.remove();
+      this.deps.refreshModelLabel();
+    } catch (error) {
+      status.addClass("is-err");
+      status.setText(error instanceof Error ? error.message : String(error));
+    } finally { this.submitting = false; button.disabled = false; }
+  }
+
 }

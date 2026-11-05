@@ -6,7 +6,7 @@ import { DEFAULT_SETTINGS } from "../../src/types";
 import { defaultChatControls } from "../../src/claude/chatControls";
 import type { ComposerHost } from "../../src/view/chat/hosts";
 
-function mountComposer(): { root: FakeElement; composer: Composer; chat: ChatSession } {
+function mountComposer(): { root: FakeElement; composer: Composer; chat: ChatSession; send: ComposerDeps["onSend"] } {
   const plugin = {
     settings: structuredClone(DEFAULT_SETTINGS),
     router: () => ({
@@ -28,7 +28,7 @@ function mountComposer(): { root: FakeElement; composer: Composer; chat: ChatSes
   const composer = new Composer(new App() as never, plugin, chat, deps);
   const root = new FakeElement();
   composer.mount(root as unknown as HTMLElement, []);
-  return { root, composer, chat };
+  return { root, composer, chat, send: deps.onSend };
 }
 
 function classesOf(children: FakeElement[]): string[] {
@@ -38,6 +38,15 @@ function classesOf(children: FakeElement[]): string[] {
 describe("Composer layout", () => {
   afterEach(() => {
     Platform.isMobile = false;
+  });
+
+  it("keeps composition Enter out of sending while ordinary Enter sends", () => {
+    const { composer, send } = mountComposer();
+    const input = composer.inputEl as unknown as FakeElement;
+    input.dispatchEvent({ type: "keydown", key: "Enter", isComposing: true, preventDefault() {} });
+    expect(send).not.toHaveBeenCalled();
+    input.dispatchEvent({ type: "keydown", key: "Enter", isComposing: false, preventDefault() {} });
+    expect(send).toHaveBeenCalledTimes(1);
   });
 
   it("keeps the mobile input and Send in one input row, with context and Ask / Plan / Act in a toolbar under it", () => {

@@ -33,6 +33,7 @@ export function mergeSourceMarkdown(
   fm: FrontmatterData,
   validateMerged?: MergedFrontmatterValidator,
   fillBody?: string,
+  refreshKeys?: ReadonlySet<string>,
 ): string {
   const prepared = prepareSourceMarkdown(content);
   const { properties: frontmatter, body, eol } = prepared;
@@ -43,7 +44,7 @@ export function mergeSourceMarkdown(
       prepared.document.set(key, frontmatter[key]);
       continue;
     }
-    if (SYSTEM_KEYS.has(key) || missing(frontmatter[key])) {
+    if (SYSTEM_KEYS.has(key) || refreshKeys?.has(key) || missing(frontmatter[key])) {
       frontmatter[key] = value;
       prepared.document.set(key, value);
     }

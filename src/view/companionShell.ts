@@ -38,6 +38,7 @@ export interface CompanionShellDeps {
   standingOrders: () => OrdersController;
   conversations: () => ConversationsController;
   views: () => WorkspaceViews;
+  cancelTidy?: (id: string) => void;
   chatLeafFor: (conversationId: string) => WorkspaceLeaf | null;
 }
 
@@ -196,6 +197,7 @@ export class CompanionShell {
   }
 
   async runActivityRecovery(activityId: string, actionId: string): Promise<void> {
+    if (actionId === "stop-tidy") { this.deps.cancelTidy?.(activityId); return; }
     const conversations = this.deps.conversations();
     if (activityId.startsWith("order:")) {
       if (actionId === "retry") return this.deps.standingOrders().retry(activityId);

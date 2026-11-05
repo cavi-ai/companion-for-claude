@@ -1,3 +1,4 @@
+import { assertOwnedVault, resetOwnedVault } from "./ownership.ts";
 // CDP-driven page automation shared by the daemon (initial settle), the CLI's
 // `reload` command, and the Playwright fixture (per-test reset). Each caller
 // makes its own chromium.connectOverCDP() to the same live Obsidian instance;
@@ -284,6 +285,7 @@ export async function resetVaultState(
   originalEnv: Record<string, string>,
   processId: number,
 ): Promise<void> {
+  await assertOwnedVault(vault);
   const { context, page } = connection;
   for (const candidate of context.pages()) {
     if (candidate !== page && !candidate.isClosed()) await candidate.close();
@@ -300,9 +302,7 @@ export async function resetVaultState(
     }
     return app.plugins.disablePlugin("claude-companion");
   });
-  for (const entry of await readdir(vault)) {
-    if (entry !== ".obsidian") await rm(join(vault, entry), { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
-  }
+  await resetOwnedVault(vault);
   await rm(join(vault, ".obsidian", "plugins", "claude-companion"), { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   for (const file of ["appearance.json", "workspace.json", "workspace-mobile.json"]) {
     await rm(join(vault, ".obsidian", file), { force: true });

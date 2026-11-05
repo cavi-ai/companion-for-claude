@@ -9,22 +9,26 @@ export interface SettingsSection {
   items: SettingGroupItem[];
 }
 
-const PAGES: Record<string, [string, string, SettingsCategory]> = {
-  Connection: ["connection", "Provider & model", "chat"],
-  Behavior: ["context", "Prompts & context", "chat"],
-  "Agent bridge — MCP server (desktop)": ["bridge", "Vault bridge (MCP)", "connections"],
-  "External tools — MCP client": ["external-tools", "External tools", "connections"],
-  "Cloud (experimental)": ["cloud", "Cloud sessions (experimental)", "connections"],
-  Publishing: ["publishing", "Publishing", "connections"],
-  "Semantic search (local embeddings)": ["semantic", "Semantic search", "capture"],
-  "Local models (Ollama & endpoints)": ["local", "Local models", "chat"],
-  "Source capture (typed clips)": ["capture", "Source capture", "capture"],
-  "Vault ontology (typed notes & relations)": ["ontology", "Note types & relations", "capture"],
-  "Research Desk & discovery": ["research", "Research & discovery", "capture"],
-  "Session memory": ["memory", "Session memory", "files"],
-  "Files & tags": ["files", "Files & tags", "files"],
-  "What this plugin accesses (privacy)": ["privacy", "Privacy & data access", "files"],
-  "Desktop-only features": ["desktop", "Desktop-only features", "connections"],
+export function settingSection<T extends SettingDefinitionItem>(sectionId: string, definition: T): T & { sectionId: string } {
+  return { ...definition, sectionId };
+}
+
+const SECTIONS: Record<string, [string, SettingsCategory]> = {
+  "connection": ["Provider & model", "chat"],
+  "context": ["Prompts & context", "chat"],
+  "bridge": ["Vault bridge (MCP)", "connections"],
+  "external-tools": ["External tools", "connections"],
+  "cloud": ["Cloud sessions (experimental)", "connections"],
+  "publishing": ["Publishing", "connections"],
+  "semantic": ["Semantic search", "capture"],
+  "local": ["Local models", "chat"],
+  "capture": ["Source capture", "capture"],
+  "ontology": ["Note types & relations", "capture"],
+  "research": ["Research & discovery", "capture"],
+  "memory": ["Session memory", "files"],
+  "files": ["Files & tags", "files"],
+  "privacy": ["Privacy & data access", "files"],
+  "desktop": ["Desktop-only features", "connections"],
 };
 
 export function settingVisible(item: { visible?: boolean | (() => boolean) }): boolean {
@@ -37,8 +41,8 @@ export function settingsSections(definitions: SettingDefinitionItem[]): Settings
   const visit = (definition: SettingDefinitionItem): void => {
     if (!settingVisible(definition)) return;
     if (!("type" in definition)) return;
-    const name = definition.type === "page" ? definition.name : definition.heading;
-    if (definition.type === "page" && name === "Agent (act on your vault)") {
+    const id = (definition as SettingDefinitionItem & { sectionId?: string }).sectionId;
+    if (id === "agent") {
       const items = definition.items ?? [];
       const groups: Array<[string, string, string[]]> = [
         ["permissions", "Note permissions", ["agentModeEnabled", "agentAllowWrites"]],
@@ -54,10 +58,10 @@ export function settingsSections(definitions: SettingDefinitionItem[]): Settings
       if (web.length) sections.push({ id: "web", title: "Web tools", category: "vault", description: "", items: web as SettingGroupItem[] });
       return;
     }
-    const metadata = name ? PAGES[name] : undefined;
+    const metadata = id ? SECTIONS[id] : undefined;
     if (metadata) {
-      const [id, title, category] = metadata;
-      sections.push({ id, title, category, description: "desc" in definition && typeof definition.desc === "string" ? definition.desc : "", items: (definition.items ?? []) as SettingGroupItem[] });
+      const [title, category] = metadata;
+      sections.push({ id: id!, title, category, description: "desc" in definition && typeof definition.desc === "string" ? definition.desc : "", items: (definition.items ?? []) as SettingGroupItem[] });
     } else {
       for (const child of definition.items ?? []) visit(child);
     }

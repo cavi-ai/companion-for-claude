@@ -32,7 +32,7 @@ the MCP bridge on layout-ready. Everything else is organized by concern.
 | `research/` | The Research Desk: projects, sources, evidence, claims, questions, documents as typed Markdown notes. `repository.ts` is the vault-backed store; `parse.ts`/`render.ts` round-trip records; `identity.ts` dedups sources; `graph.ts` builds snapshots; `audit.ts` flags problems; `draft*`/`revision*` implement claim-grounded drafting and claim-preserving revision; `webCapture.ts` captures web sources as clean markdown; `tools.ts` defines the `research_*` MCP tools; `researchFeature.ts` builds the Desk view and owns discovery coordinators, refresh scheduling and the plan-to-build handoff (`plugin.research()`). |
 | `discovery/` | Scholarly discovery: `adapters/` (OpenAlex, Crossref, arXiv, Zotero item lookup), `coordinator.ts` orchestrates search → merge → rank → optional model rerank → import; `safeUrl.ts` scheme-checks URLs. |
 | `sources/` | Typed source capture: `watcher.ts` decides which new inbox files to enrich, `detect.ts` classifies the type, `registry.ts` holds per-type frontmatter schemas, `enrich.ts` fills them (constrained-JSON utility calls, thinking disabled) and reads a clip that arrived empty from its source page, `frontmatterMerge.ts` unions tags so clips keep their own, `enrichmentQuality.ts` rejects placeholder titles, lost metadata, and malformed provenance inside the atomic write, `clipperSetup.ts` derives the template install state and `clipperVerification.ts` checks clipped notes against the expected type, schema version, and destination, `clipperFeature.ts` runs template export, the setup modal, and arriving-clip verification, `organize.ts` proposes domain folders and plans collision-safe rename+moves for the clipping organizer. |
-| `onboarding/` | `firstRun.ts` and `wizard.ts` are the pure ordering of the one-time consent prompts and the setup wizard steps; `onboarding.ts` runs them: layout-ready first run, the single-instance wizard, the ontology seed and reload. |
+| `onboarding/` | `onboarding.ts` loads existing schemas at startup and owns explicit ontology/integration actions. `providers/connection.ts` validates and saves the chosen connection for chat setup and settings; connecting does not open optional setup prompts. |
 | `ontology/` | Vault ontology: `schema.ts` parses schema notes into resolved types with inheritance; `describe.ts` shapes tool-readable registry output; `propose.ts` validates proposed schema notes; `conform.ts` performs advisory checks and safe auto-fixes; `digest.ts` injects a compact type digest into the system prompt. |
 | `canvas/jsonCanvas.ts` | Validates a model-proposed node/edge graph into JSON Canvas 1.0 with deterministic auto-layout. |
 | `bases/baseFile.ts` | Validates a model-proposed database view and emits Obsidian Bases `.base` YAML. |
@@ -95,7 +95,7 @@ artifacts, and built-in semantic search run on mobile.
 
 ## Security model
 
-Four boundaries, each documented in [`SECURITY.md`](https://github.com/cavi-ai/claude-obsidian/blob/20cd1fcfa6bfc0ae39b55fcb6241c48144e157b4/SECURITY.md):
+Four boundaries, each documented in [`SECURITY.md`](https://github.com/cavi-ai/claude-obsidian/blob/4dd506c98e4f98c25b741e4a0bf60e7e93c63446/SECURITY.md):
 
 **Credentials** use Obsidian's encrypted secret storage and are excluded from
 vault-synced plugin data. The MCP token can also come from
@@ -125,8 +125,8 @@ One standalone Obsidian product plus an optional universal-agent reference:
   workflows use the official Obsidian CLI and do not depend on Companion or MCP.
   Companion-native adaptations live in this repository and use Companion's own
   vault context. The optional MCP bridge is a separate Companion integration.
-- `upstream/html-effectiveness/`, `upstream/obsidian-skills/` — pinned, unmodified submodules. Provenance in [`NOTICE`](https://github.com/cavi-ai/claude-obsidian/blob/20cd1fcfa6bfc0ae39b55fcb6241c48144e157b4/NOTICE).
+- `upstream/html-effectiveness/`, `upstream/obsidian-skills/` — pinned, unmodified submodules. Provenance in [`NOTICE`](https://github.com/cavi-ai/claude-obsidian/blob/4dd506c98e4f98c25b741e4a0bf60e7e93c63446/NOTICE).
 
 Version numbers in `manifest.json`, `versions.json`, and `package.json` must match
 the git tag, and `versions.json` maps version → `minAppVersion`. See
-[`CONTRIBUTING.md`](https://github.com/cavi-ai/claude-obsidian/blob/20cd1fcfa6bfc0ae39b55fcb6241c48144e157b4/CONTRIBUTING.md).
+[`CONTRIBUTING.md`](https://github.com/cavi-ai/claude-obsidian/blob/4dd506c98e4f98c25b741e4a0bf60e7e93c63446/CONTRIBUTING.md).

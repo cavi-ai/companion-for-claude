@@ -1,3 +1,4 @@
+import { recordVaultOwnership } from "./ownership.ts";
 // Vault seeding: fixture notes + plugin data.json, shared by the daemon's
 // first launch and the fixture's per-scenario reset. Pure fs, no CDP.
 
@@ -100,4 +101,5 @@ export async function seedVault(vault: string, ports: StubPorts, options: Scenar
       await writeFile(dest, content);
     }
   }
+  await recordVaultOwnership(vault);
 }

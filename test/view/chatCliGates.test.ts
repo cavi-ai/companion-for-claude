@@ -1,3 +1,5 @@
+import { ConnectionController } from "../../src/providers/connection";
+import { unavailableStore } from "../../src/secrets/store";
 import { describe, expect, it, vi } from "vitest";
 import { App, FakeElement, Platform, clearNotices, getLastOpenedModal, getNoticeMessages, WorkspaceLeaf } from "../fakes/obsidian";
 import { ChatView } from "../../src/view/ChatView";
@@ -152,6 +154,8 @@ describe("ChatView on the claude-cli backend", () => {
       chatCapabilities: () => NOT_CLI,
       chatProvider: () => ({ provider: { id: "anthropic", hasCredentials: () => false }, model: DEFAULT_SETTINGS.model }),
     }) as unknown as ClaudeCompanionPlugin["router"];
+    const connection = new ConnectionController({ settings: () => plugin.settings, test: async () => ({ ok: true, detail: "Connected" }), save: () => plugin.saveSettings(), store: unavailableStore() });
+    plugin.connection = () => connection;
     const view = new ChatView(new WorkspaceLeaf(new App()), plugin);
     const host = new FakeElement() as unknown as HTMLElement;
     const seam = view as unknown as { messagesEl: HTMLElement; setupCard: { render(parent: HTMLElement): void }; renderEmptyState(): void; refreshModelLabel(): void };
@@ -163,9 +167,7 @@ describe("ChatView on the claude-cli backend", () => {
     const codexButton = buttons.find((b) => b.textContent === "Use Codex sign-in");
     expect(codexButton).toBeDefined();
     codexButton?.dispatchEvent({ type: "click" });
-    await Promise.resolve();
-    await Promise.resolve();
-    expect(plugin.settings.chatBackend).toBe("codex-cli");
+    await vi.waitFor(() => expect(plugin.settings.chatBackend).toBe("codex-cli"));
   });
 
   it("leads the setup card with Claude Code when the CLI is signed in", () => {

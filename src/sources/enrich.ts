@@ -6,7 +6,7 @@ import { parseCsvMeta } from "./csvMeta";
 import { extractFields, type ExtractCompletionOpts } from "./extract";
 import { sanitize } from "../memory/sanitize";
 import { sourceFrontmatter, buildSidecarNote } from "./sourceNote";
-import { applySourceFrontmatter, sourceProperties } from "./frontmatterMerge";
+import { applySourceFrontmatter, mergeSourceMarkdown, sourceProperties } from "./frontmatterMerge";
 import { sanitizeFileName } from "../artifacts/parse";
 import { validateEnrichment, validateMergedSourceProvenance } from "./enrichmentQuality";
 import { stripFrontmatter } from "../markdown/frontmatter";
@@ -201,18 +201,47 @@ export async function enrichCapture(deps: EnrichDeps, capture: RawCapture): Prom
     return { file, type, record, readFromPage: pageBody !== undefined };
   }
   const dir = capture.path.includes("/") ? capture.path.slice(0, capture.path.lastIndexOf("/")) : "";
-  const base = sanitizeFileName(String(record.fields.title ?? capture.basename));
-  const assetFileName = `${capture.basename}.${capture.ext}`;
-  const noteContent = buildSidecarNote(record, assetFileName, deps.baseTags, deps.resolveTags);
-  const path = normalizePath(dir ? `${dir}/${base}.md` : `${base}.md`);
-  const existing = deps.app.vault.getAbstractFileByPath(path);
-  let file: TFile;
-  deps.assertActive?.();
-  if (existing instanceof TFile) {
-    await deps.app.vault.modify(existing, noteContent);
-    file = existing;
-  } else {
-    file = await deps.app.vault.create(path, noteContent);
+  const fm = sourceFrontmatter(record, deps.baseTags, deps.resolveTags);
+  const derivedKeys = new Set(schema.fields.filter((field) => field.source === "derived").map((field) => field.key));
+  const owns = (content: string): boolean => {
+    const properties = sourceProperties(content);
+    return properties.source_enriched === true && properties.asset === capture.path;
+  };
+  // Find legacy sidecars in the source folder too: the model title may change,
+  // and a newly written sidecar may not have reached the metadata cache yet.
+  const candidates = deps.app.vault.getMarkdownFiles().filter((file) =>
+    (file.path.includes("/") ? file.path.slice(0, file.path.lastIndexOf("/")) : "") === dir
+    || deps.app.metadataCache.getFileCache(file)?.frontmatter?.asset === capture.path,
+  );
+  for (const file of candidates) {
+    let owned = false;
+    try { owned = owns(await deps.app.vault.read(file)); } catch { /* Unrelated invalid YAML is not ours to repair. */ }
+    if (!owned) continue;
+    deps.assertActive?.();
+    await deps.app.vault.process(file, (current) => {
+      deps.assertActive?.();
+      if (!owns(current)) throw new Error("The sidecar ownership changed. The note was not updated; retry enrichment.");
+      return mergeSourceMarkdown(current, fm, undefined, undefined, derivedKeys);
+    });
+    return { file, type, record, readFromPage: false };
   }
-  return { file, type, record, readFromPage: false };
+  // New names derive from the asset, never from model output. A collision is
+  // another note's property, including a folder or a concurrent creation.
+  const base = sanitizeFileName(capture.basename) || "Source";
+  const noteContent = buildSidecarNote(record, `${capture.basename}.${capture.ext}`, deps.baseTags, deps.resolveTags);
+  const fold = (path: string): string => path.normalize("NFC").toLowerCase();
+  const occupied = (path: string): boolean =>
+    (deps.app.vault.getAllLoadedFiles?.() ?? deps.app.vault.getFiles()).some((entry) => fold(entry.path) === fold(path));
+  for (let suffix = 1; ; suffix++) {
+    const stem = suffix === 1 ? base : `${base} ${suffix}`;
+    const path = normalizePath(dir ? `${dir}/${stem}.md` : `${stem}.md`);
+    if (occupied(path)) continue;
+    deps.assertActive?.();
+    try {
+      const file = await deps.app.vault.create(path, noteContent);
+      return { file, type, record, readFromPage: false };
+    } catch (error) {
+      if (!occupied(path) && !(await deps.app.vault.adapter.exists?.(path))) throw error;
+    }
+  }
 }

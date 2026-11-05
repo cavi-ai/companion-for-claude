@@ -88,7 +88,7 @@ describe("scanVaultHealth", () => {
     expect(section(companion({ connection: { backend: "claude-cli", needsCredential: true } }), "connection")).toMatchObject({
       group: "companion", count: 1, severity: "error",
       items: [{ path: "", message: "claude-cli has no credential — chat cannot send" }],
-      actions: [{ id: "open-setup-wizard", label: "Open setup wizard" }],
+      actions: [{ id: "open-setup-wizard", label: "Connect Companion" }],
     });
   });
 

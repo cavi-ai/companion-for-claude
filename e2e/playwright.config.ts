@@ -8,7 +8,11 @@ export default defineConfig({
   testIgnore: "captures/**",
   fullyParallel: false,
   workers: 1,
-  maxFailures: 1,
+  maxFailures: 3,
+  projects: [
+    { name: "critical", testMatch: ["first-run.spec.ts", "source-safety.spec.ts", "settings.spec.ts", "tidy-failure-feedback.spec.ts", "tidy-selection.spec.ts"] },
+    { name: "regressions", testIgnore: ["first-run.spec.ts", "source-safety.spec.ts", "settings.spec.ts", "tidy-failure-feedback.spec.ts", "tidy-selection.spec.ts", "captures/**"], dependencies: ["critical"] },
+  ],
   timeout: 60_000,
   expect: { timeout: 10_000 },
   reporter: [["line"]],

@@ -76,6 +76,26 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+describe("explicit source enrichment", () => {
+  it("Manual only blocks automatic requests but lets a manual Inbox operation enrich the note", async () => {
+    const app = new App();
+    const file = app.vault.seed("Clippings/Manual.md", "---\nsource: https://example.org/article\n---\n\nUseful article body.");
+    const complete = vi.fn(async () => ({ text: JSON.stringify({ title: "Useful article", site: "Example", summary: "Useful summary." }) }));
+    const selection = { provider: { id: "anthropic", label: "Claude" }, model: "audit-model" };
+    const controller = new SourceEnrichmentController(testControllerDeps({
+      settings: () => ({ ...DEFAULT_SETTINGS, sourceCaptureConsent: "deny", sourceEnrichOnCreate: false }),
+      enrichApp: app,
+      vault: { cachedRead: async () => app.vault.read(file) },
+      router: () => ({ utilitySelection: async () => selection, completeResolved: complete }) as never,
+    }));
+    expect(await controller.enrichFile(file, false, "automatic")).toMatchObject({ status: "skipped" });
+    expect(complete).not.toHaveBeenCalled();
+    expect(await controller.enrichFile(file, false)).toMatchObject({ status: "enriched" });
+    expect(complete).toHaveBeenCalledTimes(1);
+    expect(await app.vault.read(file)).toContain("source_enriched: true");
+  });
+});
+
 describe("enrichment lifecycle", () => {
   it("coalesces a manual source command with Inbox enrichment through the real extraction and write", async () => {
     const app = new App();

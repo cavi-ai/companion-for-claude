@@ -1,10 +1,9 @@
-import { App, FileSystemAdapter } from "obsidian";
+import { App, Modal, FileSystemAdapter } from "obsidian";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import ClaudeCompanionPlugin from "../src/main";
 import { McpHttpServer } from "../src/mcp/server";
 import { CliSession } from "../src/cli/session";
 import { DEFAULT_SETTINGS } from "../src/types";
-import { SetupWizardModal } from "../src/view/SetupWizardModal";
 import { buildPlugin } from "./fakes/plugin";
 
 afterEach(() => vi.restoreAllMocks());
@@ -157,60 +156,14 @@ describe("plugin Claude CLI lifecycle", () => {
     expect(after.hasCredentials()).toBe(true);
   });
 
-  // Only the "connect" step is left in play: index/vault-tools are pre-satisfied
-  // so a wizard opening can only be explained by the credential race.
-  function forWizardRace(p: ClaudeCompanionPlugin): void {
-    p.settings = { ...p.settings, ontologyEnabled: false, semanticEnabled: false, desktopIntegrationsOffered: true, setupWizardDone: false };
-  }
-
-  it("awaits the in-flight Claude Code probe before planning the wizard: signed-in resolves to no wizard", async () => {
+  it("waits for the CLI probe without interrupting startup with optional setup", async () => {
     const rt = runtime();
-    rt.probe = async () => {
-      await new Promise((resolve) => setTimeout(resolve, 0));
-      return { loggedIn: true, method: "claude.ai" };
-    };
+    rt.probe = async () => { await new Promise((resolve) => setTimeout(resolve, 0)); return { loggedIn: true, method: "claude.ai" }; };
     const p = plugin(rt);
-    forWizardRace(p);
-    const openSpy = vi.spyOn(SetupWizardModal.prototype, "open").mockImplementation(() => undefined);
-    const cliProbe = p.router().claudeCli.refresh();
-    await p.onboarding().runFirstRun(cliProbe);
-    expect(openSpy).not.toHaveBeenCalled();
+    p.settings.ontologyEnabled = false;
+    const opened = vi.spyOn(Modal.prototype, "open");
+    await p.onboarding().runFirstRun(p.router().claudeCli.refresh());
     expect(p.router().claudeCli.hasCredentials()).toBe(true);
-  });
-
-  it("still opens no wizard when the probe settles not signed in and no API key is set — the chat setup card covers it", async () => {
-    const rt = runtime();
-    rt.probe = async () => ({ loggedIn: false, method: "" });
-    const p = plugin(rt);
-    forWizardRace(p);
-    const openSpy = vi.spyOn(SetupWizardModal.prototype, "open").mockImplementation(() => undefined);
-    const cliProbe = p.router().claudeCli.refresh();
-    await p.onboarding().runFirstRun(cliProbe);
-    expect(openSpy).not.toHaveBeenCalled();
-    expect(p.router().claudeCli.hasCredentials()).toBe(false);
-  });
-
-  it("opens one wizard when layout-ready and the chat setup card both continue onboarding", async () => {
-    const rt = runtime();
-    const p = plugin(rt);
-    forWizardRace(p);
-    p.settings = { ...p.settings, desktopIntegrationsOffered: false, semanticEnabled: true, semanticModelPrompted: false };
-    await p.router().claudeCli.refresh();
-    const openSpy = vi.spyOn(SetupWizardModal.prototype, "open");
-    await Promise.all([p.onboarding().continueOnboarding(), p.onboarding().continueOnboarding()]);
-    expect(openSpy).toHaveBeenCalledTimes(1);
-    (openSpy.mock.contexts[0] as SetupWizardModal).close();
-    p.onboarding().openSetupWizard();
-    expect(openSpy).toHaveBeenCalledTimes(2);
-  });
-
-  it("no credential → layout-ready opens no wizard", async () => {
-    const rt = runtime();
-    rt.probe = async () => ({ loggedIn: false, method: "" });
-    const p = plugin(rt);
-    forWizardRace(p);
-    const openSpy = vi.spyOn(SetupWizardModal.prototype, "open").mockImplementation(() => undefined);
-    await p.onboarding().runFirstRun();
-    expect(openSpy).not.toHaveBeenCalled();
+    expect(opened).not.toHaveBeenCalled();
   });
 });

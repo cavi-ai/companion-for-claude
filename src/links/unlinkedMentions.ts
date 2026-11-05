@@ -162,7 +162,7 @@ function findWholeWord(text: string, lower: string, name: string): number {
  * markdown links) with same-length null padding so offsets keep lining up
  * while matches inside those spans become impossible.
  */
-function maskNonProse(content: string): string {
+export function maskNonProse(content: string): string {
   let out = content;
   // Keep newlines so line-anchored patterns (and reported offsets) stay true.
   const blank = (s: string): string => s.replace(/[^\n]/g, " ");
@@ -175,7 +175,7 @@ function maskNonProse(content: string): string {
   const fenced = fencedLines(lines);
   out = lines.map((line, i) => (fenced[i] ? blank(line) : line)).join("\n");
   // Inline code.
-  out = out.replace(/`[^`\n]*`/g, blank);
+  out = out.replace(/(?<!`)(`+)([\s\S]*?)\1(?!`)/g, blank);
   // Wikilinks (with or without pipe) and embeds.
   out = out.replace(/!?\[\[[^\]]*\]\]/g, blank);
   // Markdown links: mask the whole [text](target).

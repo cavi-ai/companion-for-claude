@@ -5,8 +5,8 @@ test("Regenerate uses the resumed question rather than the other conversation im
     settingsOverride: { agentModeEnabled: false, context: { activeNote: false, selection: false, linkedNotes: false, searchVault: false } },
     providerReply: [
       { match: String.raw`/^(?=[\s\S]*ARCHIVE-A-REGEN-621)(?=[\s\S]*"type"\s*:\s*"image")/`, replies: ["Foreign image included."] },
-      { match: String.raw`/^(?=[\s\S]*CHART-B-REGEN-622)(?=[\s\S]*"type"\s*:\s*"image")/`, replies: ["Image B received."] },
-      { match: "/./", replies: ["Original A."] },
+      { match: String.raw`/^(?=[\s\S]*CHART-B-REGEN-622)(?=[\s\S]*"type"\s*:\s*"image")/`, replies: ["Image B received.", "Image B regenerated."] },
+      { match: "/./", replies: ["Original A.", "Regenerated A."] },
     ],
   });
   const errors: string[] = [];
@@ -41,14 +41,14 @@ test("Regenerate uses the resumed question rather than the other conversation im
     await page.screenshot({ path: testInfo.outputPath("resumed-text-question-with-no-image.png") });
     await context.getByRole("button", { name: "Close message context" }).click();
     await chat.getByRole("button", { name: "Regenerate", exact: true }).click();
-    await expect(chat.locator(".cc-assistant .cc-body").last()).toHaveText("Original A.");
+    await expect(chat.locator(".cc-assistant .cc-body").last()).toHaveText("Regenerated A.");
     expect(await rig.providerRequests()).toBe(3);
     await page.screenshot({ path: testInfo.outputPath("regenerate-kept-the-text-question.png") });
     await expect(chat.getByRole("button", { name: "Regenerate", exact: true })).toBeVisible();
     await chat.getByRole("button", { name: "Resume a past conversation", exact: true }).click();
     await page.locator(".cc-session-row").filter({ hasText: "CHART-B-REGEN-622" }).click();
     await chat.getByRole("button", { name: "Regenerate", exact: true }).click();
-    await expect(chat.locator(".cc-assistant .cc-body").last()).toHaveText("Image B received.");
+    await expect(chat.locator(".cc-assistant .cc-body").last()).toHaveText("Image B regenerated.");
     expect(await rig.providerRequests()).toBe(4);
     expect(errors).toEqual([]);
   } finally { page.off("pageerror", onError); }

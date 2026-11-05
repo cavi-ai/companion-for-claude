@@ -147,7 +147,7 @@ export class SourceEnrichmentController {
         const [path, file] = next;
         this.enrichPending.delete(path);
         try {
-          const outcome = await this.enrichFile(file);
+          const outcome = await this.enrichFile(file, true, "automatic");
           if (outcome.status === "enriched") this.enrichedSinceIdle = true;
         } catch (error) {
           if (!this.deps.isUtilityLifecycleActive(this.deps.utilityLifecycleGeneration())) continue;
@@ -186,7 +186,7 @@ export class SourceEnrichmentController {
     }
   }
 
-  enrichFile(file: FileRef, notify = true): Promise<EnrichRunOutcome> {
+  enrichFile(file: FileRef, notify = true, trigger: "manual" | "automatic" = "manual"): Promise<EnrichRunOutcome> {
     const lifecycleGeneration = this.deps.utilityLifecycleGeneration();
     const coordinator = this._coordinator ??= new KeyedSerialQueue<string, EnrichRunOutcome>();
     return coordinator.run(file.path, async () => {
@@ -196,7 +196,7 @@ export class SourceEnrichmentController {
           error: new Error("Companion unloaded before source enrichment started; no content was sent."),
         };
       }
-      return this.performEnrichFile(file, notify);
+      return this.performEnrichFile(file, notify, trigger);
     });
   }
 
@@ -225,10 +225,10 @@ export class SourceEnrichmentController {
     if (sizeFailure) return sizeFailure;
     if (file.extension !== "md") return { status: "skipped", reason: `${file.basename} is not a markdown note.` };
     if (this.deps.settings().sourceCaptureConsent === "deny") {
-      return { status: "skipped", reason: "automatic source enrichment is set to manual only." };
+      return { status: "skipped", reason: "Automatic source enrichment is set to manual only." };
     }
     if (this.deps.settings().sourceCaptureConsent !== "allow" && !(await this.askSourceCaptureConsent())) {
-      return { status: "skipped", reason: "automatic source enrichment was not approved." };
+      return { status: "skipped", reason: "Automatic source enrichment was not approved." };
     }
     const activityId = this.deps.activity().start({
       id: `source-enrichment:research:${file.path}`,
@@ -285,18 +285,20 @@ export class SourceEnrichmentController {
     }
   }
 
-  private async performEnrichFile(file: FileRef, notify = true): Promise<EnrichRunOutcome> {
+  private async performEnrichFile(file: FileRef, notify = true, trigger: "manual" | "automatic" = "manual"): Promise<EnrichRunOutcome> {
     const sizeFailure = this.mobileSourceSizeFailure(file);
     if (sizeFailure) return sizeFailure;
     const content = file.extension === "md" ? await this.deps.vault.cachedRead(file.path) : "";
     if (!shouldEnrich({ path: file.path, ext: file.extension, content, inboxFolder: this.deps.settings().sourceInboxFolder, recentlyWritten: this.enrichRecentlyWritten })) {
       return { status: "skipped", reason: `${file.basename} is not eligible for source enrichment.` };
     }
-    if (this.deps.settings().sourceCaptureConsent === "deny") {
-      return { status: "skipped", reason: "automatic source enrichment is set to manual only." };
-    }
-    if (this.deps.settings().sourceCaptureConsent !== "allow" && !(await this.askSourceCaptureConsent())) {
-      return { status: "skipped", reason: "automatic source enrichment was not approved." };
+    if (trigger === "automatic") {
+      if (!this.deps.settings().sourceEnrichOnCreate || this.deps.settings().sourceCaptureConsent === "deny") {
+        return { status: "skipped", reason: "Automatic source enrichment is set to manual only." };
+      }
+      if (this.deps.settings().sourceCaptureConsent !== "allow" && !(await this.askSourceCaptureConsent())) {
+        return { status: "skipped", reason: "Automatic source enrichment was not approved." };
+      }
     }
     return this.performEnrich(file, notify, file.extension === "md" ? content : undefined);
   }

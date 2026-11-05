@@ -41,7 +41,7 @@ export function buildClipperSetup(host: ClipperSetupHost): ClipperFeature {
 
 export type OnboardingHost = Pick<
   ClaudeCompanionPlugin,
-  "app" | "desktopIntegrations" | "ontology" | "router" | "saveSettings" | "secrets" | "semantic" | "settings"
+  "app" | "desktopIntegrations" | "ontology" | "router" | "saveSettings" | "secrets" | "semantic" | "settings" | "views"
 >;
 
 export function buildOnboarding(host: OnboardingHost): Onboarding {
@@ -54,6 +54,7 @@ export function buildOnboarding(host: OnboardingHost): Onboarding {
     ontology: () => host.ontology(),
     semantic: () => host.semantic(),
     openDesktopIntegrations: () => host.desktopIntegrations().open(),
+    openConnection: () => { void host.views().activateView(); },
     isMobile: () => Platform.isMobile,
   });
 }
@@ -91,6 +92,7 @@ export type ShellHost = Pick<
   | "conversations"
   | "desktopIntegrations"
   | "memory"
+  | "noteFlows"
   | "router"
   | "saveSettings"
   | "semantic"
@@ -101,6 +103,7 @@ export type ShellHost = Pick<
 
 export function buildShell(host: ShellHost): CompanionShell {
   return new CompanionShell({
+    cancelTidy: (id) => host.noteFlows().cancel(id),
     app: host.app,
     settings: () => host.settings,
     saveSettings: () => host.saveSettings(),

@@ -1,4 +1,4 @@
-import { chmod, mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, openSettingsSection, test } from "./fixtures";
@@ -8,8 +8,8 @@ const GUI_PATH = "/usr/bin:/bin:/usr/sbin:/sbin";
 
 test("Codex and OpenCode installed on the login-shell PATH are found when Obsidian runs with the GUI PATH", async ({ rig }) => {
   const harness = await rig.reset();
+  const root = await mkdtemp(join(tmpdir(), "cc-cli-discovery-"));
   try {
-    const root = await mkdtemp(join(tmpdir(), "cc-cli-discovery-"));
     const bin = join(root, "shellbin");
     await mkdir(bin, { recursive: true });
     await writeFile(join(bin, "codex"), `#!/bin/sh
@@ -49,7 +49,13 @@ esac
 
     await expect(codexRow.locator(".cc-conn-status")).toContainText("Codex 9.9.9 · signed in via ChatGPT", { timeout: 10_000 });
     await expect(opencodeRow.locator(".cc-conn-status")).toContainText("OpenCode 8.8.8 · signed in via 2 credentials", { timeout: 10_000 });
+    expect(await pageBackend(harness.page)).toBe("claude");
   } finally {
     await harness.close();
+    await rm(root, { recursive: true, force: true });
   }
 });
+
+function pageBackend(page: import("@playwright/test").Page): Promise<string> {
+  return page.evaluate(() => (window as unknown as { app: { plugins: { plugins: Record<string, { settings: { chatBackend: string } }> } } }).app.plugins.plugins["claude-companion"]!.settings.chatBackend);
+}

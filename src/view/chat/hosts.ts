@@ -23,7 +23,7 @@ export type TranscriptHost = Pick<ClaudeCompanionPlugin, "research" | "router" |
   conversations: () => Pick<ChatConversations, "list">;
 };
 
-export type SetupCardHost = Pick<ClaudeCompanionPlugin, "onboarding" | "router" | "saveSettings" | "secrets" | "settings">;
+export type SetupCardHost = Pick<ClaudeCompanionPlugin, "connection" | "router" | "secrets" | "settings">;
 
 /** The chat view's own needs plus everything it hands to the composer, header, transcript, and setup card. */
 export type ChatViewHost = ComposerHost & Omit<TranscriptHost, "conversations"> & SetupCardHost & Omit<HeaderHost, "conversations"> & {

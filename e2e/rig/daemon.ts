@@ -1,3 +1,4 @@
+import { prepareRigRoot } from "./ownership.ts";
 // The rig daemon: launches Obsidian exactly once, hosts the provider/endpoint/
 // embed stubs and a loopback control API, and survives across `playwright
 // test` invocations. Run via `pnpm run e2e:rig start` (e2e/rig/cli.ts spawns
@@ -61,7 +62,7 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  await rm(RIG_ROOT, { recursive: true, force: true }).catch(() => undefined);
+  await prepareRigRoot(RIG_ROOT);
   const vault = join(RIG_ROOT, "vault");
   const profile = join(RIG_ROOT, "profile");
   await mkdir(vault, { recursive: true });

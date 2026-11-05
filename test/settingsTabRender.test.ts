@@ -215,65 +215,30 @@ describe("settings tab render", () => {
     button!.dispatchEvent({ type: "click" });
   }
 
-  it("uses the same persisted permissions in everyday and advanced views", async () => {
-    const plugin = stubPlugin();
-    const tab = new ClaudeCompanionSettingTab(new App() as never, plugin);
-    const container = tab.containerEl as unknown as FakeElement;
-    openSettingTab(tab);
-    click(container, "Control access to my notes");
-    expect(container.querySelectorAll(".setting-item-name").map((el) => el.textContent)).toEqual(expect.arrayContaining(["Read and search notes", "Create and edit notes"]));
-    await tab.setControlValue("agentAllowWrites", true);
-    click(container, "More vault access settings");
-    expect(tab.getControlValue("agentAllowWrites")).toBe(true);
-    expect(container.querySelectorAll("nav")).toHaveLength(1);
-    expect(container.querySelectorAll(".setting-item-name").map((el) => el.textContent)).not.toContain("Max tool iterations per turn");
-    click(container, "Agent behavior");
-    expect(container.querySelectorAll(".setting-item-name").map((el) => el.textContent)).toContain("Max tool iterations per turn");
-    click(container, "Everyday settings");
-    expect(container.querySelectorAll(".cc-settings-home")).toHaveLength(1);
-    expect(plugin.settings.agentAllowWrites).toBe(true);
-  });
-
-  it("finds a control in a collapsed advanced section from the home search", () => {
-    const plugin = stubPlugin();
-    const tab = new ClaudeCompanionSettingTab(new App() as never, plugin);
-    const container = tab.containerEl as unknown as FakeElement;
-    openSettingTab(tab);
-    const input = container.querySelectorAll("input")[0]!;
-    input.value = "agentMaxIterations";
-    input.dispatchEvent({ type: "input" });
-    expect(container.querySelectorAll(".setting-item-name").map((el) => el.textContent)).toContain("Max tool iterations per turn");
-    expect(container.querySelectorAll(".cc-settings-home")).toHaveLength(0);
-  });
-
-  it("opens the everyday task menu even for an existing advanced user", () => {
-    const plugin = stubPlugin();
-    plugin.settings.settingsShowAdvanced = true;
-    const tab = new ClaudeCompanionSettingTab(new App() as never, plugin);
-    expect(() => openSettingTab(tab)).not.toThrow();
-    const container = tab.containerEl as unknown as FakeElement;
-
-    const items = container.querySelectorAll(".setting-item");
-    expect(items.length).toBeLessThan(10);
-
-    const controls = container.querySelectorAll(".setting-item-control");
-    expect(controls.filter((c) => c.children.length > 0)).toHaveLength(0);
-    expect(container.querySelectorAll(".cc-settings-destination-title").map((b) => b.textContent)).toEqual([
-      "Choose how I chat", "Control access to my notes", "Connect apps & tools", "Capture and find knowledge", "Advanced settings",
-    ]);
-  });
-
-  it("links the open-source repository from the settings home only", () => {
+  it("opens directly on editable provider controls and exposes capture settings in one navigation step", () => {
     const tab = new ClaudeCompanionSettingTab(new App() as never, stubPlugin());
     const container = tab.containerEl as unknown as FakeElement;
     openSettingTab(tab);
-    const links = container.querySelectorAll(".cc-settings-open-source").flatMap((el) => el.querySelectorAll("a"));
-    expect(links.map((a) => [a.textContent, a.getAttribute("href")])).toEqual([
-      ["Star on GitHub", "https://github.com/cavi-ai/companion-for-claude"],
-      ["Report an issue", "https://github.com/cavi-ai/companion-for-claude/issues"],
-    ]);
-    click(container, "Control access to my notes");
-    expect(container.querySelectorAll(".cc-settings-open-source")).toHaveLength(0);
+    expect(container.querySelectorAll(".setting-item-name").map((el) => el.textContent)).toContain("Anthropic API key");
+    expect(container.querySelectorAll(".cc-settings-disclosure")).toHaveLength(0);
+    click(container, "Capture & search");
+    expect(container.querySelectorAll(".setting-item-name").map((el) => el.textContent)).toContain("Auto-enrich on create");
+    click(container, "Back");
+    expect(container.querySelectorAll(".setting-item-name").map((el) => el.textContent)).toContain("Anthropic API key");
+  });
+
+  it("searches controls across categories and returns to the current category", () => {
+    const tab = new ClaudeCompanionSettingTab(new App() as never, stubPlugin());
+    const container = tab.containerEl as unknown as FakeElement;
+    openSettingTab(tab);
+    click(container, "Vault access");
+    const input = container.querySelector("input")!;
+    input.value = "Max response tokens";
+    input.dispatchEvent({ type: "input" });
+    expect(container.querySelectorAll(".setting-item-name").map((el) => el.textContent)).toContain("Max response tokens");
+    click(container, "Back");
+    expect(container.querySelectorAll(".setting-item-name").map((el) => el.textContent)).toContain("Read and search notes");
+    expect(container.querySelector("input")?.value).toBe("");
   });
 
   it("renders on mobile with the desktop-only pages withheld", () => {
@@ -288,7 +253,6 @@ describe("settings tab render", () => {
         .querySelectorAll(".setting-item-name")
         .map((el) => el.textContent);
       expect(names).not.toContain("Enable MCP server");
-      expect(names).not.toContain("Ollama host");
       const backend = flatten(definitionsOf(stubPlugin())).find((d) => (d.control as { key?: string } | undefined)?.key === "chatBackend");
       expect(Object.keys((backend?.control as { options: Record<string, string> }).options)).not.toContain("claude-cli");
       expect(names).not.toContain("Codex model");

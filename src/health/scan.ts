@@ -121,7 +121,7 @@ function companionSections(c: CompanionStatus): HealthSection[] {
     ? {
       id: "connection", group: "companion", title: "Connection", count: 1, severity: "error",
       items: [{ path: "", message: `${c.connection.backend} has no credential — chat cannot send` }],
-      actions: [{ id: "open-setup-wizard", label: "Open setup wizard" }],
+      actions: [{ id: "open-setup-wizard", label: "Connect Companion" }],
     }
     : { id: "connection", group: "companion", title: "Connection", count: 0, severity: "ok", items: [] });
 

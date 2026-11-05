@@ -1,8 +1,8 @@
 import type { Page } from "@playwright/test";
 import { expect, test } from "./fixtures";
 
-const ORIGINAL = "# Garden draft\n\nWater the plants in the morning.\n";
-const CORRECTED = "# Garden draft\n\nWater the plants in the evening.\n";
+const ORIGINAL = "# Garden draft\n\nWater teh plants in the morning.\n";
+const CORRECTED = "# Garden draft\n\nWater the plants in the morning.\n";
 type AppWindow = { app: {
   commands: { executeCommandById(id: string): void };
   workspace: { openLinkText(path: string, source: string, newLeaf: boolean): Promise<void> };
@@ -50,7 +50,7 @@ test("failed title and tag checks report incomplete work and can be retried", as
 });
 
 test("successful copyedits remain reviewable when tagging fails", async ({ rig }, testInfo) => {
-  const { page } = await rig.reset({ extraFiles: { "Garden draft.md": ORIGINAL }, providerFail: [{ match: "precise knowledge-base indexer", status: 503 }], providerReply: [{ match: "meticulous markdown copyeditor", replies: [CORRECTED] }] });
+  const { page } = await rig.reset({ extraFiles: { "Garden draft.md": ORIGINAL }, providerFail: [{ match: "precise knowledge-base indexer", status: 503 }], providerReply: [{ match: "meticulous markdown copyeditor", replies: [JSON.stringify({ complete: true, edits: [{ old_str: "teh plants", new_str: "the plants" }] })] }] });
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
   await openNote(page);
@@ -72,7 +72,7 @@ test("successful copyedits remain reviewable when tagging fails", async ({ rig }
   expect(errors).toEqual([]);
 });
 
-for (const { label, reply, failed } of [{ label: "empty", reply: "   ", failed: true }, { label: "truncated", reply: "# Garden", failed: true }, { label: "unchanged", reply: ORIGINAL, failed: false }]) {
+for (const { label, reply, failed } of [{ label: "empty", reply: "   ", failed: true }, { label: "truncated", reply: "# Garden", failed: true }, { label: "unchanged", reply: JSON.stringify({ complete: true, edits: [] }), failed: false }]) {
   test(`a ${label} copyedit reply has truthful completion feedback`, async ({ rig }) => {
     const { page } = await rig.reset({ extraFiles: { "Garden draft.md": ORIGINAL }, providerReply: [{ match: "/./", replies: [reply] }] });
     const errors: string[] = [];

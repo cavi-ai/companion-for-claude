@@ -17,7 +17,7 @@ import { canDeleteDeviceModel, setCredential } from "./actions";
 import { cliModelItem } from "./cliModels";
 
 export interface ConnectionItemsContext {
-  plugin: Pick<ClaudeCompanionPlugin, "deviceChat" | "onboarding" | "refreshViews" | "router" | "saveSettings" | "settings">;
+  plugin: Pick<ClaudeCompanionPlugin, "connection" | "deviceChat" | "onboarding" | "refreshViews" | "router" | "saveSettings" | "settings">;
   storageBlurb(): string;
   renderStatus(el: HTMLElement, status: ProviderStatus): void;
 }
@@ -30,7 +30,8 @@ function cliStatusItems(ctx: ConnectionItemsContext, backend: CliBackend, cliOf:
       name: backend.label,
       desc: `Status of the ${backend.binary} command this backend runs. Companion never sees your credentials; ${backend.label} holds them.`,
       render: (setting) => {
-        const status = setting.settingEl.createDiv({ cls: "cc-conn-status" });
+        const status = setting.settingEl.querySelector<HTMLElement>(".cc-conn-status")
+          ?? setting.settingEl.createDiv({ cls: "cc-conn-status" });
         const cli = cliOf(plugin.router());
         const probe = cli.probe();
         if (probe) ctx.renderStatus(status, { ok: probe.loggedIn, detail: probe.loggedIn ? `${backend.label} ${probe.version} · signed in via ${probe.method} · ${probe.executable}` : `Not signed in — ${backend.signInHint}.` });
@@ -42,7 +43,6 @@ function cliStatusItems(ctx: ConnectionItemsContext, backend: CliBackend, cliOf:
               const result = await cliOf(plugin.router()).test();
               ctx.renderStatus(status, result);
               plugin.refreshViews();
-              if (result.ok) await plugin.onboarding().runFirstRunPrompts();
             }),
         );
       },
@@ -116,17 +116,28 @@ export function connectionItems(ctx: ConnectionItemsContext): SettingGroupItem[]
             frag.appendText(`. ${ctx.storageBlurb()}`);
           }),
         );
+        let draft = s.apiKey;
+        const status = setting.settingEl.createDiv({ cls: "cc-conn-status", attr: { role: "status" } });
+        let pending = false;
+        let button!: import("obsidian").ButtonComponent;
+        const connect = async (): Promise<void> => {
+          if (pending) return;
+          pending = true;
+          button.setDisabled(true);
+          status.setText("Connecting…");
+          try { ctx.renderStatus(status, await plugin.connection().connect({ backend: "claude", apiKey: draft })); }
+          finally { pending = false; button.setDisabled(false); }
+        };
         setting.addText((text) => {
           text.inputEl.type = "password";
-          text.inputEl.setCssStyles({ width: "320px" });
-          text
-            .setPlaceholder("sk-ant-api…")
-            .setValue(s.apiKey)
-            .onChange(async (v) => {
-              setCredential(s, "apiKey", v);
-              await plugin.saveSettings();
-            });
+          text.inputEl.setAttribute("aria-label", "Anthropic API key");
+          text.setPlaceholder("sk-ant-api…").setValue(draft).onChange((value) => { draft = value; });
+          text.inputEl.addEventListener("keydown", (event) => {
+            if (event.key === "Enter" && !event.isComposing) { event.preventDefault(); draft = text.getValue(); void connect(); }
+          });
         });
+        setting.addButton((btn) => { button = btn; btn.setButtonText("Connect").setCta().onClick(connect); });
+
       },
     },
     {
@@ -174,6 +185,7 @@ export function connectionItems(ctx: ConnectionItemsContext): SettingGroupItem[]
     },
     {
       name: "Save & test connection",
+      visible: () => plugin.settings.authMode !== "apiKey",
       desc: "Saves settings and sends a tiny request to verify your credential.",
       render: (setting) => {
         const status = setting.settingEl.createDiv({ cls: "cc-conn-status" });
@@ -182,12 +194,9 @@ export function connectionItems(ctx: ConnectionItemsContext): SettingGroupItem[]
             .setButtonText("Save & test")
             .setCta()
             .onClick(async () => {
-              await plugin.saveSettings();
               ctx.renderStatus(status, { ok: true, detail: "Testing…" });
-              const result = await plugin.router().anthropic.test();
+              const result = await plugin.connection().connect({ backend: "claude" });
               ctx.renderStatus(status, result);
-              // Prompts held back while there was no credential can run now.
-              if (result.ok) await plugin.onboarding().runFirstRunPrompts();
             }),
         );
       },

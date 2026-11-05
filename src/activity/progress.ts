@@ -9,6 +9,11 @@ export function beginActivity(store: ActivityStore, title: string, kind: Activit
     setMessage(message: string, completed?: number, total?: number): void {
       if (!ended) store.update(id, { currentItem: message, ...(completed === undefined ? {} : { completed }), ...(total === undefined ? {} : { total }) });
     },
+    cancel(): void {
+      if (ended) return;
+      ended = true;
+      store.update(id, { state: "cancelled", recovery: [] });
+    },
     finish(): void {
       if (ended) return;
       ended = true;

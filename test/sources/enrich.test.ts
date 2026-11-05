@@ -407,16 +407,52 @@ describe("enrichCapture — extraction failure", () => {
   });
 });
 
-describe("enrichCapture — re-enriching a CSV", () => {
-  it("modifies the existing sidecar instead of creating a duplicate", async () => {
+describe("enrichCapture — sidecar ownership", () => {
+  const capture = { kind: "datafile" as const, path: "Clippings/sales.csv", basename: "sales", ext: "csv", content: "date,units\n2024,10" };
+  const complete = async () => JSON.stringify({ title: "Sales", summary: "Monthly sales." });
+
+  it("preserves an unrelated note whose name matches the generated title", async () => {
     const app = new App();
-    const complete = async () => JSON.stringify({ title: "Sales", summary: "Monthly sales." });
-    const cap = { kind: "datafile" as const, path: "Clippings/sales.csv", basename: "sales", ext: "csv", content: "date,units\n2024,10" };
-    const r1 = await enrichCapture(deps(app, complete), cap);
-    const r2 = await enrichCapture(deps(app, complete), cap);
-    expect(r2.file.path).toBe(r1.file.path);
-    const sidecars = app.vault.getMarkdownFiles().filter((f) => f.path.startsWith("Clippings/") && f.path.endsWith(".md"));
-    expect(sidecars).toHaveLength(1);
+    const original = "# Sales\n\nUser-owned notes.\n";
+    const existing = app.vault.seed("Clippings/Sales.md", original);
+    const result = await enrichCapture(deps(app, complete), capture);
+    expect(await app.vault.read(existing)).toBe(original);
+    expect(result.file.path).not.toBe(existing.path);
+  });
+
+  it("keeps the sidecar identity, body and custom metadata across title changes", async () => {
+    const app = new App();
+    const first = await enrichCapture(deps(app, complete), capture);
+    const annotated = (await app.vault.read(first.file)).replace("source_enriched:", "reviewer: Franco\nsource_enriched:") + "\nUSER ANNOTATION\n";
+    await app.vault.modify(first.file, annotated);
+    const second = await enrichCapture(deps(app, async () => JSON.stringify({ title: "Updated sales", summary: "Updated summary." })), { ...capture, content: "date,units\n2024,10\n2025,20" });
+    expect(second.file.path).toBe(first.file.path);
+    expect(markdownBody(await app.vault.read(second.file))).toBe(markdownBody(annotated));
+    expect(parseYaml((await app.vault.read(second.file)).split("---")[1]!)).toMatchObject({ reviewer: "Franco", title: "Sales", rows: 2 });
+  });
+
+  it("preserves edits made at the atomic update boundary", async () => {
+    const app = new App();
+    const first = await enrichCapture(deps(app, complete), capture);
+    const process = app.vault.process.bind(app.vault);
+    vi.spyOn(app.vault, "process").mockImplementation(async (file, transform) => {
+      await app.vault.modify(file, (await app.vault.read(file)) + "\nConcurrent annotation.\n");
+      return process(file, transform);
+    });
+    await enrichCapture(deps(app, complete), capture);
+    expect(await app.vault.read(first.file)).toContain("Concurrent annotation.");
+  });
+
+  it("refuses an update when the current sidecar ownership changes", async () => {
+    const app = new App();
+    const first = await enrichCapture(deps(app, complete), capture);
+    const process = app.vault.process.bind(app.vault);
+    vi.spyOn(app.vault, "process").mockImplementation(async (file, transform) => {
+      await app.vault.modify(file, "# Replaced with user-owned content\n");
+      return process(file, transform);
+    });
+    await expect(enrichCapture(deps(app, complete), capture)).rejects.toThrow(/ownership|belongs|changed/);
+    expect(await app.vault.read(first.file)).toBe("# Replaced with user-owned content\n");
   });
 });
 

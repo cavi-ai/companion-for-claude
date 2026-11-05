@@ -1,3 +1,4 @@
+import { recordVaultOwnership } from "./rig/ownership.ts";
 import { expect, test as base } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { ControlClient, PLUGIN_ROOT, liveState } from "./rig/client.ts";
@@ -25,7 +26,7 @@ export interface Rig {
   reloadPlugin(): Promise<void>;
   /** Mutate the renderer's live process.env over CDP (e.g. widen PATH for a liveClaude test). reset() restores the hermetic baseline. */
   setProcessEnv(env: Record<string, string>): Promise<void>;
-  /** No-op: the rig is never torn down by a test. Kept so existing try/finally blocks port unchanged. */
+  /** Flush editor saves and record the owned scenario; keep shared scenarios running. */
   close(options?: { keep?: boolean }): Promise<void>;
 }
 
@@ -47,6 +48,7 @@ async function buildRig(): Promise<Rig> {
   // real HOME), only PATH/SHELL stay hermetic. See rig/daemon.ts.
   const hermeticEnv: Record<string, string> = { SHELL: `${bin}/login-shell`, PATH: `${bin}:/usr/bin:/bin:/usr/sbin:/sbin` };
   let lastTheme: "light" | "dark" = "light";
+  let scenarioActive = false;
 
   const rig: Rig = {
     page,
@@ -60,9 +62,11 @@ async function buildRig(): Promise<Rig> {
     providerServed: () => control.providerServed(),
     githubRequests: () => control.githubRequests(),
     async reset(options: ScenarioOptions = {}) {
+      scenarioActive = false;
       lastTheme = options.theme ?? "light";
       await control.setStubs(options);
       await resetVaultState({ context, page }, state.vault, state.argvLog, ports as StubPorts, PLUGIN_ROOT, options, hermeticEnv, state.obsidianPid);
+      scenarioActive = true;
       return rig;
     },
     async reloadPlugin() {
@@ -71,12 +75,26 @@ async function buildRig(): Promise<Rig> {
     async setProcessEnv(env: Record<string, string>) {
       await setProcessEnv(page, env);
     },
-    async close() { /* the rig outlives every test; nothing to release */ },
+    async close() {
+      if (scenarioActive) {
+        // Flush debounced editor saves without unloading shared serial scenarios.
+        await page.evaluate(async () => {
+          const app = (window as unknown as { app: import("obsidian").App }).app;
+          const saves = app.workspace.getLeavesOfType("markdown").map((leaf) => {
+            const view = leaf.view as import("obsidian").MarkdownView;
+            return view.file ? view.save() : Promise.resolve();
+          });
+          await Promise.all(saves);
+        });
+        await recordVaultOwnership(state.vault);
+      }
+    },
   };
   return rig;
 }
 
-export const test = base.extend<{}, { rig: Rig }>({
+export const test = base.extend<{ _scenarioOwnership: void }, { rig: Rig }>({
+  _scenarioOwnership: [async ({ rig }, use) => { try { await use(); } finally { await rig.close(); } }, { auto: true }],
   rig: [async ({}, use) => {
     const rig = await buildRig();
     await use(rig);

@@ -1,3 +1,4 @@
+import { UtilityUnavailableError } from "../providers/endpointPolicy";
 // Per-note vault flows: link suggestions, "Tidy with Claude", and frontmatter suggestions.
 // Every flow proposes first and writes only what the user accepts.
 
@@ -14,7 +15,6 @@ import { reviewInboxBatchLinks } from "../links/inboxBatchReview";
 import { mentionEdits } from "../links/suggest";
 import { findUnlinkedMentions, linkMention, withLinktext, type LinkCandidate } from "../links/unlinkedMentions";
 import type { OntologyRegistry } from "../ontology/registry";
-import { UtilityUnavailableError } from "../providers/endpointPolicy";
 import type { ProviderRouter } from "../providers/router";
 import { resolveTags } from "../tags/resolve";
 import { selectPromptTags } from "../tags/vocabulary";
@@ -39,6 +39,21 @@ function frontmatterTags(value: unknown): string[] {
 }
 
 export class NoteFlows {
+  private disposed = false;
+  private pending = new Map<string, AbortController>();
+  private reviews = new Set<{ close(): void }>();
+  dispose(): void { this.disposed = true; for (const abort of this.pending.values()) abort.abort(); for (const modal of this.reviews) modal.close(); }
+  cancel(id: string): void { this.pending.get(id)?.abort(); }
+  private assertActive(signal?: AbortSignal): void {
+    if (this.disposed || signal?.aborted) throw new DOMException("Tidy stopped. The remaining changes were not applied.", "AbortError");
+  }
+  private choose<T>(build: (resolve: (value: T | null) => void) => { open(): void; close(): void }): Promise<T | null> {
+    if (this.disposed) return Promise.resolve(null);
+    return new Promise((resolve) => {
+      const modal = build((value) => { this.reviews.delete(modal); resolve(value); });
+      this.reviews.add(modal); modal.open();
+    });
+  }
   constructor(private deps: NoteFlowsDeps) {}
 
   private get app(): App {
@@ -136,12 +151,16 @@ export class NoteFlows {
    */
   async enrichNoteFlow(file: TFile, presetOptions?: EnrichOptions): Promise<void> {
     const options =
-      presetOptions ?? (await new Promise<EnrichOptions | null>((resolve) => new EnrichOptionsModal(this.app, 1, resolve).open()));
-    if (!options) return;
+      presetOptions ?? (await this.choose<EnrichOptions>((resolve) => new EnrichOptionsModal(this.app, 1, resolve)));
+    if (!options || this.disposed) return;
 
     const progress = beginActivity(this.activity, `Tidying ${file.basename}…`);
+    const abort = new AbortController();
+    this.pending.set(progress.id, abort);
+    this.activity.update(progress.id, { recovery: [{ id: "stop-tidy", label: "Stop", kind: "stop" }] });
     try {
-      const proposal = await this.buildEnrichProposal(file, options);
+      const proposal = await this.buildEnrichProposal(file, options, abort.signal);
+      this.assertActive(abort.signal);
       const failures = proposal.failures?.map(({ step, message }) => `${step}: ${message}`).join("\n");
       if (failures) progress.fail(failures);
       if (!proposal.rename && !proposal.frontmatter && !proposal.plan) {
@@ -149,16 +168,17 @@ export class NoteFlows {
         return;
       }
       progress.setMessage("Review proposed changes");
-      const decision = await new Promise<EnrichDecision | null>((resolve) =>
-        new EnrichReviewModal(this.app, proposal, resolve).open(),
-      );
+      const decision = await this.choose<EnrichDecision>((resolve) => new EnrichReviewModal(this.app, proposal, resolve));
       if (!decision) return;
-      await this.applyEnrichDecision(file, proposal, decision);
+      this.assertActive(abort.signal);
+      await this.applyEnrichDecision(file, proposal, decision, abort.signal);
       new Notice(failures ? `Applied selected changes to ${file.basename}. Some Tidy steps failed; run Tidy again to retry.` : `Tidied ${file.basename}.`, failures ? 12000 : 6000);
     } catch (e) {
+      if (abort.signal.aborted || this.disposed) { progress.cancel(); return; }
       progress.fail(e);
       new Notice(`Tidy failed — ${e instanceof Error ? e.message : String(e)}`);
     } finally {
+      this.pending.delete(progress.id);
       progress.finish();
     }
   }
@@ -185,16 +205,18 @@ export class NoteFlows {
   }
 
   /** Compute everything an enrich pass can propose for one note (no writes). */
-  private async buildEnrichProposal(file: TFile, options: EnrichOptions): Promise<EnrichProposal> {
+  private async buildEnrichProposal(file: TFile, options: EnrichOptions, signal?: AbortSignal): Promise<EnrichProposal> {
+    this.assertActive(signal);
     const content = await this.app.vault.cachedRead(file);
     const proposal: EnrichProposal = { path: file.path };
 
     let tagResult: { title: string; tags: string[]; newTags: string[]; summary: string } | null = null;
     if (options.rename || options.frontmatter) {
       try {
-        tagResult = await summarizeAndTag(this.deps.router(), content, vaultVocabulary(this.app));
+        tagResult = await summarizeAndTag(this.deps.router(), content, vaultVocabulary(this.app), signal);
       } catch (e) {
-        if (e instanceof UtilityUnavailableError) throw e;
+        this.assertActive(signal);
+        if (e instanceof UtilityUnavailableError && e.resolution.state === "unavailable-without-Claude" && e.resolution.reason === "fallback-denied") throw e;
         const step = [options.rename ? "Rename note" : "", options.frontmatter ? "Tags & summary" : ""].filter(Boolean).join(" / ");
         (proposal.failures ??= []).push({ step, message: e instanceof Error ? e.message : String(e) });
       }
@@ -216,12 +238,16 @@ export class NoteFlows {
           user: buildLintUser(body),
           maxTokens: lintMaxTokens(body),
           temperature: 0.2,
+          responseFormat: "json",
+          ...(signal ? { signal } : {}),
         });
+        this.assertActive(signal);
         body = parseLintResponse(text, body) ?? body;
       } catch (e) {
         (proposal.failures ??= []).push({ step: "Lint note", message: e instanceof Error ? e.message : String(e) });
       }
     }
+    this.assertActive(signal);
     const edits = diffToEdits(content, body);
     if (edits.length > 0) proposal.plan = planEdits(content, edits);
 
@@ -253,21 +279,26 @@ export class NoteFlows {
     file: TFile,
     proposal: EnrichProposal,
     decision: EnrichDecision,
+    signal?: AbortSignal,
   ): Promise<void> {
+    this.assertActive(signal);
     this.ensureCurrentNote(file);
     if (proposal.plan && decision.accepted.some(Boolean)) {
       const plan = proposal.plan;
-      await this.app.vault.process(file, (current) => applyPlan(current, plan, decision.accepted));
+      await this.app.vault.process(file, (current) => { this.assertActive(signal); return applyPlan(current, plan, decision.accepted); });
     }
     if (proposal.frontmatter && decision.frontmatter) {
       const { addedTags, summary } = proposal.frontmatter;
+      this.assertActive(signal);
       await this.app.fileManager.processFrontMatter(file, (fm) => {
+        this.assertActive(signal);
         const current = fm as Record<string, unknown>;
         current.tags = normalizeTags([...frontmatterTags(current.tags), ...addedTags]);
         if (summary && !current.summary) current.summary = summary;
       });
     }
     if (proposal.rename && decision.rename) {
+      this.assertActive(signal);
       await this.app.fileManager.renameFile(file, proposal.rename.to);
     }
   }

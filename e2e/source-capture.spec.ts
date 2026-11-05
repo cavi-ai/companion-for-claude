@@ -79,6 +79,13 @@ test("Inbox recovery preserves the note when its source URL changes during the p
   } finally {
     source.release();
     await source.close();
+    await rig.page.evaluate(async ({ path, initial, changed }) => {
+      const app = (window as unknown as { app: App }).app;
+      const file = app.vault.getFileByPath(path);
+      if (!file) return;
+      const content = await app.vault.read(file);
+      if (content === initial || content === changed) await app.vault.delete(file);
+    }, { path, initial, changed });
   }
 });
 
