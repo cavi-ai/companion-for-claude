@@ -1,7 +1,8 @@
 // Web Clipper setup: template export, the setup modal, and verification of
 // arriving clips against the schemas the templates were exported from.
 
-import { normalizePath, Notice, type App, type TFile } from "obsidian";
+import { normalizePath, type App, type TFile } from "obsidian";
+import { CompanionNotice as Notice } from "../notice";
 import type { ActivityStore } from "../activity/store";
 import type { PluginSettings } from "../types";
 import { ensureVaultFolder, writeOrReplaceFile } from "../vault/vaultFiles";

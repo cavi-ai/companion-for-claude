@@ -1,4 +1,5 @@
-import { type App, type EventRef, Notice, type TAbstractFile, TFile } from "obsidian";
+import { type App, type EventRef, type TAbstractFile, TFile } from "obsidian";
+import { CompanionNotice as Notice } from "../../notice";
 import { checkCitations, currentCitationTargets, extractCitations, resolveCitationPath, type CheckedCitation, type CitationTarget } from "../../chat/provenance";
 
 const PROVENANCE_ITEMS = 12;

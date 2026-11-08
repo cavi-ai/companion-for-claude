@@ -27,7 +27,7 @@ for (const kind of ["image", "note"] as const) for (const navigate of [false, tr
     await page.screenshot({ path: info.outputPath("source-error-scoped-to-request-draft.png") });
     await page.evaluate(() => { (window as unknown as W).gate?.restore(); });
     if (navigate) {
-      await chat.getByRole("button", { name: "Resume a past conversation", exact: true }).click();
+      await chat.getByRole("button", { name: "Sessions", exact: true }).click();
       await page.locator(".cc-session-row").filter({ hasText: "Source reading conversation" }).click();
       await expect(input).toHaveValue("  Explain my selected source.  ");
     }

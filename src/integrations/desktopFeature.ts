@@ -1,7 +1,8 @@
 // Desktop integrations: the setup modal, its Claude Code and Claude Desktop
 // controller, and the read-only MCP bridge preparation behind it.
 
-import { FileSystemAdapter, Notice, Platform, type App } from "obsidian";
+import { FileSystemAdapter, Platform, type App } from "obsidian";
+import { CompanionNotice as Notice } from "../notice";
 import { sourceActivityDetail } from "../sources/controller";
 import { bridgeHeaderValue, bridgeUrl, generateToken, resolveMcpToken } from "../mcp/clientConfig";
 import type { ProviderRouter } from "../providers/router";

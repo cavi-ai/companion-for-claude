@@ -1,22 +1,22 @@
 # Authentication & cost
 
-Companion can run desktop chat through your installed Claude Code CLI, or talk
-directly to Anthropic with a credential you provide. There is no Companion
+Companion can run desktop chat through an installed Claude Code, Codex, or
+OpenCode CLI, or talk directly to Anthropic with a credential you provide. There is no Companion
 service or account in between.
 
-*Settings → Companion for Claude → Choose how I chat*
+*Settings → Companion for Claude → Chat & models → Provider & model*
 
-## Claude Code backend (desktop)
+## CLI backends (desktop)
 
-Choose **Claude Code — your subscription** as the chat backend to use the
-installed, signed-in `claude` command. Companion does not read or store the
-CLI's credentials. Each saved conversation owns a resumable Claude Code
-session; aborting or losing the process starts a fresh one on the next turn.
-Vault-tool writes keep Companion's normal per-action confirmation.
+Choose Claude Code, Codex, or OpenCode in the chat header’s model picker or the
+provider settings. Companion runs the installed command and leaves its sign-in
+credentials with the CLI. If needed, sign in through that command’s own interface:
+`claude auth login`, `codex login`, or `opencode auth login`.
 
-This backend is desktop-only and covers chat. Background utility tasks such as
-summaries, tagging, and source enrichment still need a direct API credential or
-a local model. If the command is not signed in, run `claude auth login`.
+Conversations retain their own CLI session state. Vault writes use Companion’s
+confirmation flow, including an explicit grant for the current chat session.
+Utility tasks such as summaries, tagging, and source enrichment use their own
+configured provider.
 
 ## Three direct API modes
 
@@ -81,19 +81,15 @@ actionable messages rather than raw HTTP errors.
 
 ## Models
 
-*Settings → Companion for Claude → Choose how I chat → Model*
+Open the model button in the chat header to search choices grouped by backend.
+Desktop CLI groups appear for available commands or the selected CLI backend.
+Configured Ollama and compatible endpoints include their discovered models, and
+the current configured model remains selectable. Wide panes repeat these choices
+in the composer.
 
-| Model | When |
-|---|---|
-| Claude Opus 5 | Most capable — deep reasoning and agentic work |
-| Claude Opus 4.8 | Previous Opus generation — deep reasoning, best artifacts |
-| **Claude Sonnet 5** | Balanced default — fast and strong |
-| Claude Haiku 4.5 | Fastest and cheapest — quick edits and Q&A |
-| Claude Fable 5 | Claude 5 family |
-
-**Custom model id** overrides the dropdown entirely, for a model id newer than
-this build knows about or a gateway-specific name. You can also switch model per
-message from the chat composer.
+**Custom model id** in provider settings selects a model not in the built-in
+Claude list, such as a gateway-specific name. Selecting a model from another
+backend changes the chat route as well as the model.
 
 ## Cost and caching
 
@@ -114,15 +110,15 @@ For direct API credentials, the context-window gauge and session cost estimate
 account for each bucket separately, so what you see reflects what caching
 actually saved rather than pricing every token as fresh input.
 
-Claude Code chat reports subscription usage rather than a dollar estimate;
-billing and limits are owned by the signed-in CLI account.
+CLI chat reports usage rather than an Anthropic API cost estimate; billing and
+limits belong to the provider account used by that CLI.
 
 Other levers: route bulk work to a local model, or let the Auto backend keep you
 running when usage runs out — see [local-models.md](local-models.md).
 
 ## Where credentials are stored
 
-The Claude Code backend stores no Claude credential in Companion. On **Obsidian
+The CLI backends keep their sign-in credentials outside Companion. On **Obsidian
 1.11.5 and later**, every credential Companion does hold — the API key,
 the OAuth token, the custom-endpoint key, the Zotero and Brave Search keys, the
 MCP bridge token, and the two cloud tokens — goes into your device's encrypted

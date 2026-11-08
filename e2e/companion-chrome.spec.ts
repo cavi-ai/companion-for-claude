@@ -40,8 +40,8 @@ test("completed activity clears and Quick Options stays inside compact viewports
       activity.finish(id, { completed: 1, succeeded: 1 });
     });
 
-    const completedIndex = chrome.locator(".cc-activity-indicator.is-succeeded", { hasText: "Building semantic index" });
-    await expect(completedIndex).toContainText("Complete");
+    const completedIndex = chrome.locator(".cc-activity-indicator.is-succeeded");
+    await expect(completedIndex).toHaveAttribute("aria-label", /Complete/);
     await expect(completedIndex).toBeHidden({ timeout: 5_000 });
 
     const promptCards = page.locator(".cc-empty-examples .cc-example");
@@ -104,9 +104,9 @@ test("completed activity clears and Quick Options stays inside compact viewports
         pane.style.inset = "0 0 0 auto";
         pane.style.zIndex = "20";
       }, width);
-      const activityTrigger = chrome.locator(".cc-activity-indicator", { hasText: "Index needs attention" });
+      const activityTrigger = chrome.locator(".cc-activity-indicator");
       await activityTrigger.click();
-      const drawer = chrome.locator(".cc-activity-drawer");
+      const drawer = page.locator(".cc-chat-root .cc-activity-drawer");
       await expect(drawer).toBeVisible();
       const drawerBounds = await drawer.evaluate((element) => {
         const rect = element.getBoundingClientRect();
@@ -145,8 +145,10 @@ test("completed activity clears and Quick Options stays inside compact viewports
     for (const width of [280, 320, 360, 480, 768]) {
       await page.setViewportSize({ width, height: 560 });
       chrome = page.locator(".cc-chat-root .cc-header").last();
-      const trigger = chrome.getByRole("button", { name: /Quick options for/i });
+      const direct = chrome.getByRole("button", { name: /Quick options for/i });
+      const trigger = await direct.isVisible() ? direct : chrome.getByRole("button", { name: "More actions" });
       await trigger.click();
+      if (trigger !== direct) await page.getByRole("button", { name: "Quick options…", exact: true }).click();
       const modal = page.locator(".modal.cc-quick-options-shell");
       await expect(modal).toBeVisible();
 
@@ -183,12 +185,12 @@ test("chat spends no extra header row on quick options", async ({ rig }) => {
 
     const options = header.getByRole("button", { name: /Quick options for/i });
     await expect(options).toHaveCount(1);
-    await expect(header.locator(".cc-header-actions .cc-companion-quick-options")).toHaveCount(1);
+    await expect(header.locator(".cc-header-routing .cc-companion-quick-options")).toHaveCount(1);
 
     // The control is an icon in the actions row, not a label eating the pane.
     const geometry = await options.evaluate((element) => {
       const button = element.getBoundingClientRect();
-      const row = element.closest(".cc-header-actions")!.getBoundingClientRect();
+      const row = element.closest(".cc-header-routing")!.getBoundingClientRect();
       return { buttonWidth: button.width, rowWidth: row.width, text: element.textContent ?? "" };
     });
     expect(geometry.text.trim()).toBe("");
@@ -198,9 +200,9 @@ test("chat spends no extra header row on quick options", async ({ rig }) => {
     const original = page.viewportSize();
     for (const width of [480, 1000]) {
       await page.setViewportSize({ width, height: 700 });
-      const controls = await header.locator(".cc-header-actions .cc-companion-chrome-controls").evaluate((element) => {
+      const controls = await header.locator(".cc-header-routing .cc-companion-chrome-controls").evaluate((element) => {
         const box = element.getBoundingClientRect();
-        const row = element.closest(".cc-header-actions")!.getBoundingClientRect();
+        const row = element.closest(".cc-header-routing")!.getBoundingClientRect();
         return { width: box.width, rowWidth: row.width, display: getComputedStyle(element).display };
       });
       expect(controls.display).toBe("flex");
@@ -209,7 +211,11 @@ test("chat spends no extra header row on quick options", async ({ rig }) => {
     if (original) await page.setViewportSize(original);
 
     // Everything the removed gear reached is still one click away.
-    await options.click();
+    if (await options.isVisible()) await options.click();
+    else {
+      await header.getByRole("button", { name: "More actions" }).click();
+      await page.getByRole("button", { name: "Quick options…", exact: true }).click();
+    }
     const modal = page.locator(".modal.cc-quick-options-shell");
     await expect(modal).toBeVisible();
     await expect(modal.getByRole("button", { name: "Open all settings" })).toBeAttached();

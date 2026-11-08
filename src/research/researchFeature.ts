@@ -2,7 +2,8 @@
 // construction, the discovery coordinators, refresh scheduling, and the
 // plan-note Build action.
 
-import { htmlToMarkdown, MarkdownView, normalizePath, Notice, Platform, requestUrl, TFile, type App, type WorkspaceLeaf } from "obsidian";
+import { htmlToMarkdown, MarkdownView, normalizePath, Platform, requestUrl, TFile, type App, type WorkspaceLeaf } from "obsidian";
+import { CompanionNotice as Notice } from "../notice";
 import type { ActivityStore } from "../activity/store";
 import { PLANNING_INSTRUCTION } from "../artifacts/designSystem";
 import { beginActivity } from "../activity/progress";

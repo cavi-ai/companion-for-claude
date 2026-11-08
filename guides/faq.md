@@ -20,7 +20,7 @@ search — including building the index — all work on mobile.
 
 Four things need special handling because they rely on a desktop-local runtime:
 
-- **Claude Code chat** — the installed CLI backend is desktop-only; use a direct
+- **CLI chat** — Claude Code, Codex, and OpenCode run only on desktop; use a direct
   API credential on mobile.
 - **The MCP bridge** — it runs an HTTP server. Use cloud sessions on mobile instead.
 - **Ollama** — local chat and embedding models need a localhost server. Utility
@@ -37,7 +37,8 @@ To the model provider you configured, and nowhere else. There is **no telemetry,
 no analytics, and no phone-home** — the source contains no analytics SDK, no
 tracking pixel, and no usage-reporting call.
 
-The complete list of hosts the plugin can ever contact:
+Direct network requests made by Companion are listed below. Desktop CLI backends
+contact their own configured providers and services.
 
 | Host | When |
 |---|---|
@@ -63,8 +64,8 @@ to build a local index. Desktop filesystem integrations are disabled on mobile.
 ## API key or subscription?
 
 Either. An **API key** works on desktop and mobile and bills your Anthropic API
-account. On desktop, the **Claude Code** backend uses the installed CLI's sign-in
-without storing a credential in Companion. A **long-term OAuth token** from
+account. On desktop, **Claude Code**, **Codex**, and **OpenCode** use the
+installed CLI’s sign-in without storing its credential in Companion. A **long-term OAuth token** from
 `claude setup-token` is the direct-API subscription alternative.
 
 Both are first-class. What isn't supported is a pasted browser session cookie from
@@ -98,20 +99,20 @@ More in [claude-code-bridge.md](claude-code-bridge.md#troubleshooting).
 
 ## Which models can I use?
 
-Claude Opus 5.5, Claude Opus 4.8, Claude Opus 4.6, **Claude Sonnet 5.5**
-(the default), Claude Haiku 4.5, and Claude Fable 5.1 from the dropdown,
-switchable per message from the composer.
+The chat header’s model picker groups choices by backend: Claude API and Auto,
+available desktop CLIs, configured local endpoints, and on-device models. The
+composer repeats the same choices on wide panes. Local endpoints and CLI backends
+can supply their own model lists; the current configured model remains available.
 
-A **Custom model id** field overrides the dropdown for anything newer than this
-build knows about, or a gateway-specific name. Connection tests always use Haiku
-4.5 so they cost almost nothing.
+Use **Custom model id** in provider settings for a Claude or gateway model outside
+the built-in list. See [models and authentication](auth.md#models).
 
 ## Will it change my notes without asking?
 
-No. Three separate gates:
+Writes follow three separate gates:
 
 - **Edits** use word-level inline review when the note is open and the red/green modal otherwise. Only accepted hunks are written — and that path stays available even with write tools off, because reviewing the diff *is* the approval.
-- **Write tools** (create, append, move, Canvas, Bases, research records) each ask for confirmation before running. Decline and Claude is told, then carries on.
+- **Write tools** (create, append, move, Canvas, Bases, research records) ask for confirmation unless you select **Allow for this session**. Revoke that grant from the chat header’s write-permission button. Decline a call and the model is told, then carries on.
 - **Plan Mode** — the Plan segment of the Ask / Plan / Act mode control in the composer hands Claude the read-only tool set only, whatever your settings say. Use it when you want a proposal, not an action.
 
 If Claude is asked to write with writes off, it's instructed to say so plainly
@@ -129,4 +130,4 @@ Use the community store — that's the released, reviewed build. Use
 
 
 Bugs and feature requests: a GitHub issue. Suspected vulnerabilities: **not** a
-public issue — follow [`SECURITY.md`](https://github.com/cavi-ai/claude-obsidian/blob/4dd506c98e4f98c25b741e4a0bf60e7e93c63446/SECURITY.md).
+public issue — follow [`SECURITY.md`](https://github.com/cavi-ai/claude-obsidian/blob/66650de402f44506559a1b3f42c69dc3c383df1d/SECURITY.md).

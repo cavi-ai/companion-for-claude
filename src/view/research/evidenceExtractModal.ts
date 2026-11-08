@@ -1,4 +1,5 @@
-import { Modal, Notice, type App } from "obsidian";
+import { Modal, type App } from "obsidian";
+import { CompanionNotice as Notice } from "../../notice";
 import { samePassageExcerpt, type ProposedPassage } from "../../research/evidenceExtraction";
 import type { ResearchSourceRecord, SourceLocatorKind } from "../../research/types";
 import { sanitizeLoadError } from "./shared";

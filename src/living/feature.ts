@@ -2,7 +2,8 @@
 // keep it current. A view whose source changed shows so and rebuilds when it is
 // displayed; a failed rebuild waits for Retry instead of trying again.
 
-import { type App, Notice, TFile } from "obsidian";
+import { type App, TFile } from "obsidian";
+import { CompanionNotice as Notice } from "../notice";
 import { errorMessage } from "../records";
 import { completeJsonWithRepair } from "../providers/jsonRepair";
 import type { ProviderSelection } from "../providers/router";

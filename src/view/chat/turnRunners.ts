@@ -1,4 +1,5 @@
-import { Notice, TFile, type App } from "obsidian";
+import { TFile, type App } from "obsidian";
+import { CompanionNotice as Notice } from "../../notice";
 import type { ChatViewHost } from "./hosts";
 import type { ChatSession } from "./chatSession";
 import { providerTurnRunner, type AgentTurnDeps, type AgentTurnHandlers, type AgentTurnResult, type AgentTurnRunner } from "../../agent/loop";

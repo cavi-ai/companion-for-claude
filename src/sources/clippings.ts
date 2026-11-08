@@ -3,7 +3,8 @@
 // research themes in a folder. Each enriches what it needs through the source
 // pipeline, asks the model once per batch, and shows a review before writing.
 
-import { Notice, TFile, TFolder, normalizePath, type App } from "obsidian";
+import { TFile, TFolder, normalizePath, type App } from "obsidian";
+import { CompanionNotice as Notice } from "../notice";
 import type { ActivityStore } from "../activity/store";
 import { beginActivity } from "../activity/progress";
 import { noteExcerpt } from "../markdown/excerpt";

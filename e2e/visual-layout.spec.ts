@@ -56,6 +56,22 @@ async function sizePane(root: Locator, width: number): Promise<void> {
   }, width);
 }
 
+async function chatGeometry(root: Locator): Promise<unknown> {
+  return root.evaluate((element) => {
+    const box = (node: HTMLElement | null) => {
+      if (!node) return null;
+      const rect = node.getBoundingClientRect();
+      return { x: rect.x, y: rect.y, width: rect.width, height: rect.height, right: rect.right, bottom: rect.bottom, clientWidth: node.clientWidth, scrollWidth: node.scrollWidth };
+    };
+    return {
+      root: box(element), header: box(element.querySelector(".cc-header")), composer: box(element.querySelector(".cc-composer")),
+      controls: [...element.querySelectorAll<HTMLElement>(".cc-header button, .cc-composer button, .cc-composer select")]
+        .filter((node) => node.getBoundingClientRect().width > 0)
+        .map((node) => ({ label: node.getAttribute("aria-label") ?? node.textContent, bounds: box(node) })),
+    };
+  });
+}
+
 async function visualIssues(root: Locator): Promise<string[]> {
   return await root.evaluate((element) => {
     const issues: string[] = [];
@@ -135,15 +151,24 @@ test("primary Companion screens are visually contained at real pane breakpoints"
   const harness = await rig.reset();
   const { page } = harness;
   const failures: string[] = [];
+  const geometry: Array<{ surface: string; width: number; bounds: unknown }> = [];
   try {
     await page.setViewportSize({ width: 1280, height: 800 });
     for (const surface of surfaces) {
       const root = await openSurface(page, surface);
-      for (const width of [320, 420, 600]) {
+      for (const width of surface.name === "chat" ? [280, 320, 360, 390, 420, 428, 600, 768] : [320, 420, 600]) {
         await sizePane(root, width);
         await settle(page);
         await page.screenshot({ path: `${OUTPUT}/visual-${surface.name}-${width}-light.png` });
         for (const issue of await visualIssues(root)) failures.push(`${surface.name}@${width}: ${issue}`);
+        if (surface.name === "chat") {
+          geometry.push({ surface: surface.name, width, bounds: await chatGeometry(root) });
+          expect(await root.locator(".cc-composer").evaluate((element) => element.scrollWidth - element.clientWidth), `composer@${width}`).toBeLessThanOrEqual(1);
+          await expect(root.locator(".cc-header-session > .cc-session-title")).toBeVisible();
+          await expect(root.getByRole("button", { name: "Sessions", exact: true })).toBeVisible();
+          for (const label of ["Ask", "Plan", "Act"]) await expect(root.locator(".cc-mode-segment-label").filter({ hasText: new RegExp(`^${label}$`) })).toBeVisible();
+          if (width < 720) await expect(root.locator(".cc-ctl-model")).toBeHidden();
+        }
       }
     }
 
@@ -158,7 +183,12 @@ test("primary Companion screens are visually contained at real pane breakpoints"
       await settingsPage.setViewportSize({ width, height: 700 });
       await settle(settingsPage);
       await settingsPage.screenshot({ path: `${OUTPUT}/visual-settings-${width}-light.png` });
-      for (const issue of await visualIssues(settings)) failures.push(`settings@${width}: ${issue}`);
+      for (const category of ["Chat & models", "Connections", "Files & privacy"]) {
+        await settings.getByRole("button", { name: category, exact: true }).click();
+        await settle(settingsPage);
+        await settingsPage.screenshot({ path: `${OUTPUT}/visual-settings-${width}-${category.split(" ")[0]!.toLowerCase()}-light.png` });
+        for (const issue of await visualIssues(settings)) failures.push(`settings@${width}/${category}: ${issue}`);
+      }
     }
 
     // Resizing the settings window can tear it down on 1.13; closing it is the
@@ -175,6 +205,7 @@ test("primary Companion screens are visually contained at real pane breakpoints"
     await page.screenshot({ path: `${OUTPUT}/visual-chat-320-dark.png` });
     for (const issue of await visualIssues(chat)) failures.push(`chat@320-dark: ${issue}`);
 
+    await test.info().attach("pane-geometry", { body: JSON.stringify(geometry, null, 2), contentType: "application/json" });
     expect(failures, failures.join("\n")).toEqual([]);
   } finally {
     await harness.close();

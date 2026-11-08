@@ -1,4 +1,5 @@
-import { type MarkdownView, Notice } from "obsidian";
+import { type MarkdownView} from "obsidian";
+import { CompanionNotice as Notice } from "../../notice";
 import { quickNotice } from "../../notice";
 import { errorMessage } from "../../records";
 

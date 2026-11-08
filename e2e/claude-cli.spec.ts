@@ -12,7 +12,7 @@ test("chat runs on the Claude Code backend with no API key and reuses the proces
     });
     const chat = page.locator(".cc-chat-root").first();
     await expect(chat).toBeVisible();
-    await expect(chat).toContainText("● Claude Code", { timeout: 15_000 });
+    await expect(chat.getByRole("button", { name: "Choose model and backend: Claude Code · E2e Model", exact: true })).toBeVisible({ timeout: 15_000 });
     const input = chat.locator(".cc-input").first();
     await input.fill("ping");
     await input.press("Enter");
@@ -51,7 +51,7 @@ test("a failed Claude Code result shows an error, not an empty reply", async ({ 
       await app.commands.executeCommandById("claude-companion:open-chat");
     });
     const chat = page.locator(".cc-chat-root").first();
-    await expect(chat).toContainText("● Claude Code", { timeout: 15_000 });
+    await expect(chat.getByRole("button", { name: "Choose model and backend: Claude Code · E2e Model", exact: true })).toBeVisible({ timeout: 15_000 });
     const input = chat.locator(".cc-input").first();
     await input.fill("please make it fail");
     await input.press("Enter");
@@ -72,7 +72,7 @@ test("a skill from the palette runs as a composed turn on the Claude Code backen
       await app.commands.executeCommandById("claude-companion:open-chat");
     });
     const chat = page.locator(".cc-chat-root").first();
-    await expect(chat).toContainText("● Claude Code", { timeout: 15_000 });
+    await expect(chat.getByRole("button", { name: "Choose model and backend: Claude Code · E2e Model", exact: true })).toBeVisible({ timeout: 15_000 });
     const input = chat.locator(".cc-input").first();
     await input.fill("/wikilink-weaver Build plan.md");
     await input.press("Enter");
@@ -99,7 +99,7 @@ test("an unresponsive Claude Code turn survives restart and resumes explicitly",
     await app.commands.executeCommandById("claude-companion:open-chat");
   });
   const chat = harness.page.locator(".cc-chat-root").first();
-  await expect(chat).toContainText("● Claude Code", { timeout: 15_000 });
+  await expect(chat.getByRole("button", { name: "Choose model and backend: Claude Code · E2e Model", exact: true })).toBeVisible({ timeout: 15_000 });
   await chat.locator(".cc-input").fill("hang forever");
   await chat.locator(".cc-input").press("Enter");
   await expect.poll(async () => {

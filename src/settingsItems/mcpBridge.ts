@@ -17,7 +17,7 @@ function codeBlock(containerEl: HTMLElement, label: string, code: string, copyTe
   const wrap = containerEl.createDiv({ cls: "cc-snippet" });
   const head = wrap.createDiv({ cls: "cc-snippet-head" });
   head.createSpan({ text: label });
-  const copy = head.createEl("button", { cls: "cc-action", text: "Copy" });
+  const copy = head.createEl("button", { cls: "cc-snippet-copy", text: "Copy", attr: { "aria-label": `Copy ${label}` } });
   copy.addEventListener("click", () => {
     void navigator.clipboard.writeText(copyText);
     copy.setText("Copied");
@@ -80,7 +80,8 @@ export function mcpItems(ctx: McpBridgeItemsContext): SettingGroupItem[] {
     {
       name: "Bridge status",
       render: (setting) => {
-        const status = setting.settingEl.createDiv({ cls: "cc-conn-status" });
+        const status = setting.settingEl.querySelector<HTMLElement>(".cc-conn-status")
+          ?? setting.settingEl.createDiv({ cls: "cc-setting-detail cc-conn-status", attr: { role: "status" } });
         const running = plugin.mcpRunning();
         status.toggleClass("is-ok", running && s.mcpEnabled);
         status.toggleClass("is-err", s.mcpEnabled && !running);
@@ -108,6 +109,7 @@ export function mcpItems(ctx: McpBridgeItemsContext): SettingGroupItem[] {
       render: (setting) => {
         const r = resolved();
         if (r.source === "none") {
+          setting.settingEl.querySelector(".cc-setting-snippets")?.remove();
           setting.setDesc(`Set an access token (or $${MCP_TOKEN_ENV}) to get connection snippets.`);
           return;
         }
@@ -117,8 +119,12 @@ export function mcpItems(ctx: McpBridgeItemsContext): SettingGroupItem[] {
           ? { port: s.mcpPort, token: mcpTokenEnvRef() } // expands in the user's shell
           : { port: s.mcpPort, token: ctx.tokenReveal.shown ? r.token : maskToken(r.token) };
         const copyInfo = r.source === "env" ? display : real;
-        codeBlock(setting.settingEl, "Advanced Claude Code MCP connection (ordinary use is CLI-first):", claudeCodeCommand(display), claudeCodeCommand(copyInfo));
-        codeBlock(setting.settingEl, "Claude Desktop (add to claude_desktop_config.json):", claudeDesktopConfig(display), claudeDesktopConfig(copyInfo));
+        // Native settings updates reuse the row and clear only native controls.
+        const detail = setting.settingEl.querySelector<HTMLElement>(".cc-setting-snippets")
+          ?? setting.settingEl.createDiv({ cls: "cc-setting-detail cc-setting-snippets" });
+        detail.empty();
+        codeBlock(detail, "Claude Code", claudeCodeCommand(display), claudeCodeCommand(copyInfo));
+        codeBlock(detail, "Claude Desktop", claudeDesktopConfig(display), claudeDesktopConfig(copyInfo));
       },
     },
   ];

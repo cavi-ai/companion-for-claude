@@ -1,6 +1,7 @@
 // Wires the runtime cluster: the build controller, the MCP bridge and the optimize feature.
 
-import { Notice, Platform, TFile, normalizePath } from "obsidian";
+import { Platform, TFile, normalizePath } from "obsidian";
+import { CompanionNotice as Notice } from "../notice";
 import { BuildController, type BuildControllerDeps } from "../build/controller";
 import type ClaudeCompanionPlugin from "../main";
 import { McpBridgeController, type McpBridgeControllerDeps } from "../mcp/bridgeController";

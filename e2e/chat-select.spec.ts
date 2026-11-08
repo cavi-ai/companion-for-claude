@@ -9,7 +9,7 @@ test("an assistant reply's text can be selected with the mouse", async ({ rig })
       await app.commands.executeCommandById("claude-companion:open-chat");
     });
     const chat = page.locator(".cc-chat-root").first();
-    await expect(chat).toContainText("● Claude Code", { timeout: 15_000 });
+    await expect(chat.getByRole("button", { name: "Choose model and backend: Claude Code · E2e Model", exact: true })).toBeVisible({ timeout: 15_000 });
     await chat.locator(".cc-input").fill("ping");
     await chat.locator(".cc-input").press("Enter");
     const reply = chat.locator(".cc-msg.cc-assistant").last();

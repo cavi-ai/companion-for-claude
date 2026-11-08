@@ -135,6 +135,26 @@ describe("SessionDropdown", () => {
     doc.dispatchEvent({ type: "mousedown", target: new FakeElement("div") });
     expect(dropdown.isOpen).toBe(false);
   });
+  it("explicit Close returns focus and reopening preserves search and active identity", () => {
+    const { root, dropdown, anchor } = setup([convo("a", "Alpha"), convo("b", "Beta")], { activeId: "b" });
+    const search = root.querySelector(".cc-session-search")!; search.value = "Beta"; search.dispatchEvent({ type: "input" });
+    click(root.querySelector(".cc-pane-popover-close")!);
+    expect(dropdown.isOpen).toBe(false); expect(anchor.getAttribute("data-focused")).toBe("true");
+    dropdown.open();
+    const reopened = body.querySelector(".cc-session-dropdown")!;
+    expect(reopened.querySelector(".cc-session-search")!.value).toBe("Beta");
+    expect(titles(reopened)).toEqual(["Beta"]); expect(rows(reopened)[0]!.classList.has("is-active")).toBe(true);
+    dropdown.close();
+  });
+
+  it("outside dismissal preserves the clicked control's focus", () => {
+    const { dropdown, anchor } = setup([convo("a", "Alpha")]);
+    const other = body.createEl("button"); other.focus();
+    doc.dispatchEvent({ type: "mousedown", target: other });
+    expect(dropdown.isOpen).toBe(false); expect(anchor.getAttribute("data-focused")).toBeNull();
+    expect(other.getAttribute("data-focused")).toBe("true");
+  });
+
 });
 
 describe("SessionDropdown row menu", () => {

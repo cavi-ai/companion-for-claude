@@ -3,7 +3,7 @@
 In agent mode the model works the vault itself instead of answering from
 whatever you pasted. It searches, reads, follows links, and — when you allow
 it — writes, all inside a single turn, with every step shown to you. The agent
-runs through the direct Claude API, the signed-in Claude Code CLI on desktop,
+runs through the direct Claude API, a signed-in desktop CLI,
 or **fully local** on a tool-capable Ollama model — see
 [Runs on local models](#runs-on-local-models).
 
@@ -57,7 +57,7 @@ trace.
 Web results come back with URLs the model is told to cite. Both tools also join
 the [MCP bridge](claude-code-bridge.md) catalog when enabled.
 
-**Writes — only with *Allow write tools* on, and each one asks you first:**
+**Writes — only with *Allow write tools* on. Each asks first unless you grant access for the session:**
 
 | Tool | What it does |
 |---|---|
@@ -132,7 +132,7 @@ The write tools are withheld from the request rather than discouraged by prompt.
 
 ## The guardrails
 
-- **Per-action confirmation.** Every write tool call pops a confirmation showing what it's about to do. Decline and Claude gets "User declined." and carries on.
+- **Write confirmation.** Each write tool call asks first unless you select **Allow for this session**. The header’s write-permission button revokes that grant. Decline a call and Claude gets "User declined." and carries on.
 - **Fail closed.** If the confirmation handler isn't wired up, write tools return an error rather than running. A mis-wired caller cannot mutate the vault.
 - **Iteration cap.** *Max tool iterations per turn* (default 10, range 1–20) bounds the loop. On hitting it you get a notice — "Stopped after N tool iterations — ask me to continue if the answer is incomplete" — not a silent truncation.
 - **Result truncation.** A single tool result is capped at 8,000 characters, and the cut is labelled inline so Claude knows something was omitted rather than assuming it read everything.
@@ -154,7 +154,7 @@ matter to you:
 
 ## Memory feeds back in
 
-With session memory on (*Settings → Companion for Claude → Advanced settings → Files & privacy → Session memory*,
+With session memory on (*Settings → Companion for Claude → Files & privacy → Session memory*,
 desktop only, default folder `Claude/Sessions`), Claude Code session transcripts
 are digested into per-session notes, and those digests are consolidated into one
 evolving **"What Claude Knows"** note.
@@ -170,12 +170,12 @@ characters, oldest dropped first.
 
 ## Settings reference
 
-*Settings → Companion for Claude → Advanced settings → Vault access*
+*Settings → Companion for Claude → Vault access*
 
 | Setting | Default | Effect |
 |---|---|---|
 | Let Claude use vault tools | On | Enables the read-only loop. Off = plain chat with pre-attached context only. |
-| Allow write tools | On | Adds the 16 write tools when ontology is enabled. Every call still asks first. |
+| Allow write tools | On | Adds the 16 write tools when ontology is enabled. Calls ask first unless you grant access for the session. |
 | Max tool iterations per turn | 10 | Rounds of search/read/write before the model must answer. |
 | Web search tool | Off | Adds `web_search` (engine: DuckDuckGo keyless, or Brave with an API key). |
 | Web fetch tool | Off | Adds `web_fetch` — read one public page per explicit call. |

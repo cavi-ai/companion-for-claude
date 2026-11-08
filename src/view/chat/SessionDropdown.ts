@@ -1,5 +1,6 @@
 import { Menu, Modal, setIcon, type App } from "obsidian";
 import { type Conversation, relativeTime } from "../../conversations/store";
+import { companionPane, PanePopover } from "../panePopover";
 
 type Action = (conversation: Conversation) => void | Promise<void>;
 
@@ -24,9 +25,6 @@ export interface SessionDropdownOptions {
   onClose?: () => void;
 }
 
-const WIDTH = 360;
-const GAP = 4;
-const EDGE = 8;
 const DELETE_ARM_MS = 2500;
 
 class RenameModal extends Modal {
@@ -88,12 +86,7 @@ export class SessionDropdown {
   private armed: { id: string; timer: number } | null = null;
   private visible: Conversation[] = [];
 
-  private readonly onOutside = (evt: { target?: unknown }): void => {
-    if (this.suspended || !this.root) return;
-    const target = evt.target as HTMLElement | null;
-    if (target && (this.root.contains(target) || this.options.anchor.contains(target) || target.closest?.(".menu"))) return;
-    this.close();
-  };
+  private popover: PanePopover | null = null;
 
   constructor(private options: SessionDropdownOptions) {}
 
@@ -103,24 +96,35 @@ export class SessionDropdown {
 
   open(): void {
     if (this.root) return;
-    const root = activeDocument.body.createDiv({ cls: "cc-session-dropdown", attr: { role: "dialog", "aria-label": "Sessions" } });
+    const root = companionPane(this.options.anchor).createDiv({ cls: "cc-session-dropdown", attr: { role: "dialog", "aria-label": "Sessions" } });
     this.root = root;
+    this.options.anchor.setAttribute("aria-expanded", "true");
+    const heading = root.createDiv({ cls: "cc-pane-popover-header" });
+    heading.createEl("h3", { text: "Sessions" });
+    heading.createEl("button", { cls: "cc-pane-popover-close", text: "Close", attr: { type: "button", "aria-label": "Close sessions" } })
+      .addEventListener("click", () => this.close(true));
     this.searchEl = root.createEl("input", {
       cls: "cc-session-search",
       attr: { type: "text", placeholder: "Search sessions…", "aria-label": "Search sessions" },
     });
+    this.searchEl.value = this.query;
     this.searchEl.addEventListener("input", () => {
       this.query = this.searchEl.value;
       this.selected = 0;
       this.renderList();
     });
-    this.listEl = root.createDiv({ cls: "cc-session-list", attr: { role: "listbox" } });
+    this.listEl = root.createDiv({ cls: "cc-session-list cc-pane-popover-body", attr: { role: "listbox" } });
     this.footerEl = root.createDiv({ cls: "cc-session-footer" });
     root.addEventListener("keydown", (evt: KeyboardEvent) => this.onKey(evt));
-    activeDocument.addEventListener("mousedown", this.onOutside, true);
-    this.position();
+    this.popover = new PanePopover({
+      anchor: this.options.anchor,
+      panel: root,
+      onDismiss: (reason) => this.close(reason === "escape"),
+      suspended: () => this.suspended,
+      ignoreOutside: (target) => Boolean(target.closest?.(".menu")),
+    });
     this.render();
-    this.searchEl.focus();
+    this.searchEl.focus({ preventScroll: true });
   }
 
   close(returnFocus = false): void {
@@ -129,9 +133,11 @@ export class SessionDropdown {
     this.root = null;
     if (this.armed) window.clearTimeout(this.armed.timer);
     this.armed = null;
-    activeDocument.removeEventListener("mousedown", this.onOutside, true);
+    this.popover?.dispose();
+    this.popover = null;
+    this.options.anchor.setAttribute("aria-expanded", "false");
     root.remove();
-    if (returnFocus) this.options.anchor.focus();
+    if (returnFocus) this.options.anchor.focus({ preventScroll: true });
     this.options.onClose?.();
   }
 
@@ -140,17 +146,10 @@ export class SessionDropdown {
     if (this.root) this.render();
   }
 
-  private position(): void {
-    if (!this.root) return;
-    const rect = this.options.anchor.getBoundingClientRect();
-    const width = Math.min(WIDTH, activeWindow.innerWidth - EDGE * 2);
-    const left = Math.max(EDGE, Math.min(rect.right - width, activeWindow.innerWidth - width - EDGE));
-    this.root.setCssProps({ top: `${rect.bottom + GAP}px`, left: `${left}px` });
-  }
-
   private render(): void {
     this.renderList();
     this.renderFooter();
+    this.popover?.reposition();
   }
 
   private archivedCount(): number {
@@ -170,7 +169,7 @@ export class SessionDropdown {
     this.selected = Math.min(this.selected, this.visible.length - 1);
     this.visible.forEach((c, index) => {
       const archived = c.archivedAt !== undefined;
-      const row = this.listEl.createDiv({ cls: "cc-session-row", attr: { role: "option" } });
+      const row = this.listEl.createDiv({ cls: "cc-session-row", attr: { role: "option", "aria-selected": String(index === this.selected), ...(c.id === activeId ? { "aria-current": "true" } : {}) } });
       if (index === this.selected) row.addClass("is-selected");
       if (c.id === activeId) row.addClass("is-active");
       if (archived) row.addClass("is-archived");

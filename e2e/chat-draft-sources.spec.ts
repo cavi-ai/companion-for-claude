@@ -39,7 +39,7 @@ test("each resumed draft uses its own selected source after reload", async ({ ri
     await expect(chat.locator(".cc-at-item.is-selected")).toContainText("BContext");
     await input.press("Enter");
     await input.fill("New chat question B.");
-    await chat.getByRole("button", { name: "Resume a past conversation", exact: true }).click();
+    await chat.getByRole("button", { name: "Sessions", exact: true }).click();
     await page.locator(".cc-session-row").filter({ hasText: "Archive conversation" }).click();
     await expect(input).toHaveValue("Follow up on archive A.");
     await chat.locator(".cc-context-trigger").click();
@@ -113,7 +113,7 @@ test("a capture completing in another draft stays with its original question", a
     await expect(context).toContainText("Notes/BContext.md");
     await expect(context).not.toContainText("Page A");
     await context.getByRole("button", { name: "Close message context" }).click();
-    await chat.getByRole("button", { name: "Resume a past conversation", exact: true }).click();
+    await chat.getByRole("button", { name: "Sessions", exact: true }).click();
     await page.locator(".cc-session-row").filter({ hasText: "Article conversation" }).click();
     await expect(input).toHaveValue("Continue with article A.");
     await chat.locator(".cc-context-trigger").click();

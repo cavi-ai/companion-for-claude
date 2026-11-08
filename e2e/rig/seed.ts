@@ -1,9 +1,10 @@
 import { recordVaultOwnership } from "./ownership.ts";
 // Vault seeding: fixture notes + plugin data.json, shared by the daemon's
-// first launch and the fixture's per-scenario reset. Pure fs, no CDP.
+// first launch and the fixture's per-scenario reset. Live resets inject native
+// vault IO; plugin/config state always stays on fs outside the vault file tree.
 
 import { mkdir, readFile, writeFile, copyFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { ScenarioOptions, StubPorts } from "./types.ts";
 
 function note(frontmatter: string, body: string): string { return `---\n${frontmatter}\n---\n\n${body}\n`; }
@@ -30,7 +31,16 @@ export async function installPluginBuild(vault: string, buildDir: string): Promi
   for (const file of ["main.js", "manifest.json", "styles.css"]) await copyFile(join(buildDir, file), join(plugin, file));
 }
 
-export async function seedVault(vault: string, ports: StubPorts, options: ScenarioOptions, buildDir: string): Promise<void> {
+export interface FixtureIO {
+  mkdir(path: string): Promise<void>;
+  writeFile(path: string, content: string | Uint8Array): Promise<void>;
+}
+
+export async function seedVault(vault: string, ports: StubPorts, options: ScenarioOptions, buildDir: string, fixtureIO?: FixtureIO): Promise<void> {
+  const fixtures = fixtureIO ?? {
+    mkdir: async (path: string) => { await mkdir(join(vault, path), { recursive: true }); },
+    writeFile: async (path: string, content: string | Uint8Array) => { await writeFile(join(vault, path), content); },
+  };
   const obsidian = join(vault, ".obsidian");
   await installPluginBuild(vault, buildDir);
   const plugin = join(obsidian, "plugins", "claude-companion");
@@ -63,42 +73,42 @@ export async function seedVault(vault: string, ports: StubPorts, options: Scenar
     ? { settings: firstRunSettings }
     : { settings }));
 
-  const alpha = join(vault, "Research", "Alpha");
-  for (const folder of ["Sources", "Evidence", "Claims", "Questions", "Documents"]) await mkdir(join(alpha, folder), { recursive: true });
-  await writeFile(join(alpha, "Project.md"), note('title: "Continuity research"\ntype: "research-project"\nproject: "[[Research/Alpha/Project.md]]"\nquestion: "How does evidence retain continuity?"\nstage: write\nstatus: active', "# Continuity research"));
-  await writeFile(join(alpha, "Sources", "Study.md"), note('title: "Continuity study"\ntype: "research-source"\nproject: "[[Research/Alpha/Project.md]]"\nsource_kind: web\nurl: "https://example.test/study"\ncontent_fingerprint: "sha256:new"', "# Source\n\nCaptured study."));
-  await writeFile(join(alpha, "Evidence", "Stale result.md"), note('title: "Stale result"\ntype: "evidence"\nproject: "[[Research/Alpha/Project.md]]"\nsource: "[[Research/Alpha/Sources/Study.md]]"\nsource_fingerprint: "sha256:old"\nlocator_kind: page\nlocator_value: "4"\nreview_state: reviewed', "> Continuity improves with provenance."));
-  await writeFile(join(alpha, "Evidence", "Challenge.md"), note('title: "Challenge"\ntype: "evidence"\nproject: "[[Research/Alpha/Project.md]]"\nsource: "[[Research/Alpha/Sources/Study.md]]"\nlocator_kind: page\nlocator_value: "8"\nreview_state: proposed', "> Continuity varies by workflow."));
-  await writeFile(join(alpha, "Claims", "Continuity claim.md"), note('title: "Continuity claim"\ntype: "claim"\nproject: "[[Research/Alpha/Project.md]]"\nproposition: "Provenance preserves continuity."\nconfidence: moderate\nreview_state: reviewed\nsupports:\n  - "[[Research/Alpha/Evidence/Stale result.md]]"\nchallenges:\n  - "[[Research/Alpha/Evidence/Challenge.md]]"\ncontextualizes: []\nlimitations:\n  - "One workflow was studied"', "# Claim"));
-  await writeFile(join(alpha, "Questions", "Mechanism.md"), note('title: "Mechanism"\ntype: "research-question"\nproject: "[[Research/Alpha/Project.md]]"\nquestion: "Which mechanism matters?"\nstatus: open\nabout: "[[Research/Alpha/Claims/Continuity claim.md]]"', "# Open question"));
-  await writeFile(join(alpha, "Documents", "Draft.md"), note('title: "White paper"\ntype: "research-document"\nproject: "[[Research/Alpha/Project.md]]"\ndocument_kind: draft\nclaims:\n  - "[[Research/Alpha/Claims/Continuity claim.md]]"', "# White paper\n\nDraft fixture."));
+  const alpha = join("Research", "Alpha");
+  for (const folder of ["Sources", "Evidence", "Claims", "Questions", "Documents"]) await fixtures.mkdir(join(alpha, folder));
+  await fixtures.writeFile(join(alpha, "Project.md"), note('title: "Continuity research"\ntype: "research-project"\nproject: "[[Research/Alpha/Project.md]]"\nquestion: "How does evidence retain continuity?"\nstage: write\nstatus: active', "# Continuity research"));
+  await fixtures.writeFile(join(alpha, "Sources", "Study.md"), note('title: "Continuity study"\ntype: "research-source"\nproject: "[[Research/Alpha/Project.md]]"\nsource_kind: web\nurl: "https://example.test/study"\ncontent_fingerprint: "sha256:new"', "# Source\n\nCaptured study."));
+  await fixtures.writeFile(join(alpha, "Evidence", "Stale result.md"), note('title: "Stale result"\ntype: "evidence"\nproject: "[[Research/Alpha/Project.md]]"\nsource: "[[Research/Alpha/Sources/Study.md]]"\nsource_fingerprint: "sha256:old"\nlocator_kind: page\nlocator_value: "4"\nreview_state: reviewed', "> Continuity improves with provenance."));
+  await fixtures.writeFile(join(alpha, "Evidence", "Challenge.md"), note('title: "Challenge"\ntype: "evidence"\nproject: "[[Research/Alpha/Project.md]]"\nsource: "[[Research/Alpha/Sources/Study.md]]"\nlocator_kind: page\nlocator_value: "8"\nreview_state: proposed', "> Continuity varies by workflow."));
+  await fixtures.writeFile(join(alpha, "Claims", "Continuity claim.md"), note('title: "Continuity claim"\ntype: "claim"\nproject: "[[Research/Alpha/Project.md]]"\nproposition: "Provenance preserves continuity."\nconfidence: moderate\nreview_state: reviewed\nsupports:\n  - "[[Research/Alpha/Evidence/Stale result.md]]"\nchallenges:\n  - "[[Research/Alpha/Evidence/Challenge.md]]"\ncontextualizes: []\nlimitations:\n  - "One workflow was studied"', "# Claim"));
+  await fixtures.writeFile(join(alpha, "Questions", "Mechanism.md"), note('title: "Mechanism"\ntype: "research-question"\nproject: "[[Research/Alpha/Project.md]]"\nquestion: "Which mechanism matters?"\nstatus: open\nabout: "[[Research/Alpha/Claims/Continuity claim.md]]"', "# Open question"));
+  await fixtures.writeFile(join(alpha, "Documents", "Draft.md"), note('title: "White paper"\ntype: "research-document"\nproject: "[[Research/Alpha/Project.md]]"\ndocument_kind: draft\nclaims:\n  - "[[Research/Alpha/Claims/Continuity claim.md]]"', "# White paper\n\nDraft fixture."));
 
-  const beta = join(vault, "Research", "Beta"); await mkdir(beta, { recursive: true });
-  await writeFile(join(beta, "Project.md"), note('title: "Empty project"\ntype: "research-project"\nproject: "[[Research/Beta/Project.md]]"\nquestion: "What should we investigate?"\nstage: frame\nstatus: active', "# Empty project"));
+  const beta = join("Research", "Beta"); await fixtures.mkdir(beta);
+  await fixtures.writeFile(join(beta, "Project.md"), note('title: "Empty project"\ntype: "research-project"\nproject: "[[Research/Beta/Project.md]]"\nquestion: "What should we investigate?"\nstage: frame\nstatus: active', "# Empty project"));
 
-  const gamma = join(vault, "Research", "Gamma");
-  for (const folder of ["Sources", "Evidence", "Claims", "Documents"]) await mkdir(join(gamma, folder), { recursive: true });
-  await writeFile(join(gamma, "Project.md"), note('title: "Gamma research"\ntype: "research-project"\nproject: "[[Research/Gamma/Project.md]]"\nquestion: "Does Gamma hold?"\nstage: write\nstatus: active', "# Gamma research"));
-  await writeFile(join(gamma, "Sources", "Gamma study.md"), note('title: "Gamma study"\ntype: "research-source"\nproject: "[[Research/Gamma/Project.md]]"\nsource_kind: web\nurl: "https://example.test/gamma"\ncontent_fingerprint: "sha256:g1"', "# Source\n\nGamma study."));
-  await writeFile(join(gamma, "Evidence", "Gamma result.md"), note('title: "Gamma result"\ntype: "evidence"\nproject: "[[Research/Gamma/Project.md]]"\nsource: "[[Research/Gamma/Sources/Gamma study.md]]"\nsource_fingerprint: "sha256:g1"\nlocator_kind: page\nlocator_value: "2"\nreview_state: reviewed', "> Gamma improves continuity."));
-  await writeFile(join(gamma, "Claims", "Gamma claim.md"), note('title: "Gamma claim"\ntype: "claim"\nproject: "[[Research/Gamma/Project.md]]"\nproposition: "Gamma preserves continuity."\nconfidence: moderate\nreview_state: reviewed\nsupports:\n  - "[[Research/Gamma/Evidence/Gamma result.md]]"\nchallenges: []\ncontextualizes: []\nlimitations: []', "# Claim"));
+  const gamma = join("Research", "Gamma");
+  for (const folder of ["Sources", "Evidence", "Claims", "Documents"]) await fixtures.mkdir(join(gamma, folder));
+  await fixtures.writeFile(join(gamma, "Project.md"), note('title: "Gamma research"\ntype: "research-project"\nproject: "[[Research/Gamma/Project.md]]"\nquestion: "Does Gamma hold?"\nstage: write\nstatus: active', "# Gamma research"));
+  await fixtures.writeFile(join(gamma, "Sources", "Gamma study.md"), note('title: "Gamma study"\ntype: "research-source"\nproject: "[[Research/Gamma/Project.md]]"\nsource_kind: web\nurl: "https://example.test/gamma"\ncontent_fingerprint: "sha256:g1"', "# Source\n\nGamma study."));
+  await fixtures.writeFile(join(gamma, "Evidence", "Gamma result.md"), note('title: "Gamma result"\ntype: "evidence"\nproject: "[[Research/Gamma/Project.md]]"\nsource: "[[Research/Gamma/Sources/Gamma study.md]]"\nsource_fingerprint: "sha256:g1"\nlocator_kind: page\nlocator_value: "2"\nreview_state: reviewed', "> Gamma improves continuity."));
+  await fixtures.writeFile(join(gamma, "Claims", "Gamma claim.md"), note('title: "Gamma claim"\ntype: "claim"\nproject: "[[Research/Gamma/Project.md]]"\nproposition: "Gamma preserves continuity."\nconfidence: moderate\nreview_state: reviewed\nsupports:\n  - "[[Research/Gamma/Evidence/Gamma result.md]]"\nchallenges: []\ncontextualizes: []\nlimitations: []', "# Claim"));
   const v1Envelope = { id: "gamma-claim", claimPaths: ["Research/Gamma/Claims/Gamma claim.md"], evidence: [{ path: "Research/Gamma/Evidence/Gamma result.md", fingerprint: "sha256:g1" }], citations: [{ key: "source-gamma-study", sourcePath: "Research/Gamma/Sources/Gamma study.md" }], provider: "companion", model: "evidence-outline-v1", generatedAt: "outline" };
   const v1Content = "Gamma preserves continuity.";
   const v1Section = `<!-- cavi:draft-section version=1 meta=${encodeURIComponent(JSON.stringify(v1Envelope))} fingerprint=fnv1a-${fnv1aHex(v1Content)} -->\n${v1Content}\n<!-- cavi:draft-section:end id=${v1Envelope.id} -->`;
-  await writeFile(join(gamma, "Documents", "Outline.md"), note('title: "Gamma outline"\ntype: "research-document"\nproject: "[[Research/Gamma/Project.md]]"\ndocument_kind: outline\nclaims:\n  - "[[Research/Gamma/Claims/Gamma claim.md]]"', `# Gamma outline\n\n${v1Section}`));
+  await fixtures.writeFile(join(gamma, "Documents", "Outline.md"), note('title: "Gamma outline"\ntype: "research-document"\nproject: "[[Research/Gamma/Project.md]]"\ndocument_kind: outline\nclaims:\n  - "[[Research/Gamma/Claims/Gamma claim.md]]"', `# Gamma outline\n\n${v1Section}`));
 
-  const longReference = join(vault, "Reference material with a deliberately long folder name");
-  await mkdir(longReference, { recursive: true });
-  await writeFile(join(longReference, "A very long note title that must truncate without widening the composer.md"), "# Long fixture\n");
-  await writeFile(join(longReference, "Study.pdf"), Buffer.from("%PDF-1.4\n%e2e\n"));
-  await writeFile(join(longReference, "Figure.png"), Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
-  await writeFile(join(vault, "Build plan.md"), "# Build plan\n\n- [ ] Create the parser\n- [ ] Wire the interface\n");
+  const longReference = join("Reference material with a deliberately long folder name");
+  await fixtures.mkdir(longReference);
+  await fixtures.writeFile(join(longReference, "A very long note title that must truncate without widening the composer.md"), "# Long fixture\n");
+  await fixtures.writeFile(join(longReference, "Study.pdf"), Buffer.from("%PDF-1.4\n%e2e\n"));
+  await fixtures.writeFile(join(longReference, "Figure.png"), Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+  await fixtures.writeFile("Build plan.md", "# Build plan\n\n- [ ] Create the parser\n- [ ] Wire the interface\n");
 
   if (options.extraFiles) {
     for (const [rel, content] of Object.entries(options.extraFiles)) {
-      const dest = join(vault, rel);
-      await mkdir(join(dest, ".."), { recursive: true });
-      await writeFile(dest, content);
+      const dest = rel;
+      await fixtures.mkdir(dirname(dest));
+      await fixtures.writeFile(dest, content);
     }
   }
   await recordVaultOwnership(vault);

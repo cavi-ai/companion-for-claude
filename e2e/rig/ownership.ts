@@ -41,10 +41,19 @@ export async function assertOwnedVault(vault: string): Promise<Snapshot> {
   return actual;
 }
 
-export async function resetOwnedVault(vault: string): Promise<void> {
+export interface VaultDeletion {
+  deleteFile(path: string): Promise<void>;
+  deleteDirectory(path: string): Promise<void>;
+}
+
+export async function resetOwnedVault(vault: string, deletion?: VaultDeletion): Promise<void> {
   const owned = await assertOwnedVault(vault);
-  for (const path of Object.keys(owned.files)) await rm(join(vault, path));
-  for (const path of owned.directories.sort((a, b) => b.length - a.length)) await rmdir(join(vault, path));
+  const io = deletion ?? {
+    deleteFile: async (path: string) => { await rm(join(vault, path)); },
+    deleteDirectory: async (path: string) => { await rmdir(join(vault, path)); },
+  };
+  for (const path of Object.keys(owned.files)) await io.deleteFile(path);
+  for (const path of owned.directories.sort((a, b) => b.length - a.length)) await io.deleteDirectory(path);
 }
 
 /** Never erase the shared rig root at launch, especially after somebody added real notes. */

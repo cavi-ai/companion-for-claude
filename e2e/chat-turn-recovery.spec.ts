@@ -7,7 +7,7 @@ test("a hung Claude Code turn stays visible, stops, and allows the next request"
     await app.commands.executeCommandById("claude-companion:open-chat");
   });
   const chat = page.locator(".cc-chat-root").first();
-  await expect(chat).toContainText("● Claude Code", { timeout: 15_000 });
+  await expect(chat.getByRole("button", { name: "Choose model and backend: Claude Code · E2e Model", exact: true })).toBeVisible({ timeout: 15_000 });
 
   await chat.locator(".cc-input").fill("hang forever");
   await chat.locator(".cc-input").press("Enter");
@@ -30,7 +30,7 @@ test("saved prompts can be reused and the last answer regenerated after plugin r
     await app.commands.executeCommandById("claude-companion:open-chat");
   });
   const chat = page.locator(".cc-chat-root").first();
-  await expect(chat).toContainText("● Claude Code", { timeout: 15_000 });
+  await expect(chat.getByRole("button", { name: "Choose model and backend: Claude Code · E2e Model", exact: true })).toBeVisible({ timeout: 15_000 });
   await chat.locator(".cc-input").fill("ping");
   await chat.locator(".cc-input").press("Enter");
   await expect(chat.locator(".cc-msg.cc-assistant").last()).toContainText("pong from claude code", { timeout: 30_000 });
@@ -58,7 +58,7 @@ test("a saved edit can be reviewed and applied after plugin reload", async ({ ri
     await app.commands.executeCommandById("claude-companion:open-chat");
   });
   const chat = page.locator(".cc-chat-root").first();
-  await expect(chat).toContainText("● Claude Code", { timeout: 15_000 });
+  await expect(chat.getByRole("button", { name: "Choose model and backend: Claude Code · E2e Model", exact: true })).toBeVisible({ timeout: 15_000 });
   await chat.locator(".cc-input").fill("ping");
   await chat.locator(".cc-input").press("Enter");
   await expect(chat.locator(".cc-msg.cc-assistant").last()).toContainText("pong from claude code", { timeout: 30_000 });
@@ -104,7 +104,7 @@ test("a saved edit inside a table is reviewed in the modal, not inline, in Live 
   await openTable();
   await openChat();
   const chat = page.locator(".cc-chat-root").first();
-  await expect(chat).toContainText("● Claude Code", { timeout: 15_000 });
+  await expect(chat.getByRole("button", { name: "Choose model and backend: Claude Code · E2e Model", exact: true })).toBeVisible({ timeout: 15_000 });
   await chat.locator(".cc-input").fill("ping");
   await chat.locator(".cc-input").press("Enter");
   await expect(chat.locator(".cc-msg.cc-assistant").last()).toContainText("pong from claude code", { timeout: 30_000 });
@@ -143,7 +143,7 @@ test("a saved edit can be discarded without touching the note", async ({ rig }) 
     await app.commands.executeCommandById("claude-companion:open-chat");
   });
   const chat = page.locator(".cc-chat-root").first();
-  await expect(chat).toContainText("● Claude Code", { timeout: 15_000 });
+  await expect(chat.getByRole("button", { name: "Choose model and backend: Claude Code · E2e Model", exact: true })).toBeVisible({ timeout: 15_000 });
   await chat.locator(".cc-input").fill("ping");
   await chat.locator(".cc-input").press("Enter");
   await expect(chat.locator(".cc-msg.cc-assistant").last()).toContainText("pong from claude code", { timeout: 30_000 });

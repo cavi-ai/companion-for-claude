@@ -2,7 +2,8 @@ import { UtilityUnavailableError } from "../providers/endpointPolicy";
 // Per-note vault flows: link suggestions, "Tidy with Claude", and frontmatter suggestions.
 // Every flow proposes first and writes only what the user accepts.
 
-import { Notice, TFile, TFolder, type App } from "obsidian";
+import { TFile, TFolder, type App } from "obsidian";
+import { CompanionNotice as Notice } from "../notice";
 import type { ActivityStore } from "../activity/store";
 import { beginActivity } from "../activity/progress";
 import { sanitizeFileName } from "../artifacts/parse";

@@ -1,4 +1,5 @@
-import { ItemView, Notice, type WorkspaceLeaf } from "obsidian";
+import { ItemView, type WorkspaceLeaf } from "obsidian";
+import { CompanionNotice as Notice } from "../notice";
 import { buildArgument, CLAIM_STATUS_LABEL, type ArgumentModel, type ClaimCard, type RecordLink } from "../research/argument";
 import { auditProject, type AuditFinding } from "../research/audit";
 import type { DraftCoordinator } from "../research/draftCoordinator";

@@ -34,7 +34,7 @@ for (const action of ["accepted", "selection", "refused"] as const) {
     const chat = page.locator(".cc-chat-root");
     const input = chat.locator(".cc-input");
     const send = () => chat.getByRole("button", { name: /^Send(?: message)?$/ }).click();
-    await expect(chat.locator(".cc-backend-pill")).toContainText("Claude Code");
+    await expect(chat.locator(".cc-model-backend")).toContainText("Claude Code");
     await input.fill("Start the archive discussion.");
     await send();
     await expect(chat.locator(".cc-assistant .cc-body").last()).toHaveText("pong from claude code");

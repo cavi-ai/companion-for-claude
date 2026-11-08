@@ -1,10 +1,11 @@
+import { CompanionNotice as Notice } from "./notice";
 import { ConnectionController } from "./providers/connection";
 import { registerNativeResultImport } from "./native/controller";
 import { registerDeviceGpuCheck } from "./device/controller";
 import { DeviceChatClient } from "./device/client";
 import { DeviceProvider } from "./providers/device";
 import { createEmbedWorker } from "./semantic/transformers/workerSource";
-import { FileSystemAdapter, htmlToMarkdown, MarkdownView, Notice, parseYaml, Platform, Plugin, requestUrl, WorkspaceLeaf } from "obsidian";
+import { FileSystemAdapter, htmlToMarkdown, MarkdownView, parseYaml, Platform, Plugin, requestUrl, WorkspaceLeaf } from "obsidian";
 import { ChatView, CHAT_VIEW_TYPE } from "./view/ChatView";
 import { MemoryView, MEMORY_VIEW_TYPE } from "./view/MemoryView";
 import { InboxView, INBOX_VIEW_TYPE } from "./view/InboxView";

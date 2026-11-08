@@ -1,7 +1,8 @@
 // Publishing and cloud dispatch: the Gist publish controller, the published-note
 // registry persisted in data.json, and the cloud session controller.
 
-import { MarkdownView, normalizePath, Notice, requestUrl, TFile, type App } from "obsidian";
+import { MarkdownView, normalizePath, requestUrl, TFile, type App } from "obsidian";
+import { CompanionNotice as Notice } from "../notice";
 import type { ActivityStore } from "../activity/store";
 import { CloudController } from "../cloud/controller";
 import type { PluginSettings } from "../types";

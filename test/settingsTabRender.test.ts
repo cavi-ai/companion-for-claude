@@ -218,6 +218,7 @@ describe("settings tab render", () => {
   it("opens directly on editable provider controls and exposes capture settings in one navigation step", () => {
     const tab = new ClaudeCompanionSettingTab(new App() as never, stubPlugin());
     const container = tab.containerEl as unknown as FakeElement;
+    expect(container.classList.has("cc-settings-surface")).toBe(true);
     openSettingTab(tab);
     expect(container.querySelectorAll(".setting-item-name").map((el) => el.textContent)).toContain("Anthropic API key");
     expect(container.querySelectorAll(".cc-settings-disclosure")).toHaveLength(0);
@@ -262,6 +263,78 @@ describe("settings tab render", () => {
       Platform.isMobile = false;
       Platform.isDesktop = true;
     }
+  });
+});
+
+describe("rich settings details", () => {
+  it("keeps a populated CLI status beneath its label and Check action", () => {
+    const plugin = stubPlugin();
+    const router = plugin.router();
+    router.codexCli.probe = () => ({ loggedIn: true, version: "1.2.3", method: "API key", executable: "/opt/tools/codex" }) as never;
+    plugin.router = () => router;
+    const row = flatten(definitionsOf(plugin)).find((item) => item.name === "Codex")!;
+    const setting = new Setting(new FakeElement() as unknown as HTMLElement);
+    row.render!(setting, undefined);
+    const detail = setting.settingEl.querySelector(".cc-setting-detail")!;
+    expect(detail.parent).toBe(setting.settingEl);
+    expect(detail.getAttribute("role")).toBe("status");
+    expect(detail.textContent).toContain("/opt/tools/codex");
+    expect(setting.controlEl.querySelector("button")?.textContent).toBe("Check Codex");
+    expect(setting.controlEl.querySelector(".cc-setting-detail")).toBeNull();
+  });
+
+  it("stacks masked MCP snippets in one detail slot with independent Copy actions", () => {
+    const plugin = stubPlugin();
+    plugin.settings.mcpEnabled = true;
+    plugin.settings.mcpToken = "test-secret-token-never-rendered";
+    const row = flatten(definitionsOf(plugin)).find((item) => item.name === "Connection snippets")!;
+    const setting = new Setting(new FakeElement() as unknown as HTMLElement);
+    row.render!(setting, undefined);
+    const detail = setting.settingEl.querySelector(".cc-setting-detail")!;
+    expect(detail.parent).toBe(setting.settingEl);
+    expect(detail.querySelectorAll(".cc-snippet")).toHaveLength(2);
+    expect(detail.querySelectorAll(".cc-snippet-copy").map((button) => button.getAttribute("aria-label"))).toEqual(["Copy Claude Code", "Copy Claude Desktop"]);
+    const code = detail.querySelectorAll("code").map((element) => element.textContent).join("\n");
+    expect(code).not.toContain("test-secret-token-never-rendered");
+    expect(code).toContain("127.0.0.1");
+  });
+
+  it("reuses snippet details when the native host renders an existing row again", () => {
+    const plugin = stubPlugin();
+    plugin.settings.mcpEnabled = true;
+    plugin.settings.mcpToken = "test-token";
+    const row = flatten(definitionsOf(plugin)).find((item) => item.name === "Connection snippets")!;
+    const setting = new Setting(new FakeElement() as unknown as HTMLElement);
+    row.render!(setting, undefined);
+    const first = setting.settingEl.querySelector(".cc-setting-snippets");
+    setting.controlEl.empty();
+    row.render!(setting, undefined);
+    expect(setting.settingEl.querySelectorAll(".cc-setting-snippets")).toHaveLength(1);
+    expect(setting.settingEl.querySelector(".cc-setting-snippets")).toBe(first);
+    expect(setting.settingEl.querySelectorAll(".cc-snippet")).toHaveLength(2);
+    plugin.settings.mcpToken = "";
+    row.render!(setting, undefined);
+    expect(setting.settingEl.querySelectorAll(".cc-snippet")).toHaveLength(0);
+  });
+
+  it("keeps one current status detail when connection rows are reused", () => {
+    const plugin = stubPlugin();
+    for (const name of ["Anthropic API key", "Environment credential", "Save & test connection", "Bridge status"]) {
+      const row = flatten(definitionsOf(plugin)).find((item) => item.name === name)!;
+      const setting = new Setting(new FakeElement() as unknown as HTMLElement);
+      row.render!(setting, undefined);
+      const first = setting.settingEl.querySelector(".cc-conn-status");
+      setting.controlEl.empty();
+      row.render!(setting, undefined);
+      expect(setting.settingEl.querySelectorAll(".cc-conn-status"), name).toHaveLength(1);
+      expect(setting.settingEl.querySelector(".cc-conn-status"), name).toBe(first);
+    }
+  });
+
+  it("gives the system prompt eight editable lines without changing scalar controls", () => {
+    const definitions = flatten(definitionsOf());
+    expect(definitions.find((item) => item.name === "System prompt")?.control).toMatchObject({ type: "textarea", key: "systemPrompt", rows: 8 });
+    expect(definitions.find((item) => item.name === "Context character budget")?.control).toMatchObject({ type: "number", key: "contextCharBudget" });
   });
 });
 

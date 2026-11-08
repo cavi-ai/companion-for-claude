@@ -14,8 +14,9 @@ test("device backend exposes its download controls and fails closed without cach
     await app.commands.executeCommandById("claude-companion:open-chat");
   });
   const chat = page.locator(".cc-chat-root").first();
-  await expect(chat.locator(".cc-backend-pill")).toContainText("On-device GPU");
-  await expect(chat.locator(".cc-model").first()).toContainText("SmolLM2 360M · on-device");
+  await expect(chat.locator(".cc-model-backend")).toHaveText("On-device");
+  await expect(chat.locator(".cc-model-text")).toHaveText("SmolLM2 360M");
+  await expect(chat.getByRole("button", { name: "Choose model and backend: On-device GPU · SmolLM2 360M", exact: true })).toBeVisible();
   await expect(chat.locator(".cc-ctl-model .cc-ctl-select")).toHaveValue("device:smollm2-360m");
   await chat.locator(".cc-input").fill("Say hello.");
   await chat.locator(".cc-input").press("Enter");

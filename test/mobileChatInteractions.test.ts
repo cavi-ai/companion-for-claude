@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { App, FakeElement, getLastOpenedModal, WorkspaceLeaf } from "./fakes/obsidian";
+import { App, FakeElement, getLastOpenedModal, Platform, WorkspaceLeaf } from "./fakes/obsidian";
+import { ActivityStore } from "../src/activity/store";
 import { ChatView } from "../src/view/ChatView";
 import { DEFAULT_SETTINGS } from "../src/types";
 import type ClaudeCompanionPlugin from "../src/main";
@@ -82,16 +83,37 @@ describe("mobile chat interactions", () => {
 
   it("titles a local session with the friendly model label, not the raw slug", () => {
     const plugin = pluginStub();
+    plugin.settings.chatBackend = "local";
+    plugin.settings.ollamaModel = "qwen2.5-coder:7b";
     plugin.router = () => ({
       chatProvider: () => ({ provider: { id: "ollama" }, model: "qwen2.5-coder:7b" }),
       chatCapabilities: () => ({ agentActions: true, claudeControls: true, metered: false, local: true, cli: false }),
     }) as unknown as ClaudeCompanionPlugin["router"];
-    const view = new ChatView(new WorkspaceLeaf(new App()), plugin);
-    (view as unknown as { modelLabelEl: FakeElement }).modelLabelEl = new FakeElement();
+    const app = new App();
+    const chrome = { app, activity: new ActivityStore() };
+    plugin.shell = (() => ({ companionChrome: () => chrome })) as unknown as ClaudeCompanionPlugin["shell"];
+    plugin.conversations = (() => ({ list: () => [] })) as unknown as ClaudeCompanionPlugin["conversations"];
+    const view = new ChatView(new WorkspaceLeaf(app), plugin);
+    const root = view.contentEl as unknown as FakeElement;
+    root.addClass("cc-chat-root");
+    const header = (view as unknown as { header: { mount(root: HTMLElement, callbacks: Record<string, () => void>): void; teardown(): void } }).header;
+    const mobile = Platform.isMobile;
+    Platform.isMobile = true;
+    try {
+      header.mount(root as unknown as HTMLElement, {
+        onModelClick() {}, onMcpClick() {}, onWriteGrantRevoke() {}, onNewChat() {}, onHistory() {}, onOverflow() {},
+      });
+      view.refreshModelLabel();
 
-    view.refreshModelLabel();
-
-    expect((view as unknown as { modelLabelEl: FakeElement }).modelLabelEl.textContent).toBe("Qwen2.5 Coder:7b · local");
+      const model = root.querySelector(".cc-model")!;
+      expect(model.tagName).toBe("BUTTON");
+      expect(model.querySelector(".cc-model-text")?.textContent).toBe("Qwen2.5 Coder:7b");
+      expect(model.querySelector(".cc-model-backend")?.textContent).toBe("Ollama");
+      expect(model.getAttribute("aria-label")).toBe("Choose model and backend: Ollama · Qwen2.5 Coder:7b");
+    } finally {
+      header.teardown();
+      Platform.isMobile = mobile;
+    }
   });
 
   it("does not repeat the Claude Code backend in the model label", () => {

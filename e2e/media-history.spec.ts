@@ -74,7 +74,7 @@ test("switching to a text-only endpoint cannot silently drop an earlier image", 
     await expect(input).toHaveValue("Follow-up: what does the chart label mean?");
     expect(posts).toEqual([]); expect(await rig.providerRequests()).toBe(1);
     await page.screenshot({ path: info.outputPath("local-switch-keeps-historical-image-question-unsent.png") });
-    await models.selectOption("e2e-model");
+    await models.selectOption("claude:e2e-model");
     const sent = page.waitForRequest(messageRequest);
     await chat.getByRole("button", { name: /^Send(?: message)?$/ }).click(); await assertEarlierImage(await sent);
     await expect(chat.locator(".cc-assistant .cc-body").last()).toHaveText("History image received.");
@@ -101,7 +101,7 @@ for (const fail of [false, true]) test(`navigating away while historical media p
     expect(await page.locator(".notice").filter({ hasText: "Earlier attachment" }).count()).toBe(0);
     await expect(input).toHaveValue("A different unsent question.");
     expect(await rig.providerRequests()).toBe(1);
-    await chat.getByRole("button", { name: "Resume a past conversation", exact: true }).click();
+    await chat.getByRole("button", { name: "Sessions", exact: true }).click();
     await page.locator(".cc-session-row").filter({ hasText: "Explain the archive chart" }).click();
     await expect(input).toHaveValue("Keep this follow-up with the chart.");
     await page.evaluate(() => { (window as unknown as W).restoreHistoryRead?.(); });

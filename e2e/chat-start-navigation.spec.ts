@@ -22,7 +22,7 @@ for (const destination of ["New chat", "saved conversation"] as const) {
     const chat = page.locator(".cc-chat-root");
     const input = chat.locator(".cc-input");
     const send = chat.getByRole("button", { name: /^Send(?: message)?$/ });
-    const history = chat.getByRole("button", { name: "Resume a past conversation", exact: true });
+    const history = chat.getByRole("button", { name: "Sessions", exact: true });
     if (destination === "saved conversation") {
       await input.fill("Existing conversation question");
       await send.click();

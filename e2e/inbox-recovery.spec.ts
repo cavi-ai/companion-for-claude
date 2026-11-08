@@ -1,5 +1,7 @@
 import { expect, test } from "./fixtures";
 
+const MAC = process.platform === "darwin";
+
 test("an immediate editor correction can be enriched and resolves the failed batch", async ({ rig }, testInfo) => {
   const badPath = "Clippings/Bad clipping.md";
   const malformed = "---\nsource: https://example.com/follow-up\nwith: invalid: YAML\n---\n# Follow-up\n\nRecruit more participants before drawing conclusions.\n";
@@ -28,11 +30,11 @@ test("an immediate editor correction can be enriched and resolves the failed bat
   await bad.locator(".cc-inbox-open").click();
   const editor = page.locator(".markdown-source-view:visible .cm-content");
   await editor.click();
-  await editor.press("Meta+ArrowUp");
+  await editor.press(MAC ? "Meta+ArrowUp" : "Control+Home");
   await editor.press("ArrowDown");
   await editor.press("ArrowDown");
-  await editor.press("Meta+ArrowLeft");
-  await editor.press("Meta+Shift+ArrowRight");
+  await editor.press(MAC ? "Meta+ArrowLeft" : "Home");
+  await editor.press(MAC ? "Meta+Shift+ArrowRight" : "Shift+End");
   expect(await page.evaluate(() => window.getSelection()?.toString())).toBe("with: invalid: YAML");
   await editor.press("Backspace");
   // Do not wait for autosave: the explicit action must save the matching editor.

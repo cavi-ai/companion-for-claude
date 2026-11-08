@@ -13,7 +13,7 @@ You don't need the first to get the second.
 
 ## On-device GPU chat
 
-1. In *Settings → Companion for Claude → Choose how I chat*, choose **On-device GPU**
+1. In *Settings → Companion for Claude → Chat & models → Provider & model*, choose **On-device GPU**
    as the chat backend.
 2. Start with **SmolLM2 360M** (about 275 MB, the smaller default), or select
    **Qwen3 0.6B** (about 579 MB).
@@ -48,7 +48,7 @@ the plugin no longer offers the command that launches the helper app.
 
 ## Never lose functionality: the Auto backend
 
-*Settings → Companion for Claude → Choose how I chat → Chat backend*
+*Settings → Companion for Claude → Chat & models → Provider & model → Chat backend*
 
 | Backend | Behavior |
 |---|---|

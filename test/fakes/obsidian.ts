@@ -327,9 +327,12 @@ export function getNoticeMessages(): string[] { return noticeHistory.map((notice
 export function getNotices(): readonly Notice[] { return noticeHistory; }
 export class Notice {
   hidden = false;
-  constructor(public message: string, public timeout?: number) { noticeHistory.push(this); }
-  hide(): void { this.hidden = true; }
-  setMessage(message: string): void { this.message = message; }
+  containerEl = new FakeElement("div");
+  messageEl = this.containerEl.createDiv({ cls: "notice-message" });
+  noticeEl = this.messageEl;
+  constructor(public message: string, public timeout?: number) { this.containerEl.addClass("notice"); this.messageEl.setText(message); noticeHistory.push(this); }
+  hide(): void { this.hidden = true; this.containerEl.remove(); }
+  setMessage(message: string): this { this.message = message; this.messageEl.setText(message); return this; }
 }
 export class FakeMenuItem {
   title = "";
@@ -391,7 +394,19 @@ export class FakeElement {
     if (on) this.classList.add(name); else this.classList.delete(name);
   }
   appendText(text: string): void { this.textContent += text; }
-  appendChild<T>(child: T): T { const element = child as unknown as FakeElement; element.parent = this; this.children.push(element); return child; }
+  appendChild<T>(child: T): T { const element = child as unknown as FakeElement; element.remove(); element.parent = this; this.children.push(element); return child; }
+  insertBefore<T>(child: T, reference: unknown): T {
+    const element = child as unknown as FakeElement;
+    if (element === reference) return child;
+    element.remove();
+    const index = this.children.indexOf(reference as FakeElement);
+    element.parent = this;
+    if (index < 0) this.children.push(element); else this.children.splice(index, 0, element);
+    return child;
+  }
+  get parentElement(): FakeElement | null { return this.parent; }
+  get nextSibling(): FakeElement | null { return this.parent?.children[this.parent.children.indexOf(this) + 1] ?? null; }
+  after(element: FakeElement): void { this.parent?.insertBefore(element, this.nextSibling); }
   createEl(tag: string, options: any = {}): FakeElement {
     const child = new FakeElement(tag);
     child.textContent = options.text ?? "";

@@ -37,7 +37,7 @@ export async function preflightTurn<P extends ProviderLike>(deps: PreflightDeps<
   let { provider, model } = deps.chatProvider();
   let caps = deps.chatCapabilities();
   let reprobed = false;
-  if (CLI_BACKENDS.includes(backend) && !caps.cli && !deps.anthropicHasCredentials()) {
+  if (CLI_BACKENDS.includes(backend) && !caps.cli) {
     const signIn = deps.cliSignIn();
     const label = signIn?.label ?? "This backend";
     if (signIn?.available()) {
@@ -48,7 +48,7 @@ export async function preflightTurn<P extends ProviderLike>(deps: PreflightDeps<
         reprobed = true;
       }
     }
-    if (!caps.cli) {
+    if (!caps.cli && !deps.anthropicHasCredentials()) {
       return { ok: false, notice: signIn?.available() ? `${label} is not signed in — ${signIn.signInHint}, or add an API key in Companion settings.` : `${label} runs on desktop only. Add an API key to chat here.` };
     }
   }

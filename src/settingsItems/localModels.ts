@@ -2,7 +2,8 @@
 // endpoint hosts, model pickers with Detect, connection tests, and the tag
 // classifier backend.
 
-import { Notice, type SettingGroupItem } from "obsidian";
+import { type SettingGroupItem } from "obsidian";
+import { CompanionNotice as Notice } from "../notice";
 import type ClaudeCompanionPlugin from "../main";
 import { mergeDetectedModels } from "../providers/localModels";
 import type { ProviderStatus } from "../providers/types";

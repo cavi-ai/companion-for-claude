@@ -11,9 +11,11 @@ source of truth.
 
 [**Install from the Obsidian community store**](https://obsidian.md/plugins?id=claude-companion)
 · [Getting started](guides/getting-started.md)
-· [All guides](https://github.com/cavi-ai/claude-obsidian/blob/4dd506c98e4f98c25b741e4a0bf60e7e93c63446/README.md#guides)
+· [All guides](https://github.com/cavi-ai/claude-obsidian/blob/66650de402f44506559a1b3f42c69dc3c383df1d/README.md#guides)
 
-![Companion in Obsidian: onboarding interviews connected to a finding, proposal, and next research session beside Claude Opus 5.5 chat](assets/canvas-output.png)
+![Example note-edit review with two change checkboxes and an Apply selected button](assets/diff-review.png)
+
+The review image shows an example note; use the separate sample below to try it yourself.
 
 ## Try one note edit you control
 
@@ -26,7 +28,7 @@ Constraint: Keep it single-user; do not add account registration.
 Next step: Choose the smallest useful first screen.
 ```
 
-After [setup](https://github.com/cavi-ai/companion-for-claude/blob/main/guides/getting-started.md), open the note and enable the **Note**
+After [setup](guides/getting-started.md), open the note and enable the **Note**
 context chip. Select **Act** and keep **Allow write tools** enabled. Ask:
 
 > Propose a clearer next step for this project. Keep its constraints unchanged
@@ -38,14 +40,14 @@ stayed intact? The model may propose one hunk or several; rejecting the entire
 proposal is a valid outcome.
 
 Model access is separate. Attached context is sent through the backend you
-select. See [edit review and guardrails](https://github.com/cavi-ai/companion-for-claude/blob/main/guides/agent-mode.md).
+select. See [edit review and guardrails](guides/agent-mode.md).
 
 ## Install
 
 1. Open **Settings → Community plugins → Browse**.
 2. Search for **Companion for Claude**, then install and enable it.
 3. Open Companion and choose a connection:
-   - **Claude Code sign-in** on desktop, using the installed `claude` command.
+   - **CLI sign-in** on desktop through Claude Code, Codex, or OpenCode.
    - **Anthropic API** on desktop or mobile, using your own credential.
    - **Local model** through Ollama or an OpenAI-compatible endpoint.
 4. Open a note, enable the **Note** context chip, and send your first message.
@@ -59,7 +61,7 @@ select. See [edit review and guardrails](https://github.com/cavi-ai/companion-fo
   screenshots as context. Pasted images are saved as ordinary vault files in
   your configured Obsidian attachment folder.
 - **Agent mode** that can search, read, and follow links while showing every tool
-  call; writes remain behind confirmation.
+  call; writes ask for confirmation unless you grant access for the session.
 - **Reviewable edits** with per-hunk acceptance before a note changes.
 - **Research Desk** for sources, evidence, claims, outlines,
   drafts, and deterministic assurance checks.
@@ -77,7 +79,7 @@ select. See [edit review and guardrails](https://github.com/cavi-ai/companion-fo
 - **Optional integrations**: a loopback MCP bridge for live-vault tools, and an
   MCP client for servers you explicitly configure.
 
-The product overview stays in the [repository README](https://github.com/cavi-ai/claude-obsidian/blob/4dd506c98e4f98c25b741e4a0bf60e7e93c63446/README.md). Detailed
+The product overview stays in the [repository README](https://github.com/cavi-ai/claude-obsidian/blob/66650de402f44506559a1b3f42c69dc3c383df1d/README.md). Detailed
 behavior and setup live in the guides:
 
 - [Agent mode, edits, and guardrails](guides/agent-mode.md)
@@ -91,9 +93,10 @@ behavior and setup live in the guides:
 
 ## Desktop agents
 
-Companion chat can run directly through Claude Code. Choose **Claude Code — your
-subscription** under **Connection** and Companion uses one resumable CLI session
-per saved conversation. This backend does not require the MCP bridge.
+Companion chat can run through an installed, signed-in Claude Code, Codex, or
+OpenCode CLI. Choose its backend and model from the chat header, or under
+**Settings → Companion for Claude → Chat & models → Provider & model**.
+The in-chat CLI connection does not require enabling the standalone MCP bridge.
 
 For portable Claude Code workflows using the official Obsidian CLI:
 
@@ -183,7 +186,7 @@ To install a development build, copy `main.js`, `manifest.json`, and
 **Companion for Claude** in Community plugins. `pnpm run dev` watches and
 rebuilds `main.js` for active development.
 
-See [`CONTRIBUTING.md`](https://github.com/cavi-ai/claude-obsidian/blob/4dd506c98e4f98c25b741e4a0bf60e7e93c63446/CONTRIBUTING.md) for the full gate and release
+See [`CONTRIBUTING.md`](https://github.com/cavi-ai/claude-obsidian/blob/66650de402f44506559a1b3f42c69dc3c383df1d/CONTRIBUTING.md) for the full gate and release
 workflow.
 
 ## Releases
@@ -197,4 +200,4 @@ workflow.
 ## License
 
 MIT — see [`LICENSE`](LICENSE). Third-party attribution is in
-[`NOTICE`](https://github.com/cavi-ai/claude-obsidian/blob/4dd506c98e4f98c25b741e4a0bf60e7e93c63446/NOTICE).
+[`NOTICE`](https://github.com/cavi-ai/claude-obsidian/blob/66650de402f44506559a1b3f42c69dc3c383df1d/NOTICE).

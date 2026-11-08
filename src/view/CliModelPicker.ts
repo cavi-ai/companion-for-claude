@@ -1,4 +1,5 @@
-import { FuzzySuggestModal, Notice, type App } from "obsidian";
+import { FuzzySuggestModal, type App } from "obsidian";
+import { CompanionNotice as Notice } from "../notice";
 import type { CliModel } from "../cli/modelDiscovery";
 import { cliModelChoices } from "./cliModelChoices";
 

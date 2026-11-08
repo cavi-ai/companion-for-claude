@@ -19,7 +19,7 @@ test("session titles can be saved with the mouse and cancelled without changes",
   const title = modal.getByRole("textbox", { name: "Session title", exact: true });
   const save = modal.getByRole("button", { name: "Save", exact: true });
   const openRename = async () => {
-    if (!await history.isVisible()) await chat.getByRole("button", { name: "Resume a past conversation", exact: true }).click();
+    if (!await history.isVisible()) await chat.getByRole("button", { name: "Sessions", exact: true }).click();
     await history.locator(".cc-session-more").click();
     await page.locator(".menu").getByText("Rename", { exact: true }).click();
     await expect(title).toBeFocused();
@@ -50,7 +50,7 @@ test("session titles can be saved with the mouse and cancelled without changes",
   await title.press("Enter");
   await expect(history.locator(".cc-session-title")).toHaveText("Pilot next steps");
   await rig.reloadPlugin();
-  await chat.getByRole("button", { name: "Resume a past conversation", exact: true }).click();
+  await chat.getByRole("button", { name: "Sessions", exact: true }).click();
   await expect(history.locator(".cc-session-title")).toHaveText("Pilot next steps");
   expect(await rig.providerRequests()).toBe(1);
 });

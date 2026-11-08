@@ -1,4 +1,5 @@
 import { setIcon, type App } from "obsidian";
+import { mountFeedbackHost } from "../notice";
 import type { ActivityStore } from "../activity/store";
 import { mountActivityIndicator } from "./ActivityIndicator";
 import { QuickOptionsModal, type QuickOptionsModalDependencies } from "./QuickOptionsModal";
@@ -53,11 +54,13 @@ export function renderCompanionChrome(
     optionsButton.addEventListener("click", () => new QuickOptionsModal(deps.app, page, deps).open());
   }
 
+  const unmountFeedback = mountFeedbackHost(root);
   let disposed = false;
   return (remove = true) => {
     if (disposed) return;
     disposed = true;
     unmountActivity(remove);
+    unmountFeedback();
     // A borrowed host belongs to the caller; only remove what this created.
     if (remove) (owned ? chrome : controls).remove();
   };

@@ -1,6 +1,7 @@
 // Wires the conversation cluster: the store controller, distillation, session actions and the turn service.
 
-import { Notice, Platform, TFile } from "obsidian";
+import { Platform, TFile } from "obsidian";
+import { CompanionNotice as Notice } from "../notice";
 import { saveSummaryNote } from "../artifacts/artifactStore";
 import { ChatTurnService } from "../chat/turnService";
 import { resolveCitationPath } from "../chat/provenance";

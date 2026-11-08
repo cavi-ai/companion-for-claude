@@ -27,6 +27,7 @@ export class CliProvider implements Provider {
   private cached: CliProbe | null = null;
   private modelCache: { models: CliModel[]; at: number } | null = null;
   private modelDiscovery: Promise<CliModel[]> | null = null;
+  private statusCheck: Promise<ProviderStatus> | null = null;
 
   private readonly active = new Set<CliChild>();
 
@@ -63,7 +64,12 @@ export class CliProvider implements Provider {
     return `${this.label} runs on desktop only.`;
   }
 
-  async refresh(): Promise<ProviderStatus> {
+  refresh(): Promise<ProviderStatus> {
+    if (!this.statusCheck) this.statusCheck = this.refreshStatus().finally(() => { this.statusCheck = null; });
+    return this.statusCheck;
+  }
+
+  private async refreshStatus(): Promise<ProviderStatus> {
     if (!this.runtime) return { ok: false, detail: this.desktopOnlyMessage() };
     const found = await this.runtime.find(this.backend);
     if (!found) {

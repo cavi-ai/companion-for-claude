@@ -35,7 +35,7 @@ for (const reload of [false, true]) {
     await backend.getByRole("combobox").selectOption("claude-cli");
     await expect.poll(() => page.evaluate(() => (window as unknown as AppWindow).app.plugins.plugins["claude-companion"]!.settings.chatBackend)).toBe("claude-cli");
     await dismissSettingsSurface(settings);
-    await expect(chat.locator(".cc-backend-pill")).toContainText("Claude Code");
+    await expect(chat.locator(".cc-model-backend")).toContainText("Claude Code");
     await input.fill("Which part of that chart matters most?");
     await chat.getByRole("button", { name: /^Send(?: message)?$/ }).click();
     await expect(chat.locator(".cc-assistant .cc-body").last()).toHaveText("pong from claude code");

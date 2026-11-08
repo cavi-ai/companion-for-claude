@@ -8,7 +8,10 @@ class Child extends EventEmitter {
   stderr = new EventEmitter();
   sent: Record<string, unknown>[] = [];
   signals: string[] = [];
-  stdin = { write: (s: string) => { this.sent.push(JSON.parse(s)); }, end: () => {} };
+  stdin = Object.assign(new EventEmitter(), {
+    write: (s: string, callback?: (error?: Error | null) => void) => { this.sent.push(JSON.parse(s)); callback?.(); },
+    end: () => {},
+  });
   kill(signal?: string): boolean { this.signals.push(signal ?? "SIGTERM"); return true; }
   reply(id: number, result: unknown): void { this.stdout.emit("data", Buffer.from(`${JSON.stringify({ id, result })}\n`)); }
 }
@@ -46,6 +49,34 @@ describe("CLI model discovery", () => {
     await rejected;
     expect(child.signals).toContain("SIGTERM");
     child.emit("exit", 1);
+  });
+
+  it("terminates discovery when writing initialization throws", async () => {
+    const child = new Child();
+    child.stdin.write = () => { throw new Error("stdin closed during initialization"); };
+    await expect(listCodexModels(() => child as CliChild)).rejects.toThrow("stdin closed during initialization");
+    expect(child.signals).toContain("SIGTERM");
+    child.emit("exit", 1);
+  });
+
+  it("handles an asynchronous stdin error without emitting an unhandled error", async () => {
+    const child = new Child();
+    const result = listCodexModels(() => child as CliChild).catch(error => error as Error);
+    expect(() => child.stdin.emit("error", new Error("write EPIPE"))).not.toThrow();
+    expect(await result).toMatchObject({ message: "write EPIPE" });
+    expect(child.signals).toContain("SIGTERM");
+    child.emit("exit", 1);
+  });
+
+  it("rejects a failed pagination write instead of returning a partial catalog", async () => {
+    const child = new Child();
+    const result = listCodexModels(() => child as CliChild);
+    const rejected = expect(result).rejects.toThrow("write EPIPE");
+    child.reply(0, {});
+    child.stdin.write = (_line, callback) => { callback?.(new Error("write EPIPE")); };
+    child.reply(1, { data: [{ model: "partial-model" }], nextCursor: "next" });
+    child.emit("exit", 1);
+    await rejected;
   });
 
   it("bounds an unresponsive discovery process and escalates termination", async () => {

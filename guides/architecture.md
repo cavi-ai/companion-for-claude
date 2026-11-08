@@ -11,9 +11,9 @@ the MCP bridge on layout-ready. Everything else is organized by concern.
 
 | Module | Responsibility |
 |---|---|
-| `providers/` | `ProviderRouter` builds providers from settings and routes chat among Anthropic, Claude Code CLI, Ollama, auto fallback, and OpenAI-compatible endpoints while routing utility work independently. `chatTurn.ts` settles one streaming attempt as a turn result and routes a chat turn: a partial agent answer is kept with a notice, the on-device backend never falls back, and other failures retry locally when the fallback policy allows. `anthropic.ts`/`claudeCli.ts`/`ollama.ts`/`openaiCompat.ts` implement the provider boundary; `ollamaBody.ts`/`ollamaParse.ts` are the pure Ollama wire format; `jsonRepair.ts` is the shared complete→parse→repair loop; `auth.ts` resolves direct-API credentials; `fallback.ts` owns offline/usage fallback; `endpointPolicy.ts` classifies local endpoints; `utilityConsent.ts` holds the session's mobile fallback consent: one decision per exact source and destination, one shared dialog, a denial no racing allow replaces, and deny after unload; `utilityRouting.ts` resolves the runtime utility selection, asks that consent through the mobile dialog, and owns the unload lifecycle that discards in-flight utility work; `errorHints.ts` preserves causes and adds actionable guidance. |
+| `providers/` | `ProviderRouter` builds providers from settings and routes chat among Anthropic, Claude Code, Codex, OpenCode, on-device models, Ollama, auto fallback, and OpenAI-compatible endpoints while routing utility work independently. `chatTurn.ts` settles one streaming attempt as a turn result and routes a chat turn: a partial agent answer is kept with a notice, the on-device backend never falls back, and other failures retry locally when the fallback policy allows. `anthropic.ts`/`claudeCli.ts`/`ollama.ts`/`openaiCompat.ts` implement the provider boundary; `ollamaBody.ts`/`ollamaParse.ts` are the pure Ollama wire format; `jsonRepair.ts` is the shared complete→parse→repair loop; `auth.ts` resolves direct-API credentials; `fallback.ts` owns offline/usage fallback; `endpointPolicy.ts` classifies local endpoints; `utilityConsent.ts` holds the session's mobile fallback consent: one decision per exact source and destination, one shared dialog, a denial no racing allow replaces, and deny after unload; `utilityRouting.ts` resolves the runtime utility selection, asks that consent through the mobile dialog, and owns the unload lifecycle that discards in-flight utility work; `errorHints.ts` preserves causes and adds actionable guidance. |
 | `claude/` | `sse.ts` parses the Anthropic streaming response; `models.ts` resolves the model id (dropdown vs custom). |
-| `cli/` | The desktop Claude Code chat runtime: executable/auth probing, JSONL stream parsing, per-conversation resume state, abort/restart handling, and a per-session ephemeral tool bridge that keeps approvals and Plan Mode scoped to the originating conversation. `sessionPool.ts` keeps one session per conversation, reuses it while its signature holds and the process is alive, evicts the least recently used idle session at capacity, runs calls for one conversation in order so a close waits for a session still opening, and releases each session's bridge and prompt file after closing it. |
+| `cli/` | The desktop CLI chat runtime for Claude Code, Codex, and OpenCode: executable/auth probing, JSONL stream parsing, per-conversation resume state, abort/restart handling, and a per-session ephemeral tool bridge that keeps approvals and Plan Mode scoped to the originating conversation. `sessionPool.ts` keeps one session per conversation, reuses it while its signature holds and the process is alive, evicts the least recently used idle session at capacity, runs calls for one conversation in order so a close waits for a session still opening, and releases each session's bridge and prompt file after closing it. |
 | `web/` | `search.ts` is the agent's web search (DuckDuckGo HTML and Brave adapters behind one result shape); `fetch.ts` reads one public page as bounded readable markdown; `requestFetch.ts` adapts `requestUrl` to the fetch API and builds the shared web-capture IO. Pure, IO injected. |
 | `artifacts/` | `designSystem.ts` holds the design-system prompt injected into every system prompt; `parse.ts` extracts `claude-html` blocks; `renderInline.ts` renders them in a sandboxed iframe with a restrictive CSP; `artifactStore.ts` saves them as notes. |
 | `context/` | `vaultContext.ts` assembles per-request context (active note, selection, linked/backlinked notes, vault search, attached pages) within `contextCharBudget`; `search.ts` is keyword scoring; `attachments.ts` handles vault PDFs/images and pasted screenshots as multimodal blocks; `urlContext.ts` detects a pasted URL and shapes the attached-page record, with `webCapture.ts` doing the Defuddle fetch on explicit user action only. |
@@ -89,13 +89,13 @@ because Obsidian's Electron exposes Node — and is reached through a guarded
 dynamic import with inline `import("http")` types, so the bundle never statically
 imports a Node builtin and stays loadable on mobile.
 
-Desktop-only features are the Claude Code chat backend, MCP bridge, Ollama,
+Desktop-only features include the CLI chat backends, MCP bridge, Ollama,
 stdio MCP clients, and session import, all gated at runtime. Direct-API chat,
 artifacts, and built-in semantic search run on mobile.
 
 ## Security model
 
-Four boundaries, each documented in [`SECURITY.md`](https://github.com/cavi-ai/claude-obsidian/blob/4dd506c98e4f98c25b741e4a0bf60e7e93c63446/SECURITY.md):
+Four boundaries, each documented in [`SECURITY.md`](https://github.com/cavi-ai/claude-obsidian/blob/66650de402f44506559a1b3f42c69dc3c383df1d/SECURITY.md):
 
 **Credentials** use Obsidian's encrypted secret storage and are excluded from
 vault-synced plugin data. The MCP token can also come from
@@ -125,8 +125,8 @@ One standalone Obsidian product plus an optional universal-agent reference:
   workflows use the official Obsidian CLI and do not depend on Companion or MCP.
   Companion-native adaptations live in this repository and use Companion's own
   vault context. The optional MCP bridge is a separate Companion integration.
-- `upstream/html-effectiveness/`, `upstream/obsidian-skills/` — pinned, unmodified submodules. Provenance in [`NOTICE`](https://github.com/cavi-ai/claude-obsidian/blob/4dd506c98e4f98c25b741e4a0bf60e7e93c63446/NOTICE).
+- `upstream/html-effectiveness/`, `upstream/obsidian-skills/` — pinned, unmodified submodules. Provenance in [`NOTICE`](https://github.com/cavi-ai/claude-obsidian/blob/66650de402f44506559a1b3f42c69dc3c383df1d/NOTICE).
 
 Version numbers in `manifest.json`, `versions.json`, and `package.json` must match
 the git tag, and `versions.json` maps version → `minAppVersion`. See
-[`CONTRIBUTING.md`](https://github.com/cavi-ai/claude-obsidian/blob/4dd506c98e4f98c25b741e4a0bf60e7e93c63446/CONTRIBUTING.md).
+[`CONTRIBUTING.md`](https://github.com/cavi-ai/claude-obsidian/blob/66650de402f44506559a1b3f42c69dc3c383df1d/CONTRIBUTING.md).

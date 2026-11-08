@@ -1,4 +1,5 @@
-import { Notice, TFile, type App } from "obsidian";
+import { TFile, type App } from "obsidian";
+import { CompanionNotice as Notice } from "../../notice";
 import { buildClaimSuggestionRequest, claimSuggestionEvidence, parseClaimSuggestion } from "../../research/claimSuggestion";
 import { buildExtractionRequest, fitSourceText, parseExtraction, type SourceText } from "../../research/evidenceExtraction";
 import type { ResearchSourceRecord } from "../../research/types";

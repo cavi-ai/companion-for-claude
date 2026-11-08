@@ -1,4 +1,5 @@
-import { Notice, type App } from "obsidian";
+import { type App } from "obsidian";
+import { CompanionNotice as Notice } from "../../notice";
 import { maxBytesFor, sniffMime, type MediaAttachment } from "../../context/attachments";
 import { quickNotice } from "../../notice";
 

@@ -75,7 +75,7 @@ test.describe("Claude Code backend, live", () => {
       const { page } = harness;
       await openChat(page);
       const chat = page.locator(".cc-chat-root").first();
-      await expect(chat).toContainText("● Claude Code", { timeout: 20_000 });
+      await expect(chat.getByRole("button", { name: /^Choose model and backend: Claude Code · .+$/ })).toBeVisible({ timeout: 20_000 });
 
       // stream
       await send(page, "Reply with exactly: pong");

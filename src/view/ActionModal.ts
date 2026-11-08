@@ -10,7 +10,11 @@ export interface ActionModalItem {
 
 /** Touch-safe action sheet used where a mouse-positioned menu is unreliable. */
 export class ActionModal extends Modal {
-  constructor(app: App, private heading: string, private items: ActionModalItem[]) { super(app); }
+  private returnFocus: HTMLElement | null;
+  constructor(app: App, private heading: string, private items: ActionModalItem[]) {
+    super(app);
+    this.returnFocus = this.contentEl.ownerDocument.activeElement as HTMLElement | null;
+  }
 
   override onOpen(): void {
     this.titleEl.setText(this.heading);
@@ -29,5 +33,8 @@ export class ActionModal extends Modal {
     }
   }
 
-  override onClose(): void { this.contentEl.empty(); }
+  override onClose(): void {
+    this.contentEl.empty();
+    if (this.returnFocus?.isConnected !== false && typeof this.returnFocus?.focus === "function") this.returnFocus.focus();
+  }
 }

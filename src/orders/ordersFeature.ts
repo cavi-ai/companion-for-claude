@@ -1,7 +1,8 @@
 // Standing orders and the edits they queue: controller wiring, persisted state,
 // run and review entry points, and the vault watchers that arm them.
 
-import { getAllTags, normalizePath, Notice, TFile, type App, type EventRef } from "obsidian";
+import { getAllTags, normalizePath, TFile, type App, type EventRef } from "obsidian";
+import { CompanionNotice as Notice } from "../notice";
 import type { ActivityStore } from "../activity/store";
 import { executeTool } from "../agent/tools";
 import { toolAccess, type ToolRunKind } from "../agent/toolAccess";

@@ -8,7 +8,7 @@ export function behaviorItems(): SettingGroupItem[] {
     {
       name: "System prompt",
       desc: "Prepended to every conversation. The artifact design system is always appended automatically.",
-      control: { type: "textarea", key: "systemPrompt", rows: 5 },
+      control: { type: "textarea", key: "systemPrompt", rows: 8 },
     },
     {
       name: "Context character budget",

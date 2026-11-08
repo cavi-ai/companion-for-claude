@@ -1,4 +1,5 @@
-import { type App, Notice, TFile, setIcon } from "obsidian";
+import { type App, TFile, setIcon } from "obsidian";
+import { CompanionNotice as Notice } from "../../notice";
 
 /** Navigate only to an existing Canvas reported by the successful vault tool. */
 export function renderCanvasResult(app: App, parent: HTMLElement, name: string, result: string, ok: boolean): void {

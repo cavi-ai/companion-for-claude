@@ -1,4 +1,5 @@
-import { App, Modal, Notice, Setting } from "obsidian";
+import { App, Modal, Setting } from "obsidian";
+import { CompanionNotice as Notice } from "../notice";
 import { formatClassifyNotice, type ApplyResult, type ClassifyResult } from "../optimize/controller";
 import type { MergeCandidate } from "../optimize/tagScan";
 import { createOptimizeState, removeRow, selectedMerges, swapRow, toggleRow, type OptimizeViewState } from "./optimizeState";

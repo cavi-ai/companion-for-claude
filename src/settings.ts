@@ -44,6 +44,7 @@ export class ClaudeCompanionSettingTab extends PluginSettingTab {
     private plugin: SettingsHost,
   ) {
     super(app, plugin);
+    this.containerEl.addClass("cc-settings-surface");
   }
 
   /** Where credentials actually land, so the copy can't claim safety it doesn't have. */

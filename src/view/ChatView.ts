@@ -1,5 +1,5 @@
 import { draftContextState } from "./chat/draftContextState";
-import { ItemView, MarkdownView, Notice, Platform, WorkspaceLeaf, setIcon, type ViewStateResult } from "obsidian";
+import { ItemView, MarkdownView, Platform, WorkspaceLeaf, setIcon, type ViewStateResult } from "obsidian";
 import type { ChatViewHost } from "./chat/hosts";
 import type { ChatMessage, ContextToggles } from "../types";
 import { errorMessage } from "../records";
@@ -10,6 +10,7 @@ import { watchAttachmentRenames } from "./chat/attachmentRenames";
 import { cliEntries } from "./chat/cliEntries";
 import { readTurnMedia, rememberTurnMedia, readTurnContext, rememberTurnContext, type TurnContextAttachments } from "../chat/turnSources";
 import { preflightTurn, startTurn, turnPersistence, turnHistory } from "../chat/turnStart";
+import { selectedModelValue } from "./chat/modelCatalog";
 import { historyHasMedia, loadHistoryMedia, projectRequestMessages, type HistoryMedia } from "../chat/mediaHistory";
 import { loadMediaBlocks } from "./chat/mediaBlocks";
 import { compactMessages, type Conversation } from "../conversations/store";
@@ -30,7 +31,7 @@ import { credentialSetupInputs, needsCredentialSetup } from "../providers/setupS
 import { EMPTY_SESSION, type SessionUsage } from "../usage/tokens";
 import { type TokenUsage } from "../claude/sse";
 import type { CompanionWorkspaceCard } from "./companionWorkspace";
-import { quickNotice } from "../notice";
+import { quickNotice, CompanionNotice as Notice } from "../notice";
 import { ComposerContextManager } from "./ComposerContextManager";
 import { type AutomaticContextKey } from "./contextManagerModel";
 import { HeaderControls } from "./chat/HeaderControls";
@@ -39,6 +40,7 @@ import { ConversationDrafts } from "./chat/conversationDrafts";
 import { DraftSubmission, type DraftStart } from "./chat/draftSubmission";
 import { reuseDraft } from "./chat/reuseDraft";
 import { pinChatAboveKeyboard } from "./chat/keyboardPin";
+import { reserveHostStatusBar } from "./chat/hostInsets";
 import { Transcript } from "./chat/Transcript";
 import { TurnRunners } from "./chat/turnRunners";
 import { ChatProjectBinding } from "./chat/projectBinding";
@@ -119,6 +121,7 @@ export class ChatView extends ItemView {
   private maxTokensOverride: number | null = null;
   private contextStatusInterval: number | null = null;
   private unpinKeyboard: (() => void) | null = null;
+  private releaseHostInsets: (() => void) | null = null;
   /** Last visible context-manager state; skip DOM rebuilds when nothing changed. */
   private get lastContextManagerSignature(): string { return this.composer.lastContextManagerSignature; }
   private set lastContextManagerSignature(v: string) { this.composer.lastContextManagerSignature = v; }
@@ -217,8 +220,9 @@ export class ChatView extends ItemView {
     });
     this.header = new HeaderControls(this.app, plugin, this.chat, {
       anyContextEnabled: () => this.composer.anyContextEnabled(),
+      conversationId: () => this.conversationId,
+      refreshTabTitle: () => this.refreshTabTitle(),
       clearChat: (...args) => this.clearChat(...args),
-      cliEntries: (...args) => cliEntries(...args),
       loadConversation: (...args) => this.loadConversation(...args),
       openSettings: (...args) => this.openSettings(...args),
       renderContextManager: (...args) => this.renderContextManager(...args),
@@ -337,6 +341,11 @@ export class ChatView extends ItemView {
     );
     this.unpinKeyboard?.();
     this.unpinKeyboard = Platform.isMobile ? pinChatAboveKeyboard(root, window) : null;
+    this.releaseHostInsets?.();
+    this.releaseHostInsets = Platform.isMobile ? null : reserveHostStatusBar(root, (listener) => {
+      const ref = this.app.workspace.on("layout-change", listener);
+      return () => this.app.workspace.offref(ref);
+    });
     this.renderContextManager();
 
     // User templates: load now, refresh when a note in the folder changes.
@@ -397,6 +406,7 @@ export class ChatView extends ItemView {
 
   /** Ask Obsidian to re-read getDisplayText() so the tab header follows the active conversation's title. */
   private refreshTabTitle(): void {
+    this.header.refreshSessionTitle();
     (this.leaf as { updateHeader?: () => void }).updateHeader?.();
   }
 
@@ -468,10 +478,12 @@ export class ChatView extends ItemView {
     }
     this.unpinKeyboard?.();
     this.unpinKeyboard = null;
+    this.releaseHostInsets?.();
+    this.releaseHostInsets = null;
     this.composer.destroy();
   }
 
-  refreshModelLabel(): void { return this.header.refreshModelLabel(); }
+  refreshModelLabel(): void { this.header.refreshModelLabel(); this.refreshTabTitle(); }
 
   // ---------- public entry point (used by commands) ----------
 
@@ -549,6 +561,7 @@ export class ChatView extends ItemView {
     this.renderEmptyState();
     this.setSending(false);
     this.updateUsageBar();
+    this.refreshTabTitle();
   }
 
   private openSettings(): void {
@@ -575,7 +588,9 @@ export class ChatView extends ItemView {
     if (!text) return;
     // Check credentials BEFORE clearing the composer — a new user's first
     // message must never be silently discarded.
-    if (this.setupRequired()) {
+    const router = this.plugin.router();
+    const selectedCli = cliEntries(router).find(entry => entry.backend.id === router.chatBackend);
+    if (this.setupRequired() && !selectedCli?.provider.available()) {
       this.transcript.showSetupCard();
       return;
     }
@@ -610,6 +625,7 @@ export class ChatView extends ItemView {
   private async run(userText: string, display?: string, maxTokens?: number, opts?: { model?: string; context?: Partial<ContextToggles>; regenerate?: boolean; media?: MediaAttachment[]; sources?: TurnContextAttachments; submission?: DraftStart }): Promise<boolean> {
     if (opts?.media === undefined && !this.composer.pastedImages.ready()) return false;
     const generation = this.drafts.generation;
+    const selection = selectedModelValue(this.plugin.settings, this.controls?.model ?? resolveModelId(this.plugin.settings.model, this.plugin.settings.customModel), Platform.isMobile);
     const previousConversation = this.conversationId ? this.plugin.conversations().list().find((entry) => entry.id === this.conversationId) : undefined;
     const previousTurn = previousConversation?.activeTurn;
     const before = previousTurn?.regenerating && previousTurn.state !== "running" ? previousConversation!.messages : this.messages;
@@ -634,11 +650,11 @@ export class ChatView extends ItemView {
         return entry ? { label: entry.backend.label, signInHint: entry.backend.signInHint, available: () => entry.provider.available(), refresh: () => entry.provider.refresh() } : null;
       },
     });
+    if (this.drafts.generation !== generation || selection !== selectedModelValue(this.plugin.settings, this.controls?.model ?? resolveModelId(this.plugin.settings.model, this.plugin.settings.customModel), Platform.isMobile)) return false;
     if (!preflight.ok) {
       new Notice(preflight.notice);
       return false;
     }
-    if (this.drafts.generation !== generation) return false;
     const { provider, model, caps } = preflight;
     if (preflight.reprobed) void this.refreshBackendPill();
 

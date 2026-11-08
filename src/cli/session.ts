@@ -13,7 +13,7 @@ export interface CliChildStream {
 }
 
 export interface CliChild {
-  stdin: { write(chunk: string, cb?: (err?: Error | null) => void): unknown; end(): void };
+  stdin: { write(chunk: string, cb?: (err?: Error | null) => void): unknown; end(): void; on?(event: "error", listener: (error: Error) => void): unknown };
   stdout: CliChildStream;
   stderr: CliChildStream;
   on(event: "exit", listener: (code: number | null) => void): unknown;

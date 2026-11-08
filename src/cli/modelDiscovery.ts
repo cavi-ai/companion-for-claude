@@ -33,7 +33,12 @@ export function listCodexModels(spawn: () => CliChild): Promise<CliModel[]> {
       if (error) reject(error);
       else resolve([...models.values()]);
     };
-    const send = (message: unknown): void => { child.stdin.write(`${JSON.stringify(message)}\n`); };
+    const send = (message: unknown): void => {
+      if (settled) return;
+      try {
+        child.stdin.write(`${JSON.stringify(message)}\n`, (error) => { if (error) finish(error); });
+      } catch (error) { finish(error instanceof Error ? error : new Error(String(error))); }
+    };
     const list = (cursor?: string): void => {
       send({ id: ++requestId, method: "model/list", params: { limit: 100, includeHidden: false, ...(cursor ? { cursor } : {}) } });
     };
@@ -43,6 +48,7 @@ export function listCodexModels(spawn: () => CliChild): Promise<CliModel[]> {
       finish(new Error("Codex exited before returning its models."));
     });
     child.on("error", (error) => finish(error));
+    child.stdin.on?.("error", (error) => finish(error));
     child.stderr.on("data", () => {}); // Drain startup diagnostics without exposing credentials.
     child.stdout.on("data", (chunk) => {
       if (settled) return;

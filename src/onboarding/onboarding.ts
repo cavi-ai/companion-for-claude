@@ -1,6 +1,7 @@
 // Optional feature setup and ontology loading. Connection never starts a wizard.
 
-import { normalizePath, Notice, TFile, type App } from "obsidian";
+import { normalizePath, TFile, type App } from "obsidian";
+import { CompanionNotice as Notice } from "../notice";
 import type { OntologyRegistry } from "../ontology/registry";
 import { planSeed, seedFiles } from "../ontology/seed";
 import type { ProviderRouter } from "../providers/router";

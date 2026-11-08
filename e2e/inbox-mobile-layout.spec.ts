@@ -102,7 +102,7 @@ test("invalid clip properties stay readable and can be corrected before retry", 
   expect(before).toBe(malformed);
   const editor = page.locator(".markdown-source-view:visible .cm-content");
   await editor.click();
-  await editor.press("Meta+A");
+  await editor.press("ControlOrMeta+A");
   await page.keyboard.insertText("---\nsource: https://example.com/article\n---\n\nBody.  \n");
   await row.getByRole("button", { name: `Enrich ${LONG}`, exact: true }).click();
   await expect(inbox.locator(".cc-inbox-typed")).toContainText(LONG);

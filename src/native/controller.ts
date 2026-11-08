@@ -1,4 +1,5 @@
-import { Notice, Platform, Plugin } from "obsidian";
+import { Platform, Plugin } from "obsidian";
+import { CompanionNotice as Notice } from "../notice";
 import { ensureVaultFolder } from "../vault/vaultFiles";
 import { NATIVE_JOB_FOLDER, NATIVE_MAX_FILE_BYTES, NATIVE_MODEL, validNativeID,
   validateNativeRequest, validateNativeResult } from "./handoff";

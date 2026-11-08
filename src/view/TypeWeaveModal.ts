@@ -1,4 +1,5 @@
-import { App, Modal, Notice, Setting } from "obsidian";
+import { App, Modal, Setting } from "obsidian";
+import { CompanionNotice as Notice } from "../notice";
 import { formatTypeClassifyNotice, type TypeApplyResult, type TypeClassifyResult } from "../optimize/typeController";
 import type { TypeScanReport } from "../optimize/typeScan";
 import { createTypeWeaveState, removeRow, rowDescription, selectedTypes, setRowType, toggleRow, type TypeWeaveViewState } from "./typeWeaveState";

@@ -1,6 +1,7 @@
 // The Research Desk & discovery page: research model, scholarly discovery, Zotero, and the cache.
 
-import { Notice, type SettingGroupItem } from "obsidian";
+import { type SettingGroupItem } from "obsidian";
+import { CompanionNotice as Notice } from "../notice";
 import type ClaudeCompanionPlugin from "../main";
 import { researchModelOptions } from "../research/researchModel";
 import { setCredential } from "./actions";

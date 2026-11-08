@@ -1,4 +1,5 @@
-import { MarkdownView, Notice, type App, type EventRef } from "obsidian";
+import { MarkdownView, type App, type EventRef } from "obsidian";
+import { CompanionNotice as Notice } from "../../notice";
 import type { ContextToggles } from "../../types";
 import { substitutePlaceholders } from "../../templates/promptTemplates";
 import { WORKFLOWS } from "../../workflows/catalog";

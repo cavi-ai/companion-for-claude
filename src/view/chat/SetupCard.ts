@@ -17,9 +17,10 @@ export interface SetupCardDeps {
 
 export class SetupCard {
   private readonly probeInFlight = new Set<string>();
-  /** The card re-renders when a CLI sign-in is detected; a half-typed key survives it. */
+  /** Preserve a half-typed key across an explicit card remount. */
   private keyDraft = "";
   private submitting = false;
+  private refreshConnections: (() => void) | null = null;
 
   constructor(private readonly deps: SetupCardDeps) {}
 
@@ -27,36 +28,41 @@ export class SetupCard {
     const card = parent.createDiv({ cls: "cc-setup-card" });
     const router = this.deps.plugin.router();
     const entries = this.deps.cliEntries(router);
-    for (const { backend, provider } of entries) {
-      if (!provider.hasCredentials() && provider.available() && !this.probeInFlight.has(backend.id)) {
-        this.probeInFlight.add(backend.id);
-        void provider.refresh().catch(() => undefined).finally(() => {
-          this.probeInFlight.delete(backend.id);
-          if (provider.hasCredentials() && this.deps.messagesEl().querySelector(".cc-setup-card")) this.deps.renderEmptyState();
-        });
-      }
-    }
-    const signedIn = entries.filter((e) => e.provider.hasCredentials());
-    const lead = signedIn[0]?.backend;
     const storage = this.deps.plugin.secrets().available()
       ? "The key is kept in device secret storage. Chat sends your message and selected context to the chosen provider."
       : "Secure key storage is unavailable. Use an existing signed-in connection or repair Obsidian secret storage.";
     card.createDiv({ cls: "cc-setup-title", text: "Connect to Claude" });
-    card.createDiv({
-      cls: "cc-setup-sub",
-      text: lead
+    const subtitle = card.createDiv({ cls: "cc-setup-sub" });
+    const cli = card.createDiv({ cls: "cc-setup-cli" });
+    const separator = card.createDiv({ cls: "cc-setup-or", text: "or" });
+    const choices = new Map<CliBackend["id"], HTMLButtonElement>();
+    const updateConnections = (): void => {
+      const signedIn = entries.filter(entry => entry.provider.hasCredentials());
+      const lead = signedIn[0]?.backend;
+      subtitle.setText(lead
         ? `${lead.label} is signed in on this computer. Use it for chat on your subscription, or add an Anthropic API key. ${storage}`
-        : `Add your Anthropic API key to start chatting. ${storage}`,
-    });
-    if (signedIn.length > 0) {
-      const cli = card.createDiv({ cls: "cc-setup-cli" });
+        : `Add your Anthropic API key to start chatting. ${storage}`);
+      const available = new Set(signedIn.map(entry => entry.backend.id));
+      for (const [id, button] of choices) {
+        if (available.has(id)) continue;
+        button.remove();
+        choices.delete(id);
+      }
       for (const { backend } of signedIn) {
+        if (choices.has(backend.id)) continue;
         const useCli = cli.createEl("button", { cls: "mod-cta cc-setup-cli-use", text: `Use ${backend.label} sign-in` });
         useCli.addEventListener("click", () => void this.submit(card, useCli, async () => this.deps.plugin.connection().connect({ backend: backend.id })));
-
+        choices.set(backend.id, useCli);
       }
-      card.createDiv({ cls: "cc-setup-or", text: "or" });
-    }
+      cli.toggle(signedIn.length > 0);
+      separator.toggle(signedIn.length > 0);
+    };
+    updateConnections();
+    this.refreshConnections = () => {
+      if (!this.deps.messagesEl().contains(card)) return;
+      updateConnections();
+      this.deps.refreshModelLabel();
+    };
     const link = card.createEl("a", {
       cls: "cc-setup-link",
       text: "Get a key at console.anthropic.com",
@@ -83,6 +89,15 @@ export class SetupCard {
     });
     const settingsBtn = card.createEl("button", { cls: "cc-setup-settings", text: "Other connections…" });
     settingsBtn.addEventListener("click", () => this.deps.openSettings());
+    for (const { backend, provider } of entries) {
+      if (!provider.hasCredentials() && provider.available() && !this.probeInFlight.has(backend.id)) {
+        this.probeInFlight.add(backend.id);
+        void provider.refresh().catch(() => undefined).finally(() => {
+          this.probeInFlight.delete(backend.id);
+          if (provider.hasCredentials()) this.refreshConnections?.();
+        });
+      }
+    }
   }
   private async submit(card: HTMLElement, button: HTMLButtonElement, connect: () => Promise<{ ok: boolean; detail: string }>, status = card.createDiv({ cls: "cc-setup-status" })): Promise<void> {
     if (this.submitting) return;

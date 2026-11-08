@@ -1,6 +1,7 @@
 // Review or discard one queued order edit. Stale text never reaches the vault: the edit is re-planned against the live note first.
 
-import { Notice, TFile, type App } from "obsidian";
+import { TFile, type App } from "obsidian";
+import { CompanionNotice as Notice } from "../notice";
 import { planEdits } from "../edit/diff";
 import { reviewAndApply } from "../edit/reviewAndApply";
 import { removeEdit, replaceEdits, type QueuedEdit } from "./editQueue";

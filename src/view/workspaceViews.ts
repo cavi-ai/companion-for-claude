@@ -1,7 +1,8 @@
 // Opens and reuses Companion's workspace leaves, resolves the active-note card,
 // runs chat-driven workflows, and keeps the Source inbox ribbon badge current.
 
-import { MarkdownView, Notice, Platform, TFile, type App, type WorkspaceLeaf } from "obsidian";
+import { MarkdownView, Platform, TFile, type App, type WorkspaceLeaf } from "obsidian";
+import { CompanionNotice as Notice } from "../notice";
 import { auditProject } from "../research/audit";
 import { nextSteps } from "../research/nextSteps";
 import { documentSections } from "../research/sectionStatus";

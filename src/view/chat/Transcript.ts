@@ -1,4 +1,5 @@
-import { type App, type EventRef, type MarkdownView, Notice, setIcon, type TFile } from "obsidian";
+import { type App, type EventRef, type MarkdownView, setIcon, type TFile } from "obsidian";
+import { CompanionNotice as Notice } from "../../notice";
 import { ProvenanceFooters } from "./provenanceFooter";
 import { renderCanvasResult } from "./canvasResult";
 import type { TranscriptHost } from "./hosts";

@@ -26,6 +26,8 @@ jobs:
     steps:
       - name: Checkout monorepo
         uses: actions/checkout@v7
+        with:
+          submodules: recursive
 
       # `skip` covers the mirror side only. An already-published community-store
       # release is a backfill, not a re-cut, so the run continues and finishes

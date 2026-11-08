@@ -476,7 +476,7 @@ describe("Chat render lifecycle", () => {
     expect(hint).toMatch(/host/i);
   });
 
-  it("renders the calm desktop header: 3 ghost icons plus quick options, no state group", async () => {
+  it("keeps session actions together and routes model controls separately", async () => {
     const app = new App();
     (app.workspace as unknown as { getActiveViewOfType(): null; getActiveFile(): null }).getActiveViewOfType = () => null;
     (app.workspace as unknown as { getActiveFile(): null }).getActiveFile = () => null;
@@ -532,10 +532,9 @@ describe("Chat render lifecycle", () => {
     const primary = headerActions?.querySelector(".cc-header-actions-primary");
     expect(primary).toBeTruthy();
     expect(primary?.querySelectorAll("button").map((b) => b.getAttribute("aria-label"))).toEqual([
+      "Sessions",
       "New chat",
-      "Resume a past conversation",
       "More actions",
-      "Quick options for Chat",
     ]);
     expect(headerActions?.querySelector(".cc-header-actions-state")).toBeNull();
     expect(headerActions?.querySelectorAll(".cc-mcp-btn").length).toBe(0);

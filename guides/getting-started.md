@@ -2,7 +2,7 @@
 
 Install Companion for Claude, connect Claude, and get to a useful first answer.
 The API-key path takes no terminal; desktop subscribers can instead use an
-already installed and signed-in Claude Code CLI.
+already installed and signed-in Claude Code, Codex, or OpenCode CLI.
 
 ## 1. Install
 
@@ -17,19 +17,21 @@ repo; the store listing tracks it.
 
 ## 2. Connect Claude
 
-On desktop, the first-run card offers **Use Claude Code sign-in** when the
-installed `claude` command is signed in. That runs chat on your Claude
-subscription without saving an API credential. Each saved Companion
-conversation resumes its own Claude Code session. The CLI backend is desktop
-only and covers chat; utility work such as source enrichment still needs a
-direct API credential or a local model.
+On desktop, the first-run card offers **Use Claude Code sign-in**, **Use Codex
+sign-in**, or **Use OpenCode sign-in** for installed, signed-in commands. Each CLI
+keeps its own credentials. These connections are desktop-only and cover chat;
+utility work such as source enrichment uses its separately configured provider.
 
 The simple path on every device is an Anthropic API key:
 
-1. Open the [Anthropic Console → API keys](https://console.anthropic.com/settings/keys) and create a key.
-2. In Obsidian, go to *Settings → Companion for Claude → Choose how I chat*.
-3. Leave **Authentication** on **API key** and paste the key into **Anthropic API key**.
-4. Click **Save & test connection**. A green result means you're done.
+1. Open Companion from the sparkles ribbon icon or **Open chat panel** command.
+2. On the **Connect to Claude** card, paste your Anthropic API key. The card links
+   to the [Anthropic Console](https://console.anthropic.com/settings/keys) if you need one.
+3. Click **Connect** or press **Enter**, then read the connection result. A failed
+   check leaves the card visible with its error.
+
+Use **Other connections…** for local models or advanced connection settings.
+The first connection does not require the setup wizard.
 
 You pay Anthropic for usage; nothing is billed by this plugin, and there is no
 account to create with us.
@@ -45,10 +47,16 @@ command palette (*Open chat panel*).
 
 ![The Companion chat panel with a completed vault-grounded answer](../assets/chat-panel.png)
 
+Use the model button in the chat header to choose a backend and model. On wide
+panes, the composer offers the same choices. **Sessions** opens saved
+conversations; **Activity** opens current work and recovery actions. Close a panel
+with its **Close** button, Escape, or a click outside it. Feedback stays below the
+header and has a **Dismiss** button.
+
 Above the composer is a row of **Context** chips. Toggle one on and its content
 rides along with your next message:
 
-- **Active note** — the note you're looking at.
+- **Note** — the note you're looking at.
 - **Selection** — just the text you highlighted.
 - **Linked / Backlinks** — notes the active note points at, and notes pointing back.
 - **Search** — a keyword (or semantic, if enabled) sweep of the whole vault.
@@ -61,13 +69,21 @@ fetches it and reduces it to clean readable markdown (the same Defuddle engine
 behind Obsidian's Web Clipper). The fetch only happens when you ask for it, and a
 failure shows on the pill instead of derailing the chat.
 
-Try: open a note with some substance, toggle **Active note**, and ask
+Try: open a note with some substance, toggle **Note**, and ask
 *"What am I actually claiming here, and what's unsupported?"*
 
 Companion trims attached context to a character budget (default 24,000
 characters, 6 notes) so a big vault can't blow up a request. Both are adjustable
-under *Settings → Companion for Claude → Advanced settings → Chat & models → Prompts & context*.
+under *Settings → Companion for Claude → Chat & models → Prompts & context*.
 
+
+### Review a note change
+
+Try the [sample-note exercise](../README.md#try-one-note-edit-you-control):
+ask for a clearer next step while preserving a single-user constraint. Inspect
+and accept or reject the proposed changes before checking the saved note.
+[Edit review](agent-mode.md#editing-notes-diffs-not-writes) explains how hunks
+are applied; creating a new note uses a separate write confirmation.
 
 ## 4. Your first artifact
 
@@ -105,10 +121,10 @@ step it takes shows up as a tool chip you can expand.
 
 ![Agent mode showing vault search and note read tool calls, with one result expanded](../assets/agent-tool-chips.png)
 
-Under *Settings → Companion for Claude → Advanced settings → Vault access*:
+Under *Settings → Companion for Claude → Vault access*:
 
 - **Read and search notes** — the read-only loop (search, read, follow links). On by default. Turn it off for plain chat with only pre-attached context.
-- **Create and edit notes** — also lets Claude create, edit, and move notes. On by default, and **every single write asks you first**.
+- **Create and edit notes** — also lets Claude create, edit, and move notes. On by default. Each write asks first unless you grant access for the session; the header’s write-permission button revokes that grant.
 - **Max tool iterations per turn** (under **Agent behavior**) — how many search/read/write rounds Claude may take before it has to answer. Default 10.
 
 Note edits are a separate, safer path: Claude proposes exact replacements. If

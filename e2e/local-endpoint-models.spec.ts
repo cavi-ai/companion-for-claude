@@ -1,4 +1,5 @@
 import { expect, openSettingsSection, test } from "./fixtures";
+import { setRightSidebarWidth } from "./rig/pageOps";
 import { modelLabel } from "../src/claude/models";
 
 const MODELS = ["mlx-community/Qwen3-8B-4bit", "lmstudio/gemma-3-12b"];
@@ -17,10 +18,25 @@ test("the chat picker lists every model the local endpoint serves", async ({ rig
   const { page } = harness;
   try {
     await openChat(page);
-    const select = page.locator(".cc-ctl-model .cc-ctl-select");
+    const chat = page.locator(".cc-chat-root");
+    const select = chat.locator(".cc-ctl-model .cc-ctl-select");
+    await expect(select).toBeHidden();
+    await chat.locator(".cc-model").click();
+    const chooser = page.locator(".cc-model-picker");
+    const endpoints = chooser.locator('[data-backend="custom"] .cc-model-option');
+    await expect(endpoints).toHaveCount(MODELS.length);
+    for (const model of MODELS) {
+      await expect(chooser.locator(`[data-model-value="custom:${model}"]`)).toBeVisible();
+    }
+    await chooser.locator(`[data-model-value="custom:${MODELS[0]}"]`).click();
+    await expect(chat.locator(".cc-model-backend")).toHaveText("Endpoint");
+    await expect(chat.getByRole("button", { name: `Choose model and backend: Endpoint · ${modelLabel(MODELS[0]!)}`, exact: true })).toBeVisible();
+
+    // The duplicate picker is available when the pane has room for the full rail.
+    await setRightSidebarWidth(page, 768);
     await expect(select).toBeVisible();
 
-    const group = select.locator('optgroup[label="Local (endpoint)"]');
+    const group = select.locator('optgroup[label="Endpoint"]');
     await expect(group).toHaveCount(1, { timeout: 10_000 });
     await expect(group.locator("option")).toHaveCount(MODELS.length);
     for (const model of MODELS) {
@@ -31,12 +47,17 @@ test("the chat picker lists every model the local endpoint serves", async ({ rig
     // label and the picker agree instead of only the header updating.
     await select.selectOption(`custom:${MODELS[1]}`);
     // The header shows the formatted label; the picker keeps the raw id.
-    await expect(page.locator(".cc-model").first()).toContainText(modelLabel(MODELS[1]!));
+    await expect(chat.locator(".cc-model-text")).toHaveText(modelLabel(MODELS[1]!));
+    await expect(chat.getByRole("button", { name: `Choose model and backend: Endpoint · ${modelLabel(MODELS[1]!)}`, exact: true })).toBeVisible();
     // It records the choice, not just the live DOM: survives a plugin restart.
     await harness.reloadPlugin();
     await openChat(page);
-    await expect(page.locator(".cc-model").first()).toContainText(modelLabel(MODELS[1]!));
-    await expect(page.locator(".cc-ctl-model .cc-ctl-select")).toHaveValue(`custom:${MODELS[1]}`);
+    await expect(chat.locator(".cc-model-backend")).toHaveText("Endpoint");
+    await expect(chat.locator(".cc-model-text")).toHaveText(modelLabel(MODELS[1]!));
+    await expect(chat.getByRole("button", { name: `Choose model and backend: Endpoint · ${modelLabel(MODELS[1]!)}`, exact: true })).toBeVisible();
+    await setRightSidebarWidth(page, 768);
+    await expect(select).toBeVisible();
+    await expect(select).toHaveValue(`custom:${MODELS[1]}`);
   } finally {
     await harness.close();
   }

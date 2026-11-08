@@ -30,7 +30,11 @@ const DRAFT_REPLY = JSON.stringify({
   gaps: [],
 });
 const ORIGINAL_PLAN = "# Build plan\n\nNotes for implementation.\n\n- [ ] Create the parser\n- [ ] Wire the interface\n- [ ] Write tests\n- [ ] Ship it\n";
-const ENRICHED_PLAN = "# Build Plan\n\nNotes for implementation.\n\n- [ ] Create the parser\n- [ ] Wire the interface\n- [ ] Write tests\n- [ ] Ship it to users\n";
+const DIFF_REVIEW_PLAN = ORIGINAL_PLAN.replace("Notes for implementation.", "Notes for implemenation.") + "\nKeep the source and tests togeter.\n";
+const DIFF_REVIEW_EDITS = [
+  { old_str: "Notes for implemenation.", new_str: "Notes for implementation." },
+  { old_str: "Keep the source and tests togeter.", new_str: "Keep the source and tests together." },
+];
 function note(frontmatter: string, body: string): string { return `---\n${frontmatter}\n---\n\n${body}\n`; }
 
 function fnv1aHex(text: string): string {
@@ -130,7 +134,24 @@ function outputPath(name: string, theme: "dark" | "light", assetRoot = ASSETS): 
 
 async function prepareCapture(target: Locator | Page): Promise<Page> {
   const targetPage = "page" in target && typeof (target as Locator).page === "function" ? (target as Locator).page() : (target as Page);
-  await targetPage.mouse.move(0, 0);
+  // The top-left corner can be a native sidebar control. Measure a blank hit
+  // target before moving the isolated pointer so capture setup opens no tooltip.
+  const pointer = await targetPage.evaluate(() => {
+    const interactive = "button,a,input,textarea,select,summary,[role=button],[role=menuitem],[contenteditable],[aria-label],[title],[data-tooltip-position],.clickable-icon,.sidebar-toggle-button,.workspace-tab-header,iframe,canvas,svg";
+    const candidates = [0.8, 0.5, 0.2].flatMap((y) => [0.5, 0.25, 0.75].map((x) => ({ x: Math.floor(innerWidth * x), y: Math.floor(innerHeight * y) })));
+    candidates.push({ x: 0, y: 0 });
+    for (const point of candidates) {
+      const hit = document.elementFromPoint(point.x, point.y);
+      if (!hit || hit.closest(interactive)) continue;
+      if (!["auto", "default"].includes(getComputedStyle(hit).cursor)) continue;
+      if ([...hit.childNodes].some((node) => node.nodeType === Node.TEXT_NODE && node.textContent?.trim())) continue;
+      return { ...point, hit: { tag: hit.tagName, classes: hit.className }, viewport: { width: innerWidth, height: innerHeight } };
+    }
+    throw new Error("No noninteractive blank capture point is available");
+  });
+  await targetPage.mouse.move(pointer.x, pointer.y);
+  const hover = await targetPage.evaluate(() => [...document.querySelectorAll(":hover")].map((element) => ({ tag: element.tagName, classes: element.className, label: element.getAttribute("aria-label") })));
+  await test.info().attach("capture-pointer-state", { body: JSON.stringify({ pointer, hover }, null, 2), contentType: "application/json" });
   await expect(targetPage.locator(".tooltip")).toBeHidden();
   await targetPage.evaluate(() => {
     document.querySelectorAll(".notice, .cc-turn-complete-status").forEach((n) => n.remove());
@@ -328,7 +349,7 @@ test.describe("README captures", () => {
       endpointReply: "Your vault summary is ready — generated entirely on this device.",
       extraFiles: SCENE_FILES,
       providerReply: [
-        { match: "copyeditor", flags: "i", replies: [ENRICHED_PLAN] },
+        { match: "copyeditor", flags: "i", replies: [JSON.stringify({ complete: true, edits: DIFF_REVIEW_EDITS })] },
         { match: "Draft one research-document section", replies: [DRAFT_REPLY] },
         { match: "What should I work on next?", replies: [CHAT_REPLY] },
       ],
@@ -371,8 +392,25 @@ test.describe("README captures", () => {
         await input.press("Enter");
         const answer = root.locator(".cc-msg.cc-assistant").last();
         await expect(answer).toContainText(CHAT_REPLY_LEAD, { timeout: 15_000 });
+        await expect(answer).toContainText("Finish by running the audit so the draft and its sources stay in sync.");
         await expect(answer.locator("a.internal-link")).toHaveCount(1);
-        await shootThrough(root, answer, 386, "chat-panel.png", theme, PLUGIN_ASSETS);
+        await expect(answer.locator(".cc-provenance")).toContainText("Continuity claim");
+        await expect(answer.locator(".cc-actions")).toBeVisible();
+        await expect(root.locator(".cc-header-session > .cc-session-title")).toBeVisible();
+        await expect(root.getByRole("button", { name: "Sessions", exact: true })).toBeVisible();
+        await expect(root.getByRole("button", { name: /^Choose model and backend/ })).toBeVisible();
+        const send = root.getByRole("button", { name: /^Send(?: message)?$/ });
+        await send.click({ trial: true });
+        // A square frame includes the complete answer, cited notes and reply
+        // actions beneath the session/model rows at the unchanged 520px width.
+        const rootBox = await root.boundingBox();
+        const answerBox = await answer.boundingBox();
+        expect(rootBox?.width, "chat-panel pane width").toBe(520);
+        await shootThrough(root, answer, 520, "chat-panel.png", theme, PLUGIN_ASSETS);
+        const png = await readFile(outputPath("chat-panel.png", theme, PLUGIN_ASSETS));
+        expect(png.readUInt32BE(16), "chat-panel output width").toBe(1040);
+        expect(png.readUInt32BE(20), "chat-panel output height").toBe(1040);
+        await test.info().attach("chat-panel-composition", { body: JSON.stringify({ frame: { width: 520, height: 520 }, root: rootBox, answer: answerBox, send: await send.boundingBox() }, null, 2), contentType: "application/json" });
       });
 
       test("composer-320.png", async () => {
@@ -396,28 +434,30 @@ test.describe("README captures", () => {
       });
 
       test("diff-review.png", async () => {
-        // "Tidy with Claude…" (not the single-edit rewrite path): its lint step
-        // sends the whole note to the utility (here: chat-role/Anthropic-stub)
-        // model and diffToEdits() turns the returned full copy into edits, one per
-        // LCS-changed region merged only when within MERGE_GAP (3) lines of each
-        // other — a changed heading and a changed last task, six unchanged lines
-        // apart, stay two separate edits and so two separate .cc-diff-hunk boxes.
+        // Tidy validates exact prose replacements before diffToEdits builds the
+        // review. Two spelling corrections separated by six unchanged lines
+        // stay separate hunks; the heading and every task remain unchanged.
         await resetScene(theme, { chatBackend: "claude", model: "claude-sonnet-5-5" });
         const { page } = harness;
-        await page.evaluate(async () => {
+        await page.evaluate(async (content) => {
           const w = window as unknown as {
             app: {
-              vault: { getAbstractFileByPath(path: string): unknown };
+              vault: { getAbstractFileByPath(path: string): unknown; modify(file: unknown, content: string): Promise<void> };
               plugins: { plugins: Record<string, { noteFlows(): { enrichNoteFlow(file: unknown, options: { rename: boolean; frontmatter: boolean; links: boolean; lint: boolean }): Promise<void> } }> };
             };
           };
           const file = w.app.vault.getAbstractFileByPath("Build plan.md");
+          await w.app.vault.modify(file, content);
           // Fire and forget: enrichNoteFlow() only resolves once the review
           // modal it opens is closed, which this test never does.
           void w.app.plugins.plugins["claude-companion"]!.noteFlows().enrichNoteFlow(file, { rename: false, frontmatter: false, links: false, lint: true });
-        });
+        }, DIFF_REVIEW_PLAN);
         const modal = page.locator(".modal", { has: page.locator(".cc-diff-hunk") });
         await expect(modal.locator(".cc-diff-hunk")).toHaveCount(2, { timeout: 15_000 });
+        for (const [index, edit] of DIFF_REVIEW_EDITS.entries()) {
+          await expect(modal.locator(".cc-diff-hunk").nth(index)).toContainText(edit.old_str);
+          await expect(modal.locator(".cc-diff-hunk").nth(index)).toContainText(edit.new_str);
+        }
         await shoot(modal, "diff-review.png", theme);
       });
 
@@ -503,17 +543,41 @@ test.describe("README captures", () => {
       test("mcp-bridge-settings.png", async () => {
         await resetScene(theme, { mcpEnabled: true, mcpPort: 22360, mcpToken: "3f9c1b7e2a6d4c8f9e0b1a2c3d4e5f60" });
         const settingsPage = await openSettingsSection(harness, "Vault bridge (MCP)");
-        await settingsPage.setViewportSize({ width: 1000, height: 760 });
+        await settingsPage.setViewportSize({ width: 1000, height: 800 });
         const tab = settingsPage.locator(".vertical-tab-content-container .vertical-tab-content").last();
+        await tab.evaluate((element) => Object.assign(element.style, { width: "680px", minWidth: "0", maxWidth: "680px" }));
+        await expect.poll(async () => Math.abs((await tab.boundingBox())!.width - 680), { message: "MCP settings pane must acknowledge its declared width" }).toBeLessThanOrEqual(0.5);
         await expect(tab.getByText(/✓ Running at /)).toBeVisible({ timeout: 15_000 });
-        await settingsPage.addStyleTag({ content: "*::-webkit-scrollbar { display: none; }" });
         await prepareCapture(settingsPage);
         const tabBox = await tab.boundingBox();
         if (!tabBox) throw new Error("Failed to measure mcp-bridge-settings");
-        // Skip the back chevron at the tab's left edge; end on a divider between settings rows.
-        expect(tabBox.height, "settings tab must be tall enough for the fixed crop").toBeGreaterThanOrEqual(712);
-        expect(tabBox.width, "settings tab must be wide enough for the fixed crop").toBeGreaterThanOrEqual(692);
-        await captureClip(settingsPage, { x: tabBox.x + 12, y: tabBox.y, width: 680, height: 712 }, "mcp-bridge-settings.png", theme, ASSETS);
+        // Capture the whole declared pane instead of a strip from a wider tab.
+        expect(tabBox.height, "settings tab must be tall enough for the fixed crop").toBeGreaterThanOrEqual(748);
+        expect(Math.abs(tabBox.width - 680), "settings pane width").toBeLessThanOrEqual(0.5);
+        const clip = { x: tabBox.x, y: tabBox.y, width: 680, height: 748 };
+        const controls = [
+          { name: "Search", locator: tab.getByRole("searchbox", { name: "Search all settings" }) },
+          { name: "Enable MCP server", locator: tab.locator('.setting-item:has(.setting-item-name:text-is("Enable MCP server")) .checkbox-container') },
+          { name: "Port", locator: tab.locator('.setting-item:has(.setting-item-name:text-is("Port")) input') },
+          { name: "Access token", locator: tab.locator('.setting-item:has(.setting-item-name:text-is("Access token")) input') },
+          { name: "Regenerate", locator: tab.getByRole("button", { name: "Regenerate", exact: true }) },
+          { name: "Enable MCP server row", locator: tab.locator('.setting-item:has(.setting-item-name:text-is("Enable MCP server"))') },
+          { name: "Port row", locator: tab.locator('.setting-item:has(.setting-item-name:text-is("Port"))') },
+          { name: "Access token row", locator: tab.locator('.setting-item:has(.setting-item-name:text-is("Access token"))') },
+        ];
+        const bounds = [];
+        for (const { name, locator } of controls) {
+          await expect(locator, name).toBeVisible();
+          const box = await locator.boundingBox();
+          if (!box) throw new Error(`Failed to measure MCP control: ${name}`);
+          expect(box.x, `${name} left edge`).toBeGreaterThanOrEqual(clip.x);
+          expect(box.y, `${name} top edge`).toBeGreaterThanOrEqual(clip.y);
+          expect(box.x + box.width, `${name} right edge`).toBeLessThanOrEqual(clip.x + clip.width);
+          expect(box.y + box.height, `${name} bottom edge`).toBeLessThanOrEqual(clip.y + clip.height);
+          bounds.push({ name, box });
+        }
+        await test.info().attach("mcp-capture-bounds", { body: JSON.stringify({ clip, tab: tabBox, controls: bounds }, null, 2), contentType: "application/json" });
+        await captureClip(settingsPage, clip, "mcp-bridge-settings.png", theme, ASSETS);
       });
 
       test("local-fallback-indicator.png", async () => {
@@ -527,7 +591,7 @@ test.describe("README captures", () => {
         const answer = root.locator(".cc-msg.cc-assistant").last();
         await expect(answer).toContainText("generated entirely on this device", { timeout: 15_000 });
         await expect(root.locator(".cc-error")).toHaveCount(0);
-        await shootThrough(root, answer, 296, "local-fallback-indicator.png", theme);
+        await shootThrough(root, answer, 336, "local-fallback-indicator.png", theme);
       });
 
       test("agent-tool-chips.png", async () => {
@@ -542,19 +606,8 @@ test.describe("README captures", () => {
         await chips.nth(1).locator("summary").click();
         // Crop to the transcript only: from top of .cc-chat-root down to bottom
         // of last assistant bubble, excluding the composer.
-        // Hide the composer so nothing overflows and causes horizontal scroll offset.
-        await harness.page.addStyleTag({ content: ".cc-chat-root .cc-composer, .cc-chat-root textarea { display: none !important; }" });
-        // Reset every horizontal scroll: a wide row (e.g. the usage bar) can leave
-        // an ancestor mid-horizontal-scroll; pin every scrollable element back to
-        // its left edge before measuring bounding boxes.
-        await harness.page.evaluate(() => {
-          for (const el of Array.from(document.querySelectorAll<HTMLElement>("*"))) {
-            if (el.scrollLeft) el.scrollLeft = 0;
-          }
-          window.scrollTo(0, 0);
-        });
         const bubble = root.locator(".cc-msg.cc-assistant").last();
-        await shootThrough(root, bubble, 446, "agent-tool-chips.png", theme);
+        await shootThrough(root, bubble, 460, "agent-tool-chips.png", theme);
       });
 
       test("hero.png", async () => {

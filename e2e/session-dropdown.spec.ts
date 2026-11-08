@@ -39,7 +39,7 @@ async function openChat(page: Page): Promise<void> {
 }
 
 async function openDropdown(page: Page) {
-  await page.locator('[aria-label="Resume a past conversation"]:visible').first().click();
+  await page.locator('.cc-sessions-btn:visible').first().click();
   const dropdown = page.locator(".cc-session-dropdown");
   await expect(dropdown).toBeVisible();
   return dropdown;
@@ -73,12 +73,21 @@ test("switching conversations preserves their separate drafts and sending clears
   await openChat(page);
   const chat = page.locator(".cc-chat-root");
   const input = chat.locator("textarea");
+  let feedbackSequence = 0;
   const select = async (title: string) => {
-    // Completion notices overlap the history button and pause dismissal on hover.
-    await page.mouse.move(500, 150);
-    await expect(page.locator(".notice")).toHaveCount(0);
+    const feedbackId = `session-selection-${++feedbackSequence}`;
+    await page.evaluate((id) => {
+      const app = (window as unknown as { app: { plugins: { plugins: Record<string, { semantic(): { deps: { notice(message: string, timeout: number): { containerEl: HTMLElement } } } }> } } }).app;
+      const notice = app.plugins.plugins["claude-companion"]!.semantic().deps.notice("Session feedback remains visible", 0);
+      notice.containerEl.setAttribute("data-session-feedback", id);
+    }, feedbackId);
+    const feedback = page.locator(`.cc-feedback-host .notice[data-session-feedback="${feedbackId}"]`);
+    await expect(feedback).toBeVisible();
     const dropdown = await openDropdown(page);
+    await expect(feedback).toBeVisible();
     await dropdown.locator(".cc-session-row").filter({ hasText: title }).click();
+    await expect(feedback).toBeVisible();
+    await feedback.getByRole("button", { name: "Dismiss feedback" }).click();
   };
 
   await input.fill(draftB);
@@ -118,7 +127,7 @@ test("the dropdown opens under the history button, narrow, inside the viewport",
   const { page } = await rig.reset({ providerReply: [DISTILL_RULE] });
   await seedConversation(page, BASIC);
   await openChat(page);
-  const button = page.locator('[aria-label="Resume a past conversation"]:visible').first();
+  const button = page.locator('.cc-sessions-btn:visible').first();
   const buttonBox = (await button.boundingBox())!;
   const dropdown = await openDropdown(page);
   const box = (await dropdown.boundingBox())!;

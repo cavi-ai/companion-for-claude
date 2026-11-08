@@ -21,7 +21,7 @@ function cliGate(opts: { backend?: string; signedIn: boolean; refreshSignsIn?: b
   const signIn: CliSignIn = { label: "Claude Code", signInHint: "run `claude auth login`", available: () => opts.available ?? true, refresh };
   const deps = {
     backend: opts.backend ?? "claude-cli",
-    chatProvider: () => ({ provider: provider(state.signedIn ? "claude-cli" : "anthropic", state.signedIn), model: "m" }),
+    chatProvider: () => ({ provider: provider(state.signedIn ? opts.backend ?? "claude-cli" : "anthropic", state.signedIn), model: "m" }),
     chatCapabilities: () => (state.signedIn ? CLI : NOT_CLI),
     anthropicHasCredentials: () => opts.anthropic ?? false,
     cliSignIn: () => signIn,
@@ -65,11 +65,19 @@ describe("preflightTurn", () => {
     expect(result).toMatchObject({ ok: true, reprobed: false });
   });
 
-  it("proceeds without refreshing when Anthropic has credentials", async () => {
+  it("keeps the API fallback after checking that the selected CLI is signed out", async () => {
     const { deps, refresh } = cliGate({ signedIn: false, anthropic: true });
     const result = await preflightTurn({ ...deps, chatProvider: () => ({ provider: provider("anthropic", true), model: "m" }) });
-    expect(refresh).not.toHaveBeenCalled();
+    expect(refresh).toHaveBeenCalledTimes(1);
     expect(result).toMatchObject({ ok: true, reprobed: false });
+  });
+
+  it("waits for the selected CLI before using an available API fallback", async () => {
+    const { deps, refresh } = cliGate({ backend: "codex-cli", signedIn: false, refreshSignsIn: true, anthropic: true });
+    const result = await preflightTurn(deps);
+    expect(refresh).toHaveBeenCalledTimes(1);
+    expect(result).toMatchObject({ ok: true, reprobed: true, caps: CLI });
+    expect(result.ok && result.provider.id).toBe("codex-cli");
   });
 
   it.each([

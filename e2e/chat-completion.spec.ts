@@ -24,7 +24,7 @@ test("background completion leaves history reachable and opens the reply by keyb
   await expect(page.locator(".cc-turn-complete-status")).toHaveAttribute("role", "status");
   await expect(ready).toHaveJSProperty("tabIndex", 0);
 
-  const history = chat.getByRole("button", { name: "Resume a past conversation", exact: true });
+  const history = chat.getByRole("button", { name: "Sessions", exact: true });
   // A physical click must reach history on its first attempt, without clearing feedback.
   const box = (await history.boundingBox())!;
   await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);

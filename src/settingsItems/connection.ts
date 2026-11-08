@@ -1,7 +1,8 @@
 // The Connection group: authentication, credentials, model, chat backend, the
 // on-device model download, and the CLI backends' status rows.
 
-import { Notice, Platform, type SettingGroupItem } from "obsidian";
+import { Platform, type SettingGroupItem } from "obsidian";
+import { CompanionNotice as Notice } from "../notice";
 import type ClaudeCompanionPlugin from "../main";
 import { chatBackendOptions } from "../providers/runtimeBackend";
 import { DEVICE_MODELS, clearDeviceModel, deviceModelCached } from "../device/models";
@@ -31,7 +32,7 @@ function cliStatusItems(ctx: ConnectionItemsContext, backend: CliBackend, cliOf:
       desc: `Status of the ${backend.binary} command this backend runs. Companion never sees your credentials; ${backend.label} holds them.`,
       render: (setting) => {
         const status = setting.settingEl.querySelector<HTMLElement>(".cc-conn-status")
-          ?? setting.settingEl.createDiv({ cls: "cc-conn-status" });
+          ?? setting.settingEl.createDiv({ cls: "cc-setting-detail cc-conn-status", attr: { role: "status" } });
         const cli = cliOf(plugin.router());
         const probe = cli.probe();
         if (probe) ctx.renderStatus(status, { ok: probe.loggedIn, detail: probe.loggedIn ? `${backend.label} ${probe.version} · signed in via ${probe.method} · ${probe.executable}` : `Not signed in — ${backend.signInHint}.` });
@@ -117,7 +118,8 @@ export function connectionItems(ctx: ConnectionItemsContext): SettingGroupItem[]
           }),
         );
         let draft = s.apiKey;
-        const status = setting.settingEl.createDiv({ cls: "cc-conn-status", attr: { role: "status" } });
+        const status = setting.settingEl.querySelector<HTMLElement>(".cc-conn-status")
+          ?? setting.settingEl.createDiv({ cls: "cc-setting-detail cc-conn-status", attr: { role: "status" } });
         let pending = false;
         let button!: import("obsidian").ButtonComponent;
         const connect = async (): Promise<void> => {
@@ -172,7 +174,8 @@ export function connectionItems(ctx: ConnectionItemsContext): SettingGroupItem[]
         const detail = found
           ? `Using ${env.ANTHROPIC_API_KEY ? "ANTHROPIC_API_KEY" : "ANTHROPIC_AUTH_TOKEN"}` + (env.ANTHROPIC_BASE_URL ? " + ANTHROPIC_BASE_URL" : "") + " from the environment."
           : "No ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN found in this process's environment. Note: apps launched from the macOS Dock often don't inherit shell exports — launch Obsidian from a terminal, or use one of the other modes.";
-        const box = setting.settingEl.createDiv({ cls: "cc-conn-status" });
+        const box = setting.settingEl.querySelector<HTMLElement>(".cc-conn-status")
+          ?? setting.settingEl.createDiv({ cls: "cc-setting-detail cc-conn-status", attr: { role: "status" } });
         box.toggleClass("is-ok", found);
         box.toggleClass("is-err", !found);
         box.setText((found ? "✓ " : "✗ ") + detail);
@@ -188,7 +191,8 @@ export function connectionItems(ctx: ConnectionItemsContext): SettingGroupItem[]
       visible: () => plugin.settings.authMode !== "apiKey",
       desc: "Saves settings and sends a tiny request to verify your credential.",
       render: (setting) => {
-        const status = setting.settingEl.createDiv({ cls: "cc-conn-status" });
+        const status = setting.settingEl.querySelector<HTMLElement>(".cc-conn-status")
+          ?? setting.settingEl.createDiv({ cls: "cc-setting-detail cc-conn-status", attr: { role: "status" } });
         setting.addButton((btn) =>
           btn
             .setButtonText("Save & test")

@@ -25,7 +25,7 @@ const captures: CaptureContract[] = [
   {
     path: documentationAsset("chat-panel.png"),
     width: 1040,
-    height: 772,
+    height: 1040,
     maxHeightToWidth: 1.55,
   },
   {
@@ -37,19 +37,19 @@ const captures: CaptureContract[] = [
   {
     path: documentationAsset("local-fallback-indicator.png", true),
     width: 840,
-    height: 592,
+    height: 672,
     maxHeightToWidth: 1.25,
   },
   {
     path: documentationAsset("agent-tool-chips.png", true),
     width: 1040,
-    height: 892,
+    height: 920,
     maxHeightToWidth: 1.25,
   },
   {
     path: documentationAsset("diff-review.png", true),
     width: 1120,
-    height: 712,
+    height: 760,
     maxHeightToWidth: 1,
   },
   {
@@ -67,7 +67,7 @@ const captures: CaptureContract[] = [
   {
     path: documentationAsset("mcp-bridge-settings.png", true),
     width: 1360,
-    height: 1424,
+    height: 1496,
     maxHeightToWidth: 1.1,
   },
 ];

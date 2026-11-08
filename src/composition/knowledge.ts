@@ -1,6 +1,7 @@
 // Wires the knowledge cluster: semantic index, source enrichment, session memory and clippings.
 
-import { htmlToMarkdown, Notice, Platform, requestUrl, TFile, normalizePath } from "obsidian";
+import { htmlToMarkdown, Platform, requestUrl, TFile, normalizePath } from "obsidian";
+import { CompanionNotice as Notice } from "../notice";
 import { cliSessionIds } from "../conversations/store";
 import type ClaudeCompanionPlugin from "../main";
 import { MemoryController } from "../memory/controller";

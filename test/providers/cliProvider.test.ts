@@ -93,6 +93,20 @@ describe.each([
     expect(p.executable()).toBe("/usr/local/bin/x");
   });
 
+  it("shares an in-flight read-only status check between setup and the first send", async () => {
+    let finish!: () => void;
+    const ready = new Promise<void>(resolve => { finish = resolve; });
+    const probe = vi.fn(async () => { await ready; return { loggedIn: true, method: "x.ai" }; });
+    const p = new CliProvider(backend, runtime({ probe }));
+    const first = p.refresh();
+    const second = p.refresh();
+    await flush();
+    finish();
+    await Promise.all([first, second]);
+    expect(probe).toHaveBeenCalledTimes(1);
+    expect(p.hasCredentials()).toBe(true);
+  });
+
   it("reports a missing binary, naming the backend and its sign-in command", async () => {
     const p = new CliProvider(backend, runtime({ find: async () => null }));
     const status = await p.refresh();

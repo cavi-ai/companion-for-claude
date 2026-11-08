@@ -13,10 +13,21 @@ const CATEGORIES: Array<{ id: SettingsCategory; title: string }> = [
 const DROPDOWN = ".setting-item-control select:not(.is-measuring)";
 const watchedLists = new WeakSet<HTMLElement>();
 
-/** Tag direct rows that hold a dropdown so the stylesheet can lay them out without a relational selector. */
+/** Tag native controls and full-width details without relational CSS selectors. */
 export function markDropdownRows(listEl: HTMLElement): void {
   for (const row of Array.from(listEl.children)) {
-    if (row.classList.contains("setting-item")) row.classList.toggle("cc-dropdown-row", row.querySelector(DROPDOWN) !== null);
+    if (!row.classList.contains("setting-item")) continue;
+    row.classList.toggle("cc-dropdown-row", row.querySelector(DROPDOWN) !== null);
+    const control = row.querySelector<HTMLElement>(".setting-item-control");
+    const textarea = control?.querySelector<HTMLTextAreaElement>("textarea");
+    const multiline = Boolean(textarea);
+    if (textarea && !textarea.getAttribute("aria-label") && !textarea.getAttribute("aria-labelledby")) {
+      const label = row.querySelector(".setting-item-name")?.textContent?.trim();
+      if (label) textarea.setAttribute("aria-label", label);
+    }
+    control?.classList.toggle("cc-setting-detail", multiline);
+    row.classList.toggle("cc-setting-detail-row", Array.from(row.children).some((child) => child.classList.contains("cc-setting-detail")));
+    row.classList.toggle("cc-setting-editor-row", multiline);
   }
 }
 

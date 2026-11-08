@@ -41,8 +41,35 @@ case "$*" in
 esac
 `;
 
-// codex/opencode are not driven by any spec yet; a minimal --version-answering
-// stub is enough to keep them off the hermetic PATH's real-binary risk.
+const FAKE_CODEX = `import { createInterface } from "node:readline";
+import { appendFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+const args = process.argv.slice(2);
+const modelFlag = args.findIndex(arg => arg === "-m" || arg === "--model");
+const model = modelFlag >= 0 ? args[modelFlag + 1] : null;
+appendFileSync(join(dirname(fileURLToPath(import.meta.url)), "codex-argv.log"), JSON.stringify({ argv: args, model }) + "\\n");
+if (args.includes("--version")) {
+  console.log("0.0.0-e2e (codex)");
+} else if (args[0] === "login" && args[1] === "status") {
+  console.error("Logged in using ChatGPT");
+} else if (args.includes("app-server")) {
+  for await (const line of createInterface({ input: process.stdin })) {
+    const message = JSON.parse(line);
+    if (message.method === "initialize") console.log(JSON.stringify({ id: message.id, result: {} }));
+    else if (message.method === "model/list") console.log(JSON.stringify({ id: message.id, result: { data: [{ id: "e2e-codex-model", model: "e2e-codex-model", displayName: "E2E Codex model", hidden: false }], nextCursor: null } }));
+  }
+} else if (args[0] === "exec" && args.includes("--json")) {
+  console.log(JSON.stringify({ type: "thread.started", thread_id: "e2e-codex-session" }));
+  console.log(JSON.stringify({ type: "item.completed", item: { id: "e2e-codex-message", type: "agent_message", text: "pong from codex (" + (model ?? "default") + ")" } }));
+  console.log(JSON.stringify({ type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } }));
+} else {
+  console.error("Unsupported fixture Codex command");
+  process.exitCode = 2;
+}
+`;
+
+// Keep commands outside the modeled protocols hermetic as well.
 const fakeMinimalCli = (name: string): string => `#!/bin/sh
 case "$*" in
   *--version*) printf '0.0.0-e2e (${name})\\n' ;;
@@ -64,7 +91,13 @@ export async function installFakeCli(root: string): Promise<{ bin: string; argvL
   const claude = join(bin, "claude");
   await writeFile(claude, FAKE_CLAUDE);
   await chmod(claude, 0o755);
-  for (const name of ["codex", "opencode"]) {
+  const codex = join(bin, "codex");
+  await writeFile(join(bin, "codex.mjs"), FAKE_CODEX);
+  await writeFile(join(bin, "codex-argv.log"), "");
+  const nodeExecutable = `'${process.execPath.replace(/'/g, "'\\''")}'`;
+  await writeFile(codex, `#!/bin/sh\nexec ${nodeExecutable} "$(dirname "$0")/codex.mjs" "$@"\n`);
+  await chmod(codex, 0o755);
+  for (const name of ["opencode"]) {
     const path = join(bin, name);
     await writeFile(path, fakeMinimalCli(name));
     await chmod(path, 0o755);

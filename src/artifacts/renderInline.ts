@@ -1,4 +1,5 @@
-import { setIcon, Notice, Modal, App } from "obsidian";
+import { setIcon, Modal, App } from "obsidian";
+import { CompanionNotice as Notice } from "../notice";
 import { validateArtifactInteractivity } from "./parse";
 import type { ArtifactOpenTarget } from "../types";
 

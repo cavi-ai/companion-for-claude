@@ -75,6 +75,33 @@ function renderedControls(settings: Partial<PluginSettings>) {
 }
 
 describe("ChatView on the claude-cli backend", () => {
+  it.each(["backend", "model"] as const)("owns the immediate send while checking CLI readiness and retains the draft if its %s changes", async change => {
+    clearNotices();
+    const { plugin, refresh } = gatePluginStub(false, true);
+    let finish!: () => void;
+    const ready = new Promise<void>(resolve => { finish = resolve; });
+    const perform = refresh.getMockImplementation()!;
+    refresh.mockImplementationOnce(async () => { await ready; return perform(); });
+    const view = new ChatView(new WorkspaceLeaf(new App()), plugin);
+    const seam = view as unknown as {
+      controls: ReturnType<typeof defaultChatControls>; inputEl: HTMLTextAreaElement; messagesEl: HTMLElement;
+      submission: { pending: boolean }; onSend(): Promise<void>;
+    };
+    seam.controls = defaultChatControls(DEFAULT_SETTINGS.model);
+    seam.inputEl = new FakeElement("textarea") as unknown as HTMLTextAreaElement;
+    seam.inputEl.value = "Send using the selected CLI";
+    seam.messagesEl = new FakeElement() as unknown as HTMLElement;
+    const sending = seam.onSend();
+    try {
+      expect(seam.submission.pending).toBe(true);
+      expect(refresh).toHaveBeenCalledTimes(1);
+      if (change === "backend") plugin.settings.chatBackend = "claude";
+      else seam.controls.model = "claude-opus-4-6";
+    } finally { finish(); await sending; }
+    expect(seam.submission.pending).toBe(false);
+    expect(seam.inputEl.value).toBe("Send using the selected CLI");
+    expect(getNoticeMessages()).toEqual([]);
+  });
   it("picks the Claude Code runner for a turn and hands it the modal callbacks", async () => {
     const plugin = pluginStub({ chatBackend: "claude-cli" }, CLI, true);
     const view = new ChatView(new WorkspaceLeaf(new App()), plugin);

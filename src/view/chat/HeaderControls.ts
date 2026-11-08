@@ -1,21 +1,22 @@
-import { Platform, setIcon, Menu, Modal, Notice, type App } from "obsidian";
+import { Platform, setIcon, Menu, Modal, type App } from "obsidian";
 import type { HeaderHost } from "./hosts";
 import { renderCompanionChrome } from "../companionChrome";
 import type { ChatMessage } from "../../types";
 import type { Conversation } from "../../conversations/store";
 import { SessionDropdown } from "./SessionDropdown";
-import { modelLabel } from "../../claude/models";
-import { DEVICE_MODELS, DEVICE_MAX_INPUT_TOKENS, DEVICE_MAX_OUTPUT_TOKENS, deviceModelCached } from "../../device/models";
-import { isMobileModelChoiceActive, mobileModelChoices } from "../mobileModelChoices";
+import { CLAUDE_MODELS, modelLabel } from "../../claude/models";
+import { DEVICE_MODELS, DEVICE_MAX_INPUT_TOKENS, DEVICE_MAX_OUTPUT_TOKENS } from "../../device/models";
+import { MODEL_BACKEND_LABELS, ModelCatalogSource } from "./modelCatalog";
+import { ModelPickerModal } from "../ModelPickerModal";
+import { chatBackendForRuntime } from "../../providers/runtimeBackend";
 import type { ChatControls } from "../../claude/chatControls";
 import type { ChatSession } from "./chatSession";
-import type { CliBackend, CliSignInProvider } from "../../cli/backends/types";
-import type { ProviderRouter } from "../../providers/router";
 import { contextGauge, estimateTokens, estimateTokensForChars, formatCost, formatTokens, sessionCost, type SessionUsage } from "../../usage/tokens";
 import { ActionModal, type ActionModalItem } from "../ActionModal";
 import { QuickOptionsModal } from "../QuickOptionsModal";
-import { quickNotice } from "../../notice";
-import { CliModelPicker } from "../CliModelPicker";
+import { quickNotice, CompanionNotice as Notice } from "../../notice";
+
+const HEADER_BACKEND_LABELS = { ...MODEL_BACKEND_LABELS, claude: "API", device: "On-device" };
 
 export interface HeaderControlsCallbacks {
   onModelClick: () => void;
@@ -28,8 +29,9 @@ export interface HeaderControlsCallbacks {
 
 export interface HeaderControlsDeps {
   anyContextEnabled(): boolean;
+  conversationId(): string | null;
+  refreshTabTitle(): void;
   clearChat(): void;
-  cliEntries(router: ProviderRouter): { backend: CliBackend; provider: CliSignInProvider }[];
   loadConversation(conversation: Conversation): void;
   openSettings(): void;
   renderContextManager(): void;
@@ -45,9 +47,11 @@ export interface HeaderControlsDeps {
 /** The chat panel's header row: eyebrow/title, model chip, backend/write-grant pills, chrome-hosted actions. */
 export class HeaderControls {
   modelLabelEl!: HTMLElement;
+  sessionTitleEl!: HTMLElement;
+  private modelPicker: ModelPickerModal | null = null;
   /** The active chat project's name, next to the conversation title; empty (hidden via CSS) when there's none. */
   projectLabelEl!: HTMLElement;
-  /** Desktop only: the text span nested inside the cc-model chip (dot + text + chevron). */
+  /** The model name stays separate from the backend prefix on both platforms. */
   modelTextEl: HTMLElement | null = null;
   backendPillEl!: HTMLElement;
   writeGrantPillEl!: HTMLElement;
@@ -58,9 +62,12 @@ export class HeaderControls {
   private headerEl: HTMLElement | null = null;
   private historyBtnEl: HTMLElement | null = null;
   private sessionDropdown: SessionDropdown | null = null;
+  private sessionListKey = "";
 
   /** Detach any chrome mounted by a previous mount() call. */
   teardown(remove?: boolean): void {
+    this.modelPicker?.close();
+    this.modelPicker = null;
     this.sessionDropdown?.close();
     this.sessionDropdown = null;
     this.disposeChrome?.(remove);
@@ -70,63 +77,49 @@ export class HeaderControls {
   mount(root: HTMLElement, cb: HeaderControlsCallbacks): void {
     const header = root.createDiv({ cls: "cc-header" });
     this.headerEl = header;
-    const title = header.createDiv({ cls: "cc-title" });
-    title.createSpan({ cls: "cc-eyebrow", text: "COMPANION FOR CLAUDE" });
-    const brand = title.createDiv({ cls: "cc-brand" });
-    setIcon(brand.createSpan({ cls: "cc-brand-icon", attr: { "aria-hidden": "true" } }), "sparkles");
-    brand.createSpan({ text: "Companion" });
-    this.projectLabelEl = title.createSpan({ cls: "cc-project-label" });
-    this.modelLabelEl = title.createSpan({ cls: "cc-model" });
-    this.backendPillEl = title.createSpan({ cls: "cc-backend-pill", attr: { "aria-label": "Chat backend / connectivity" } });
-    this.writeGrantPillEl = title.createEl("button", {
-      cls: "cc-write-grant-pill",
-      text: "✎ writes auto-allowed",
-      attr: { "aria-label": "Agent writes are auto-allowed for this session — click to revoke" },
+    const session = header.createDiv({ cls: "cc-header-session" });
+    this.sessionTitleEl = session.createSpan({ cls: "cc-session-title", text: "New chat" });
+    this.projectLabelEl = session.createSpan({ cls: "cc-project-label" });
+    const actions = session.createDiv({ cls: "cc-header-actions" });
+    const primary = actions.createDiv({ cls: "cc-header-actions-primary" });
+    const history = primary.createEl("button", { cls: "cc-sessions-btn", attr: { type: "button", "aria-label": "Sessions" } });
+    setIcon(history.createSpan({ cls: "cc-sessions-icon", attr: { "aria-hidden": "true" } }), "history");
+    history.createSpan({ cls: "cc-sessions-label", text: "Sessions" });
+    history.addEventListener("click", () => cb.onHistory());
+    this.historyBtnEl = history;
+    this.iconButton(primary, "plus", "New chat", () => cb.onNewChat());
+    this.iconButton(primary, Platform.isMobile ? "more-vertical" : "more-horizontal", "More actions", () => cb.onOverflow());
+
+    const routing = header.createDiv({ cls: "cc-header-routing" });
+    this.modelLabelEl = routing.createEl("button", { cls: "cc-model", attr: { type: "button", "aria-label": "Choose model and backend", "aria-haspopup": "dialog" } });
+    this.modelLabelEl.addEventListener("click", () => cb.onModelClick());
+    this.backendPillEl = this.modelLabelEl.createSpan({ cls: "cc-model-backend" });
+    this.modelTextEl = this.modelLabelEl.createSpan({ cls: "cc-model-text" });
+    setIcon(this.modelLabelEl.createSpan({ cls: "cc-model-chevron", attr: { "aria-hidden": "true" } }), "chevron-down");
+    const activity = routing.createDiv({ cls: "cc-header-activity" });
+    this.disposeChrome = renderCompanionChrome(root, "chat", "Chat", this.plugin.shell().companionChrome(), { host: activity, compact: true });
+    activity.querySelector(".cc-companion-quick-options")?.addClass("cc-header-secondary");
+    this.writeGrantPillEl = routing.createEl("button", {
+      cls: "cc-write-grant-pill", text: "✎",
+      attr: { type: "button", "aria-label": "Revoke automatic write permission for this session" },
     });
     this.writeGrantPillEl.addEventListener("click", () => cb.onWriteGrantRevoke());
-    const actions = header.createDiv({ cls: "cc-header-actions" });
-    if (Platform.isMobile) {
-      // Mobile: the model name is the model picker, and one ⋯ menu carries the
-      // actions the desktop icon row holds, plus the session toggles from the
-      // hidden controls bar (Act on vault, Plan mode, memory ingest). Truly
-      // desktop-only chrome (MCP, session capture) stays omitted.
-      this.modelLabelEl.addClass("cc-model-tappable");
-      this.modelLabelEl.addEventListener("click", () => cb.onModelClick());
-      const more = actions.createEl("button", { cls: "cc-icon-btn clickable-icon", attr: { "aria-label": "More actions" } });
-      setIcon(more, "more-vertical");
-      more.addEventListener("click", () => cb.onOverflow());
-      // Quick options reaches mobile through that one ⋯ menu; a second control on
-      // a phone-width header is the crowding this row exists to avoid.
-      this.disposeChrome = renderCompanionChrome(root, "chat", "Chat", this.plugin.shell().companionChrome(), {
-        host: actions,
-        compact: true,
-        omitOptionsButton: true,
-      });
-    } else {
-      // Desktop: same pattern as mobile — the model name opens the model picker,
-      // and one "More" button carries the rest (Save, capture, MCP bridge) so the
-      // header stays a calm 3-icon row plus quick options.
-      this.modelLabelEl.addClass("cc-model-tappable");
-      this.modelLabelEl.addEventListener("click", () => cb.onModelClick());
-      this.mcpStatusEl = this.modelLabelEl.createEl("button", { cls: "cc-mcp-dot", attr: { "aria-label": "MCP bridge controls" } });
-      this.mcpStatusEl.addEventListener("click", (evt) => {
-        evt.stopPropagation();
-        cb.onMcpClick(evt);
-      });
-      this.modelTextEl = this.modelLabelEl.createSpan({ cls: "cc-model-text" });
-      setIcon(this.modelLabelEl.createSpan({ cls: "cc-model-chevron" }), "chevron-down");
-
-      const primary = actions.createDiv({ cls: "cc-header-actions-primary" });
-      this.iconButton(primary, "plus", "New chat", () => cb.onNewChat());
-      this.historyBtnEl = this.iconButton(primary, "history", "Resume a past conversation", () => cb.onHistory());
-      this.iconButton(primary, "more-horizontal", "More actions", () => cb.onOverflow());
-      // Quick options joins this row rather than owning a header of its own, and
-      // replaces the gear: its own sheet already offers "Open all settings".
-      this.disposeChrome = renderCompanionChrome(root, "chat", "Chat", this.plugin.shell().companionChrome(), {
-        host: primary,
-        compact: true,
-      });
+    if (!Platform.isMobile) {
+      this.mcpStatusEl = routing.createEl("button", { cls: "cc-mcp-dot cc-header-secondary", attr: { type: "button", "aria-label": "MCP bridge controls" } });
+      setIcon(this.mcpStatusEl, "plug-zap");
+      this.mcpStatusEl.addEventListener("click", evt => cb.onMcpClick(evt));
     }
+    this.refreshSessionTitle();
+  }
+
+  refreshSessionTitle(): void {
+    if (!this.sessionTitleEl && !this.sessionDropdown) return;
+    const id = this.deps.conversationId?.() ?? null;
+    const conversations = this.plugin.conversations().list();
+    const conversation = id ? conversations.find(entry => entry.id === id) : undefined;
+    this.sessionTitleEl?.setText(conversation?.title ?? "New chat");
+    const key = JSON.stringify([id, conversations.map(entry => [entry.id, entry.title, entry.archivedAt, entry.updatedAt, entry.messages.length])]);
+    if (this.sessionListKey !== key) { this.sessionListKey = key; this.sessionDropdown?.refresh(); }
   }
 
   /** Mount the context-window gauge + usage text into the composer's send group. */
@@ -205,64 +198,32 @@ export class HeaderControls {
   }
 
   refreshModelLabel(): void {
+    if (!this.modelLabelEl) return;
+    const backend = chatBackendForRuntime(this.plugin.settings.chatBackend, Platform.isMobile);
     const router = this.plugin.router();
-    const { model: resolvedModel, provider } = router.chatProvider();
-    const caps = router.chatCapabilities();
-    const chosen = modelLabel(this.controls?.model ?? this.plugin.settings.model);
-    const deviceName = DEVICE_MODELS.find((model) => model.id === resolvedModel)?.name ?? resolvedModel;
-    const cliLabel = provider.id === "codex-cli" ? router.codexCli.modelLabel(resolvedModel) : provider.id === "opencode-cli" ? router.opencodeCli.modelLabel(resolvedModel) : null;
-    const label = cliLabel ?? (this.plugin.settings.chatBackend === "device" ? `${deviceName} · on-device` : caps.local ? `${modelLabel(resolvedModel)} · local` : chosen);
-    // Desktop nests the dot + chevron inside cc-model, so the name text goes into
-    // its own child span; mobile has no such child and keeps setting cc-model directly.
-    (this.modelTextEl ?? this.modelLabelEl).setText(label);
+    const resolved = router.chatProvider();
+    const servingBackend = ({ anthropic: "claude", "claude-cli": "claude-cli", "codex-cli": "codex-cli", "opencode-cli": "opencode-cli", ollama: "local", "openai-compat": "custom", device: "device" } as const)[resolved.provider.id];
+    const model = servingBackend === "claude" ? this.controls?.model ?? resolved.model : resolved.model;
+    const label = servingBackend === "codex-cli" ? router.codexCli.modelLabel(model)
+      : servingBackend === "opencode-cli" ? router.opencodeCli.modelLabel(model)
+      : servingBackend === "device" ? DEVICE_MODELS.find(entry => entry.id === model)?.name ?? model
+      : modelLabel(model);
+    const serving = HEADER_BACKEND_LABELS[servingBackend];
+    const prefix = backend === "auto" ? `Auto · ${serving}`
+      : backend === servingBackend ? HEADER_BACKEND_LABELS[backend]
+      : `${HEADER_BACKEND_LABELS[backend]} → ${serving}`;
+    const accessiblePrefix = backend === "auto" ? `Auto · ${MODEL_BACKEND_LABELS[servingBackend]}`
+      : backend === servingBackend ? MODEL_BACKEND_LABELS[backend]
+      : `${MODEL_BACKEND_LABELS[backend]} → ${MODEL_BACKEND_LABELS[servingBackend]}`;
+    this.backendPillEl?.setText(prefix);
+    (this.modelTextEl ?? this.modelLabelEl)?.setText(label);
+    this.modelLabelEl?.setAttr("aria-label", `Choose model and backend: ${accessiblePrefix} · ${label}`);
+    this.refreshSessionTitle();
     if (this.usageEl) this.updateUsageBar();
   }
 
-  /**
-   * Update the header backend pill: shows the active mode and, for auto/local,
-   * whether a local model is reachable (so you can see your offline safety net
-   * at a glance). Best-effort and never throws.
-   */
-  async refreshBackendPill(): Promise<void> {
-    if (!this.backendPillEl) return;
-    const router = this.plugin.router();
-    const backend = router.chatBackend;
-    const el = this.backendPillEl;
-    el.removeClass("is-ok", "is-warn");
-    if (backend === "device") {
-      const model = this.plugin.settings.deviceChatModel;
-      const cached = await deviceModelCached(model, typeof caches === "undefined" ? undefined : caches);
-      if (this.plugin.settings.chatBackend !== "device" || this.plugin.settings.deviceChatModel !== model) return;
-      el.setText(cached ? "● On-device GPU · downloaded" : "● On-device GPU · download model");
-      el.toggleClass("is-warn", !cached);
-      return;
-    }
-    if (backend === "claude-cli" || backend === "codex-cli" || backend === "opencode-cli") {
-      const entry = this.deps.cliEntries(router).find((e) => e.backend.id === backend);
-      const label = entry?.backend.label ?? "CLI";
-      const ok = entry?.provider.hasCredentials() ?? false;
-      el.setText(ok ? `● ${label}` : router.anthropic.hasCredentials() ? `● ${label} offline · API key` : `● ${label} not signed in`);
-      el.toggleClass("is-ok", ok);
-      el.toggleClass("is-warn", !ok);
-      return;
-    }
-    if (backend === "claude") {
-      el.setText("");
-      el.toggleClass("is-ok", false);
-      return;
-    }
-    const localOk = await router.localAvailable();
-    if (backend === "local") {
-      el.setText(localOk ? "● local" : "● local offline");
-      el.toggleClass("is-ok", localOk);
-      el.toggleClass("is-warn", !localOk);
-    } else {
-      // auto
-      el.setText(localOk ? "● auto · local ready" : "● auto · no local");
-      el.toggleClass("is-ok", localOk);
-      el.toggleClass("is-warn", !localOk);
-    }
-  }
+  /** The selected route is part of the model control, without a second readiness row. */
+  async refreshBackendPill(): Promise<void> { if (this.modelLabelEl) this.refreshModelLabel(); }
 
   async refreshContextStatus(): Promise<void> {
     // Refresh active-note detail as navigation changes, and the MCP header icon.
@@ -334,7 +295,7 @@ export class HeaderControls {
     }
     items.push(
       { title: "Model controls…", icon: "sliders-horizontal", run: () => this.openTuneModal() },
-      { title: "Options…", icon: "settings-2", run: () => new QuickOptionsModal(this.app, "chat", this.plugin.shell().companionChrome()).open() },
+      { title: "Quick options…", icon: "settings-2", run: () => new QuickOptionsModal(this.app, "chat", this.plugin.shell().companionChrome()).open() },
     );
     // Session toggles from the desktop controls bar. Phones set Ask / Plan / Act
     // from the composer toolbar, so the mode items are desktop-only here.
@@ -367,33 +328,10 @@ export class HeaderControls {
 
   /** Model picker opened by tapping the model name in the header. */
   openModelMenu(): void {
-    const backend = this.plugin.settings.chatBackend;
-    if (!Platform.isMobile && (backend === "codex-cli" || backend === "opencode-cli")) {
-      const router = this.plugin.router();
-      const provider = backend === "codex-cli" ? router.codexCli : router.opencodeCli;
-      const current = backend === "codex-cli" ? this.plugin.settings.codexModel : this.plugin.settings.opencodeModel;
-      new CliModelPicker(this.app, provider.label, current, () => provider.listModels(), (id) => void this.onModelSelect(`${backend}:${id}`), () => this.deps.openSettings()).open();
-      return;
-    }
-    const resolved = this.plugin.router().chatProvider();
-    const activeModel = resolved.provider.id === "anthropic" ? this.controls.model : resolved.model;
-    const deviceItems: ActionModalItem[] = DEVICE_MODELS.map((model) => ({
-      title: `${model.name} · on-device`, checked: resolved.provider.id === "device" && activeModel === model.id,
-      run: () => void this.onModelSelect(`device:${model.id}`),
-    }));
-    const items = mobileModelChoices({
-      // Avoid a network probe on tap: the configured local model is the one
-      // mobile users need to retain/switch back to. Discovery remains in settings.
-      ollamaModels: [],
-      configuredOllamaModel: this.plugin.settings.ollamaModel,
-      openaiCompatHost: this.plugin.settings.openaiCompatHost,
-      openaiCompatModel: this.plugin.settings.openaiCompatModel,
-    }).map((choice): ActionModalItem => ({
-      title: choice.label,
-      checked: isMobileModelChoiceActive(choice, resolved.provider.id, activeModel),
-      run: () => void this.onModelSelect(choice.value),
-    }));
-    new ActionModal(this.app, "Choose model", [...deviceItems, ...items]).open();
+    this.modelPicker?.close();
+    const source = new ModelCatalogSource(this.plugin, () => this.controls.model, Platform.isMobile);
+    this.modelPicker = new ModelPickerModal(this.app, source, value => void this.onModelSelect(value), () => this.deps.openSettings());
+    this.modelPicker.open();
   }
 
   /** Show the session-grant pill only while the grant is live. */
@@ -407,7 +345,13 @@ export class HeaderControls {
    * back to Claude (backend → auto, so it still falls back to local when needed).
    */
   async onModelSelect(value: string): Promise<void> {
-    if (!Platform.isMobile && value.startsWith("codex-cli:")) {
+    const route = /^(auto|claude|claude-cli):/.exec(value);
+    if (route && (!Platform.isMobile || route[1] !== "claude-cli")) {
+      this.plugin.settings.chatBackend = route[1] as "auto" | "claude" | "claude-cli";
+      this.controls.model = value.slice(route[0].length);
+      if (CLAUDE_MODELS.some(model => model.id === this.controls.model)) this.plugin.settings.model = this.controls.model;
+      else { this.plugin.settings.model = "custom"; this.plugin.settings.customModel = this.controls.model; }
+    } else if (!Platform.isMobile && value.startsWith("codex-cli:")) {
       this.plugin.settings.codexModel = value.slice("codex-cli:".length);
       this.plugin.settings.chatBackend = "codex-cli";
     } else if (!Platform.isMobile && value.startsWith("opencode-cli:")) {
@@ -471,25 +415,28 @@ export class HeaderControls {
       app: this.app,
       anchor,
       conversations: () => this.plugin.conversations().list(),
-      activeId: () => this.plugin.conversations().getActive()?.id ?? null,
+      activeId: () => this.deps.conversationId(),
       actions: {
         resume: async (chosen) => {
           const conversation = await this.plugin.conversations().setActive(chosen.id);
           if (conversation) this.deps.loadConversation(conversation);
         },
-        rename: (conversation, title) => this.plugin.conversations().rename(conversation.id, title),
+        rename: async (conversation, title) => {
+          await this.plugin.conversations().rename(conversation.id, title);
+          this.refreshSessionTitle();
+          this.deps.refreshTabTitle();
+        },
         fork: (conversation) => this.plugin.sessionActions().fork(conversation.id),
         forkFromSummary: (conversation) => this.plugin.sessionActions().forkFromSummary(conversation.id),
         distill: async (conversation) => { await this.plugin.sessionActions().distill(conversation.id); },
         archive: (conversation) => this.plugin.sessionActions().archive(conversation.id),
         unarchive: (conversation) => this.plugin.conversations().unarchive(conversation.id),
         remove: async (doomed) => {
-          if (this.plugin.conversations().getActive()?.id === doomed.id) {
-            await this.plugin.deleteActiveConversation(); // resets the view + notices
-          } else {
-            await this.plugin.conversations().delete(doomed.id);
-            quickNotice(`Deleted “${doomed.title}”.`);
-          }
+          await this.plugin.conversations().delete(doomed.id);
+          if (this.deps.conversationId() === doomed.id) this.deps.clearChat();
+          this.refreshSessionTitle();
+          this.deps.refreshTabTitle();
+          quickNotice(`Deleted “${doomed.title}”.`);
         },
       },
       onClose: () => { this.sessionDropdown = null; },

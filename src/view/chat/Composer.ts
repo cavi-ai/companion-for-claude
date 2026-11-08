@@ -1,4 +1,5 @@
-import { Platform, setIcon, MarkdownView, Notice, TFile, type App } from "obsidian";
+import { CompanionNotice as Notice } from "../../notice";
+import { Platform, setIcon, MarkdownView, TFile, type App } from "obsidian";
 import { type SlashCommand, parseSlashQuery } from "../slashCommands";
 import { SlashMenu } from "../SlashMenu";
 import { AtMenu } from "../AtMenu";
@@ -12,15 +13,13 @@ import type { AttachedPath } from "../../context/vaultContext";
 import { type MediaAttachment, mediaKind, mediaMime } from "../../context/attachments";
 import { type AttachedPage, detectPageUrl, pageLabel, snapshotPages } from "../../context/urlContext";
 import type { ContentBlock } from "../../providers/types";
-import { CLAUDE_MODELS } from "../../claude/models";
-import { DEVICE_MODELS } from "../../device/models";
 import { capabilitiesFor, effortLevels } from "../../claude/capabilities";
 import { type ChatControls, knobVisibility } from "../../claude/chatControls";
-import { mergeDetectedModels } from "../../providers/localModels";
 import type { ComposerHost } from "./hosts";
 import type { ContextToggles } from "../../types";
 import { applyMention, initialToggles } from "./contextScope";
-import { appendCliModelOptions, syncModelSelection } from "./cliModelOptions";
+import { reconcileModelOptions, syncModelSelection } from "./cliModelOptions";
+import { ModelCatalogSource } from "./modelCatalog";
 import { loadMediaBlocks } from "./mediaBlocks";
 import { loadAttachedNotes, type PreparedAttachedNote } from "../../context/attachedNotes";
 import { cancelPastedImages, PastedImagePreparation } from "./pastedImage";
@@ -50,6 +49,7 @@ export interface ComposerDeps {
 
 /** The composer: input, @/slash menus, attachments/context manager, quick options, submit. */
 export class Composer {
+  private modelCatalog: ModelCatalogSource | null = null;
   el!: HTMLElement;
   inputEl!: HTMLTextAreaElement;
   sendBtn!: HTMLButtonElement;
@@ -192,7 +192,7 @@ export class Composer {
     this.sendBtn.addEventListener("click", () => this.deps.onSend());
   }
 
-  destroy(): void { this.pastedImages.dispose(); this.modeControl?.dispose(); this.contextManager?.destroy(); }
+  destroy(): void { this.modelCatalog?.dispose(); this.pastedImages.dispose(); this.modeControl?.dispose(); this.contextManager?.destroy(); }
 
   constructor(private app: App, private plugin: ComposerHost, private chat: ChatSession, private deps: ComposerDeps) {
     this.contextToggles = initialToggles(plugin.settings.context);
@@ -474,19 +474,14 @@ export class Composer {
     // so picking a model doesn't flicker or drop focus. Only `knobsEl` rebuilds.
     const modelWrap = this.controlsEl.createDiv({ cls: "cc-ctl cc-ctl-model" });
     const select = modelWrap.createEl("select", { cls: "cc-ctl-select", attr: { "aria-label": "Model" } });
-    const claudeGroup = select.createEl("optgroup", { attr: { label: "Claude" } });
-    const ids = new Set(CLAUDE_MODELS.map((m) => m.id));
-    for (const m of CLAUDE_MODELS) claudeGroup.createEl("option", { value: m.id, text: m.label });
-    if (!ids.has(this.controls.model)) claudeGroup.createEl("option", { value: this.controls.model, text: this.controls.model });
-    const deviceGroup = select.createEl("optgroup", { attr: { label: "On-device GPU" } });
-    for (const model of DEVICE_MODELS) deviceGroup.createEl("option", { value: `device:${model.id}`, text: model.name });
-    syncModelSelection(this.controlsEl, this.plugin.settings, this.controls.model);
+    this.modelCatalog?.dispose();
+    const catalog = new ModelCatalogSource(this.plugin, () => this.controls.model, Platform.isMobile);
+    this.modelCatalog = catalog;
+    reconcileModelOptions(select, catalog.snapshot(), catalog.selected());
     select.addEventListener("change", () => void this.deps.onModelSelect(select.value));
-    // Pull in detected Ollama models so a local model can be picked here without
-    // opening settings. Async — appended once the local server answers.
-    void this.appendLocalModelOptions(select);
-    void this.appendCustomModelOptions(select);
-    if (!Platform.isMobile) void appendCliModelOptions(select, this.plugin);
+    void catalog.refresh(groups => {
+      if (this.modelCatalog === catalog && select.isConnected !== false) reconcileModelOptions(select, groups, catalog.selected());
+    });
 
     // Reasoning indicator: lit when the current backend thinks before
     // answering (Claude thinking on, or a local model with thinking metadata).
@@ -532,48 +527,10 @@ export class Composer {
     this.modeControl = new ModeControl(parent, this.chat.mode);
   }
 
-  /** Append a "Local (Ollama)" optgroup of detected models to the switcher. */
-  private async appendLocalModelOptions(select: HTMLSelectElement): Promise<void> {
-    let detected: string[];
-    try {
-      detected = await this.plugin.router().ollama.listModels();
-    } catch (e) {
-      console.debug("Claude Companion: Ollama model listing failed", e);
-      detected = [];
-    }
-    const configured = this.plugin.settings.ollamaModel;
-    const models = mergeDetectedModels(detected, configured);
-    if (!models.length || !select.isConnected) return;
-    const group = select.createEl("optgroup", { attr: { label: "Local (Ollama)" } });
-    for (const m of models) group.createEl("option", { value: `ollama:${m}`, text: `${m} · local` });
-    // Now that local options exist, reflect the active backend in the selection.
-    if (this.plugin.settings.chatBackend === "local" && configured) select.value = `ollama:${configured}`;
-  }
-
-  /**
-   * Append a "Local (endpoint)" optgroup for the OpenAI-compatible server —
-   * every model it reports, so one can be picked here without knowing its id.
-   */
-  private async appendCustomModelOptions(select: HTMLSelectElement): Promise<void> {
-    if (!this.plugin.settings.openaiCompatHost.trim()) return;
-    let detected: string[];
-    try {
-      detected = await this.plugin.router().openaiCompat.listModels();
-    } catch (e) {
-      console.debug("Claude Companion: custom endpoint model listing failed", e);
-      detected = [];
-    }
-    const configured = this.plugin.settings.openaiCompatModel;
-    const models = mergeDetectedModels(detected, configured);
-    if (!models.length || !select.isConnected) return;
-    const group = select.createEl("optgroup", { attr: { label: "Local (endpoint)" } });
-    for (const m of models) group.createEl("option", { value: `custom:${m}`, text: `${m} · endpoint` });
-    const active = configured.trim() || models[0];
-    if (this.plugin.settings.chatBackend === "custom" && active) select.value = `custom:${active}`;
-  }
-
   /** Rebuild only the capability-dependent knobs into the given container. */
   renderKnobsInto(parent: HTMLElement): void {
+    const modelSelect = this.controlsEl.querySelector<HTMLElement>(".cc-ctl-model")?.querySelector<HTMLSelectElement>("select");
+    if (this.modelCatalog && modelSelect) reconcileModelOptions(modelSelect, this.modelCatalog.snapshot(), this.modelCatalog.selected());
     syncModelSelection(this.controlsEl, this.plugin.settings, this.controls.model);
     parent.empty();
 

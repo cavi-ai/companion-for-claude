@@ -1,4 +1,5 @@
-import { App, Modal, Notice, Setting } from "obsidian";
+import { App, Modal, Setting } from "obsidian";
+import { CompanionNotice as Notice } from "../notice";
 import type { LinkApplyResult } from "../optimize/linkController";
 import type { LinkProposal, LinkScanReport } from "../optimize/linkScan";
 import { createLinkWeaveState, kindLabel, removeRow, selectedProposals, toggleRow, type LinkWeaveViewState } from "./linkWeaveState";

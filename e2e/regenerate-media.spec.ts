@@ -34,7 +34,7 @@ test("Regenerate uses the resumed question rather than the other conversation im
     await chat.getByRole("button", { name: /^Send(?: message)?$/ }).click();
     await expect(chat.locator(".cc-assistant .cc-body").last()).toHaveText("Image B received.");
     await expect(chat.getByRole("button", { name: "Regenerate", exact: true })).toBeVisible();
-    await chat.getByRole("button", { name: "Resume a past conversation", exact: true }).click();
+    await chat.getByRole("button", { name: "Sessions", exact: true }).click();
     await page.locator(".cc-session-row").filter({ hasText: "ARCHIVE-A-REGEN-621" }).click();
     await chat.locator(".cc-context-trigger").click();
     await expect(context).not.toContainText("private-chart-b.png");
@@ -45,7 +45,7 @@ test("Regenerate uses the resumed question rather than the other conversation im
     expect(await rig.providerRequests()).toBe(3);
     await page.screenshot({ path: testInfo.outputPath("regenerate-kept-the-text-question.png") });
     await expect(chat.getByRole("button", { name: "Regenerate", exact: true })).toBeVisible();
-    await chat.getByRole("button", { name: "Resume a past conversation", exact: true }).click();
+    await chat.getByRole("button", { name: "Sessions", exact: true }).click();
     await page.locator(".cc-session-row").filter({ hasText: "CHART-B-REGEN-622" }).click();
     await chat.getByRole("button", { name: "Regenerate", exact: true }).click();
     await expect(chat.locator(".cc-assistant .cc-body").last()).toHaveText("Image B regenerated.");

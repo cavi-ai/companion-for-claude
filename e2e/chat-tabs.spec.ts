@@ -30,7 +30,7 @@ test("running New chat tab twice opens two leaves that stream independent conver
   // Send "ping" in the first tab and wait for the reply.
   await focusChatLeaf(page, 0);
   const first = page.locator(".cc-chat-root:visible").first();
-  await expect(first).toContainText("● Claude Code", { timeout: 15_000 });
+  await expect(first.getByRole("button", { name: "Choose model and backend: Claude Code · E2e Model", exact: true })).toBeVisible({ timeout: 15_000 });
   await expect(first.locator(".cc-msg")).toHaveCount(0); // fresh tab, nothing sent yet
   await first.locator(".cc-input").fill("ping");
   await first.locator(".cc-input").press("Enter");
@@ -40,7 +40,7 @@ test("running New chat tab twice opens two leaves that stream independent conver
   // Switch to the second tab — a fresh, empty conversation, unaffected by the first — and do the same.
   await focusChatLeaf(page, 1);
   const second = page.locator(".cc-chat-root:visible").first();
-  await expect(second).toContainText("● Claude Code", { timeout: 15_000 });
+  await expect(second.getByRole("button", { name: "Choose model and backend: Claude Code · E2e Model", exact: true })).toBeVisible({ timeout: 15_000 });
   await expect(second.locator(".cc-msg")).toHaveCount(0);
   await second.locator(".cc-input").fill("ping");
   await second.locator(".cc-input").press("Enter");

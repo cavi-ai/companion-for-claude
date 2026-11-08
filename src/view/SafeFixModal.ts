@@ -1,4 +1,5 @@
-import { App, Modal, Notice, Setting } from "obsidian";
+import { App, Modal, Setting } from "obsidian";
+import { CompanionNotice as Notice } from "../notice";
 import type { SafeFix } from "../health/controller";
 
 /** Review gate for ontology auto-fixes: only checked notes, only changed keys. */

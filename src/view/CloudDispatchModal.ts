@@ -1,4 +1,5 @@
-import { App, Modal, Notice } from "obsidian";
+import { App, Modal} from "obsidian";
+import { CompanionNotice as Notice } from "../notice";
 
 /** Minimal prompt for what a dispatched cloud session should do. */
 export class CloudDispatchModal extends Modal {

@@ -1,4 +1,5 @@
-import { App, Notice, TFile } from "obsidian";
+import { App, TFile } from "obsidian";
+import { CompanionNotice as Notice } from "../notice";
 import { sanitizeFileName, type ExtractedArtifact } from "./parse";
 import { buildFrontmatter, normalizeTags, datedTitleBase, localCalendarDate } from "../indexing/frontmatter";
 import { ensureVaultFolder, uniqueNotePath } from "../vault/vaultFiles";

@@ -1,4 +1,5 @@
-import { Notice, Platform, type Plugin } from "obsidian";
+import { Platform, type Plugin } from "obsidian";
+import { CompanionNotice as Notice } from "../notice";
 import { probeDeviceGpu, type GpuReport } from "./gpu";
 
 /** Explicit support check; registration performs no allocation or vault IO. */

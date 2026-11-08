@@ -42,7 +42,7 @@ test("reopened chat keeps separate conversation drafts through plugin reload", a
   await expect(chat).toHaveCount(0);
   await command("workspace:undo-close-pane");
   await expect(input).toHaveValue(next);
-  await chat.getByRole("button", { name: "Resume a past conversation", exact: true }).click();
+  await chat.getByRole("button", { name: "Sessions", exact: true }).click();
   await page.locator(".cc-session-row").filter({ hasText: "Original question" }).click();
   await expect(input).toHaveValue(followup);
   await rig.reloadPlugin();

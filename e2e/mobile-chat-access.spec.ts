@@ -38,7 +38,7 @@ async function expectChatFits(width: number): Promise<void> {
   const option = menu.getByRole("button", { name: /\/research/i });
   await expect(menu).toBeVisible();
   await expect(option).toBeVisible();
-  for (const selector of [".cc-messages", ".cc-composer"]) {
+  for (const selector of [".cc-header", ".cc-messages", ".cc-composer"]) {
     const region = chat.locator(selector);
     await expect.poll(async () => await region.evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1);
   }
@@ -63,14 +63,28 @@ test("mobile chat stays contained and opens Research Desk from a touch slash sel
   const header = chat.locator(".cc-header");
   await expect(header).toBeVisible();
   const activity = header.locator(".cc-activity-indicator");
-  await expect(activity).toHaveAttribute("aria-label", "Companion activity: Building semantic index, 0%");
+  await expect(activity).toHaveAttribute("aria-label", "Activity: 1 task, 0% complete");
+  await expect(activity.locator(".cc-activity-indicator-title")).toHaveText("Activity");
   await expect(activity).toHaveAttribute("aria-expanded", "false");
   await expect(activity.locator("[role=progressbar]")).toHaveAttribute("aria-valuenow", "0");
   await expect(header.locator("[role=status]")).toHaveAttribute("aria-live", "polite");
   const activityBox = await activity.boundingBox();
   expect(activityBox).toBeTruthy();
-  expect(activityBox!.width).toBe(44);
-  expect(activityBox!.height).toBe(44);
+  expect(activityBox!.width).toBeGreaterThanOrEqual(44);
+  expect(activityBox!.height).toBeGreaterThanOrEqual(44);
+  const headerBox = (await header.boundingBox())!;
+  expect(activityBox!.x).toBeGreaterThanOrEqual(headerBox.x);
+  expect(activityBox!.x + activityBox!.width).toBeLessThanOrEqual(headerBox.x + headerBox.width + 1);
+  expect(activityBox!.y).toBeGreaterThanOrEqual(headerBox.y);
+  expect(activityBox!.y + activityBox!.height).toBeLessThanOrEqual(headerBox.y + headerBox.height + 1);
+  await activity.click();
+  const drawer = chat.locator(".cc-activity-drawer");
+  await expect(drawer).toBeVisible();
+  await expect(drawer.locator(".cc-activity-summary")).toHaveText("Building semantic index");
+  await drawer.locator(".cc-activity-summary").click();
+  await expect(drawer.locator(".cc-activity-state")).toHaveText("0% complete");
+  await drawer.getByRole("button", { name: "Close activity" }).click();
+  await expect(activity).toBeFocused();
 
   for (const width of [320, 360, 390, 428, 768]) await expectChatFits(width);
 

@@ -1,4 +1,4 @@
-import { App, FakeElement, getLastOpenedModal, Platform, WorkspaceLeaf } from "obsidian";
+import { App, FakeElement, fakeDocument, getLastOpenedModal, Platform, WorkspaceLeaf } from "obsidian";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ActivityStore } from "../../src/activity/store";
 import type ClaudeCompanionPlugin from "../../src/main";
@@ -6,6 +6,7 @@ import { DEFAULT_SETTINGS } from "../../src/types";
 import { ChatView } from "../../src/view/ChatView";
 import type { CompanionChromeDependencies } from "../../src/view/companionChrome";
 import { conversationFakes } from "../fakes/conversations";
+import { ActionModal } from "../../src/view/ActionModal";
 
 /** Same shape as chatRenderLifecycle.test.ts's desktop-header plugin stub, reused for onOpen()-driven header tests. */
 function headerPlugin(fakes = conversationFakes()): ClaudeCompanionPlugin {
@@ -62,25 +63,57 @@ async function openHeader(fakes = conversationFakes()): Promise<ChatView> {
 }
 
 describe("Desktop chat header polish", () => {
+  it("restores the More trigger before opening the next modal", () => {
+    const trigger = new FakeElement("button");
+    trigger.focus();
+    let active: unknown;
+    const modal = new ActionModal(new App(), "Actions", [{ title: "Quick options…", run: () => { active = fakeDocument.activeElement; } }]);
+    modal.open();
+    const option = (modal.contentEl as unknown as FakeElement).querySelector("button")!;
+    option.focus();
+    option.dispatchEvent({ type: "click" });
+    expect(active).toBe(trigger);
+  });
+  it("keeps title and Sessions selection bound to this leaf across global active changes and rename", async () => {
+    const alpha = { id: "a", title: "Alpha", createdAt: 1, updatedAt: 2, messages: [] };
+    const beta = { id: "b", title: "Beta", createdAt: 1, updatedAt: 3, messages: [] };
+    const fakes = conversationFakes({ conversations: [alpha, beta], activeId: "b" });
+    const view = await openHeader(fakes);
+    view.loadConversation(alpha);
+    const root = view.contentEl as unknown as FakeElement;
+    expect(root.querySelector(".cc-session-title")?.textContent).toBe("Alpha");
+    await fakes.conversations.rename("a", "Renamed Alpha");
+    view.refreshModelLabel();
+    expect(root.querySelector(".cc-session-title")?.textContent).toBe("Renamed Alpha");
+    expect(view.getDisplayText()).toBe("Renamed Alpha");
+    const header = (view as unknown as { header: { openHistory(): void; sessionDropdown: { options: { activeId(): string | null } } } }).header;
+    header.openHistory();
+    expect(header.sessionDropdown.options.activeId()).toBe("a");
+    expect(fakes.conversations.getActive()?.id).toBe("b");
+    view.clearChat();
+    expect(root.querySelector(".cc-session-title")?.textContent).toBe("New chat");
+    await view.onClose();
+  });
   afterEach(() => {
     Platform.isMobile = false;
   });
 
-  it("has exactly New chat / Resume / More actions + quick options, no Save button and no cc-mcp-btn", async () => {
+  it("keeps session actions together and secondary controls outside the model button", async () => {
     const view = await openHeader();
     const headerActions = (view.contentEl as unknown as FakeElement).querySelector(".cc-header-actions");
     expect(headerActions).toBeTruthy();
     const labels = headerActions?.querySelectorAll("button").map((b) => b.getAttribute("aria-label"));
-    expect(labels).toEqual(["New chat", "Resume a past conversation", "More actions", "Quick options for Chat"]);
+    expect(labels).toEqual(["Sessions", "New chat", "More actions"]);
     expect(labels).not.toContain("Distill this chat");
     expect(headerActions?.querySelectorAll(".cc-mcp-btn").length).toBe(0);
   });
 
-  it("renders every header action as an Obsidian ghost icon button", async () => {
+  it("keeps Sessions labeled beside the current leaf title", async () => {
     const view = await openHeader();
     const buttons = (view.contentEl as unknown as FakeElement).querySelector(".cc-header-actions")?.querySelectorAll("button") ?? [];
     expect(buttons.length).toBeGreaterThan(0);
-    for (const b of buttons) expect(b.classList.has("clickable-icon")).toBe(true);
+    expect(buttons.find(button => button.getAttribute("aria-label") === "Sessions")?.querySelector(".cc-sessions-label")?.textContent).toBe("Sessions");
+    expect((view.contentEl as unknown as FakeElement).querySelector(".cc-session-title")?.textContent).toBe("New chat");
   });
 
   it("the history button opens the session dropdown under it and a second click closes it", async () => {
@@ -90,15 +123,18 @@ describe("Desktop chat header polish", () => {
     g.activeWindow = { innerWidth: 1000 };
     try {
       const view = await openHeader(conversationFakes({ conversations: [{ id: "a", title: "Alpha", createdAt: 1, updatedAt: Date.now(), messages: [] }] }));
+      const pane = view.contentEl as unknown as FakeElement;
+      pane.rect = { left: 0, right: 420, top: 0, bottom: 800, width: 420, height: 800 };
+      pane.querySelector(".cc-composer")!.rect = { left: 0, right: 420, top: 650, bottom: 800, width: 420, height: 150 };
       const history = (view.contentEl as unknown as FakeElement).querySelector(".cc-header-actions")!.querySelectorAll("button")
-        .find((b) => b.getAttribute("aria-label") === "Resume a past conversation")!;
+        .find((b) => b.getAttribute("aria-label") === "Sessions")!;
       history.rect = { left: 100, right: 130, top: 10, bottom: 34, width: 30, height: 24 };
       history.dispatchEvent({ type: "click" });
-      const dropdown = body.querySelector(".cc-session-dropdown");
+      const dropdown = pane.querySelector(".cc-session-dropdown");
       expect(dropdown?.style.top).toBe("38px");
       expect(dropdown?.querySelectorAll(".cc-session-row")).toHaveLength(1);
       history.dispatchEvent({ type: "click" });
-      expect(body.querySelector(".cc-session-dropdown")).toBeNull();
+      expect(pane.querySelector(".cc-session-dropdown")).toBeNull();
     } finally {
       g.activeDocument = {};
       g.activeWindow = globalThis;
@@ -115,14 +151,16 @@ describe("Desktop chat header polish", () => {
     expect(openModelMenu).toHaveBeenCalledOnce();
   });
 
-  it("has a cc-mcp-dot inside cc-model that calls openMcpMenu, not openModelMenu, on click", async () => {
+  it("uses a native model button and a separate MCP action", async () => {
     const view = await openHeader();
     const openModelMenu = vi.fn();
     const openMcpMenu = vi.fn();
     (view as unknown as { openModelMenu: () => void }).openModelMenu = openModelMenu;
     (view as unknown as { openMcpMenu: (a: unknown) => void }).openMcpMenu = openMcpMenu;
     const modelChip = (view.contentEl as unknown as FakeElement).querySelector(".cc-model");
-    const dot = modelChip?.querySelector(".cc-mcp-dot");
+    expect(modelChip?.tagName).toBe("BUTTON");
+    expect(modelChip?.querySelector("button")).toBeNull();
+    const dot = (view.contentEl as unknown as FakeElement).querySelector(".cc-mcp-dot");
     expect(dot).toBeTruthy();
     dot?.dispatchEvent({ type: "click", stopPropagation: () => undefined });
     expect(openMcpMenu).toHaveBeenCalledOnce();
@@ -144,13 +182,14 @@ describe("Desktop chat header polish", () => {
     expect(titles).toContain("Capture a Claude Code session…");
   });
 
-  it("mobile header is unchanged: more-vertical button present, no cc-mcp-dot", async () => {
+  it("mobile keeps labeled Sessions and More without desktop-only MCP", async () => {
     Platform.isMobile = true;
     const view = await openHeader();
     const headerActions = (view.contentEl as unknown as FakeElement).querySelector(".cc-header-actions");
     const more = headerActions?.querySelectorAll("button").find((b) => b.getAttribute("aria-label") === "More actions");
     expect(more).toBeTruthy();
     expect(more?.getAttribute("data-icon")).toBe("more-vertical");
+    expect(headerActions?.querySelector(".cc-sessions-btn")).toBeTruthy();
     expect((view.contentEl as unknown as FakeElement).querySelector(".cc-mcp-dot")).toBeNull();
   });
 

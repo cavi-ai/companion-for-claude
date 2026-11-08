@@ -3,7 +3,8 @@
 // flows the commands and the System page open. One home for the optimize
 // state they all persist.
 
-import { Notice, normalizePath, type App } from "obsidian";
+import { normalizePath, type App } from "obsidian";
+import { CompanionNotice as Notice } from "../notice";
 import type { ActivityStore } from "../activity/store";
 import { beginActivity } from "../activity/progress";
 import type { OntologyRegistry } from "../ontology/registry";
