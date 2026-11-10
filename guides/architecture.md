@@ -61,9 +61,9 @@ contents and the model call.
 More than 2,100 tests across 223 Vitest files cover the pure and Obsidian-backed modules, grouped by concern
 (`test/research/`, `test/semantic/`, `test/discovery/`, `test/ontology/`,
 `test/sources/`, `test/mcp/`). CI runs version lockstep, typecheck, lint, test,
-the docs-artifact and generated-skill contracts, build, and a production
-bundle budget on Node 20 and 22, plus a
-production dependency audit and real-Obsidian Playwright suite on 22.
+the docs-artifact and generated-skill contracts, build, a production bundle
+budget, a production dependency audit and a real-Obsidian Playwright suite on
+Node 22.
 
 ```bash
 pnpm run typecheck   # tsc --noEmit --skipLibCheck
@@ -95,7 +95,7 @@ artifacts, and built-in semantic search run on mobile.
 
 ## Security model
 
-Four boundaries, each documented in [`SECURITY.md`](https://github.com/cavi-ai/claude-obsidian/blob/66650de402f44506559a1b3f42c69dc3c383df1d/SECURITY.md):
+Four boundaries, each documented in [`SECURITY.md`](https://github.com/cavi-ai/claude-obsidian/blob/60d4dbf0da2979ba4881b1ea989c36ca1de1c79a/SECURITY.md):
 
 **Credentials** use Obsidian's encrypted secret storage and are excluded from
 vault-synced plugin data. The MCP token can also come from
@@ -125,8 +125,8 @@ One standalone Obsidian product plus an optional universal-agent reference:
   workflows use the official Obsidian CLI and do not depend on Companion or MCP.
   Companion-native adaptations live in this repository and use Companion's own
   vault context. The optional MCP bridge is a separate Companion integration.
-- `upstream/html-effectiveness/`, `upstream/obsidian-skills/` — pinned, unmodified submodules. Provenance in [`NOTICE`](https://github.com/cavi-ai/claude-obsidian/blob/66650de402f44506559a1b3f42c69dc3c383df1d/NOTICE).
+- `upstream/html-effectiveness/`, `upstream/obsidian-skills/` — pinned, unmodified submodules. Provenance in [`NOTICE`](https://github.com/cavi-ai/claude-obsidian/blob/60d4dbf0da2979ba4881b1ea989c36ca1de1c79a/NOTICE).
 
 Version numbers in `manifest.json`, `versions.json`, and `package.json` must match
 the git tag, and `versions.json` maps version → `minAppVersion`. See
-[`CONTRIBUTING.md`](https://github.com/cavi-ai/claude-obsidian/blob/66650de402f44506559a1b3f42c69dc3c383df1d/CONTRIBUTING.md).
+[`CONTRIBUTING.md`](https://github.com/cavi-ai/claude-obsidian/blob/60d4dbf0da2979ba4881b1ea989c36ca1de1c79a/CONTRIBUTING.md).

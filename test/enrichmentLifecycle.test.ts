@@ -94,6 +94,45 @@ describe("explicit source enrichment", () => {
     expect(complete).toHaveBeenCalledTimes(1);
     expect(await app.vault.read(file)).toContain("source_enriched: true");
   });
+
+  it("leaves empty notes and zero-byte files alone and sends nothing to the model", async () => {
+    const app = new App();
+    const blank = app.vault.seed("Clippings/Untitled.md", "");
+    const propertiesOnly = app.vault.seed("Clippings/Tagged.md", "---\ntags: [inbox]\n---\n\n");
+    const csv = app.vault.seed("Clippings/empty.csv", "");
+    const complete = vi.fn(async () => ({ text: JSON.stringify({ title: "Guess", site: "Example", summary: "Guess." }) }));
+    const notices: string[] = [];
+    const controller = new SourceEnrichmentController(testControllerDeps({
+      enrichApp: app,
+      vault: { cachedRead: async (path: string) => app.vault.read(app.vault.getAbstractFileByPath(path) as TFile) },
+      router: () => ({ utilitySelection: async () => ({ provider: { id: "anthropic" } }), completeResolved: complete }) as never,
+      notice: (message) => { notices.push(message); },
+    }));
+    expect(await controller.enrichFile(blank, false, "automatic")).toEqual({ status: "skipped", reason: "Untitled is empty." });
+    expect(await controller.enrichFile(csv, false)).toEqual({ status: "skipped", reason: "empty is empty." });
+    expect(await controller.runEnrich(propertiesOnly)).toEqual({ status: "skipped", reason: "Tagged is empty." });
+    expect(complete).not.toHaveBeenCalled();
+    expect(notices).toEqual(["Tagged is empty."]);
+    expect(await app.vault.read(propertiesOnly)).toBe("---\ntags: [inbox]\n---\n\n");
+  });
+
+  it("Enrich note as source leaves an already enriched note alone and sends nothing to the model", async () => {
+    const app = new App();
+    const before = "---\nsource_enriched: true\ntitle: Done\n---\n\nArticle body.";
+    const file = app.vault.seed("Clippings/Done.md", before);
+    const complete = vi.fn(async () => ({ text: JSON.stringify({ title: "Again", site: "Example", summary: "Again." }) }));
+    const notices: string[] = [];
+    const controller = new SourceEnrichmentController(testControllerDeps({
+      enrichApp: app,
+      vault: { cachedRead: async () => app.vault.read(file) },
+      router: () => ({ utilitySelection: async () => ({ provider: { id: "anthropic" } }), completeResolved: complete }) as never,
+      notice: (message) => { notices.push(message); },
+    }));
+    expect(await controller.runEnrich(file)).toEqual({ status: "skipped", reason: "Done is already enriched." });
+    expect(complete).not.toHaveBeenCalled();
+    expect(await app.vault.read(file)).toBe(before);
+    expect(notices).toEqual(["Done is already enriched."]);
+  });
 });
 
 describe("enrichment lifecycle", () => {

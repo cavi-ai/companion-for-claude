@@ -33,11 +33,13 @@ import { typedInboxItems, type InboxFileEntry } from "./inbox";
 import {
   buildFolderOrganizePrompt,
   currentDomainOf,
+  defaultOrganizeSelection,
   inferDomains,
   planOrganizeMoves,
   relativeFolders,
   resolveUnresolvedWithCurrentFolder,
   type OrganizeCandidate,
+  type OrganizeMove,
 } from "./organize";
 import { applyOrganizeMoves } from "./organizeApply";
 import { isSourceEnriched } from "./watcher";
@@ -57,6 +59,18 @@ export class ClippingsController {
 
   private get app(): App {
     return this.deps.app;
+  }
+
+  /** Apply the default selection at once when auto-apply is on; otherwise apply what the review accepts. */
+  private async reviewMoves(moves: OrganizeMove[], unresolved: number, apply: (accepted: OrganizeMove[]) => Promise<void>): Promise<void> {
+    if (this.deps.settings().enrichAutoApply) {
+      const accepted = defaultOrganizeSelection(moves);
+      if (accepted.length > 0) await apply(accepted);
+      return;
+    }
+    new OrganizeReviewModal(this.app, moves, unresolved, (accepted) => {
+      if (accepted && accepted.length > 0) void apply(accepted);
+    }).open();
   }
 
   /**
@@ -185,14 +199,11 @@ export class ClippingsController {
         new Notice("Everything is already named and filed.");
         return;
       }
-      new OrganizeReviewModal(this.app, moves, skipped.length, (accepted) => {
-        if (!accepted || accepted.length === 0) return;
-        void (async () => {
-          const { moved, failed } = await applyOrganizeMoves(this.app, accepted);
-          const failedNote = failed.length > 0 ? ` ${failed.length} failed — ${failed[0]!.error}` : "";
-          new Notice(`Organized ${moved} clipping${moved === 1 ? "" : "s"} into ${base}/.${failedNote}`);
-        })();
-      }).open();
+      await this.reviewMoves(moves, skipped.length, async (accepted) => {
+        const { moved, failed } = await applyOrganizeMoves(this.app, accepted);
+        const failedNote = failed.length > 0 ? ` ${failed.length} failed — ${failed[0]!.error}` : "";
+        new Notice(`Organized ${moved} clipping${moved === 1 ? "" : "s"} into ${base}/.${failedNote}`);
+      });
     } catch (error) {
       pending.fail(error);
       throw error;
@@ -253,14 +264,11 @@ export class ClippingsController {
         return;
       }
       progress.finish();
-      new OrganizeReviewModal(this.app, moves, inferResult.unresolved.length, (accepted) => {
-        if (!accepted || accepted.length === 0) return;
-        void (async () => {
-          const { moved, failed } = await applyOrganizeMoves(this.app, accepted);
-          const failedNote = failed.length > 0 ? ` ${failed.length} failed — ${failed[0]!.error}` : "";
-          new Notice(`Organized ${moved} note${moved === 1 ? "" : "s"} into ${folder.path}/ subfolders.${failedNote}`);
-        })();
-      }).open();
+      await this.reviewMoves(moves, inferResult.unresolved.length, async (accepted) => {
+        const { moved, failed } = await applyOrganizeMoves(this.app, accepted);
+        const failedNote = failed.length > 0 ? ` ${failed.length} failed — ${failed[0]!.error}` : "";
+        new Notice(`Organized ${moved} note${moved === 1 ? "" : "s"} into ${folder.path}/ subfolders.${failedNote}`);
+      });
     } catch (e) {
       progress.fail(e);
       new Notice(`Organize failed — ${e instanceof Error ? e.message : String(e)}`);

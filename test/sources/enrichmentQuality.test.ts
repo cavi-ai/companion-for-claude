@@ -75,8 +75,8 @@ describe("validateEnrichment", () => {
     expect(qualityErrors(article({ summary: " \n\t " }))).toContain("summary: must be a non-empty string");
   });
 
-  it("rejects a summary over 200 characters", () => {
-    expect(qualityErrors(article({ summary: "s".repeat(201) }))).toContain("summary: must be at most 200 characters");
+  it("accepts a summary over 200 characters that the note already carries", () => {
+    expect(qualityErrors(article({ summary: "s".repeat(201) }))).toEqual([]);
   });
 
   it("reports each field whose runtime value has an invalid type", () => {

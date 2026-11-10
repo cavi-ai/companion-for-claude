@@ -169,11 +169,10 @@ export function validateEnrichment(
     errors.push("title: must be a meaningful, non-placeholder title");
   }
 
+  // Length is not checked: model summaries are cut to SUMMARY_MAX_CHARS, a note's own summary is kept.
   const summary = fields.summary;
   if (typeof summary !== "string" || summary.trim().length === 0) {
     errors.push("summary: must be a non-empty string");
-  } else if ([...summary].length > 200) {
-    errors.push("summary: must be at most 200 characters");
   }
 
   if (errors.length > 0) throw new EnrichmentQualityError(errors);

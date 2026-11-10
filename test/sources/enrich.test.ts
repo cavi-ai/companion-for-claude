@@ -214,17 +214,58 @@ describe("enrichCapture — dropped CSV", () => {
   });
 });
 
+describe("enrichCapture — summary edge cases", () => {
+  const clip = "---\nsource: https://example.com/post\n---\n\nTomatoes need water every morning.";
+  const enrich = async (content: string, replies: unknown[]) => {
+    const app = new App();
+    const file = app.vault.seed("Clippings/garden.md", content);
+    let call = 0;
+    const complete = vi.fn(async () => JSON.stringify(replies[Math.min(call++, replies.length - 1)]));
+    const res = await enrichCapture(deps(app, complete), { kind: "markdown", path: file.path, basename: "garden", content });
+    const out = await app.vault.cachedRead(res.file);
+    return { complete, out, frontmatter: parseYaml(/^---\n([\s\S]*?)\n---/.exec(out)?.[1] ?? "") as Record<string, unknown> };
+  };
+
+  it("cuts a model summary over 200 characters at a word boundary", async () => {
+    const long = Array.from({ length: 60 }, (_, i) => `word${i}`).join(" ");
+    const { frontmatter } = await enrich(clip, [{ title: "Garden tips", site: "Example", summary: long }]);
+    const summary = frontmatter.summary as string;
+    expect([...summary].length).toBeLessThanOrEqual(200);
+    expect(summary.endsWith("…")).toBe(true);
+    expect(long.startsWith(summary.slice(0, -1))).toBe(true);
+    expect(long.charAt(summary.length - 1)).toBe(" ");
+  });
+
+  it("asks again when the summary is blank and writes the answer", async () => {
+    const { complete, frontmatter } = await enrich(clip, [
+      { title: "Garden tips", site: "Example", summary: "   " },
+      { title: "Garden tips", site: "Example", summary: "Water tomatoes each morning." },
+    ]);
+    expect(complete).toHaveBeenCalledTimes(2);
+    expect(frontmatter.summary).toBe("Water tomatoes each morning.");
+  });
+
+  it("uses the title as the summary when the model never gives one", async () => {
+    const { complete, frontmatter, out } = await enrich(clip, [{ title: "Garden tips", site: "Example", summary: "" }]);
+    expect(complete).toHaveBeenCalledTimes(3);
+    expect(frontmatter.summary).toBe("Garden tips");
+    expect(out).toContain("source_enriched: true");
+  });
+
+  it("keeps a summary over 200 characters the note already carries", async () => {
+    const long = `${"Tomatoes ".repeat(30)}need water.`;
+    const { frontmatter } = await enrich(`---\nsource: https://example.com/post\nsummary: ${long}\n---\n\nTomatoes need water every morning.`, [{ title: "Garden tips", site: "Example" }]);
+    expect(frontmatter.summary).toBe(long);
+    expect(frontmatter.source_enriched).toBe(true);
+  });
+});
+
 describe("enrichCapture — extraction failure", () => {
   it.each([
     {
       name: "placeholder title",
       liveFrontmatter: ["title: Untitled", "site: Example", "summary: User summary"],
       message: "title: must be a meaningful, non-placeholder title",
-    },
-    {
-      name: "overlong summary",
-      liveFrontmatter: ["title: User title", "site: Example", `summary: ${"s".repeat(201)}`],
-      message: "summary: must be at most 200 characters",
     },
     {
       name: "wrong schema field type",

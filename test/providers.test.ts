@@ -244,4 +244,13 @@ describe("summarizeAndTag", () => {
     expect(res.newTags).toEqual(["brand-new"]);
     expect(seen.user).toContain("Existing tags (prefer these when relevant): llm, rust");
   });
+
+  it("cuts a summary over 200 characters at a word boundary", async () => {
+    const long = Array.from({ length: 60 }, (_, i) => `word${i}`).join(" ");
+    const { summary } = await summarizeAndTag(router(`TITLE: T\nTAGS: garden\nSUMMARY: ${long}`), "text", buildVocabulary([]));
+    expect([...summary].length).toBeLessThanOrEqual(200);
+    expect(summary.endsWith("…")).toBe(true);
+    expect(long.startsWith(summary.slice(0, -1))).toBe(true);
+    expect(long.charAt(summary.length - 1)).toBe(" ");
+  });
 });

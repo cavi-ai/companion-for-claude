@@ -7,10 +7,12 @@ type AppWindow = { app: {
   commands: { executeCommandById(id: string): void };
   workspace: { openLinkText(path: string, source: string, newLeaf: boolean): Promise<void> };
   vault: { getAbstractFileByPath(path: string): unknown; read(file: unknown): Promise<string> };
+  metadataCache: { getFileCache(file: unknown): { frontmatter?: Record<string, unknown> } | null };
   plugins: { plugins: Record<string, { activity: { snapshot(): { records: Array<{ title: string; state: string; technicalDetails?: string }> } } }> };
 } };
 
 const read = (page: Page) => page.evaluate(() => { const { vault } = (window as unknown as AppWindow).app; return vault.read(vault.getAbstractFileByPath("Garden draft.md")); });
+const frontmatter = (page: Page) => page.evaluate(() => { const { app } = window as unknown as AppWindow; return app.metadataCache.getFileCache(app.vault.getAbstractFileByPath("Garden draft.md"))?.frontmatter; });
 const activity = (page: Page) => page.evaluate(() => (window as unknown as AppWindow).app.plugins.plugins["claude-companion"]!.activity.snapshot().records.filter(({ title }) => title.startsWith("Tidying")));
 const openNote = (page: Page) => page.evaluate(() => (window as unknown as AppWindow).app.workspace.openLinkText("Garden draft", "", false));
 async function tidy(page: Page, enabled: string[]) {
@@ -66,7 +68,8 @@ test("successful copyedits remain reviewable when tagging fails", async ({ rig }
   await page.screenshot({ path: testInfo.outputPath("partial-tidy-review.png"), animations: "disabled" });
   await modal.getByRole("button", { name: "Apply selected", exact: true }).click();
   await expect(page.locator(".notice").filter({ hasText: "Some Tidy steps failed; run Tidy again to retry" })).toBeVisible();
-  expect(await read(page)).toBe(CORRECTED);
+  expect((await read(page)).endsWith(CORRECTED)).toBe(true);
+  await expect.poll(() => frontmatter(page)).toEqual({ tidied: ["lint"], tidy_hash: expect.stringMatching(/^fnv1a-/) });
   expect((await activity(page)).every(({ state }) => state === "needs-attention")).toBe(true);
   await expect(page.locator(".notice").filter({ hasText: "Tidied Garden draft." })).toHaveCount(0);
   expect(errors).toEqual([]);
@@ -80,8 +83,13 @@ for (const { label, reply, failed } of [{ label: "empty", reply: "   ", failed: 
     await openNote(page);
     await tidy(page, ["Lint note"]);
     await expect(page.locator(".notice").filter({ hasText: failed ? "Tidy couldn't finish Garden draft" : "Garden draft is already in good shape." })).toBeVisible();
-    if (failed) await expect(page.locator(".notice").filter({ hasText: "already in good shape" })).toHaveCount(0);
-    expect(await read(page)).toBe(ORIGINAL);
+    if (failed) {
+      await expect(page.locator(".notice").filter({ hasText: "already in good shape" })).toHaveCount(0);
+      expect(await read(page)).toBe(ORIGINAL);
+    } else {
+      expect((await read(page)).endsWith(ORIGINAL)).toBe(true);
+      await expect.poll(() => frontmatter(page)).toEqual({ tidied: ["lint"], tidy_hash: expect.stringMatching(/^fnv1a-/) });
+    }
     expect(await activity(page)).toMatchObject([{ state: failed ? "needs-attention" : "succeeded" }]);
     expect(errors).toEqual([]);
   });

@@ -2,6 +2,7 @@ import type { ProviderRouter } from "../providers/router";
 import { parseTaggerOutput } from "./taggerParse";
 import { resolveTags } from "../tags/resolve";
 import { selectPromptTags, type Vocabulary } from "../tags/vocabulary";
+import { clampSummary } from "../text";
 
 export { parseTaggerOutput } from "./taggerParse";
 
@@ -43,6 +44,7 @@ export async function summarizeAndTag(router: ProviderRouter, content: string, v
   const resolved = resolveTags(parsed.tags, vocab);
   return {
     ...parsed,
+    summary: clampSummary(parsed.summary),
     tags: resolved.map((r) => r.tag),
     newTags: resolved.filter((r) => r.match === "new").map((r) => r.tag),
     via: provider.label,

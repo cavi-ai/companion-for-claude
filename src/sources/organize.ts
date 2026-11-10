@@ -218,6 +218,11 @@ export interface OrganizeMove {
   domain: string;
 }
 
+/** The moves the review starts with selected, and the ones auto-apply writes: every move except the misc fallback. */
+export function defaultOrganizeSelection(moves: OrganizeMove[]): OrganizeMove[] {
+  return moves.filter((move) => move.domain !== FALLBACK_DOMAIN);
+}
+
 /** Same per-segment normalization sanitizeDomain applies before joining. */
 function sanitizeSegment(value: string): string {
   return value

@@ -8,6 +8,8 @@ export interface EnrichOptions {
   frontmatter: boolean;
   links: boolean;
   lint: boolean;
+  /** Write every proposed change without the review step. */
+  autoApply: boolean;
 }
 
 /** Everything an enrich pass can propose for one note. */
@@ -28,18 +30,21 @@ export interface EnrichDecision {
 
 /**
  * Step picker for Enrich (note + folder batch): one toggle per step, all on
- * by default; "Tidy" resolves the options, Cancel/close resolves null.
+ * by default, plus "Apply without review" starting from the saved setting;
+ * "Tidy" resolves the options, Cancel/close resolves null.
  */
 export class EnrichOptionsModal extends Modal {
   private decided = false;
-  private options: EnrichOptions = { rename: true, frontmatter: true, links: true, lint: true };
+  private options: EnrichOptions;
 
   constructor(
     app: App,
     private count: number,
     private onDone: (options: EnrichOptions | null) => void,
+    autoApply = false,
   ) {
     super(app);
+    this.options = { rename: true, frontmatter: true, links: true, lint: true, autoApply };
   }
 
   override onOpen(): void {
@@ -51,6 +56,7 @@ export class EnrichOptionsModal extends Modal {
       { key: "frontmatter", name: "Tags & summary", description: "Suggest tags (reusing existing vault tags) and a one-line summary into frontmatter." },
       { key: "links", name: "Add wikilinks", description: "Turn unlinked mentions of other notes into [[links]]." },
       { key: "lint", name: "Lint note", description: "Copyedit pass: spelling, grammar, markdown fixes." },
+      { key: "autoApply", name: "Apply without review", description: "Write every proposed change without the review step." },
     ] as const;
     for (const { key, name, description } of steps) {
       new Setting(contentEl).setName(name).setDesc(description).addToggle((toggle) => {

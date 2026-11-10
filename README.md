@@ -11,7 +11,7 @@ source of truth.
 
 [**Install from the Obsidian community store**](https://obsidian.md/plugins?id=claude-companion)
 · [Getting started](guides/getting-started.md)
-· [All guides](https://github.com/cavi-ai/claude-obsidian/blob/66650de402f44506559a1b3f42c69dc3c383df1d/README.md#guides)
+· [All guides](https://github.com/cavi-ai/claude-obsidian/blob/60d4dbf0da2979ba4881b1ea989c36ca1de1c79a/README.md#guides)
 
 ![Example note-edit review with two change checkboxes and an Apply selected button](assets/diff-review.png)
 
@@ -79,7 +79,7 @@ select. See [edit review and guardrails](guides/agent-mode.md).
 - **Optional integrations**: a loopback MCP bridge for live-vault tools, and an
   MCP client for servers you explicitly configure.
 
-The product overview stays in the [repository README](https://github.com/cavi-ai/claude-obsidian/blob/66650de402f44506559a1b3f42c69dc3c383df1d/README.md). Detailed
+The product overview stays in the [repository README](https://github.com/cavi-ai/claude-obsidian/blob/60d4dbf0da2979ba4881b1ea989c36ca1de1c79a/README.md). Detailed
 behavior and setup live in the guides:
 
 - [Agent mode, edits, and guardrails](guides/agent-mode.md)
@@ -186,7 +186,7 @@ To install a development build, copy `main.js`, `manifest.json`, and
 **Companion for Claude** in Community plugins. `pnpm run dev` watches and
 rebuilds `main.js` for active development.
 
-See [`CONTRIBUTING.md`](https://github.com/cavi-ai/claude-obsidian/blob/66650de402f44506559a1b3f42c69dc3c383df1d/CONTRIBUTING.md) for the full gate and release
+See [`CONTRIBUTING.md`](https://github.com/cavi-ai/claude-obsidian/blob/60d4dbf0da2979ba4881b1ea989c36ca1de1c79a/CONTRIBUTING.md) for the full gate and release
 workflow.
 
 ## Releases
@@ -200,4 +200,4 @@ workflow.
 ## License
 
 MIT — see [`LICENSE`](LICENSE). Third-party attribution is in
-[`NOTICE`](https://github.com/cavi-ai/claude-obsidian/blob/66650de402f44506559a1b3f42c69dc3c383df1d/NOTICE).
+[`NOTICE`](https://github.com/cavi-ai/claude-obsidian/blob/60d4dbf0da2979ba4881b1ea989c36ca1de1c79a/NOTICE).

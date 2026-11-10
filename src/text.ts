@@ -21,6 +21,19 @@ export function countOccurrences(haystack: string, needle: string): number {
   return n;
 }
 
+/** The longest summary Companion writes into a note's frontmatter, in characters. */
+export const SUMMARY_MAX_CHARS = 200;
+
+/** A summary cut to SUMMARY_MAX_CHARS characters at a word boundary, ending in an ellipsis when cut. */
+export function clampSummary(summary: string): string {
+  const text = summary.trim();
+  const chars = [...text];
+  if (chars.length <= SUMMARY_MAX_CHARS) return text;
+  const head = chars.slice(0, SUMMARY_MAX_CHARS - 1).join("");
+  const words = head.replace(/\s+\S*$/, "");
+  return `${(words || head).trimEnd()}…`;
+}
+
 /** A vault path's note name: its last segment without a `.md` extension. */
 export function noteName(path: string): string {
   return (path.split("/").pop() ?? path).replace(/\.md$/i, "");

@@ -12,14 +12,15 @@ describe("EnrichOptionsModal", () => {
     modal.onOpen();
     const root = modal.contentEl as unknown as FakeElement;
     const switches = root.querySelectorAll('[role="switch"]');
-    expect(switches.map((el) => el.getAttribute("aria-label"))).toEqual(["Rename note", "Tags & summary", "Add wikilinks", "Lint note"]);
-    expect(switches.map((el) => el.getAttribute("aria-checked"))).toEqual(["true", "true", "true", "true"]);
+    expect(switches.map((el) => el.getAttribute("aria-label"))).toEqual(["Rename note", "Tags & summary", "Add wikilinks", "Lint note", "Apply without review"]);
+    expect(switches.map((el) => el.getAttribute("aria-checked"))).toEqual(["true", "true", "true", "true", "false"]);
     for (const control of switches) {
       expect(control.getAttribute("aria-description")).toBeTruthy();
       const input = control.querySelector("input")!;
       expect(input.getAttribute("aria-hidden")).toBe("true");
+      const was = control.getAttribute("aria-checked");
       input.dispatchEvent({ type: "change" });
-      expect(control.getAttribute("aria-checked")).toBe("false");
+      expect(control.getAttribute("aria-checked")).toBe(was === "true" ? "false" : "true");
     }
   });
 });

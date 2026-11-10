@@ -1,4 +1,5 @@
 import type { FieldValue, SourceTypeSchema } from "./types";
+import { clampSummary } from "../text";
 
 export interface ValidationResult {
   ok: boolean;
@@ -27,11 +28,11 @@ function coerce(type: string, raw: unknown): FieldValue | undefined {
     const n = Number(str.replace(/[, ]/g, ""));
     return Number.isFinite(n) ? n : undefined;
   }
-  const s = scalarString(raw);
-  return s === undefined ? undefined : s.trim();
+  const s = scalarString(raw)?.trim();
+  return s ? s : undefined;
 }
 
-/** Validate a model reply against the schema's MODEL-sourced fields only. */
+/** Validate a model reply against the schema's MODEL-sourced fields only; blank strings count as missing, a summary is cut to length. */
 export function validateAgainstSchema(obj: unknown, schema: SourceTypeSchema): ValidationResult {
   const errors: string[] = [];
   const value: Record<string, FieldValue> = {};
@@ -43,7 +44,7 @@ export function validateAgainstSchema(obj: unknown, schema: SourceTypeSchema): V
       if (field.required) errors.push(`missing required field "${field.key}"`);
       continue;
     }
-    value[field.key] = coerced;
+    value[field.key] = field.key === "summary" && typeof coerced === "string" ? clampSummary(coerced) : coerced;
   }
   return { ok: errors.length === 0, errors, value };
 }

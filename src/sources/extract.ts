@@ -79,6 +79,7 @@ export async function extractFields(
   const base = `SOURCE CONTENT:\n\n${content.length > MAX_CONTENT ? content.slice(0, MAX_CONTENT) + "\n…[truncated]" : content}`;
   const opts: ExtractCompletionOpts = { maxTokens: EXTRACT_MAX_TOKENS, responseSchema: extractionJsonSchema(asked), disableThinking: true };
   let lastErrors: string[] = ["no reply"];
+  let lastReply: Record<string, unknown> | undefined;
 
   for (let attempt = 0; attempt <= maxRepairs; attempt++) {
     const user = attempt === 0 ? base : `${base}\n\nYour previous reply was invalid: ${lastErrors.join("; ")}. Return corrected JSON only.`;
@@ -91,6 +92,13 @@ export async function extractFields(
     const res = validateAgainstSchema(obj, reduced);
     if (res.ok) return { fields: { ...prefilled, ...res.value, ...derived } };
     lastErrors = res.errors;
+    if (isRecord(obj)) lastReply = obj;
+  }
+  // A reply that answers everything but the summary takes its title as the summary.
+  const title = lastReply?.title ?? prefilled.title;
+  if (lastReply && typeof title === "string") {
+    const res = validateAgainstSchema({ ...lastReply, summary: title }, reduced);
+    if (res.ok) return { fields: { ...prefilled, ...res.value, ...derived } };
   }
   throw new ExtractError(lastErrors);
 }

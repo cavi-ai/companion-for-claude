@@ -40,6 +40,11 @@ export function behaviorItems(): SettingGroupItem[] {
       desc: "Each new chat starts with keyword or semantic vault search on (off in agent mode, where Claude searches with tools).",
       control: { type: "toggle", key: "context.searchVault" },
     },
+    {
+      name: "Tidy: apply without review",
+      desc: "Tidy applies every proposed change without the review step. The step picker can turn this off for one run.",
+      control: { type: "toggle", key: "tidyAutoApply" },
+    },
   ];
 }
 

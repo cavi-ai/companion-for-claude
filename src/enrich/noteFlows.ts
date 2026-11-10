@@ -2,7 +2,7 @@ import { UtilityUnavailableError } from "../providers/endpointPolicy";
 // Per-note vault flows: link suggestions, "Tidy with Claude", and frontmatter suggestions.
 // Every flow proposes first and writes only what the user accepts.
 
-import { TFile, TFolder, type App } from "obsidian";
+import { TFile, TFolder, parseYaml, type App } from "obsidian";
 import { CompanionNotice as Notice } from "../notice";
 import type { ActivityStore } from "../activity/store";
 import { beginActivity } from "../activity/progress";
@@ -22,10 +22,13 @@ import { selectPromptTags } from "../tags/vocabulary";
 import { vaultVocabulary } from "../tags/vaultTags";
 import type { PluginSettings } from "../types";
 import { BatchDiffModal } from "../view/BatchDiffModal";
+import { createBatchDiffState } from "../view/batchDiffState";
 import { DiffModal } from "../view/DiffModal";
 import { EnrichOptionsModal, EnrichReviewModal, type EnrichDecision, type EnrichOptions, type EnrichProposal } from "../view/EnrichModal";
 import { FrontmatterModal } from "../view/FrontmatterModal";
+import { stripFrontmatter } from "../markdown/frontmatter";
 import { LINT_SYSTEM, buildLintUser, lintMaxTokens, parseLintResponse } from "./noteEnrich";
+import { TIDY_HASH_KEY, TIDY_STEPS, TIDY_STEPS_KEY, planTidy, tidyBodyHash, type TidyStep } from "./tidyMarker";
 
 export interface NoteFlowsDeps {
   app: App;
@@ -37,6 +40,11 @@ export interface NoteFlowsDeps {
 
 function frontmatterTags(value: unknown): string[] {
   return normalizeTags(Array.isArray(value) ? value.map(String) : typeof value === "string" ? [value] : []);
+}
+
+/** The decision the review starts with: every proposed item accepted. */
+function acceptAll(proposal: EnrichProposal): EnrichDecision {
+  return { rename: !!proposal.rename, frontmatter: !!proposal.frontmatter, accepted: (proposal.plan?.hunks ?? []).map(() => true) };
 }
 
 export class NoteFlows {
@@ -138,21 +146,25 @@ export class NoteFlows {
         return file instanceof TFile ? file : null;
       },
       process: async (file, transform) => { await this.app.vault.process(file, transform); },
-      select: (plans) => new Promise((resolve) => {
-        new BatchDiffModal(this.app, plans, resolve).open();
-      }),
+      select: (plans) => this.settings.enrichAutoApply
+        ? Promise.resolve(createBatchDiffState(plans).selected)
+        : new Promise((resolve) => {
+          new BatchDiffModal(this.app, plans, resolve).open();
+        }),
     });
   }
 
   /**
    * Enrich one note end to end (file-explorer right-click / command): pick the
    * steps (all on by default), then summarize → propose rename + tags/summary,
-   * wikilink unlinked mentions, and copyedit — all presented for review as
-   * per-item checkboxes + diff hunks before anything is written.
+   * wikilink unlinked mentions, and copyedit — presented for review as
+   * per-item checkboxes + diff hunks before anything is written, or applied
+   * whole when auto-apply is on. Steps a previous Tidy finished on the same
+   * body are skipped.
    */
   async enrichNoteFlow(file: TFile, presetOptions?: EnrichOptions): Promise<void> {
     const options =
-      presetOptions ?? (await this.choose<EnrichOptions>((resolve) => new EnrichOptionsModal(this.app, 1, resolve)));
+      presetOptions ?? (await this.choose<EnrichOptions>((resolve) => new EnrichOptionsModal(this.app, 1, resolve, this.settings.tidyAutoApply)));
     if (!options || this.disposed) return;
 
     const progress = beginActivity(this.activity, `Tidying ${file.basename}…`);
@@ -160,19 +172,34 @@ export class NoteFlows {
     this.pending.set(progress.id, abort);
     this.activity.update(progress.id, { recovery: [{ id: "stop-tidy", label: "Stop", kind: "stop" }] });
     try {
-      const proposal = await this.buildEnrichProposal(file, options, abort.signal);
+      this.assertActive(abort.signal);
+      const content = await this.app.vault.cachedRead(file);
+      if (!stripFrontmatter(content).trim()) {
+        new Notice(`${file.basename} is empty.`);
+        return;
+      }
+      const tidy = planTidy(content, options, parseYaml);
+      if (tidy.done) {
+        new Notice(`${file.basename} is already tidied.`);
+        return;
+      }
+      const { proposal, failed } = await this.buildEnrichProposal(file, content, tidy.pending, abort.signal);
       this.assertActive(abort.signal);
       const failures = proposal.failures?.map(({ step, message }) => `${step}: ${message}`).join("\n");
       if (failures) progress.fail(failures);
+      const finished = TIDY_STEPS.filter((step) => tidy.finished.includes(step) || (tidy.pending[step] && !failed.has(step)));
       if (!proposal.rename && !proposal.frontmatter && !proposal.plan) {
+        if (finished.length > tidy.finished.length) await this.recordTidy(file, finished, content, abort.signal);
         new Notice(failures ? `Tidy couldn't finish ${file.basename}.\n${failures}\nRun Tidy again to retry.` : `${file.basename} is already in good shape.`, failures ? 12000 : 6000);
         return;
       }
-      progress.setMessage("Review proposed changes");
-      const decision = await this.choose<EnrichDecision>((resolve) => new EnrichReviewModal(this.app, proposal, resolve));
+      progress.setMessage(options.autoApply ? "Applying changes" : "Review proposed changes");
+      const decision = options.autoApply
+        ? acceptAll(proposal)
+        : await this.choose<EnrichDecision>((resolve) => new EnrichReviewModal(this.app, proposal, resolve));
       if (!decision) return;
       this.assertActive(abort.signal);
-      await this.applyEnrichDecision(file, proposal, decision, abort.signal);
+      await this.applyEnrichDecision(file, content, proposal, decision, finished, abort.signal);
       new Notice(failures ? `Applied selected changes to ${file.basename}. Some Tidy steps failed; run Tidy again to retry.` : `Tidied ${file.basename}.`, failures ? 12000 : 6000);
     } catch (e) {
       if (abort.signal.aborted || this.disposed) { progress.cancel(); return; }
@@ -184,7 +211,7 @@ export class NoteFlows {
     }
   }
 
-  /** Batch variant for a folder: one step picker, then per-note review modals. */
+  /** Batch variant for a folder: one step picker, then per-note runs; empty notes and notes already tidied are skipped unread by the model. */
   async enrichFolderFlow(folder: TFolder): Promise<void> {
     const files: TFile[] = [];
     const walk = (f: TFolder): void => {
@@ -198,18 +225,36 @@ export class NoteFlows {
       new Notice(`No notes found in ${folder.path}/.`);
       return;
     }
-    const options = await new Promise<EnrichOptions | null>((resolve) => new EnrichOptionsModal(this.app, files.length, resolve).open());
+    const options = await new Promise<EnrichOptions | null>((resolve) => new EnrichOptionsModal(this.app, files.length, resolve, this.settings.tidyAutoApply).open());
     if (!options) return;
+    let skipped = 0;
+    let empty = 0;
     for (const file of files) {
+      const content = await this.app.vault.cachedRead(file).catch(() => null);
+      if (content !== null && !stripFrontmatter(content).trim()) {
+        empty++;
+        continue;
+      }
+      if (content !== null && planTidy(content, options, parseYaml).done) {
+        skipped++;
+        continue;
+      }
       await this.enrichNoteFlow(file, options);
     }
+    if (skipped > 0) new Notice(`Skipped ${skipped} note${skipped === 1 ? "" : "s"} already tidied.`);
+    if (empty > 0) new Notice(`Skipped ${empty} empty note${empty === 1 ? "" : "s"}.`);
   }
 
-  /** Compute everything an enrich pass can propose for one note (no writes). */
-  private async buildEnrichProposal(file: TFile, options: EnrichOptions, signal?: AbortSignal): Promise<EnrichProposal> {
+  /** Compute everything an enrich pass can propose for one note (no writes), and the steps that failed. */
+  private async buildEnrichProposal(
+    file: TFile,
+    content: string,
+    options: EnrichOptions,
+    signal?: AbortSignal,
+  ): Promise<{ proposal: EnrichProposal; failed: Set<TidyStep> }> {
     this.assertActive(signal);
-    const content = await this.app.vault.cachedRead(file);
     const proposal: EnrichProposal = { path: file.path };
+    const failed = new Set<TidyStep>();
 
     let tagResult: { title: string; tags: string[]; newTags: string[]; summary: string } | null = null;
     if (options.rename || options.frontmatter) {
@@ -220,6 +265,7 @@ export class NoteFlows {
         if (e instanceof UtilityUnavailableError && e.resolution.state === "unavailable-without-Claude" && e.resolution.reason === "fallback-denied") throw e;
         const step = [options.rename ? "Rename note" : "", options.frontmatter ? "Tags & summary" : ""].filter(Boolean).join(" / ");
         (proposal.failures ??= []).push({ step, message: e instanceof Error ? e.message : String(e) });
+        failed.add("rename").add("frontmatter");
       }
     }
 
@@ -246,6 +292,7 @@ export class NoteFlows {
         body = parseLintResponse(text, body) ?? body;
       } catch (e) {
         (proposal.failures ??= []).push({ step: "Lint note", message: e instanceof Error ? e.message : String(e) });
+        failed.add("lint");
       }
     }
     this.assertActive(signal);
@@ -272,20 +319,24 @@ export class NoteFlows {
       if (addedTags.length > 0 || summary) proposal.frontmatter = { tags: merged, summary, addedTags, newTags };
     }
 
-    return proposal;
+    return { proposal, failed };
   }
 
-  /** Apply the reviewed subset: content hunks, frontmatter, then the rename last. */
+  /** Apply the reviewed subset: content hunks, frontmatter, the finished-steps record, then the rename last. */
   private async applyEnrichDecision(
     file: TFile,
+    content: string,
     proposal: EnrichProposal,
     decision: EnrichDecision,
+    finished: TidyStep[],
     signal?: AbortSignal,
   ): Promise<void> {
     this.assertActive(signal);
     this.ensureCurrentNote(file);
+    let reviewed = content;
     if (proposal.plan && decision.accepted.some(Boolean)) {
       const plan = proposal.plan;
+      reviewed = applyPlan(content, plan, decision.accepted);
       await this.app.vault.process(file, (current) => { this.assertActive(signal); return applyPlan(current, plan, decision.accepted); });
     }
     if (proposal.frontmatter && decision.frontmatter) {
@@ -298,10 +349,26 @@ export class NoteFlows {
         if (summary && !current.summary) current.summary = summary;
       });
     }
+    if (finished.length > 0) await this.recordTidy(file, finished, reviewed, signal);
     if (proposal.rename && decision.rename) {
       this.assertActive(signal);
       await this.app.fileManager.renameFile(file, proposal.rename.to);
     }
+  }
+
+  /**
+   * Record the finished steps against the body Tidy reviewed, with the accepted
+   * edits applied; text the user changed meanwhile keeps the note eligible.
+   */
+  private async recordTidy(file: TFile, finished: TidyStep[], reviewed: string, signal?: AbortSignal): Promise<void> {
+    this.assertActive(signal);
+    this.ensureCurrentNote(file);
+    const hash = tidyBodyHash(reviewed);
+    await this.app.fileManager.processFrontMatter(file, (fm) => {
+      const current = fm as Record<string, unknown>;
+      current[TIDY_STEPS_KEY] = [...finished];
+      current[TIDY_HASH_KEY] = hash;
+    });
   }
 
   private ensureCurrentNote(file: TFile): void {

@@ -24,7 +24,7 @@ interface PrivateEnrich {
 }
 
 interface PrivateNoteFlows {
-  buildEnrichProposal(file: TFile, options: { rename: boolean; frontmatter: boolean; links: boolean; lint: boolean }): Promise<unknown>;
+  buildEnrichProposal(file: TFile, content: string, options: { rename: boolean; frontmatter: boolean; links: boolean; lint: boolean; autoApply: boolean }): Promise<{ proposal: unknown }>;
 }
 
 function controllerHarness(
@@ -356,8 +356,8 @@ describe("source enrichment wiring", () => {
     const note = app.vault.seed("Notes/Active.md", "Some content about models.");
     vi.spyOn(router.openaiCompat, "complete").mockResolvedValue("TITLE: T\nTAGS: LLMs, brand-new\nSUMMARY: s");
 
-    const proposal = (await (plugin.noteFlows() as unknown as PrivateNoteFlows).buildEnrichProposal(note, { rename: false, frontmatter: true, links: false, lint: false })) as {
-      frontmatter: { tags: string[]; addedTags: string[]; newTags: string[] };
+    const { proposal } = (await (plugin.noteFlows() as unknown as PrivateNoteFlows).buildEnrichProposal(note, await app.vault.cachedRead(note), { rename: false, frontmatter: true, links: false, lint: false, autoApply: false })) as {
+      proposal: { frontmatter: { tags: string[]; addedTags: string[]; newTags: string[] } };
     };
 
     expect(proposal.frontmatter.addedTags).toEqual(["llm", "brand-new"]);
@@ -689,11 +689,12 @@ describe("source enrichment wiring", () => {
     const before = await app.vault.cachedRead(file);
     const claudeComplete = vi.spyOn(router.anthropic, "complete").mockResolvedValue("unsafe");
 
-    const pending = (plugin.noteFlows() as unknown as PrivateNoteFlows).buildEnrichProposal(file, {
+    const pending = (plugin.noteFlows() as unknown as PrivateNoteFlows).buildEnrichProposal(file, before, {
       rename: true,
       frontmatter: true,
       links: true,
       lint: true,
+      autoApply: false,
     });
     await settle();
     choose("Don't send");

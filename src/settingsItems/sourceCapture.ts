@@ -14,6 +14,7 @@ export function sourceCaptureItems(ctx: SourceCaptureItemsContext): SettingGroup
     { name: "Auto-enrich on create", desc: "Type files automatically as they appear in the inbox (otherwise use the command).", control: { type: "toggle", key: "sourceEnrichOnCreate" } },
     { name: "Inbox folder", desc: "Folder the Web Clipper writes to and Companion watches.", control: { type: "text", key: "sourceInboxFolder", placeholder: "Clippings" } },
     { name: "Organized folder", desc: "Where “Organize clippings” moves reviewed clips — one subfolder per inferred topic/project.", control: { type: "text", key: "clipOrganizedFolder", placeholder: "Library" } },
+    { name: "Apply organize and link suggestions without review", desc: "Organize moves and Inbox link suggestions are applied without the review step. Moves to “misc” are skipped.", control: { type: "toggle", key: "enrichAutoApply" } },
     { name: "Base tags", desc: "Comma-separated tags added to every enriched source note.", control: { type: "text", key: "sourceBaseTags" } },
     {
       name: "Web Clipper templates",

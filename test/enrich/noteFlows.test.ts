@@ -1,7 +1,8 @@
-import { App, TFile, TFolder, clearNotices, getNoticeMessages } from "obsidian";
+import { App, TFile, TFolder, clearNotices, getNoticeMessages, parseYaml } from "obsidian";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ActivityStore } from "../../src/activity/store";
 import { NoteFlows } from "../../src/enrich/noteFlows";
+import { readFrontmatter, stripFrontmatter } from "../../src/markdown/frontmatter";
 import { UtilityUnavailableError } from "../../src/providers/endpointPolicy";
 import { DEFAULT_SETTINGS, type PluginSettings } from "../../src/types";
 
@@ -54,7 +55,8 @@ vi.mock("../../src/view/FrontmatterModal", () => ({
   },
 }));
 
-const OPTIONS = { rename: false, frontmatter: false, links: false, lint: false };
+const OPTIONS = { rename: false, frontmatter: false, links: false, lint: false, autoApply: false };
+const LINT_FIX = { text: JSON.stringify({ complete: true, edits: [{ old_str: "Original", new_str: "Corrected" }] }), provider: { label: "Utility" } };
 
 interface Rig {
   app: App;
@@ -202,7 +204,7 @@ describe("NoteFlows enrichNoteFlow", () => {
     vi.spyOn(app.fileManager, "processFrontMatter").mockImplementation(async (_file, update) => { update(current); });
     await flows.enrichNoteFlow(note, { ...OPTIONS, frontmatter: true });
     const tags = typeof currentTags === "string" ? [currentTags] : currentTags;
-    expect(current).toEqual({ tags: [...tags, "fresh"], summary: "My newer summary.", keep: true });
+    expect(current).toEqual({ tags: [...tags, "fresh"], summary: "My newer summary.", keep: true, tidied: ["frontmatter"], tidy_hash: expect.stringMatching(/^fnv1a-/) });
   });
 
   it("stops quietly when the step picker is dismissed", async () => {
@@ -258,7 +260,8 @@ describe("NoteFlows enrichNoteFlow", () => {
     expect(ui.proposals[0]).toMatchObject({ frontmatter: { summary: "", addedTags: ["fresh"] } });
     expect((ui.proposals[0] as { rename?: unknown }).rename).toBeUndefined();
     expect(note.path).toBe("Doc.md");
-    expect(note._content).toBe("---\nsummary: Mine\n---\nbody");
+    expect(readFrontmatter(note._content, parseYaml)).toEqual({ summary: "Mine", tidied: ["rename", "frontmatter"], tidy_hash: expect.stringMatching(/^fnv1a-/) });
+    expect(stripFrontmatter(note._content).trim()).toBe("body");
   });
 
   it("reports a failed copyedit without claiming the note passed its checks", async () => {
@@ -305,7 +308,12 @@ describe("NoteFlows enrichNoteFlow", () => {
     ui.decision = apply ? { accepted: [true], frontmatter: false, rename: false } : null;
     await flows.enrichNoteFlow(note, { ...OPTIONS, rename: true, frontmatter: true, lint: true });
     expect(ui.proposals[0]).toMatchObject({ failures: [{ step: "Rename note / Tags & summary", message: "tag service unavailable" }], plan: { hunks: expect.any(Array) } });
-    expect(note._content).toBe(apply ? "Corrected body." : "Original body.");
+    if (apply) {
+      expect(readFrontmatter(note._content, parseYaml)).toEqual({ tidied: ["lint"], tidy_hash: expect.stringMatching(/^fnv1a-/) });
+      expect(stripFrontmatter(note._content).trim()).toBe("Corrected body.");
+    } else {
+      expect(note._content).toBe("Original body.");
+    }
     expect(activity.snapshot().records[0]?.state).toBe("needs-attention");
     expect(getNoticeMessages().join("\n")).not.toContain("Tidied Doc.");
     if (apply) expect(getNoticeMessages().join("\n")).toContain("Some Tidy steps failed");
@@ -358,13 +366,137 @@ describe("NoteFlows enrichFolderFlow", () => {
 
   it("walks subfolders and tidies each markdown note in order with the chosen steps", async () => {
     const { flows } = rig();
-    const a = new TFile("Notes/a.md", "", 0);
-    const b = new TFile("Notes/sub/b.md", "", 0);
+    const a = new TFile("Notes/a.md", "A.", 0);
+    const b = new TFile("Notes/sub/b.md", "B.", 0);
     const spy = vi.spyOn(flows, "enrichNoteFlow").mockResolvedValue(undefined);
     ui.options = OPTIONS;
     await flows.enrichFolderFlow(folder([a, new TFile("Notes/skip.txt", "", 0), folder([b], "Notes/sub")]));
     expect(ui.optionCounts).toEqual([2]);
     expect(spy.mock.calls).toEqual([[a, OPTIONS], [b, OPTIONS]]);
+  });
+
+  it("skips a note a previous Tidy finished while its text is unchanged", async () => {
+    const { app, flows, complete } = rig();
+    const note = app.vault.seed("Notes/a.md", "Original body.");
+    const fresh = app.vault.seed("Notes/b.md", "Other body.");
+    tagger.summarizeAndTag.mockResolvedValue({ title: "a", tags: ["fresh"], newTags: [], summary: "Summary." });
+    complete.mockResolvedValue(LINT_FIX);
+    ui.options = { ...OPTIONS, frontmatter: true, lint: true };
+    ui.decision = { accepted: [true], frontmatter: true, rename: false };
+    await flows.enrichFolderFlow(folder([note]));
+    expect(note._content).toContain("Corrected body.");
+    expect(tagger.summarizeAndTag).toHaveBeenCalledTimes(1);
+    expect(complete).toHaveBeenCalledTimes(1);
+
+    clearNotices();
+    await flows.enrichFolderFlow(folder([note, fresh]));
+    expect(tagger.summarizeAndTag).toHaveBeenCalledTimes(2);
+    expect(complete).toHaveBeenCalledTimes(2);
+    expect(ui.proposals.map((p) => (p as { path: string }).path)).toEqual(["Notes/a.md", "Notes/b.md"]);
+    expect(getNoticeMessages()).toContain("Skipped 1 note already tidied.");
+  });
+});
+
+describe("Tidy leaves empty notes alone", () => {
+  it("sends nothing to the model for a note without a body, alone or in a folder", async () => {
+    const { app, flows, complete } = rig();
+    const empty = app.vault.seed("Notes/Empty.md", "---\ntags: [draft]\n---\n");
+    const body = app.vault.seed("Notes/Body.md", "Original body.");
+    await flows.enrichNoteFlow(empty, { ...OPTIONS, frontmatter: true, lint: true });
+    expect(getNoticeMessages()).toEqual(["Empty is empty."]);
+
+    clearNotices();
+    ui.options = { ...OPTIONS, lint: true };
+    await flows.enrichFolderFlow(Object.assign(new TFolder("Notes"), { children: [empty, body] }));
+    expect(tagger.summarizeAndTag).not.toHaveBeenCalled();
+    expect(complete).toHaveBeenCalledTimes(1);
+    expect(getNoticeMessages()).toContain("Skipped 1 empty note.");
+    expect(empty._content).toBe("---\ntags: [draft]\n---\n");
+  });
+});
+
+describe("Tidy skips work already done", () => {
+  it("skips an unchanged note and tidies it again after its text changes", async () => {
+    const { app, flows, complete } = rig();
+    const note = app.vault.seed("Doc.md", "Body.");
+    await flows.enrichNoteFlow(note, { ...OPTIONS, lint: true });
+    await flows.enrichNoteFlow(note, { ...OPTIONS, lint: true });
+    expect(complete).toHaveBeenCalledTimes(1);
+    await app.vault.modify(note, `${note._content}\n\nA new paragraph.`);
+    await flows.enrichNoteFlow(note, { ...OPTIONS, lint: true });
+    expect(complete).toHaveBeenCalledTimes(2);
+  });
+
+  it("runs only the steps a previous Tidy did not finish, then reports the note as done", async () => {
+    const { app, flows, complete } = rig();
+    const note = app.vault.seed("Doc.md", "Body.");
+    await flows.enrichNoteFlow(note, { ...OPTIONS, lint: true });
+    tagger.summarizeAndTag.mockResolvedValue({ title: "Doc", tags: ["fresh"], newTags: [], summary: "Summary." });
+    ui.decision = { accepted: [], frontmatter: true, rename: false };
+    await flows.enrichNoteFlow(note, { ...OPTIONS, frontmatter: true, lint: true });
+    expect(complete).toHaveBeenCalledTimes(1);
+    expect(tagger.summarizeAndTag).toHaveBeenCalledTimes(1);
+    expect(note._content).toContain("fresh");
+
+    clearNotices();
+    await flows.enrichNoteFlow(note, { ...OPTIONS, frontmatter: true, lint: true });
+    expect(getNoticeMessages()).toEqual(["Doc is already tidied."]);
+    expect(complete).toHaveBeenCalledTimes(1);
+    expect(tagger.summarizeAndTag).toHaveBeenCalledTimes(1);
+  });
+
+  it("retries a failed step and skips it once it succeeds", async () => {
+    const { app, flows, complete } = rig();
+    const note = app.vault.seed("Doc.md", "Body.");
+    complete.mockRejectedValueOnce(new Error("model down"));
+    await flows.enrichNoteFlow(note, { ...OPTIONS, lint: true });
+    expect(note._content).toBe("Body.");
+    await flows.enrichNoteFlow(note, { ...OPTIONS, lint: true });
+    await flows.enrichNoteFlow(note, { ...OPTIONS, lint: true });
+    expect(complete).toHaveBeenCalledTimes(2);
+  });
+
+  it("proposes again after a dismissed review and skips once the review is applied", async () => {
+    const { app, flows } = rig();
+    const note = app.vault.seed("Doc.md", "body");
+    tagger.summarizeAndTag.mockResolvedValue({ title: "Renamed", tags: [], newTags: [], summary: "" });
+    ui.decision = null;
+    await flows.enrichNoteFlow(note, { ...OPTIONS, rename: true });
+    expect(note._content).toBe("body");
+    ui.decision = { accepted: [], frontmatter: false, rename: false };
+    await flows.enrichNoteFlow(note, { ...OPTIONS, rename: true });
+    await flows.enrichNoteFlow(note, { ...OPTIONS, rename: true });
+    expect(tagger.summarizeAndTag).toHaveBeenCalledTimes(2);
+    expect(note.path).toBe("Doc.md");
+  });
+});
+
+describe("Tidy auto-apply", () => {
+  it("applies every proposed change without opening the review", async () => {
+    const { app, flows, complete } = rig();
+    const note = app.vault.seed("Doc.md", "Original body.");
+    tagger.summarizeAndTag.mockResolvedValue({ title: "New Title", tags: ["fresh"], newTags: ["fresh"], summary: "Summary." });
+    complete.mockResolvedValue(LINT_FIX);
+    await flows.enrichNoteFlow(note, { ...OPTIONS, rename: true, frontmatter: true, lint: true, autoApply: true });
+    expect(ui.proposals).toEqual([]);
+    expect(note.path).toBe("New Title.md");
+    expect(note._content).toContain("Corrected body.");
+    expect(note._content).toContain("fresh");
+    expect(note._content).toContain("Summary.");
+    expect(getNoticeMessages()).toEqual(["Tidied New Title."]);
+  });
+});
+
+describe("Inbox link auto-apply", () => {
+  it("links every suggested mention without the batch review when enrichment auto-apply is on", async () => {
+    const { app, flows, settings } = rig();
+    settings.enrichAutoApply = true;
+    app.vault.seed("Notes/Atlas.md", "");
+    const clip = app.vault.seed("Clippings/clip.md", "Atlas is mentioned.");
+    ui.batch = null;
+    const result = await flows.reviewInboxLinkSuggestions([clip]);
+    expect(result).toMatchObject({ appliedFiles: 1, appliedHunks: 1 });
+    expect(clip._content).toBe("[[Atlas]] is mentioned.");
   });
 });
 

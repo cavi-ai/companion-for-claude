@@ -54,7 +54,8 @@ for (const accepted of ["rename", "metadata"] as const) {
     await expect(page.locator(".notice").filter({ hasText: "Tidied" })).toBeVisible();
     if (accepted === "rename") {
       expect(await read("Garden draft.md")).toBeNull();
-      expect(await read("Garden schedule.md")).toBe(ORIGINAL);
+      expect((await read("Garden schedule.md"))?.endsWith(ORIGINAL)).toBe(true);
+      await expect.poll(() => page.evaluate(() => { const app = (window as unknown as AppWindow).app; return app.metadataCache.getFileCache(app.vault.getAbstractFileByPath("Garden schedule.md"))?.frontmatter; })).toEqual({ tidied: ["rename", "frontmatter"], tidy_hash: expect.stringMatching(/^fnv1a-/) });
     } else {
       expect(await read("Garden schedule.md")).toBeNull();
       const content = await read("Garden draft.md");

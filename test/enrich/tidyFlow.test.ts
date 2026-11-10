@@ -1,13 +1,14 @@
-import { App, FakeElement, getLastOpenedModal, getNoticeMessages, Modal } from "obsidian";
+import { App, FakeElement, getLastOpenedModal, getNoticeMessages, Modal, parseYaml } from "obsidian";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ActivityStore } from "../../src/activity/store";
 import { NoteFlows } from "../../src/enrich/noteFlows";
 import { ProviderRouter } from "../../src/providers/router";
 import { UtilityUnavailableError } from "../../src/providers/endpointPolicy";
+import { readFrontmatter, stripFrontmatter } from "../../src/markdown/frontmatter";
 import { DEFAULT_SETTINGS } from "../../src/types";
 
 afterEach(() => vi.restoreAllMocks());
-const options = { rename: false, frontmatter: false, links: false, lint: true };
+const options = { rename: false, frontmatter: false, links: false, lint: true, autoApply: false };
 const response = JSON.stringify({ complete: true, edits: [{ old_str: "teh plants", new_str: "the plants" }] });
 function rig() {
   const app = new App();
@@ -18,7 +19,7 @@ function rig() {
   vi.spyOn(router.anthropic, "stream").mockImplementation(async (_request, handlers) => { handlers.onText(response); handlers.onDone(response); });
   const activity = new ActivityStore();
   const flows = new NoteFlows({ app, settings: () => settings, router: () => router, activity: () => activity, ontology: () => null });
-  return { app, file, router, flows, activity };
+  return { app, file, router, flows, activity, settings };
 }
 async function review(): Promise<FakeElement> {
   await vi.waitFor(() => expect((getLastOpenedModal()?.contentEl as unknown as FakeElement)?.querySelectorAll("button").map((button) => button.textContent), getNoticeMessages().join(" | ")).toContain("Apply selected"));
@@ -37,7 +38,26 @@ describe("Tidy request to reviewed write", () => {
     expect(await r.app.vault.read(r.file)).toBe(before);
     choose(modal, "Apply selected");
     await running;
-    expect(await r.app.vault.read(r.file)).toBe(before.replace("teh plants", "the plants"));
+    const after = await r.app.vault.read(r.file);
+    expect(stripFrontmatter(after).trim()).toBe(before.replace("teh plants", "the plants").trim());
+    expect(readFrontmatter(after, parseYaml)).toEqual({ tidied: ["lint"], tidy_hash: expect.stringMatching(/^fnv1a-/) });
+  });
+  it("starts the step picker from the auto-apply setting and writes the edits without a review", async () => {
+    const r = rig();
+    r.settings.tidyAutoApply = true;
+    const before = await r.app.vault.read(r.file);
+    const running = r.flows.enrichNoteFlow(r.file);
+    const picker = getLastOpenedModal()!.contentEl as unknown as FakeElement;
+    const switches = picker.querySelectorAll('[role="switch"]');
+    expect(switches.map((el) => [el.getAttribute("aria-label"), el.getAttribute("aria-checked")])).toEqual([
+      ["Rename note", "true"], ["Tags & summary", "true"], ["Add wikilinks", "true"], ["Lint note", "true"], ["Apply without review", "true"],
+    ]);
+    for (const el of switches.slice(0, 3)) el.querySelector("input")!.dispatchEvent({ type: "change" });
+    choose(picker, "Tidy");
+    await running;
+    expect(getLastOpenedModal()!.contentEl).toBe(picker);
+    expect(await r.app.vault.read(r.file)).toContain(before.replace("teh plants", "the plants").trim());
+    expect(getNoticeMessages()).toContain("Tidied Garden.");
   });
   it("keeps supported lint available when the selected metadata provider is unavailable", async () => {
     const r = rig();

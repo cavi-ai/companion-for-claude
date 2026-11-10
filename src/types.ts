@@ -261,6 +261,9 @@ export interface PluginSettings {
   /** After each capture, merge recent digests into the "What Claude Knows" note. */
   memoryAutoConsolidate: boolean;
 
+  /** Tidy applies every proposed change without the review step; the step picker can turn it off for one run. */
+  tidyAutoApply: boolean;
+
   // ----- source capture (typed clip enrichment) -----
   /** Master switch: watch the inbox and enrich new clips/files into typed notes. */
   sourceCaptureEnabled: boolean;
@@ -274,6 +277,8 @@ export interface PluginSettings {
   sourceInboxFolder: string;
   /** Base folder organized clippings move into (per-domain subfolders inside). */
   clipOrganizedFolder: string;
+  /** Organize moves and Inbox link suggestions apply without the review step. */
+  enrichAutoApply: boolean;
   /** Tags every enriched source note gets. */
   sourceBaseTags: string[];
   /** Per-type schema overrides, keyed by source type. */
@@ -407,12 +412,15 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   memoryBaseTags: ["claude", "session"],
   memoryAutoConsolidate: false,
 
+  tidyAutoApply: false,
+
   sourceCaptureEnabled: true,
   sourceEnrichOnCreate: true,
   enrichmentDiagnostics: false,
   sourceCaptureConsent: "ask",
   sourceInboxFolder: "Clippings",
   clipOrganizedFolder: "Library",
+  enrichAutoApply: false,
   sourceBaseTags: ["source"],
   sourceSchemaOverrides: {},
   clipperTemplateFingerprint: "",

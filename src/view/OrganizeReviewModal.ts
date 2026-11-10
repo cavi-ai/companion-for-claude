@@ -1,5 +1,5 @@
 import { App, Modal, Setting } from "obsidian";
-import type { OrganizeMove } from "../sources/organize";
+import { defaultOrganizeSelection, type OrganizeMove } from "../sources/organize";
 
 /**
  * Review gate for the clipping organizer: every proposed rename+move, grouped
@@ -39,12 +39,13 @@ export class OrganizeReviewModal extends Modal {
     }
 
     const checks: Array<{ move: OrganizeMove; el: HTMLInputElement }> = [];
+    const preselected = new Set(defaultOrganizeSelection(this.moves));
     for (const [domain, moves] of [...groups.entries()].sort(([a], [b]) => a.localeCompare(b))) {
       contentEl.createDiv({ cls: "cc-organize-group-heading", text: `${domain} (${moves.length})` });
       for (const move of moves) {
         const row = contentEl.createEl("label", { cls: "cc-organize-row" });
         const check = row.createEl("input", { attr: { type: "checkbox" } });
-        check.checked = domain !== "misc";
+        check.checked = preselected.has(move);
         checks.push({ move, el: check });
         const text = row.createSpan({ cls: "cc-organize-text" });
         text.createSpan({ cls: "cc-organize-from", text: move.from });
