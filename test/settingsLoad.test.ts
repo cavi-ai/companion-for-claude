@@ -6,6 +6,7 @@ import { ClaudeCompanionSettingTab } from "../src/settings";
 import { unavailableStore } from "../src/secrets/store";
 import type ClaudeCompanionPlugin from "../src/main";
 import { fakeSemantic } from "./fakes/semantic";
+import { curatedModels } from "./fakes/curatedModels";
 
 // The initial-release flat shape: data.json *was* the settings object, with
 // keys that have since been renamed (localUtilityEnabled) or removed.
@@ -119,6 +120,7 @@ describe("resolveSettings with legacy configs", () => {
       settings: { ...resolveSettings(LEGACY_FLAT), settingsShowAdvanced: true },
       saveSettings: async () => {},
       secrets: () => unavailableStore(),
+      claudeModels: curatedModels,
       router: () => ({
       chatProvider: () => ({ provider: { id: "anthropic", label: "Claude (Anthropic API)" }, model: "claude-test" }), providerLabel: () => "Claude API", 
         anthropic: { hasCredentials: () => true },

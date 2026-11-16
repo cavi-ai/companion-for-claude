@@ -7,6 +7,7 @@ import { ChatView } from "../../src/view/ChatView";
 import type { CompanionChromeDependencies } from "../../src/view/companionChrome";
 import { conversationFakes } from "../fakes/conversations";
 import { ActionModal } from "../../src/view/ActionModal";
+import { curatedModels } from "../fakes/curatedModels";
 
 /** Same shape as chatRenderLifecycle.test.ts's desktop-header plugin stub, reused for onOpen()-driven header tests. */
 function headerPlugin(fakes = conversationFakes()): ClaudeCompanionPlugin {
@@ -32,7 +33,7 @@ function headerPlugin(fakes = conversationFakes()): ClaudeCompanionPlugin {
   return {
     app,
     settings: fakes.settings,
-    router: () => ({
+    claudeModels: curatedModels, router: () => ({
       chatBackend: "claude",
       anthropic: { hasCredentials: () => true },
       claudeCli: { hasCredentials: () => false },

@@ -12,7 +12,7 @@ const readyRuntime = (): DesktopIntegrationRuntime => ({
     marketplaceInstalled: true,
     pluginInstalled: true,
     pluginEnabled: true,
-    bridge: { enabled: false, url: "", registered: false, headerValue: "" },
+    bridge: { enabled: false, registered: false },
   }),
   setupClaudeCode: async () => ({
     claude: { available: true, version: "2.1.226" },
@@ -20,7 +20,7 @@ const readyRuntime = (): DesktopIntegrationRuntime => ({
     marketplaceInstalled: true,
     pluginInstalled: true,
     pluginEnabled: true,
-    bridge: { enabled: false, url: "", registered: false, headerValue: "" },
+    bridge: { enabled: false, registered: false },
   }),
   installClaudeDesktop: async () => ({ configPath: "/config.json", backupPath: null, restartRequired: true }),
   openTerminalAtVault: async () => ({ opened: true }),

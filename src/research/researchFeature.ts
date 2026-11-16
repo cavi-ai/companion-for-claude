@@ -25,7 +25,7 @@ import type { Provider } from "../providers/types";
 import { extractPdfPages } from "../semantic/pdf";
 import { parseClipUrl } from "../sources/detect";
 import { vaultVocabulary } from "../tags/vaultTags";
-import type { PluginSettings } from "../types";
+import type { ClaudeModel, PluginSettings } from "../types";
 import { ensureVaultFolder } from "../vault/vaultFiles";
 import type { ChatView } from "../view/ChatView";
 import { BuildView, BUILD_VIEW_TYPE } from "../view/BuildView";
@@ -52,6 +52,7 @@ export interface ResearchFeatureDeps {
   settings: () => PluginSettings;
   activity: () => ActivityStore;
   router: () => ProviderRouter;
+  claudeModels: () => ClaudeModel[];
   build: () => BuildController;
   activateView: () => Promise<ChatView | null>;
   lastMarkdownFile: () => TFile | null;
@@ -102,6 +103,7 @@ export class ResearchFeature {
       openDiscovery: (snapshot) => this.openDiscovery(snapshot),
       startFromActiveNote: () => void this.startResearchFromActiveNote(),
       researchStatus: () => this.deps.router().researchStatus(),
+      claudeModels: () => this.deps.claudeModels(),
       openResearchSettings: () => this.deps.openCompanionSettings(),
     });
   }

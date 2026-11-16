@@ -11,7 +11,7 @@ const status = {
   marketplaceInstalled: true,
   pluginInstalled: true,
   pluginEnabled: true,
-  bridge: { enabled: false, url: "", registered: false, headerValue: "" },
+  bridge: { enabled: false, registered: false },
 };
 const runtime: DesktopIntegrationRuntime = {
   inspectClaudeCode: async () => status,

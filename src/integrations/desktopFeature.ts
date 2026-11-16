@@ -4,7 +4,7 @@
 import { FileSystemAdapter, Platform, type App } from "obsidian";
 import { CompanionNotice as Notice } from "../notice";
 import { sourceActivityDetail } from "../sources/controller";
-import { bridgeHeaderValue, bridgeUrl, generateToken, resolveMcpToken } from "../mcp/clientConfig";
+import { generateToken, resolveMcpToken } from "../mcp/clientConfig";
 import type { ProviderRouter } from "../providers/router";
 import type { PluginSettings } from "../types";
 import { ChoiceModal } from "../view/ChoiceModal";
@@ -13,6 +13,7 @@ import type { ManagedProcessPort } from "../build/desktopExecutor";
 import { CLI_HOST_LABELS, type CliHost } from "./cliHosts";
 import { claudeDesktopConfigPath, type DesktopPlatform } from "./desktop";
 import { DesktopIntegrationCoordinator, type DesktopIntegrationRuntime } from "./desktopCoordinator";
+import type { ConnectionVault } from "./desktopExtension";
 import type { BridgeSetupInput } from "./desktopRuntime";
 
 export interface DesktopFeatureDeps {
@@ -25,7 +26,7 @@ export interface DesktopFeatureDeps {
   openCompanionSettings: () => void;
   openObsidianCliSettings: () => void;
   runtimeLoader: () => Promise<{
-    createNodeDesktopRuntime(platform: DesktopPlatform, homeDir: string, env: Record<string, string | undefined>, bridge?: BridgeSetupInput): Promise<DesktopIntegrationRuntime>;
+    createNodeDesktopRuntime(platform: DesktopPlatform, homeDir: string, env: Record<string, string | undefined>, bridge?: BridgeSetupInput, vault?: ConnectionVault): Promise<DesktopIntegrationRuntime>;
     createNodeManagedProcessPort(): ManagedProcessPort;
   }>;
 }
@@ -75,8 +76,8 @@ export class DesktopFeature {
   /** enabled=false, never a partial bridge: no working step without a resolvable token. */
   private claudeCodeBridgeInput(env: Record<string, string | undefined>): BridgeSetupInput {
     const resolved = resolveMcpToken(env, this.settings.mcpToken);
-    if (!this.settings.mcpEnabled || !resolved.token) return { enabled: false, url: "", headerValue: "" };
-    return { enabled: true, url: bridgeUrl(this.settings.mcpPort), headerValue: bridgeHeaderValue(resolved) };
+    if (!this.settings.mcpEnabled || !resolved.token) return { enabled: false, port: 0, token: "" };
+    return { enabled: true, port: this.settings.mcpPort, token: resolved.token };
   }
 
   /**
@@ -109,7 +110,8 @@ export class DesktopFeature {
   private async createDesktopIntegrationController(): Promise<DesktopIntegrationCoordinator> {
     const { adapter, platform, env, homeDir } = this.desktopEnvironment();
     const module = await this.deps.runtimeLoader();
-    const runtime = await module.createNodeDesktopRuntime(platform, homeDir, { APPDATA: env.APPDATA }, this.claudeCodeBridgeInput(env));
+    const vault = { name: this.app.vault.getName(), path: adapter.getBasePath() };
+    const runtime = await module.createNodeDesktopRuntime(platform, homeDir, { APPDATA: env.APPDATA }, this.claudeCodeBridgeInput(env), vault);
     return new DesktopIntegrationCoordinator({
       runtime,
       providerReady: () => this.deps.router().anthropic.hasCredentials() || this.settings.chatBackend !== "claude",

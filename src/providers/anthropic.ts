@@ -7,7 +7,7 @@ import { capabilitiesFor } from "../claude/capabilities";
 import { type CompletionRequest, type Provider, type ProviderStatus, ProviderError, isAbort } from "./types";
 import { systemWithSchema } from "./schemaPrompt";
 import { readStreamBody } from "./streamBody";
-import { type AuthInputs, type AuthMode, type ResolvedAuth, resolveAuth, resolveAuthBaseUrl, authHeaders, messagesUrl, buildSystem } from "./auth";
+import { type AuthInputs, type AuthMode, type ResolvedAuth, resolveAuth, resolveAuthBaseUrl, authHeaders, messagesUrl, modelsUrl, buildSystem } from "./auth";
 
 export interface AnthropicConsentIdentity {
   /** Auth mode and credential shape affect which external account receives the request. */
@@ -225,6 +225,21 @@ export class AnthropicProvider implements Provider {
       .filter((b) => b.type === "text")
       .map((b) => b.text ?? "")
       .join("");
+  }
+
+  /** Changes whenever the active credential or endpoint changes; compare only, never log. Null when no credential is set. */
+  modelsIdentity(): string | null {
+    const auth = this.auth();
+    return auth ? `${auth.scheme}|${auth.baseUrl}|${auth.credential}` : null;
+  }
+
+  /** Raw `GET /v1/models` body through the same auth and HTTP path as chat. */
+  async listModels(): Promise<unknown> {
+    const auth = this.auth();
+    if (!auth) throw new ProviderError("No Anthropic credential set.");
+    const res = await requestUrl({ url: modelsUrl(auth), method: "GET", headers: this.headers(auth), throw: false });
+    if (res.status < 200 || res.status >= 300) throw new ProviderError(extractApiError(res.text, res.status), res.status);
+    return res.json;
   }
 
   async test(): Promise<ProviderStatus> {

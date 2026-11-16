@@ -79,8 +79,8 @@ describe("MCP bridge — transport & auth", () => {
     await expect(tokenless.start()).rejects.toThrow(/token/i);
   });
 
-  it("answers a CORS preflight with 204", async () => {
-    const res = await fetch(base, { method: "OPTIONS" });
+  it("answers a CORS preflight from a loopback origin with 204", async () => {
+    const res = await fetch(base, { method: "OPTIONS", headers: { origin: "http://localhost:3000" } });
     expect(res.status).toBe(204);
     expect(res.headers.get("access-control-allow-methods")).toContain("POST");
   });
@@ -382,5 +382,62 @@ describe("MCP bridge — 2025-06-18 transport rules", () => {
     expect(json.result.resources.map((r) => r.uri)).toEqual(["obsidian://vault/Notes/Welcome.md"]);
     const prompts = await rpc({ jsonrpc: "2.0", id: 2, method: "prompts/list" });
     expect(((await prompts.json()) as { result: { prompts: Array<{ name: string }> } }).result.prompts.map((p) => p.name)).toEqual(["seeded"]);
+  });
+});
+
+describe("MCP bridge — browser origins", () => {
+  const ping = { jsonrpc: "2.0", id: 1, method: "ping" };
+  const withOrigin = (origin?: string, token: string | null = TOKEN): Record<string, string> => ({
+    "content-type": "application/json",
+    ...(token ? { authorization: `Bearer ${token}` } : {}),
+    ...(origin === undefined ? {} : { origin }),
+  });
+  const corsHeaders = (res: Response): string[] => [...res.headers.keys()].filter((k) => k.startsWith("access-control-"));
+
+  it("sends no CORS headers to a client without an Origin", async () => {
+    const res = await fetch(base, { method: "POST", headers: withOrigin(), body: JSON.stringify(ping) });
+    expect(res.status).toBe(200);
+    expect(corsHeaders(res)).toEqual([]);
+  });
+
+  it("sends no CORS headers on a preflight without an Origin", async () => {
+    const res = await fetch(base, { method: "OPTIONS" });
+    expect(corsHeaders(res)).toEqual([]);
+  });
+
+  it.each(["http://localhost:5173", "https://127.0.0.1:8443", "http://[::1]:3000", "http://localhost"])(
+    "echoes the loopback origin %s",
+    async (origin) => {
+      const res = await fetch(base, { method: "POST", headers: withOrigin(origin), body: JSON.stringify(ping) });
+      expect(res.status).toBe(200);
+      expect(res.headers.get("access-control-allow-origin")).toBe(origin);
+      expect(res.headers.get("vary")).toContain("Origin");
+      expect(res.headers.get("access-control-allow-headers")).toContain("authorization");
+      expect(res.headers.get("access-control-expose-headers")).toBe("mcp-session-id");
+    },
+  );
+
+  it("answers a preflight from a loopback origin", async () => {
+    const res = await fetch(base, { method: "OPTIONS", headers: { origin: "http://localhost:3000" } });
+    expect(res.status).toBe(204);
+    expect(res.headers.get("access-control-allow-origin")).toBe("http://localhost:3000");
+    expect(res.headers.get("access-control-allow-methods")).toContain("POST");
+  });
+
+  it.each(["https://example.com", "null", "http://localhost.evil.com", "http://127.0.0.1.evil.com:80", "not a url", "file:///tmp/x.html"])(
+    "rejects the origin %s with 403 before the token check",
+    async (origin) => {
+      // No token: a 403 (not 401) proves the origin is checked first.
+      const res = await fetch(base, { method: "POST", headers: withOrigin(origin, null), body: JSON.stringify(ping) });
+      expect(res.status).toBe(403);
+      expect(res.headers.get("access-control-allow-origin")).toBeNull();
+      expect(((await res.json()) as { error: string }).error).toMatch(/origin/i);
+    },
+  );
+
+  it("rejects a preflight from a foreign origin with 403", async () => {
+    const res = await fetch(base, { method: "OPTIONS", headers: { origin: "https://example.com" } });
+    expect(res.status).toBe(403);
+    expect(res.headers.get("access-control-allow-origin")).toBeNull();
   });
 });

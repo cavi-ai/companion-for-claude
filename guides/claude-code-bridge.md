@@ -20,18 +20,22 @@ On desktop, use the integration that matches the client:
 
 Open **Options → Desktop integrations** from any Companion page and choose
 **Set up Claude Code**. Companion verifies both CLIs, explains the external
-changes, and—only after confirmation—installs or re-enables the user-scoped
-plugin with the equivalent of:
+changes, and—only after confirmation—installs or re-enables the plugin for the
+open vault only, running these in the vault folder:
 
 ```bash
-claude plugin marketplace add cavi-ai/plugins
-claude plugin install obsidian-agent@cavi-ai --scope user
+claude plugin marketplace add cavi-ai/plugins --scope project
+claude plugin install obsidian-agent@cavi-ai --scope project
 ```
 
-The commands use fixed argument arrays rather than a shell. Companion does not
-install Claude Code or Obsidian itself. Once ready, **Open terminal at vault**
-opens the external terminal at this vault; run `claude` there and use an
-`obsidian-agent` workflow.
+Claude Code records both in the vault's `.claude/settings.json`; its user
+settings are not touched, so the plugin's skills load only in this vault. When
+the MCP bridge is on, setup also adds `obsidian-vault` to the vault's
+`.mcp.json` (see [Codex and Antigravity](#codex-and-antigravity) for the
+connector it runs). The commands use fixed argument arrays rather than a shell.
+Companion does not install Claude Code or Obsidian itself. Once ready, **Open
+terminal at vault** opens the external terminal at this vault; run `claude`
+there and use an `obsidian-agent` workflow.
 
 Manual prerequisite, in Obsidian 1.12.7 or newer — two steps, both Obsidian's own:
 
@@ -77,19 +81,25 @@ starts, so the extension never needs reinstalling.
 
 **Desktop integrations → Codex and Antigravity** lists each command-line agent
 it finds and offers **Connect Codex** and **Connect Antigravity**. Each one
-enables the read-only bridge, writes the same connection file plus a small
-connector script beside it (`Companion for Claude/server/index.js`), and
-registers that script as `obsidian-vault` with the CLI's own command:
+enables the read-only bridge, writes this vault's own connection file
+(`Companion for Claude/vaults/<vault>-<id>/bridge.json`) and a small connector
+script (`Companion for Claude/server/index.js`), and sets `obsidian-vault` in
+the vault's own config file for the CLI:
 
-```text
-codex mcp add obsidian-vault -- node "<connector script>"
-agy mcp add obsidian-vault node "<connector script>"
-```
+| CLI | File in the vault | Entry |
+|---|---|---|
+| Codex | `.codex/config.toml` | `[mcp_servers.obsidian-vault]` |
+| Antigravity | `.agents/mcp_config.json` | `mcpServers["obsidian-vault"]` |
+| Claude Code | `.mcp.json` | `mcpServers["obsidian-vault"]` |
 
-No token is written to the CLI's configuration. The connector needs Node.js on
-the PATH the CLI runs with, and behaves like the Claude Desktop extension: it
-starts while Obsidian is closed, opens the vault when a vault tool is called,
-and follows port and token changes. Start a new CLI session after connecting.
+Each entry runs `node "<connector script>" "<this vault's connection file>"`.
+The CLI's user configuration is never written, so the tools load only in this
+vault, and each vault's entry reaches that vault's bridge. Codex loads a
+project's `.codex/config.toml` once the vault folder is trusted. No token is
+written to the vault. The connector needs Node.js on the PATH the CLI runs
+with, and behaves like the Claude Desktop extension: it starts while Obsidian
+is closed, opens the vault when a vault tool is called, and follows port and
+token changes. Start a new CLI session in the vault folder after connecting.
 
 ## 3. Advanced bridge settings
 
@@ -232,6 +242,7 @@ This is the security-sensitive part of the plugin, and it's deliberately narrow:
 - **A non-empty bearer token is mandatory.** Startup fails outright without one. There is no tokenless mode.
 - **Constant-time token comparison**, so a wrong token leaks nothing through timing.
 - **Loopback `Host` enforcement.** Requests whose `Host` header isn't a loopback value are rejected with 403 — defense in depth against DNS rebinding, where a page on an attacker domain resolving to `127.0.0.1` would carry that domain as `Host`.
+- **Origin enforcement.** Native clients send no `Origin` and receive no CORS headers. A browser request is accepted only from an `http(s)` page on `localhost`, `127.0.0.1` or `[::1]`, whose origin is echoed back; any other `Origin`, including `null`, gets 403 before the token is checked, preflights included.
 - **Writes off by default**, and separately gated from reads.
 - **Only `/mcp` is routed**; any other path 404s. `POST` carries JSON-RPC,
   authenticated `DELETE` closes a known session, `OPTIONS` handles CORS, and
@@ -240,7 +251,7 @@ This is the security-sensitive part of the plugin, and it's deliberately narrow:
   session receives its own ephemeral port and token, so its approval callback,
   agent mode, and Plan Mode cannot be rebound by another conversation.
 
-Reporting policy and boundaries: [`SECURITY.md`](https://github.com/cavi-ai/claude-obsidian/blob/60d4dbf0da2979ba4881b1ea989c36ca1de1c79a/SECURITY.md).
+Reporting policy and boundaries: [`SECURITY.md`](https://github.com/cavi-ai/claude-obsidian/blob/c64a96cf171ebe7eab778b951c11811a1b779715/SECURITY.md).
 
 ## Troubleshooting
 

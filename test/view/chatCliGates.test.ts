@@ -8,6 +8,7 @@ import type ClaudeCompanionPlugin from "../../src/main";
 import type { ChatCapabilities } from "../../src/providers/router";
 import { defaultChatControls } from "../../src/claude/chatControls";
 import { conversationFakes } from "../fakes/conversations";
+import { curatedModels } from "../fakes/curatedModels";
 
 const CLI: ChatCapabilities = { agentActions: true, claudeControls: false, metered: false, local: false, cli: true };
 const API: ChatCapabilities = { agentActions: true, claudeControls: true, metered: true, local: false, cli: false };
@@ -22,7 +23,7 @@ function gatePluginStub(initiallySignedIn: boolean, refreshSignsIn: boolean): { 
   });
   const plugin = {
     settings: { ...structuredClone(DEFAULT_SETTINGS), chatBackend: "claude-cli" },
-    router: () => ({
+    claudeModels: curatedModels, router: () => ({
       chatBackend: "claude-cli",
       chatProvider: () =>
         state.signedIn
@@ -42,7 +43,7 @@ function pluginStub(settings: Partial<PluginSettings>, caps: ChatCapabilities, c
   const resolved = { ...structuredClone(DEFAULT_SETTINGS), ...settings };
   return {
     settings: resolved,
-    router: () => ({
+    claudeModels: curatedModels, router: () => ({
       chatProvider: () => ({ provider: { id: caps.cli ? "claude-cli" : "anthropic", hasCredentials: () => true }, model: DEFAULT_SETTINGS.model }),
       chatCapabilities: () => caps,
       chatToolCapable: async () => true,
@@ -240,7 +241,7 @@ describe("ChatView on the claude-cli backend", () => {
     );
     const plugin = {
       settings: { ...structuredClone(DEFAULT_SETTINGS), chatBackend: "claude", apiKey: "" },
-      router: () => ({
+      claudeModels: curatedModels, router: () => ({
         chatBackend: "claude",
         claudeCli: { hasCredentials: () => state.signedIn, available: () => true, refresh },
         anthropic: { hasCredentials: () => false },

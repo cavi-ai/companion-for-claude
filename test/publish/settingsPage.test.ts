@@ -7,6 +7,7 @@ import { hydrate, stripVerifiedSecrets, syncSecrets, type SecretStore } from "..
 import { unavailableStore } from "../../src/secrets/store";
 import type { PublishedItem } from "../../src/publish/registry";
 import { fakeSemantic } from "../fakes/semantic";
+import { curatedModels } from "../fakes/curatedModels";
 import type ClaudeCompanionPlugin from "../../src/main";
 
 type Row = SettingDefinitionItem & { tier?: string; render?: (setting: Setting) => void };
@@ -24,6 +25,7 @@ function stubPlugin(items: PublishedItem[] = []) {
   const plugin = {
     settings: structuredClone(DEFAULT_SETTINGS),
     saveSettings: vi.fn(async () => {}),
+    claudeModels: curatedModels,
     router: () => ({
       chatProvider: () => ({ provider: { id: "anthropic", label: "Claude (Anthropic API)" }, model: "claude-test" }),
       providerLabel: () => "Claude API",

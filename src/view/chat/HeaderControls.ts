@@ -4,7 +4,7 @@ import { renderCompanionChrome } from "../companionChrome";
 import type { ChatMessage } from "../../types";
 import type { Conversation } from "../../conversations/store";
 import { SessionDropdown } from "./SessionDropdown";
-import { CLAUDE_MODELS, modelLabel } from "../../claude/models";
+import { modelLabel } from "../../claude/models";
 import { DEVICE_MODELS, DEVICE_MAX_INPUT_TOKENS, DEVICE_MAX_OUTPUT_TOKENS } from "../../device/models";
 import { MODEL_BACKEND_LABELS, ModelCatalogSource } from "./modelCatalog";
 import { ModelPickerModal } from "../ModelPickerModal";
@@ -207,7 +207,7 @@ export class HeaderControls {
     const label = servingBackend === "codex-cli" ? router.codexCli.modelLabel(model)
       : servingBackend === "opencode-cli" ? router.opencodeCli.modelLabel(model)
       : servingBackend === "device" ? DEVICE_MODELS.find(entry => entry.id === model)?.name ?? model
-      : modelLabel(model);
+      : modelLabel(model, this.plugin.claudeModels().models());
     const serving = HEADER_BACKEND_LABELS[servingBackend];
     const prefix = backend === "auto" ? `Auto · ${serving}`
       : backend === servingBackend ? HEADER_BACKEND_LABELS[backend]
@@ -329,7 +329,7 @@ export class HeaderControls {
   /** Model picker opened by tapping the model name in the header. */
   openModelMenu(): void {
     this.modelPicker?.close();
-    const source = new ModelCatalogSource(this.plugin, () => this.controls.model, Platform.isMobile);
+    const source = new ModelCatalogSource(this.plugin, () => this.controls.model, Platform.isMobile, this.plugin.claudeModels());
     this.modelPicker = new ModelPickerModal(this.app, source, value => void this.onModelSelect(value), () => this.deps.openSettings());
     this.modelPicker.open();
   }
@@ -349,7 +349,7 @@ export class HeaderControls {
     if (route && (!Platform.isMobile || route[1] !== "claude-cli")) {
       this.plugin.settings.chatBackend = route[1] as "auto" | "claude" | "claude-cli";
       this.controls.model = value.slice(route[0].length);
-      if (CLAUDE_MODELS.some(model => model.id === this.controls.model)) this.plugin.settings.model = this.controls.model;
+      if (this.plugin.claudeModels().models().some(model => model.id === this.controls.model)) this.plugin.settings.model = this.controls.model;
       else { this.plugin.settings.model = "custom"; this.plugin.settings.customModel = this.controls.model; }
     } else if (!Platform.isMobile && value.startsWith("codex-cli:")) {
       this.plugin.settings.codexModel = value.slice("codex-cli:".length);

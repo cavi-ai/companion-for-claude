@@ -4,10 +4,12 @@ import { ActivityStore } from "../src/activity/store";
 import { ChatView } from "../src/view/ChatView";
 import { DEFAULT_SETTINGS } from "../src/types";
 import type ClaudeCompanionPlugin from "../src/main";
+import { curatedModels } from "./fakes/curatedModels";
 
 function pluginStub(): ClaudeCompanionPlugin {
   return {
     settings: structuredClone(DEFAULT_SETTINGS),
+    claudeModels: curatedModels,
     router: () => ({
       chatProvider: () => ({ provider: { id: "anthropic" }, model: DEFAULT_SETTINGS.model }),
       chatCapabilities: () => ({ agentActions: true, claudeControls: true, metered: true, local: false, cli: false }),

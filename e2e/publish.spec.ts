@@ -45,15 +45,19 @@ test("a note publishes as a secret gist without frontmatter or comments, republi
     expect(content).not.toContain("private: yes");
     expect(content).not.toContain("secret aside");
     await expect(page.locator(".notice").filter({ hasText: "link copied" })).toBeVisible();
+    const publishNotice = page.locator(".cc-companion-notice").filter({ hasText: "Published Publish me — link copied" });
+    await expect(publishNotice).toHaveCount(1);
     await expect.poll(() => published(page)).toEqual([expect.objectContaining({ key: "Publish me.md", gistId: "g1", url: "https://gist.github.com/e2e/g1", kind: "note" })]);
 
     await page.evaluate(async () => {
       const { vault } = (window as unknown as AppSeam).app;
       await vault.modify(vault.getAbstractFileByPath("Publish me.md"), "# Public heading\n\nEdited.\n");
     });
+    const noticeCount = await publishNotice.count();
     await runCommand(page, "publish-note");
     await expect.poll(async () => (await harness.githubRequests()).length, { timeout: 15_000 }).toBe(2);
     expect((await harness.githubRequests())[1]).toMatchObject({ method: "PATCH", path: "/gists/g1" });
+    await expect(publishNotice).toHaveCount(noticeCount + 1);
     await expect(confirm).toHaveCount(0);
     expect(await published(page)).toHaveLength(1);
 

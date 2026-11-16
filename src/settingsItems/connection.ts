@@ -6,7 +6,6 @@ import { CompanionNotice as Notice } from "../notice";
 import type ClaudeCompanionPlugin from "../main";
 import { chatBackendOptions } from "../providers/runtimeBackend";
 import { DEVICE_MODELS, clearDeviceModel, deviceModelCached } from "../device/models";
-import { CLAUDE_MODELS } from "../claude/models";
 import type { ProviderStatus } from "../providers/types";
 import { readAnthropicEnv, hasAnthropicEnvCredential } from "../providers/env";
 import { claudeBackend } from "../cli/backends/claude";
@@ -15,10 +14,10 @@ import { opencodeBackend } from "../cli/backends/opencode";
 import type { CliBackend } from "../cli/backends/types";
 import type { CliProvider } from "../providers/cliProvider";
 import { canDeleteDeviceModel, setCredential } from "./actions";
-import { cliModelItem } from "./cliModels";
+import { claudeModelItem, cliModelItem } from "./cliModels";
 
 export interface ConnectionItemsContext {
-  plugin: Pick<ClaudeCompanionPlugin, "connection" | "deviceChat" | "onboarding" | "refreshViews" | "router" | "saveSettings" | "settings">;
+  plugin: Pick<ClaudeCompanionPlugin, "claudeModels" | "connection" | "deviceChat" | "onboarding" | "refreshViews" | "router" | "saveSettings" | "settings">;
   storageBlurb(): string;
   renderStatus(el: HTMLElement, status: ProviderStatus): void;
 }
@@ -153,7 +152,7 @@ export function connectionItems(ctx: ConnectionItemsContext): SettingGroupItem[]
         );
         setting.addText((text) => {
           text.inputEl.type = "password";
-          text.inputEl.setCssStyles({ width: "320px" });
+          text.inputEl.addClass("cc-input-width-320");
           text
             .setPlaceholder("sk-ant-oat…")
             .setValue(s.oauthToken)
@@ -205,15 +204,7 @@ export function connectionItems(ctx: ConnectionItemsContext): SettingGroupItem[]
         );
       },
     },
-    {
-      name: "Model",
-      desc: "Pick a default model. A custom id below overrides this.",
-      control: {
-        type: "dropdown",
-        key: "model",
-        options: Object.fromEntries(CLAUDE_MODELS.map((m) => [m.id, m.label])),
-      },
-    },
+    claudeModelItem(ctx),
     {
       name: "Custom model id",
       desc: "Optional. Overrides the dropdown — useful for new or dated model snapshots.",

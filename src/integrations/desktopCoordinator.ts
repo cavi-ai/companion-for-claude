@@ -170,7 +170,7 @@ export class DesktopIntegrationCoordinator {
           status: "ready",
           providerReady: this.options.providerReady(),
           hosts: (this.state.hosts ?? []).filter((entry) => entry.host !== host).concat(result),
-          message: `${label} has the vault tools as obsidian-vault. Start a new ${label} session to use them.`,
+          message: `${label} has the vault tools as obsidian-vault in this vault. Start a new ${label} session in the vault folder to use them.`,
         });
       } catch (cause) {
         throw new Error(sanitizeDesktopError(cause instanceof Error ? cause.message : String(cause), [bridge.token]), { cause });

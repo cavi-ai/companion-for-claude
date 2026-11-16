@@ -118,8 +118,9 @@ export class McpHttpServer {
     this.log("info", "MCP server stopped");
   }
 
-  private setCors(res: ServerResponse): void {
-    res.setHeader("Access-Control-Allow-Origin", "*");
+  private setCors(res: ServerResponse, origin: string): void {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+    res.setHeader("Vary", "Origin");
     res.setHeader("Access-Control-Allow-Headers", "content-type, authorization, mcp-session-id, mcp-protocol-version");
     res.setHeader("Access-Control-Allow-Methods", "POST, DELETE, OPTIONS");
     res.setHeader("Access-Control-Expose-Headers", "mcp-session-id");
@@ -144,7 +145,16 @@ export class McpHttpServer {
     res.once("finish", release);
     res.once("close", release);
 
-    this.setCors(res);
+    // Native clients send no Origin and need no CORS; browsers get it only from loopback pages.
+    const origin = headerValue(req, "origin");
+    if (origin !== undefined) {
+      if (!isLoopbackOrigin(origin)) {
+        res.writeHead(403, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "Forbidden: origin not allowed." }));
+        return;
+      }
+      this.setCors(res, origin);
+    }
 
     if (req.method === "OPTIONS") {
       res.writeHead(204);
@@ -312,6 +322,20 @@ function isLoopbackHost(host: string | undefined): boolean {
     .replace(/^\[|\]$/g, "")
     .toLowerCase();
   return name === "127.0.0.1" || name === "localhost" || name === "::1";
+}
+
+/** True only for http(s) origins whose host is exactly localhost, 127.0.0.1 or [::1]. */
+function isLoopbackOrigin(origin: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(origin);
+  } catch {
+    return false;
+  }
+  // A real Origin is scheme://host[:port] with no path, so it equals its own normalization.
+  if (url.origin !== origin) return false;
+  if (url.protocol !== "http:" && url.protocol !== "https:") return false;
+  return url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "[::1]";
 }
 
 function readBody(req: IncomingMessage): Promise<string> {

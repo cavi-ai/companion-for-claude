@@ -9,6 +9,7 @@ import { analyzeProjectIntelligence } from "../research/intelligence";
 import { buildResearchAgentPrompt, nextSteps, type NextStep } from "../research/nextSteps";
 import type { ResearchRepository } from "../research/repository";
 import type { ResearchModelStatus } from "../research/researchModel";
+import type { ClaudeModel } from "../types";
 import type { RevisionCoordinator } from "../research/revisionCoordinator";
 import { documentSections, type DocumentSections } from "../research/sectionStatus";
 import { isResearchProjectChange } from "../research/workbenchRouting";
@@ -34,6 +35,7 @@ export interface ResearchViewDependencies {
   openDiscovery?(snapshot: ProjectSnapshot): void;
   startFromActiveNote?(): void | Promise<void>;
   researchStatus?(): ResearchModelStatus;
+  claudeModels?(): ClaudeModel[];
   openResearchSettings?(): void;
 }
 
@@ -147,7 +149,7 @@ export class ResearchView extends ItemView {
       select.value = snapshot.project.path;
       this.deps.actions.createProject();
     });
-    renderResearchModelChip(row, this.deps.researchStatus?.(), () => this.deps.openResearchSettings?.());
+    renderResearchModelChip(row, this.deps.researchStatus?.(), () => this.deps.openResearchSettings?.(), this.deps.claudeModels?.());
     if (this.deps.startFromActiveNote) {
       const fromNote = row.createEl("button", { cls: "cc-desk-from-note", text: "From active note", attr: { title: "New project from the note you have open" } });
       fromNote.addEventListener("click", () => void this.deps.startFromActiveNote?.());

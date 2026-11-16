@@ -24,9 +24,8 @@ export class CloudDispatchModal extends Modal {
       contentEl.createEl("p", { cls: "setting-item-description", text: `Attaching — ${this.context.split("\n")[0]}` });
     }
 
-    const ta = contentEl.createEl("textarea");
+    const ta = contentEl.createEl("textarea", { cls: "cc-cloud-dispatch-prompt" });
     ta.rows = 5;
-    ta.setCssStyles({ width: "100%" });
     ta.placeholder = "e.g. Summarize this week's meeting notes into a decisions log and open a PR.";
     ta.addEventListener("input", () => (this.value = ta.value));
     window.setTimeout(() => ta.focus(), 0);

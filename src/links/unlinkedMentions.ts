@@ -175,7 +175,7 @@ export function maskNonProse(content: string): string {
   const fenced = fencedLines(lines);
   out = lines.map((line, i) => (fenced[i] ? blank(line) : line)).join("\n");
   // Inline code.
-  out = out.replace(/(?<!`)(`+)([\s\S]*?)\1(?!`)/g, blank);
+  out = out.replace(/(^|[^`])(`+)([\s\S]*?)\2(?!`)/g, (match, lead: string) => lead + blank(match.slice(lead.length)));
   // Wikilinks (with or without pipe) and embeds.
   out = out.replace(/!?\[\[[^\]]*\]\]/g, blank);
   // Markdown links: mask the whole [text](target).

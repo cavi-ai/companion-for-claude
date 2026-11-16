@@ -162,6 +162,11 @@ export function authHeaders(auth: ResolvedAuth): Record<string, string> {
   return headers;
 }
 
+/** The Models endpoint for a resolved base URL (one page, the API maximum). */
+export function modelsUrl(auth: ResolvedAuth): string {
+  return `${auth.baseUrl}/v1/models?limit=1000`;
+}
+
 /** The Messages endpoint for a resolved base URL. */
 export function messagesUrl(auth: ResolvedAuth): string {
   return `${auth.baseUrl}/v1/messages`;

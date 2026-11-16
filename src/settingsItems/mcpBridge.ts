@@ -59,7 +59,7 @@ export function mcpItems(ctx: McpBridgeItemsContext): SettingGroupItem[] {
         setting
           .addText((text) => {
             text.inputEl.type = "password"; // bearer token — don't render in plaintext
-            text.inputEl.setCssStyles({ width: "min(260px, 100%)" });
+            text.inputEl.addClass("cc-input-width-fluid-260");
             text.setValue(s.mcpToken).onChange(async (v) => {
               setCredential(s, "mcpToken", v);
               await plugin.saveSettings();

@@ -17,7 +17,7 @@ export type ChatConversations = HeaderConversations & Pick<
 
 export type ChatSessions = Pick<SessionActions, "archive" | "distill" | "fork" | "forkFromSummary">;
 
-export type ComposerHost = Pick<ClaudeCompanionPlugin, "captureWebPage" | "router" | "saveSettings" | "settings">;
+export type ComposerHost = Pick<ClaudeCompanionPlugin, "captureWebPage" | "claudeModels" | "router" | "saveSettings" | "settings">;
 
 export type TranscriptHost = Pick<ClaudeCompanionPlugin, "research" | "router" | "settings" | "views"> & {
   conversations: () => Pick<ChatConversations, "list">;
@@ -39,6 +39,6 @@ export type ChatViewHost = ComposerHost & Omit<TranscriptHost, "conversations"> 
 
 export type HeaderHost = { conversations: () => HeaderConversations; sessionActions: () => ChatSessions } & Pick<
   ClaudeCompanionPlugin,
-  | "composeSystemPrompt" | "deleteActiveConversation" | "mcpStats" | "memory" | "publishing" | "research" | "router"
+  | "claudeModels" | "composeSystemPrompt" | "deleteActiveConversation" | "mcpStats" | "memory" | "publishing" | "research" | "router"
   | "saveSettings" | "setMcpEnabled" | "settings" | "shell" | "views"
 >;

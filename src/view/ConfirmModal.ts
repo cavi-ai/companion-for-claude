@@ -12,8 +12,7 @@ export class ConfirmModal extends Modal {
 
   override onOpen(): void {
     this.titleEl.setText(this.opts.title);
-    const p = this.contentEl.createEl("p", { cls: "setting-item-description" });
-    p.setCssStyles({ whiteSpace: "pre-wrap" });
+    const p = this.contentEl.createEl("p", { cls: "setting-item-description cc-confirm-body" });
     p.setText(this.opts.body);
     const row = this.contentEl.createDiv({ cls: "modal-button-container" });
     row.createEl("button", { text: "Cancel" }).addEventListener("click", () => this.close());

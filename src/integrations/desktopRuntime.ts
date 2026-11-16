@@ -8,8 +8,10 @@ import {
   parseMarketplaceList,
   parsePluginList,
   sanitizeDesktopError,
+  vaultPluginInstall,
   type BridgeSetupState,
   type ClaudeCodeInspection,
+  type ClaudeCodeTarget,
   type DesktopPlatform,
   type ProbeResult,
 } from "./desktop";
@@ -24,6 +26,7 @@ import {
   connectionOwnedBy,
   connectorScriptPath,
   refreshedConnectionBody,
+  vaultConnectionFilePath,
   withoutLegacyBridgeEntry,
   type ConnectionVault,
 } from "./desktopExtension";
@@ -31,12 +34,14 @@ import {
   CLI_HOSTS,
   CLI_HOST_LABELS,
   cliHostCandidates,
-  cliHostRegisterArgs,
-  cliHostRegistered,
-  cliHostStatusArgs,
+  cliHostConfigBody,
+  cliHostConfigPath,
+  cliHostConfigured,
+  jsonServerRunsConnector,
   parseCliVersion,
   type CliHost,
   type CliHostInspection,
+  type VaultConnector,
 } from "./cliHosts";
 
 export interface ExecResult {
@@ -80,11 +85,11 @@ export interface DesktopFsPort {
 /** What the caller knows about Companion's bridge before Claude Code has been asked. */
 export interface BridgeSetupInput {
   enabled: boolean;
-  url: string;
-  headerValue: string;
+  port: number;
+  token: string;
 }
 
-const DISABLED_BRIDGE: BridgeSetupInput = { enabled: false, url: "", headerValue: "" };
+const DISABLED_BRIDGE: BridgeSetupInput = { enabled: false, port: 0, token: "" };
 
 export interface DesktopRuntimeOptions {
   exec: ExecFilePort;
@@ -96,6 +101,8 @@ export interface DesktopRuntimeOptions {
   execDir?: string | undefined;
   /** Companion's MCP bridge as configured; omitted means disabled. */
   bridge?: BridgeSetupInput | undefined;
+  /** The open vault: every agent install and registration is written into it, never user-wide. */
+  vault?: ConnectionVault | undefined;
   /** Folder the Claude Desktop extension bundle is written to before it is opened. */
   tempDir?: string | undefined;
   /** Open a file with the app the OS registers for it. */
@@ -234,13 +241,6 @@ const commandError = (stage: string, cause: unknown, secrets: string[] = []): De
   return new DesktopIntegrationError(stage, `${stage}: ${sanitizeDesktopError(raw, secrets) || "command failed"}`);
 };
 
-/** The bearer value carried by a command's `--header "Authorization: Bearer <value>"`, if any. */
-const bearerSecret = (args: string[]): string[] => {
-  const header = args[args.indexOf("--header") + 1];
-  const token = header?.match(/^Authorization:\s*Bearer\s+(\S+)/i)?.[1];
-  return token ? [token] : [];
-};
-
 const parseLooseVersion = (stdout: string): ProbeResult => {
   const version = stdout.trim().split(/\s+/, 1)[0];
   if (!version) throw new Error("no version reported");
@@ -257,7 +257,6 @@ export function claudeExecutableCandidates(platform: DesktopPlatform, homeDir: s
 
 export class DesktopRuntime {
   private claudeExecutable = "claude";
-  private readonly cliExecutables = new Map<CliHost, string>();
 
   constructor(private readonly options: DesktopRuntimeOptions) {}
 
@@ -311,14 +310,28 @@ export class DesktopRuntime {
     ];
   }
 
-  /** `claude mcp get <name>` exits 0 when the server is registered, non-zero otherwise. */
-  private async probeMcpRegistered(name: string): Promise<boolean> {
-    try {
-      await this.options.exec.run(this.claudeExecutable, ["mcp", "get", name], COMMAND_OPTIONS);
-      return true;
-    } catch {
-      return false;
-    }
+  private separator(): string {
+    return this.options.platform === "win32" ? "\\" : "/";
+  }
+
+  /** The connector a vault's registrations run: the shared script and that vault's own connection file. */
+  private connectorFor(vault: ConnectionVault): VaultConnector {
+    const env = this.options.env ?? {};
+    return {
+      scriptPath: connectorScriptPath(this.options.platform, this.options.homeDir, env),
+      connectionPath: vaultConnectionFilePath(this.options.platform, this.options.homeDir, env, vault),
+    };
+  }
+
+  /** Write this vault's connection file and the connector script it is read by. */
+  private async writeConnector(connector: VaultConnector, input: BridgeConnectionInput): Promise<void> {
+    await this.options.fs.atomicWrite(connector.connectionPath, connectionFileBody(`http://127.0.0.1:${input.port}/mcp`, input.token, input.vault));
+    await this.options.fs.atomicWrite(connector.scriptPath, PROXY_SOURCE);
+  }
+
+  private claudeCodeTarget(): ClaudeCodeTarget | undefined {
+    const vault = this.options.vault;
+    return vault?.path ? { vaultPath: vault.path, ...this.connectorFor(vault) } : undefined;
   }
 
   async inspectClaudeCode(): Promise<ClaudeCodeInspection> {
@@ -330,20 +343,26 @@ export class DesktopRuntime {
     const claude = claudeProbe.result;
     const obsidian = obsidianProbe.result;
     this.claudeExecutable = claudeProbe.executable ?? "claude";
-    const bridge: BridgeSetupState = { ...bridgeInput, registered: false };
+    const bridge: BridgeSetupState = { enabled: bridgeInput.enabled, registered: false };
     if (!claude.available) return { claude, obsidian, marketplaceInstalled: false, pluginInstalled: false, pluginEnabled: false, bridge };
 
+    const target = this.claudeCodeTarget();
+    // Run in the vault so Claude Code reports the marketplaces and plugins this vault's project settings declare.
+    const inVault: ExecFileOptions = target ? { ...COMMAND_OPTIONS, cwd: target.vaultPath } : COMMAND_OPTIONS;
     try {
-      const marketplaces = await this.options.exec.run(this.claudeExecutable, ["plugin", "marketplace", "list", "--json"], COMMAND_OPTIONS);
-      const plugins = await this.options.exec.run(this.claudeExecutable, ["plugin", "list", "--json"], COMMAND_OPTIONS);
+      const marketplaces = await this.options.exec.run(this.claudeExecutable, ["plugin", "marketplace", "list", "--json"], inVault);
+      const plugins = await this.options.exec.run(this.claudeExecutable, ["plugin", "list", "--json"], inVault);
       const marketplaceIds = parseMarketplaceList(marketplaces.stdout);
       const pluginStates = parsePluginList(plugins.stdout);
       // Match the marketplace NAME only: `plugin install <id>@<name>` resolves by
       // name, so a matching repo under a stale name (or a local directory
       // marketplace) would skip `marketplace add` and leave the install with no
       // marketplace to resolve against — the failure this replaced.
-      const obsidianAgent = pluginStates.find(({ id }) => id === OBSIDIAN_AGENT_PLUGIN_ID);
-      if (bridgeInput.enabled) bridge.registered = await this.probeMcpRegistered("obsidian-vault");
+      const obsidianAgent = target ? vaultPluginInstall(pluginStates, OBSIDIAN_AGENT_PLUGIN_ID, target.vaultPath) : undefined;
+      if (bridgeInput.enabled && target) {
+        const projectConfig = await this.options.fs.read(`${target.vaultPath.replace(/[\\/]+$/, "")}${this.separator()}.mcp.json`);
+        bridge.registered = jsonServerRunsConnector(projectConfig, target);
+      }
       return {
         claude,
         obsidian,
@@ -365,12 +384,19 @@ export class DesktopRuntime {
 
   async setupClaudeCode(): Promise<ClaudeCodeInspection> {
     const before = await this.inspectClaudeCode();
-    for (const command of claudeCodeSetupPlan(before, this.options.platform)) {
+    const target = this.claudeCodeTarget();
+    const plan = claudeCodeSetupPlan(before, this.options.platform, target);
+    const bridge = this.options.bridge ?? DISABLED_BRIDGE;
+    const vault = this.options.vault;
+    if (target && vault && plan.some((command) => command.args[0] === "mcp")) {
+      await this.writeConnector(target, { port: bridge.port, token: bridge.token, vault });
+    }
+    for (const command of plan) {
       try {
         const executable = command.executable === "claude" ? this.claudeExecutable : command.executable;
-        await this.options.exec.run(executable, command.args, { ...COMMAND_OPTIONS, timeoutMs: 30_000 });
+        await this.options.exec.run(executable, command.args, { ...COMMAND_OPTIONS, timeoutMs: 30_000, ...(command.cwd ? { cwd: command.cwd } : {}) });
       } catch (cause) {
-        throw commandError(command.stage, cause, bearerSecret(command.args));
+        throw commandError(command.stage, cause, [bridge.token]);
       }
     }
     const after = await this.inspectClaudeCode();
@@ -421,57 +447,62 @@ export class DesktopRuntime {
   async refreshConnection(input: BridgeConnectionInput): Promise<boolean> {
     if (!input.token.trim()) return false;
     const env = this.options.env ?? {};
-    const connectionPath = connectionFilePath(this.options.platform, this.options.homeDir, env);
-    const source = await this.options.fs.read(connectionPath);
-    if (!connectionOwnedBy(source, input.vault)) return false;
-    const body = refreshedConnectionBody(source, `http://127.0.0.1:${input.port}/mcp`, input.token, input.vault);
-    if (body !== null) await this.options.fs.atomicWrite(connectionPath, body);
+    const url = `http://127.0.0.1:${input.port}/mcp`;
+    let owned = false;
+    let wrote = false;
+    // Claude Desktop's shared file, and the file this vault's agent CLI registrations read.
+    for (const connectionPath of [connectionFilePath(this.options.platform, this.options.homeDir, env), this.connectorFor(input.vault).connectionPath]) {
+      const source = await this.options.fs.read(connectionPath);
+      if (!connectionOwnedBy(source, input.vault)) continue;
+      owned = true;
+      const body = refreshedConnectionBody(source, url, input.token, input.vault);
+      if (body !== null) await this.options.fs.atomicWrite(connectionPath, body);
+      wrote ||= body !== null;
+    }
+    if (!owned) return false;
     const scriptPath = connectorScriptPath(this.options.platform, this.options.homeDir, env);
     const script = await this.options.fs.read(scriptPath);
     const staleScript = script !== null && script !== PROXY_SOURCE;
     if (staleScript) await this.options.fs.atomicWrite(scriptPath, PROXY_SOURCE);
-    return body !== null || staleScript;
+    return wrote || staleScript;
   }
 
-  /** Each agent CLI Companion can connect: whether it is installed and whether obsidian-vault is registered with it. */
+  /** Whether this vault's config file for the CLI runs this vault's connector as obsidian-vault. */
+  private async cliHostConfiguredIn(host: CliHost, vault: ConnectionVault): Promise<boolean> {
+    const source = await this.options.fs.read(cliHostConfigPath(host, vault.path, this.options.platform));
+    return cliHostConfigured(host, source, this.connectorFor(vault));
+  }
+
+  /** Each agent CLI Companion can connect: whether it is installed and whether this vault's config registers obsidian-vault. */
   async inspectCliHosts(): Promise<CliHostInspection[]> {
+    const vault = this.options.vault;
     return Promise.all(CLI_HOSTS.map(async (host) => {
-      const { result, executable } = await this.probe(cliHostCandidates(host, this.options.platform, this.options.homeDir), ["--version"], parseCliVersion);
-      if (!result.available || !executable) return { host, probe: result, registered: false };
-      this.cliExecutables.set(host, executable);
-      try {
-        const status = await this.options.exec.run(executable, cliHostStatusArgs(host), COMMAND_OPTIONS);
-        return { host, probe: result, registered: cliHostRegistered(host, status.stdout) };
-      } catch {
-        return { host, probe: result, registered: false };
-      }
+      const { result } = await this.probe(cliHostCandidates(host, this.options.platform, this.options.homeDir), ["--version"], parseCliVersion);
+      if (!result.available) return { host, probe: result, registered: false };
+      return { host, probe: result, registered: vault?.path ? await this.cliHostConfiguredIn(host, vault).catch(() => false) : false };
     }));
   }
 
   /**
-   * Connect an agent CLI to this vault: write the connection file and the
-   * connector script beside it, register the script as obsidian-vault with the
-   * CLI's own `mcp add`, then check the CLI lists it.
+   * Connect an agent CLI to this vault only: write this vault's connection file
+   * and the connector script, then set obsidian-vault in the vault's own config
+   * file for the CLI (`.codex/config.toml`, `.agents/mcp_config.json`). The
+   * CLI's user config is never written.
    */
   async connectCliHost(host: CliHost, input: BridgeConnectionInput): Promise<CliHostInspection> {
     const label = CLI_HOST_LABELS[host];
     const stage = `Connect ${label}`;
     if (!input.token.trim()) throw new DesktopIntegrationError(stage, "The MCP bridge token is empty.");
+    if (!input.vault.path) throw new DesktopIntegrationError(stage, "This vault has no folder on disk to connect.");
     const before = (await this.inspectCliHosts()).find((entry) => entry.host === host);
-    const executable = this.cliExecutables.get(host);
-    if (!before?.probe.available || !executable) throw new DesktopIntegrationError(stage, `${label} was not found. Install its command-line tool, then check again.`);
-    const env = this.options.env ?? {};
-    const scriptPath = connectorScriptPath(this.options.platform, this.options.homeDir, env);
-    await this.options.fs.atomicWrite(connectionFilePath(this.options.platform, this.options.homeDir, env), connectionFileBody(`http://127.0.0.1:${input.port}/mcp`, input.token, input.vault));
-    await this.options.fs.atomicWrite(scriptPath, PROXY_SOURCE);
-    try {
-      await this.options.exec.run(executable, cliHostRegisterArgs(host, scriptPath), { ...COMMAND_OPTIONS, timeoutMs: 30_000 });
-    } catch (cause) {
-      throw commandError(stage, cause, [input.token]);
-    }
-    const after = (await this.inspectCliHosts()).find((entry) => entry.host === host);
-    if (!after?.registered) throw new DesktopIntegrationError(stage, `${label} did not list obsidian-vault after it was added.`);
-    return after;
+    if (!before?.probe.available) throw new DesktopIntegrationError(stage, `${label} was not found. Install its command-line tool, then check again.`);
+    const connector = this.connectorFor(input.vault);
+    const configPath = cliHostConfigPath(host, input.vault.path, this.options.platform);
+    const body = cliHostConfigBody(host, await this.options.fs.read(configPath), connector, configPath);
+    await this.writeConnector(connector, input);
+    await this.options.fs.atomicWrite(configPath, body);
+    if (!(await this.cliHostConfiguredIn(host, input.vault))) throw new DesktopIntegrationError(stage, `${configPath} does not hold obsidian-vault after it was written.`);
+    return { host, probe: before.probe, registered: true };
   }
 
   async openTerminalAtVault(vaultPath: string): Promise<TerminalLaunchResult> {
@@ -507,6 +538,7 @@ export async function createNodeDesktopRuntime(
   homeDir: string,
   env: Record<string, string | undefined>,
   bridge?: BridgeSetupInput,
+  vault?: ConnectionVault,
 ): Promise<DesktopRuntime> {
   // Obsidian's renderer exposes Node through Electron's require boundary.
   // Leaving dynamic `import("node:…")` in the CJS bundle delegates it to
@@ -591,7 +623,7 @@ export async function createNodeDesktopRuntime(
     if (failure) throw new Error(failure);
   };
 
-  return new DesktopRuntime({ exec, fs: desktopFs, platform, homeDir, env, execDir, bridge, tempDir: os.tmpdir(), openPath });
+  return new DesktopRuntime({ exec, fs: desktopFs, platform, homeDir, env, execDir, bridge, vault, tempDir: os.tmpdir(), openPath });
 }
 
 export function createNodeManagedProcessPort(): ManagedProcessPort {

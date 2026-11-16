@@ -39,6 +39,7 @@ function rig(over: { activateView?: ResearchFeatureDeps["activateView"] } = {}):
     settings: () => DEFAULT_SETTINGS,
     activity: () => new ActivityStore(),
     router: () => router as never,
+    claudeModels: () => [],
     build: () => build as never,
     activateView: over.activateView ?? (async () => view as never),
     lastMarkdownFile: () => lastMarkdownFile.value,

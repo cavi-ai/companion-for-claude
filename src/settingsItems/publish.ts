@@ -21,7 +21,7 @@ export function publishItems(ctx: PublishItemsContext): SettingGroupItem[] {
         setting.setDesc(`Fine-grained token with account permission Gists: read and write. ${ctx.storageBlurb()}`);
         setting.addText((text) => {
           text.inputEl.type = "password";
-          text.inputEl.setCssStyles({ width: "min(320px, 100%)" });
+          text.inputEl.addClass("cc-input-width-fluid-320");
           text
             .setPlaceholder("github_pat_… / ghp_…")
             .setValue(s.publishGithubToken)

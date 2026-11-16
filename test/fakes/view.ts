@@ -20,21 +20,25 @@ const fail = (): never => {
 const unwired = <T extends object>(): T =>
   new Proxy({}, { get: (_target, key) => (key === "then" ? undefined : fail) }) as T;
 
+/** The fake WorkspaceLeaf takes the app; the published typings declare no constructor arguments. */
+export const leafFor = (app: App): WorkspaceLeaf =>
+  new (WorkspaceLeaf as unknown as new (app: App) => WorkspaceLeaf)(app);
+
 /** Real instance through its constructor; `overrides` are assigned on top (private fields included). */
 function withOverrides<T extends object>(instance: T, overrides: Overrides): T {
   return Object.assign(instance, overrides);
 }
 
 export function chatView(plugin: ClaudeCompanionPlugin = buildPlugin(), overrides: Overrides = {}, app: App = plugin.app): ChatView {
-  return withOverrides(new ChatView(new WorkspaceLeaf(app), plugin), overrides);
+  return withOverrides(new ChatView(leafFor(app), plugin), overrides);
 }
 
 export function inboxView(plugin: ClaudeCompanionPlugin = buildPlugin(), overrides: Overrides = {}): InboxView {
-  return withOverrides(new InboxView(new WorkspaceLeaf(plugin.app), plugin), overrides);
+  return withOverrides(new InboxView(leafFor(plugin.app), plugin), overrides);
 }
 
 export function memoryView(plugin: ClaudeCompanionPlugin = buildPlugin(), overrides: Overrides = {}): MemoryView {
-  return withOverrides(new MemoryView(new WorkspaceLeaf(plugin.app), plugin), overrides);
+  return withOverrides(new MemoryView(leafFor(plugin.app), plugin), overrides);
 }
 
 const inertSystemDeps: SystemViewDeps = {
@@ -56,7 +60,7 @@ const inertSystemDeps: SystemViewDeps = {
 };
 
 export function systemView(plugin: ClaudeCompanionPlugin = buildPlugin(), deps: SystemViewDeps = inertSystemDeps, overrides: Overrides = {}): SystemView {
-  return withOverrides(new SystemView(new WorkspaceLeaf(plugin.app), plugin, deps), overrides);
+  return withOverrides(new SystemView(leafFor(plugin.app), plugin, deps), overrides);
 }
 
 const inertBuildDeps: BuildViewDependencies = {
@@ -75,7 +79,7 @@ const inertBuildDeps: BuildViewDependencies = {
 };
 
 export function buildView(deps: BuildViewDependencies = inertBuildDeps, overrides: Overrides = {}, app: App = new App()): BuildView {
-  return withOverrides(new BuildView(new WorkspaceLeaf(app), deps), overrides);
+  return withOverrides(new BuildView(leafFor(app), deps), overrides);
 }
 
 const inertResearchDeps: ResearchViewParams[2] = {
@@ -91,7 +95,7 @@ export function researchView(
   overrides: Overrides = {},
   app: App = new App(),
 ): ResearchView {
-  return withOverrides(new ResearchView(new WorkspaceLeaf(app), repository, deps), overrides);
+  return withOverrides(new ResearchView(leafFor(app), repository, deps), overrides);
 }
 
 export function optimizeFeature(deps: Partial<OptimizeFeatureDeps> = {}, overrides: Overrides = {}): OptimizeFeature {

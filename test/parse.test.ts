@@ -42,6 +42,12 @@ describe("validateArtifactInteractivity", () => {
   it("skips member (dotted) calls it cannot validate", () => {
     expect(validateArtifactInteractivity(`<button onclick="App.switchTab('x')">x</button>`).ok).toBe(true);
   });
+  it("finds bare calls after member calls", () => {
+    const r = validateArtifactInteractivity(`<button onclick="App.switchTab('x');missing()">x</button>`);
+    expect(r.ok).toBe(false);
+    expect(r.issues.join(" ")).toContain("missing");
+    expect(r.issues.join(" ")).not.toContain("switchTab");
+  });
   it("flags a handler whose function is only defined at module scope (not global)", () => {
     const html = `<button onclick="switchTab('a')">x</button><script type="module">function switchTab(id){}</script>`;
     expect(validateArtifactInteractivity(html).ok).toBe(false);

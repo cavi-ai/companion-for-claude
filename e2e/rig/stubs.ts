@@ -70,6 +70,13 @@ export function startProviderStub(state: StubState): Promise<{ server: Server; p
       response.end();
       return;
     }
+    // The Models API list is not a chat or utility request: it is neither counted nor answered from the reply rules.
+    if (request.method === "GET" && request.url?.split("?")[0]?.endsWith("/v1/models")) {
+      request.resume();
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ data: [], has_more: false }));
+      return;
+    }
     state.requests += 1;
     let body = "";
     request.on("data", (chunk: Buffer) => { body += chunk.toString("utf8"); });

@@ -122,7 +122,7 @@ export function buildShell(host: ShellHost): CompanionShell {
 
 export type ResearchHost = Pick<
   ClaudeCompanionPlugin,
-  "activity" | "app" | "lastMarkdownFile" | "router" | "settings" | "shell" | "views"
+  "activity" | "app" | "claudeModels" | "lastMarkdownFile" | "router" | "settings" | "shell" | "views"
 >;
 
 export interface ResearchWiring {
@@ -135,6 +135,7 @@ export function buildResearch(host: ResearchHost, wiring: ResearchWiring): Resea
     settings: () => host.settings,
     activity: () => host.activity,
     router: () => host.router(),
+    claudeModels: () => host.claudeModels().models(),
     build: wiring.build,
     activateView: () => host.views().activateView(),
     lastMarkdownFile: () => host.lastMarkdownFile,

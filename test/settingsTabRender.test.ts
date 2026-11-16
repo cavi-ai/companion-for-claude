@@ -7,12 +7,14 @@ import { unavailableStore } from "../src/secrets/store";
 import type ClaudeCompanionPlugin from "../src/main";
 import { fakeSemantic } from "./fakes/semantic";
 import type { SemanticIndexProgress } from "../src/semantic/progress";
+import { curatedModels } from "./fakes/curatedModels";
 
 function stubPlugin(): ClaudeCompanionPlugin & { settings: Record<string, unknown> } {
   const semantic = fakeSemantic();
   const plugin = {
     settings: structuredClone(DEFAULT_SETTINGS),
     saveSettings: async () => {},
+    claudeModels: curatedModels,
     router: () => ({
       chatProvider: () => ({ provider: { id: "anthropic", label: "Claude (Anthropic API)" }, model: "claude-test" }), providerLabel: () => "Claude API", 
       anthropic: { hasCredentials: () => true, test: async () => ({ ok: true, detail: "" }) },

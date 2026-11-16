@@ -5,6 +5,7 @@ import type { HeaderHost } from "../../src/view/chat/hosts";
 import type { ChatSession } from "../../src/view/chat/chatSession";
 import { DEFAULT_SETTINGS, type PluginSettings } from "../../src/types";
 import { defaultChatControls } from "../../src/claude/chatControls";
+import { curatedModels } from "../fakes/curatedModels";
 
 function setup(backend: "codex-cli" | "opencode-cli") {
   const settings: PluginSettings = { ...structuredClone(DEFAULT_SETTINGS), chatBackend: backend, codexModel: "model-a", opencodeModel: "provider/model-a" };
@@ -16,7 +17,7 @@ function setup(backend: "codex-cli" | "opencode-cli") {
     chatCapabilities: () => ({ cli: true, local: false }),
     chatToolCapable: async () => false, chatReasoningActive: async () => false,
   };
-  const plugin = { settings, router: () => router, saveSettings: vi.fn(async () => {}) } as unknown as HeaderHost;
+  const plugin = { settings, claudeModels: curatedModels, router: () => router, saveSettings: vi.fn(async () => {}) } as unknown as HeaderHost;
   const chat = { controls: defaultChatControls(DEFAULT_SETTINGS.model), mode: { setCapable: () => {} } } as unknown as ChatSession;
   const deps = { renderKnobs: () => {}, showReasoning: () => {}, openSettings: vi.fn() } as unknown as HeaderControlsDeps;
   const header = new HeaderControls(new App() as never, plugin, chat, deps);

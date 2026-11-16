@@ -1,5 +1,5 @@
 import { App, Modal } from "obsidian";
-import { CLI_HOSTS, CLI_HOST_LABELS, type CliHost } from "../integrations/cliHosts";
+import { CLI_HOSTS, CLI_HOST_CONFIG_FILES, CLI_HOST_LABELS, type CliHost } from "../integrations/cliHosts";
 import type { DesktopIntegrationViewState } from "../integrations/desktopCoordinator";
 import { OBSIDIAN_CLI_UNREACHABLE, obsidianCliInstallHint, type DesktopPlatform, type ProbeResult } from "../integrations/desktop";
 
@@ -33,10 +33,10 @@ function probeLabel(probe: ProbeResult): string {
   return probe.state === "unreachable" ? "installed, not responding" : "not found";
 }
 
-const CLAUDE_CODE_DISCLOSURE = "Adds cavi-ai/plugins to Claude Code when missing, installs or enables obsidian-agent@cavi-ai at user scope, and registers Companion's loopback vault tools (obsidian-vault) with Claude Code when the MCP bridge is on.";
+const CLAUDE_CODE_DISCLOSURE = "For this vault only: adds cavi-ai/plugins when Claude Code does not know it, installs or enables obsidian-agent@cavi-ai in the vault's .claude/settings.json, and registers Companion's loopback vault tools (obsidian-vault) in the vault's .mcp.json when the MCP bridge is on. Nothing is written to Claude Code's user settings.";
 const CLAUDE_DESKTOP_DISCLOSURE = "Enables Companion's read-only loopback bridge, saves its address and token to a file only your user account can read, and opens the Obsidian vault extension in Claude Desktop to install. Replaces the obsidian-vault entry earlier versions wrote to Claude Desktop's configuration. Calling a vault tool opens Obsidian when it is closed.";
 const cliHostDisclosure = (host: CliHost): string =>
-  `Enables Companion's read-only loopback bridge, saves its address and token to a file only your user account can read, writes a small connector beside it, and registers that connector as obsidian-vault with ${CLI_HOST_LABELS[host]} (${host} mcp add). Runs with Node.js; calling a vault tool opens Obsidian when it is closed.`;
+  `Enables Companion's read-only loopback bridge, saves its address and token to a file only your user account can read, writes a small connector beside it, and registers that connector as obsidian-vault in this vault's ${CLI_HOST_CONFIG_FILES[host].join("/")}, never ${CLI_HOST_LABELS[host]}'s user config.${host === "codex" ? " Codex loads it once you trust the vault folder." : ""} Runs with Node.js; calling a vault tool opens Obsidian when it is closed.`;
 
 export class DesktopIntegrationsModal extends Modal {
   private unsubscribe: (() => void) | null = null;

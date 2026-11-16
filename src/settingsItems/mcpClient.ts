@@ -57,7 +57,7 @@ export function mcpClientItems(ctx: McpClientItemsContext): SettingGroupItem[] {
 
         if (server.transport === "http") {
           new Setting(box).setName("Server URL").addText((text) => {
-            text.inputEl.setCssStyles({ width: "320px" });
+            text.inputEl.addClass("cc-input-width-320");
             text.setPlaceholder("https://example.test/mcp").setValue(server.url).onChange(async (v) => {
               editMcpServer(server, { field: "url", value: v });
               await plugin.saveSettings();
@@ -65,14 +65,14 @@ export function mcpClientItems(ctx: McpClientItemsContext): SettingGroupItem[] {
           });
         } else {
           new Setting(box).setName("Command").addText((text) => {
-            text.inputEl.setCssStyles({ width: "240px" });
+            text.inputEl.addClass("cc-input-width-240");
             text.setPlaceholder("npx").setValue(server.command).onChange(async (v) => {
               editMcpServer(server, { field: "command", value: v });
               await plugin.saveSettings();
             });
           });
           new Setting(box).setName("Arguments").addText((text) => {
-            text.inputEl.setCssStyles({ width: "320px" });
+            text.inputEl.addClass("cc-input-width-320");
             text.setPlaceholder("-y @modelcontextprotocol/server-filesystem /path").setValue(server.args).onChange(async (v) => {
               editMcpServer(server, { field: "args", value: v });
               await plugin.saveSettings();

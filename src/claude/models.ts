@@ -47,8 +47,8 @@ export function resolveModelId(model: string, customModel: string): string {
   return selected.length > 0 ? selected : CLAUDE_MODELS[0]!.id;
 }
 
-export function modelLabel(id: string): string {
-  const known = CLAUDE_MODELS.find((m) => m.id === id)?.label;
+export function modelLabel(id: string, models: ClaudeModel[] = CLAUDE_MODELS): string {
+  const known = models.find((m) => m.id === id)?.label;
   if (known) return known;
   const words = id.split(/[-_/]+/).filter(Boolean);
   if (words.length > 1 && /^\d{8}$/.test(words[words.length - 1] ?? "")) words.pop();

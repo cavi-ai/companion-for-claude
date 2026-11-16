@@ -5,11 +5,12 @@ import { ChatSession } from "../../src/view/chat/chatSession";
 import { DEFAULT_SETTINGS } from "../../src/types";
 import { defaultChatControls } from "../../src/claude/chatControls";
 import type { ComposerHost } from "../../src/view/chat/hosts";
+import { curatedModels } from "../fakes/curatedModels";
 
 function mountComposer(): { root: FakeElement; composer: Composer; chat: ChatSession; send: ComposerDeps["onSend"] } {
   const plugin = {
     settings: structuredClone(DEFAULT_SETTINGS),
-    router: () => ({
+    claudeModels: curatedModels, router: () => ({
       ollama: { listModels: async () => [] },
       openaiCompat: { listModels: async () => [] },
       chatCapabilities: () => ({ agentActions: true, claudeControls: false, metered: false, local: false, cli: false }),

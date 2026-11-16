@@ -9,7 +9,7 @@ const ready: ClaudeCodeInspection = {
   marketplaceInstalled: true,
   pluginInstalled: true,
   pluginEnabled: true,
-  bridge: { enabled: false, url: "", registered: false, headerValue: "" },
+  bridge: { enabled: false, registered: false },
 };
 
 const deferred = <T>() => {

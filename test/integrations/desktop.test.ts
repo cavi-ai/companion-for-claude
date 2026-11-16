@@ -9,6 +9,7 @@ import {
   parseMarketplaceList,
   parsePluginList,
   sanitizeDesktopError,
+  vaultPluginInstall,
   type ClaudeCodeInspection,
 } from "../../src/integrations/desktop";
 
@@ -18,9 +19,12 @@ const inspection = (overrides: Partial<ClaudeCodeInspection> = {}): ClaudeCodeIn
   marketplaceInstalled: false,
   pluginInstalled: false,
   pluginEnabled: false,
-  bridge: { enabled: false, url: "", registered: false, headerValue: "" },
+  bridge: { enabled: false, registered: false },
   ...overrides,
 });
+
+const target = { vaultPath: "/v/Notes", scriptPath: "/c/server/index.js", connectionPath: "/c/vaults/Notes-1/bridge.json" };
+const plan = (state: ClaudeCodeInspection) => claudeCodeSetupPlan(state, "unsupported", target);
 
 describe("desktop integration contracts", () => {
   it("parses a callable Claude Code version without depending on exact release text", () => {
@@ -38,14 +42,26 @@ describe("desktop integration contracts", () => {
     ]))).toEqual(["plugins", "cavi-ai/plugins", "claude-plugins-official", "anthropics/claude-plugins-official"]);
   });
 
-  it("parses current plugin JSON with enabled state", () => {
+  it("parses current plugin JSON with enabled state, scope and project folder", () => {
     expect(parsePluginList(JSON.stringify([
-      { id: "obsidian-agent@cavi-ai", version: "0.1.0", scope: "user", enabled: true, future: "ok" },
+      { id: "obsidian-agent@cavi-ai", version: "0.1.0", scope: "user", enabled: true, projectPath: null, future: "ok" },
+      { id: "obsidian-agent@cavi-ai", scope: "project", enabled: true, projectPath: "/v/Notes" },
       { id: "remember@claude-plugins-official", enabled: false },
     ]))).toEqual([
-      { id: "obsidian-agent@cavi-ai", enabled: true },
+      { id: "obsidian-agent@cavi-ai", enabled: true, scope: "user" },
+      { id: "obsidian-agent@cavi-ai", enabled: true, scope: "project", projectPath: "/v/Notes" },
       { id: "remember@claude-plugins-official", enabled: false },
     ]);
+  });
+
+  it("counts only a project or local install recorded for this vault as the vault's", () => {
+    const plugins = [
+      { id: OBSIDIAN_AGENT_PLUGIN_ID, enabled: true, scope: "user" },
+      { id: OBSIDIAN_AGENT_PLUGIN_ID, enabled: true, scope: "project", projectPath: "/v/Other" },
+    ];
+    expect(vaultPluginInstall(plugins, OBSIDIAN_AGENT_PLUGIN_ID, "/v/Notes")).toBeUndefined();
+    const local = { id: OBSIDIAN_AGENT_PLUGIN_ID, enabled: false, scope: "local", projectPath: "/v/Notes/" };
+    expect(vaultPluginInstall([...plugins, local], OBSIDIAN_AGENT_PLUGIN_ID, "/v/Notes")).toBe(local);
   });
 
   it.each(["{}", "null", "42", "[null]", "[{\"name\":42}]"])("rejects malformed marketplace JSON: %s", (body) => {
@@ -56,61 +72,49 @@ describe("desktop integration contracts", () => {
     expect(() => parsePluginList(body)).toThrowError(DesktopIntegrationError);
   });
 
-  it("plans only the missing Claude Code setup steps", () => {
-    expect(claudeCodeSetupPlan(inspection())).toEqual([
-      { executable: "claude", args: ["plugin", "marketplace", "add", "cavi-ai/plugins"], stage: "Add the CAVI marketplace" },
-      { executable: "claude", args: ["plugin", "install", "obsidian-agent@cavi-ai", "--scope", "user"], stage: "Install obsidian-agent" },
+  it("plans only the missing Claude Code setup steps, each project-scoped in the vault", () => {
+    const cwd = "/v/Notes";
+    expect(plan(inspection())).toEqual([
+      { executable: "claude", args: ["plugin", "marketplace", "add", "cavi-ai/plugins", "--scope", "project"], stage: "Add the CAVI marketplace", cwd },
+      { executable: "claude", args: ["plugin", "install", "obsidian-agent@cavi-ai", "--scope", "project"], stage: "Install obsidian-agent", cwd },
     ]);
-    expect(claudeCodeSetupPlan(inspection({ marketplaceInstalled: true }))).toEqual([
-      { executable: "claude", args: ["plugin", "install", "obsidian-agent@cavi-ai", "--scope", "user"], stage: "Install obsidian-agent" },
+    expect(plan(inspection({ marketplaceInstalled: true }))).toEqual([
+      { executable: "claude", args: ["plugin", "install", "obsidian-agent@cavi-ai", "--scope", "project"], stage: "Install obsidian-agent", cwd },
     ]);
-    expect(claudeCodeSetupPlan(inspection({ marketplaceInstalled: true, pluginInstalled: true }))).toEqual([
-      { executable: "claude", args: ["plugin", "enable", "obsidian-agent@cavi-ai", "--scope", "user"], stage: "Enable obsidian-agent" },
+    expect(plan(inspection({ marketplaceInstalled: true, pluginInstalled: true }))).toEqual([
+      { executable: "claude", args: ["plugin", "enable", "obsidian-agent@cavi-ai", "--scope", "project"], stage: "Enable obsidian-agent", cwd },
     ]);
-    expect(claudeCodeSetupPlan(inspection({ marketplaceInstalled: true, pluginInstalled: true, pluginEnabled: true }))).toEqual([]);
+    expect(plan(inspection({ marketplaceInstalled: true, pluginInstalled: true, pluginEnabled: true }))).toEqual([]);
   });
 
-  it("connects Companion's vault tools when the bridge is enabled and not registered", () => {
-    const plan = claudeCodeSetupPlan(inspection({
-      marketplaceInstalled: true,
-      pluginInstalled: true,
-      pluginEnabled: true,
-      bridge: { enabled: true, url: "http://127.0.0.1:22360/mcp", registered: false, headerValue: "${OBSIDIAN_COMPANION_MCP_TOKEN}" },
-    }));
-    expect(plan).toEqual([
+  it("refuses to plan without a vault folder to write into", () => {
+    expect(() => claudeCodeSetupPlan(inspection())).toThrow("no folder on disk");
+  });
+
+  it("connects Companion's vault tools in the vault's .mcp.json through this vault's connector", () => {
+    expect(plan(inspection({ marketplaceInstalled: true, pluginInstalled: true, pluginEnabled: true, bridge: { enabled: true, registered: false } }))).toEqual([
       {
         executable: "claude",
-        args: ["mcp", "add", "--scope", "user", "--transport", "http", "obsidian-vault", "http://127.0.0.1:22360/mcp", "--header", "Authorization: Bearer ${OBSIDIAN_COMPANION_MCP_TOKEN}"],
+        args: ["mcp", "add", "--scope", "project", "obsidian-vault", "--", "node", "/c/server/index.js", "/c/vaults/Notes-1/bridge.json"],
         stage: "Connect Companion's vault tools",
+        cwd: "/v/Notes",
       },
     ]);
   });
 
   it("adds no bridge step once Companion's vault tools are already registered", () => {
-    const plan = claudeCodeSetupPlan(inspection({
-      marketplaceInstalled: true,
-      pluginInstalled: true,
-      pluginEnabled: true,
-      bridge: { enabled: true, url: "http://127.0.0.1:22360/mcp", registered: true, headerValue: "secret" },
-    }));
-    expect(plan).toEqual([]);
+    expect(plan(inspection({ marketplaceInstalled: true, pluginInstalled: true, pluginEnabled: true, bridge: { enabled: true, registered: true } }))).toEqual([]);
   });
 
   it("adds no bridge step while the MCP bridge is turned off", () => {
-    const plan = claudeCodeSetupPlan(inspection({
-      marketplaceInstalled: true,
-      pluginInstalled: true,
-      pluginEnabled: true,
-      bridge: { enabled: false, url: "http://127.0.0.1:22360/mcp", registered: false, headerValue: "secret" },
-    }));
-    expect(plan).toEqual([]);
+    expect(plan(inspection({ marketplaceInstalled: true, pluginInstalled: true, pluginEnabled: true, bridge: { enabled: false, registered: false } }))).toEqual([]);
   });
 
   it("installs from the marketplace name the published catalog declares", () => {
     expect(MARKETPLACE_REPO).toBe("cavi-ai/plugins");
     expect(MARKETPLACE_NAME).toBe("cavi-ai");
     expect(OBSIDIAN_AGENT_PLUGIN_ID).toBe(`obsidian-agent@${MARKETPLACE_NAME}`);
-    const [add, install] = claudeCodeSetupPlan(inspection());
+    const [add, install] = plan(inspection());
     expect(add?.args).toContain(MARKETPLACE_REPO);
     expect(install?.args).toContain(OBSIDIAN_AGENT_PLUGIN_ID);
   });

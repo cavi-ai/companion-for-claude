@@ -44,6 +44,28 @@ export function connectorScriptPath(platform: DesktopPlatform, homeDir: string, 
   return `${connection.slice(0, connection.length - CONNECTION_FILE.length)}server${separator}index.js`;
 }
 
+/** FNV-1a over the UTF-16 code units, as 8 hex digits: a stable folder key for a vault path. */
+function pathKey(value: string): string {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < value.length; i += 1) {
+    hash ^= value.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash.toString(16).padStart(8, "0");
+}
+
+/**
+ * The connection file one vault's agent CLIs read, passed to the connector as
+ * its argument: `vaults/<name>-<key>/bridge.json` beside the shared file, so
+ * each vault's registration reaches that vault's bridge and no other.
+ */
+export function vaultConnectionFilePath(platform: DesktopPlatform, homeDir: string, env: Record<string, string | undefined>, vault: ConnectionVault): string {
+  const connection = connectionFilePath(platform, homeDir, env);
+  const separator = platform === "win32" ? "\\" : "/";
+  const name = vault.name.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^[-.]+|-+$/g, "").slice(0, 40) || "vault";
+  return `${connection.slice(0, connection.length - CONNECTION_FILE.length)}vaults${separator}${name}-${pathKey(vault.path)}${separator}${CONNECTION_FILE}`;
+}
+
 /** The connection file's body: the bridge's MCP endpoint, its bearer token, and the vault that serves it. */
 export function connectionFileBody(url: string, token: string, vault?: ConnectionVault): string {
   const body = vault ? { url, token, vault: vault.name, vaultPath: vault.path } : { url, token };
@@ -95,8 +117,9 @@ const { spawn } = require("node:child_process");
 const FOLDER = process.platform === "win32"
   ? path.join(process.env.APPDATA || path.join(os.homedir(), "AppData", "Roaming"), "${CONNECTION_FOLDER}")
   : path.join(os.homedir(), "Library", "Application Support", "${CONNECTION_FOLDER}");
-const CONNECTION_FILE = path.join(FOLDER, "${CONNECTION_FILE}");
-const TOOLS_FILE = path.join(FOLDER, "${TOOLS_FILE}");
+// An agent CLI registered for one vault passes that vault's connection file; Claude Desktop passes none.
+const CONNECTION_FILE = process.argv[2] ? path.resolve(process.argv[2]) : path.join(FOLDER, "${CONNECTION_FILE}");
+const TOOLS_FILE = path.join(path.dirname(CONNECTION_FILE), "${TOOLS_FILE}");
 const SERVER_INFO = { name: "obsidian-vault", version: "${EXTENSION_VERSION}" };
 const CONNECT_HINT = "In Obsidian, open Companion's Desktop integrations and click Connect Claude Desktop.";
 const LAUNCH_WAIT_MS = 30000;
@@ -124,7 +147,7 @@ const reply = (id, result) => out({ jsonrpc: "2.0", id, result });
 const fail = (id, message) => out({ jsonrpc: "2.0", id, error: { code: -32000, message } });
 function saveTools(tools) {
   try {
-    fs.mkdirSync(FOLDER, { recursive: true });
+    fs.mkdirSync(path.dirname(TOOLS_FILE), { recursive: true });
     const temporary = TOOLS_FILE + ".tmp-" + process.pid;
     fs.writeFileSync(temporary, JSON.stringify(tools), { mode: 0o600 });
     fs.renameSync(temporary, TOOLS_FILE);

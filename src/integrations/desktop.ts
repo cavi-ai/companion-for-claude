@@ -51,14 +51,22 @@ export interface CommandSpec {
   executable: string;
   args: string[];
   stage: string;
+  /** The folder the command runs in: the vault, for every project-scoped step. */
+  cwd?: string;
 }
 
-/** Companion's MCP bridge as Claude Code sees it. `headerValue` is never a raw secret in a log or Notice — see `sanitizeDesktopError`. */
+/** Companion's MCP bridge as this vault's Claude Code project sees it. */
 export interface BridgeSetupState {
   enabled: boolean;
-  url: string;
+  /** This vault's `.mcp.json` runs this vault's connector as obsidian-vault. */
   registered: boolean;
-  headerValue: string;
+}
+
+/** Where Claude Code setup writes: the vault folder, and the connector its `.mcp.json` entry runs. */
+export interface ClaudeCodeTarget {
+  vaultPath: string;
+  scriptPath: string;
+  connectionPath: string;
 }
 
 export interface ClaudeCodeInspection {
@@ -73,6 +81,10 @@ export interface ClaudeCodeInspection {
 export interface ClaudeCodePluginState {
   id: string;
   enabled: boolean;
+  /** `user`, `project` or `local`, as Claude Code reports it. */
+  scope?: string;
+  /** The project folder a `project` or `local` install belongs to. */
+  projectPath?: string;
 }
 
 export class DesktopIntegrationError extends Error {
@@ -133,11 +145,35 @@ export function parsePluginList(stdout: string): ClaudeCodePluginState[] {
     if (!isRecord(entry) || typeof entry.id !== "string" || entry.id.trim() === "" || typeof entry.enabled !== "boolean") {
       throw new DesktopIntegrationError("Check Claude Code plugins", "Claude Code returned an invalid plugin entry.");
     }
-    return { id: entry.id, enabled: entry.enabled };
+    return {
+      id: entry.id,
+      enabled: entry.enabled,
+      ...(typeof entry.scope === "string" ? { scope: entry.scope } : {}),
+      ...(typeof entry.projectPath === "string" ? { projectPath: entry.projectPath } : {}),
+    };
   });
 }
 
-export function claudeCodeSetupPlan(state: ClaudeCodeInspection, platform: DesktopPlatform = "unsupported"): CommandSpec[] {
+const trimSeparators = (path: string): string => path.replace(/[\\/]+$/, "");
+
+/**
+ * The install of `pluginId` that belongs to this vault: a `project` or `local`
+ * install recorded for the vault folder. A `user` install loads in every folder,
+ * so it never counts as this vault's.
+ */
+export function vaultPluginInstall(plugins: ClaudeCodePluginState[], pluginId: string, vaultPath: string): ClaudeCodePluginState | undefined {
+  const vault = trimSeparators(vaultPath);
+  return plugins.find((plugin) => plugin.id === pluginId
+    && (plugin.scope === "project" || plugin.scope === "local")
+    && plugin.projectPath !== undefined
+    && trimSeparators(plugin.projectPath) === vault);
+}
+
+/**
+ * Every step is project-scoped and runs in the vault, so Claude Code writes the
+ * vault's own `.claude/settings.json` and `.mcp.json` and nothing user-wide.
+ */
+export function claudeCodeSetupPlan(state: ClaudeCodeInspection, platform: DesktopPlatform = "unsupported", target?: ClaudeCodeTarget): CommandSpec[] {
   if (!state.claude.available) throw new DesktopIntegrationError("Set up Claude Code", "Claude Code is not available.");
   if (!state.obsidian.available) {
     throw new DesktopIntegrationError(
@@ -147,35 +183,38 @@ export function claudeCodeSetupPlan(state: ClaudeCodeInspection, platform: Deskt
         : `The Obsidian CLI is not installed. ${obsidianCliInstallHint(platform)}`,
     );
   }
+  if (!target) throw new DesktopIntegrationError("Set up Claude Code", "This vault has no folder on disk to set up Claude Code in.");
+  const cwd = target.vaultPath;
   const commands: CommandSpec[] = [];
   if (!(state.pluginInstalled && state.pluginEnabled)) {
     if (!state.marketplaceInstalled) {
       commands.push({
         executable: "claude",
-        args: ["plugin", "marketplace", "add", MARKETPLACE_REPO],
+        args: ["plugin", "marketplace", "add", MARKETPLACE_REPO, "--scope", "project"],
         stage: "Add the CAVI marketplace",
+        cwd,
       });
     }
     commands.push(state.pluginInstalled
       ? {
           executable: "claude",
-          args: ["plugin", "enable", OBSIDIAN_AGENT_PLUGIN_ID, "--scope", "user"],
+          args: ["plugin", "enable", OBSIDIAN_AGENT_PLUGIN_ID, "--scope", "project"],
           stage: "Enable obsidian-agent",
+          cwd,
         }
       : {
           executable: "claude",
-          args: ["plugin", "install", OBSIDIAN_AGENT_PLUGIN_ID, "--scope", "user"],
+          args: ["plugin", "install", OBSIDIAN_AGENT_PLUGIN_ID, "--scope", "project"],
           stage: "Install obsidian-agent",
+          cwd,
         });
   }
   if (state.bridge.enabled && !state.bridge.registered) {
     commands.push({
       executable: "claude",
-      args: [
-        "mcp", "add", "--scope", "user", "--transport", "http", "obsidian-vault", state.bridge.url,
-        "--header", `Authorization: Bearer ${state.bridge.headerValue}`,
-      ],
+      args: ["mcp", "add", "--scope", "project", "obsidian-vault", "--", "node", target.scriptPath, target.connectionPath],
       stage: "Connect Companion's vault tools",
+      cwd,
     });
   }
   return commands;

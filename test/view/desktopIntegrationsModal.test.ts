@@ -70,7 +70,7 @@ describe("DesktopIntegrationsModal", () => {
         marketplaceInstalled: true,
         pluginInstalled: true,
         pluginEnabled: true,
-        bridge: { enabled: false, url: "", registered: false, headerValue: "" },
+        bridge: { enabled: false, registered: false },
       },
     });
     const modal = new DesktopIntegrationsModal(new App(), {
@@ -84,7 +84,8 @@ describe("DesktopIntegrationsModal", () => {
     });
     modal.onOpen();
     expect(visibleText(modal)).toContain("obsidian-agent@cavi-ai");
-    expect(visibleText(modal)).toContain("user scope");
+    expect(visibleText(modal)).toContain("For this vault only");
+    expect(visibleText(modal)).toContain("Nothing is written to Claude Code's user settings.");
     expect(button(modal, "Open terminal at vault")).toBeDefined();
     expect(visibleText(modal)).toContain("Turn on the MCP bridge to give Claude Code Companion's vault tools.");
   });
@@ -99,7 +100,7 @@ describe("DesktopIntegrationsModal", () => {
         marketplaceInstalled: true,
         pluginInstalled: true,
         pluginEnabled: true,
-        bridge: { enabled: true, url: "http://127.0.0.1:22360/mcp", registered: true, headerValue: "secret" },
+        bridge: { enabled: true, registered: true },
       },
     });
     const modal = new DesktopIntegrationsModal(new App(), {
@@ -125,7 +126,7 @@ describe("DesktopIntegrationsModal", () => {
         marketplaceInstalled: true,
         pluginInstalled: true,
         pluginEnabled: true,
-        bridge: { enabled: true, url: "http://127.0.0.1:22360/mcp", registered: false, headerValue: "secret" },
+        bridge: { enabled: true, registered: false },
       },
     });
     const confirm = vi.fn(async () => true);
@@ -246,7 +247,7 @@ describe("DesktopIntegrationsModal CLI status", () => {
         marketplaceInstalled: true,
         pluginInstalled: true,
         pluginEnabled: true,
-        bridge: { enabled: false, url: "", registered: false, headerValue: "" },
+        bridge: { enabled: false, registered: false },
       },
     });
     const modal = new DesktopIntegrationsModal(new App(), {
@@ -301,7 +302,7 @@ describe("DesktopIntegrationsModal CLI setup shortcut", () => {
         marketplaceInstalled: true,
         pluginInstalled: true,
         pluginEnabled: true,
-        bridge: { enabled: false, url: "", registered: false, headerValue: "" },
+        bridge: { enabled: false, registered: false },
       },
     });
     const modal = new DesktopIntegrationsModal(new App(), {
@@ -376,7 +377,7 @@ describe("DesktopIntegrationsModal agent CLIs", () => {
     button(modal, "Connect Antigravity")?.dispatchEvent({ type: "click" });
     expect(controller.connectCliHost).toHaveBeenCalledWith("agy", expect.any(Function));
     await controller.connectCliHost.mock.calls[0]![1]();
-    expect(confirm).toHaveBeenCalledWith("agy", expect.stringContaining("agy mcp add"));
+    expect(confirm).toHaveBeenCalledWith("agy", expect.stringContaining("in this vault's .agents/mcp_config.json, never Antigravity's user config"));
   });
 
   it("offers no connect button for a CLI that is not installed, and retries the CLI that failed", () => {

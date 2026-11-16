@@ -17,6 +17,7 @@ import {
   connectorScriptPath,
   extensionManifest,
   refreshedConnectionBody,
+  vaultConnectionFilePath,
   withoutLegacyBridgeEntry,
 } from "../../src/integrations/desktopExtension";
 
@@ -77,6 +78,14 @@ describe("Claude Desktop extension bundle", () => {
     expect(connectionFilePath("win32", "C:\\Users\\me", {})).toBe("C:\\Users\\me\\AppData\\Roaming\\Companion for Claude\\bridge.json");
     expect(connectorScriptPath("darwin", "/Users/me", {})).toBe("/Users/me/Library/Application Support/Companion for Claude/server/index.js");
     expect(connectorScriptPath("win32", "C:\\Users\\me", {})).toBe("C:\\Users\\me\\AppData\\Roaming\\Companion for Claude\\server\\index.js");
+  });
+
+  it("gives each vault its own connection file, keyed by its path", () => {
+    const notes = vaultConnectionFilePath("darwin", "/Users/me", {}, { name: "Field Notes", path: "/v/Field Notes" });
+    expect(notes).toMatch(/^\/Users\/me\/Library\/Application Support\/Companion for Claude\/vaults\/Field-Notes-[0-9a-f]{8}\/bridge\.json$/);
+    expect(vaultConnectionFilePath("darwin", "/Users/me", {}, { name: "Field Notes", path: "/w/Field Notes" })).not.toBe(notes);
+    expect(vaultConnectionFilePath("darwin", "/Users/me", {}, { name: "Field Notes", path: "/v/Field Notes" })).toBe(notes);
+    expect(vaultConnectionFilePath("win32", "C:\\Users\\me", {}, { name: "../..", path: "C:\\v" })).toMatch(/^C:\\Users\\me\\AppData\\Roaming\\Companion for Claude\\vaults\\vault-[0-9a-f]{8}\\bridge\.json$/);
     expect(JSON.parse(connectionFileBody("http://127.0.0.1:1/mcp", "t"))).toEqual({ url: "http://127.0.0.1:1/mcp", token: "t" });
     expect(JSON.parse(connectionFileBody("http://127.0.0.1:1/mcp", "t", { name: "Notes", path: "/v/Notes" })))
       .toEqual({ url: "http://127.0.0.1:1/mcp", token: "t", vault: "Notes", vaultPath: "/v/Notes" });
@@ -210,9 +219,9 @@ function opener(code: number, copy?: { from: string; to: string }) {
 }
 
 /** Run the proxy under plain node: send `lines` on stdin, close it, and collect each JSON line it prints. */
-function runProxy(env: Record<string, string>, lines: unknown[]): Promise<Array<Record<string, any>>> {
+function runProxy(env: Record<string, string>, lines: unknown[], args: string[] = []): Promise<Array<Record<string, any>>> {
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [proxyFile], { env: { PATH: process.env.PATH ?? "", ...env }, stdio: ["pipe", "pipe", "inherit"] });
+    const child = spawn(process.execPath, [proxyFile, ...args], { env: { PATH: process.env.PATH ?? "", ...env }, stdio: ["pipe", "pipe", "inherit"] });
     let out = "";
     child.stdout.on("data", (chunk: Buffer) => { out += chunk.toString(); });
     child.on("error", reject);
@@ -312,6 +321,20 @@ describe("Claude Desktop extension proxy", () => {
     const open = opener(1);
     const replies = await runProxy({ ...user.env, PATH: open.path }, [INIT, CALL]);
     expect(replies[1]).toMatchObject({ id: 3, result: { isError: true, content: [{ type: "text", text: expect.stringContaining("Obsidian could not be opened") }] } });
+  });
+
+  it("talks to the vault whose connection file it is given, not the shared one", async () => {
+    server = bridge({ token: "vault-token" });
+    const url = await server.listen();
+    const user = home({ url: CLOSED, token: "shared-token" });
+    const vaultFile = vaultConnectionFilePath(process.platform === "win32" ? "win32" : "darwin", user.env.HOME!, { APPDATA: user.env.APPDATA }, { name: "Notes", path: "/v/Notes" });
+    mkdirSync(dirname(vaultFile), { recursive: true });
+    writeFileSync(vaultFile, connectionFileBody(url, "vault-token", { name: "Notes", path: "/v/Notes" }));
+    const replies = await runProxy(user.env, [INIT, INITIALIZED, LIST], [vaultFile]);
+    expect(replies[1]!.result).toEqual({ tools: TOOLS });
+    expect(server.seen.every((s) => s.auth === "Bearer vault-token")).toBe(true);
+    expect(JSON.parse(readFileSync(join(dirname(vaultFile), "tools.json"), "utf8"))).toEqual(TOOLS);
+    expect(existsSync(user.tools)).toBe(false);
   });
 
   it("answers tool calls with what to do: no connection file, a rejected token", async () => {

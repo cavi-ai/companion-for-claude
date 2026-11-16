@@ -19,8 +19,7 @@ export class SlashMenu {
     private commands: SlashCommand[],
     private onChoose: (cmd: SlashCommand) => void,
   ) {
-    this.el = parent.createDiv({ cls: "cc-slash-menu" });
-    this.el.setCssStyles({ display: "none" });
+    this.el = parent.createDiv({ cls: "cc-slash-menu is-hidden" });
     this.listEl = this.el.createDiv({ cls: "cc-slash-list" });
     const footer = this.el.createDiv({ cls: "cc-slash-footer" });
     this.selectedEl = footer.createSpan({ cls: "cc-slash-selected" });
@@ -48,15 +47,15 @@ export class SlashMenu {
     }
     this.selected = 0;
     this.open = true;
-    this.el.setCssStyles({ display: "" });
+    this.el.removeClass("is-hidden");
     this.render();
   }
 
   hide(): void {
-    if (!this.open && this.el.style.display === "none") return;
+    if (!this.open) return;
     this.open = false;
     this.gesture = undefined;
-    this.el.setCssStyles({ display: "none" });
+    this.el.addClass("is-hidden");
     this.listEl.empty();
   }
 

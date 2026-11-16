@@ -1,6 +1,7 @@
 import { CLAUDE_MODELS } from "../claude/models";
 import { mergeDetectedModels } from "../providers/localModels";
 import type { ProviderId } from "../providers/types";
+import type { ClaudeModel } from "../types";
 
 export interface MobileModelChoice {
   value: string;
@@ -25,8 +26,10 @@ export function mobileModelChoices(input: {
   openaiCompatModel: string;
   /** Models the endpoint reported; empty is fine (falls back to the configured id). */
   openaiCompatModels?: string[];
+  /** Claude models to offer; defaults to the curated list. */
+  claudeModels?: ClaudeModel[];
 }): MobileModelChoice[] {
-  const choices: MobileModelChoice[] = CLAUDE_MODELS.map((model) => ({
+  const choices: MobileModelChoice[] = (input.claudeModels ?? CLAUDE_MODELS).map((model) => ({
     value: model.id,
     label: model.label,
     provider: "claude",

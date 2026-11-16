@@ -12,6 +12,8 @@ import { InboxView, INBOX_VIEW_TYPE } from "./view/InboxView";
 import { SystemView, SYSTEM_VIEW_TYPE } from "./view/SystemView";
 import { buildChat, type ChatCluster } from "./composition/chat";
 import { buildCommandActions } from "./composition/commands";
+import { buildClaudeModels } from "./composition/models";
+import type { ClaudeModelRegistry } from "./claude/modelRegistry";
 import {
   buildClipperSetup,
   buildDesktopIntegrations,
@@ -79,6 +81,7 @@ import type { ClippingsController } from "./sources/clippings";
 import { stripFrontmatter } from "./markdown/frontmatter";
 import { generateToken } from "./mcp/clientConfig";
 import type { BridgeSetupInput } from "./integrations/desktopRuntime";
+import type { ConnectionVault } from "./integrations/desktopExtension";
 import type { AgentTurnRunner } from "./agent/loop";
 import { CliSession } from "./cli/session";
 import { CliSessionPool, type PoolEntry } from "./cli/sessionPool";
@@ -233,7 +236,7 @@ export default class ClaudeCompanionPlugin extends Plugin {
   }
   private _cliRuntime: CliRuntime | null | undefined;
   private _desktopRuntimeLoader: () => Promise<{
-    createNodeDesktopRuntime(platform: DesktopPlatform, homeDir: string, env: Record<string, string | undefined>, bridge?: BridgeSetupInput): Promise<DesktopIntegrationRuntime>;
+    createNodeDesktopRuntime(platform: DesktopPlatform, homeDir: string, env: Record<string, string | undefined>, bridge?: BridgeSetupInput, vault?: ConnectionVault): Promise<DesktopIntegrationRuntime>;
     createNodeManagedProcessPort(): import("./build/desktopExecutor").ManagedProcessPort;
   }> = () => import("./integrations/desktopRuntime");
   private _externalMcp: ExternalMcpManager | null = null;
@@ -273,6 +276,11 @@ export default class ClaudeCompanionPlugin extends Plugin {
   /** Web Clipper template export, setup modal, and clip verification. */
   clipperSetup(): ClipperFeature {
     return (this._clipperSetup ??= buildClipperSetup(this));
+  }
+  private _claudeModels?: ClaudeModelRegistry;
+  /** Claude model list for pickers: curated, extended from the Models API when a direct credential is set. */
+  claudeModels(): ClaudeModelRegistry {
+    return (this._claudeModels ??= buildClaudeModels(this));
   }
   private _connection?: ConnectionController;
   connection(): ConnectionController {
@@ -825,6 +833,7 @@ export default class ClaudeCompanionPlugin extends Plugin {
     await this.persist();
     // Rebuild providers if any credentials/hosts changed.
     this._router = null;
+    void this._claudeModels?.refresh();
     // External MCP server list changed → drop stale sessions so they reconnect fresh.
     const serversJson = JSON.stringify(this.settings.mcpClientServers);
     if (this._mcpServersSnapshot !== serversJson) {

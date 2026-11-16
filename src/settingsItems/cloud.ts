@@ -56,7 +56,7 @@ export function cloudItems(ctx: CloudItemsContext): SettingGroupItem[] {
         setting.setDesc(`Per-routine bearer token (sk-ant-oat…). It only fires this one routine — no account access. ${ctx.storageBlurb()}`);
         setting.addText((text) => {
           text.inputEl.type = "password";
-          text.inputEl.setCssStyles({ width: "320px" });
+          text.inputEl.addClass("cc-input-width-320");
           text
             .setPlaceholder("sk-ant-oat…")
             .setValue(s.cloudRoutineToken)
@@ -92,7 +92,7 @@ export function repliesItems(ctx: CloudItemsContext): SettingGroupItem[] {
         setting.setDesc(`Fine-grained token with Contents:read on the repo. ${ctx.storageBlurb()}`);
         setting.addText((text) => {
           text.inputEl.type = "password";
-          text.inputEl.setCssStyles({ width: "min(320px, 100%)" });
+          text.inputEl.addClass("cc-input-width-fluid-320");
           text
             .setPlaceholder("github_pat_… / ghp_…")
             .setValue(s.cloudReplyToken)

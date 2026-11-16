@@ -10,6 +10,7 @@ import { DEFAULT_SETTINGS } from "../../src/types";
 import { ChatView } from "../../src/view/ChatView";
 import type { CompanionChromeDependencies } from "../../src/view/companionChrome";
 import { conversationFakes } from "../fakes/conversations";
+import { curatedModels } from "../fakes/curatedModels";
 
 const fakeElement = (): HTMLElement => new FakeElement() as unknown as HTMLElement;
 
@@ -65,7 +66,7 @@ describe("Chat render lifecycle", () => {
     });
     const plugin = {
       settings,
-      router: () => ({
+      claudeModels: curatedModels, router: () => ({
         chatProvider: () => ({ provider, model: DEFAULT_SETTINGS.model }),
         chatBackend: "claude",
         chatCapabilities: () => ({ agentActions: false, claudeControls: true, metered: true, local: false, cli: false }),
@@ -130,7 +131,7 @@ describe("Chat render lifecycle", () => {
     fakes.stubTurns();
     const plugin = {
       settings,
-      router: () => ({
+      claudeModels: curatedModels, router: () => ({
         chatProvider: () => ({ provider, model: DEFAULT_SETTINGS.model }),
         chatBackend: "claude",
         chatCapabilities: () => ({ agentActions: false, claudeControls: true, metered: true, local: false, cli: false }),
@@ -193,7 +194,7 @@ describe("Chat render lifecycle", () => {
     const turns = fakes.stubTurns();
     const plugin = {
       settings,
-      router: () => ({
+      claudeModels: curatedModels, router: () => ({
         chatProvider: () => ({ provider, model: DEFAULT_SETTINGS.model }),
         chatBackend: "claude",
         chatCapabilities: () => ({ agentActions: false, claudeControls: true, metered: true, local: false, cli: false }),
@@ -269,7 +270,7 @@ describe("Chat render lifecycle", () => {
     const provider = { id: "anthropic", stream: async () => undefined };
     const plugin = {
       settings: structuredClone(DEFAULT_SETTINGS),
-      router: () => ({
+      claudeModels: curatedModels, router: () => ({
         chatProvider: () => ({ provider, model: DEFAULT_SETTINGS.model }),
         chatCapabilities: () => { throw new Error("router unavailable"); },
       }),
@@ -297,7 +298,7 @@ describe("Chat render lifecycle", () => {
     const provider = { id: "claude-cli", stream: async () => undefined };
     const plugin = {
       settings: structuredClone(DEFAULT_SETTINGS),
-      router: () => ({ chatProvider: () => ({ provider, model: DEFAULT_SETTINGS.model }) }),
+      claudeModels: curatedModels, router: () => ({ chatProvider: () => ({ provider, model: DEFAULT_SETTINGS.model }) }),
       externalMcpTools: async () => { await discovery; return []; },
       agentTools: () => ({ definitions: () => [] }),
       composeSystemPrompt: () => "system",
@@ -428,7 +429,7 @@ describe("Chat render lifecycle", () => {
     fakes.stubTurns();
     const plugin = {
       settings,
-      router: () => ({
+      claudeModels: curatedModels, router: () => ({
         chatProvider: () => ({ provider: claudeProvider, model: "claude-model" }),
         chatBackend: "auto",
         chatCapabilities: () => ({ agentActions: false, claudeControls: true, metered: true, local: false, cli: false }),
@@ -499,7 +500,7 @@ describe("Chat render lifecycle", () => {
     const settings = structuredClone(DEFAULT_SETTINGS);
     const plugin = {
       settings,
-      router: () => ({
+      claudeModels: curatedModels, router: () => ({
         chatBackend: "claude",
         anthropic: { hasCredentials: () => true },
         claudeCli: { hasCredentials: () => false },

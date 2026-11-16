@@ -555,7 +555,7 @@ export class ChatView extends ItemView {
     this.projects.clear();
     this.composer.resetContextToggles();
     this.composer.dismissedPageUrl = null;
-    this.composer.pageOfferEl?.setCssStyles({ display: "none" });
+    this.composer.pageOfferEl?.addClass("is-hidden");
     this.renderContextManager();
     this.messagesEl.empty();
     this.renderEmptyState();

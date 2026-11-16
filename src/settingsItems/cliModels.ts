@@ -6,6 +6,33 @@ import type { ConnectionItemsContext } from "./connection";
 
 const CUSTOM = "__companion_custom_model__";
 
+/** The Claude model dropdown: curated choices, extended with the Models API list once it loads. */
+export function claudeModelItem(ctx: ConnectionItemsContext): SettingGroupItem {
+  const { plugin } = ctx;
+  return {
+    name: "Model",
+    desc: "Pick a default model. A custom id below overrides this.",
+    render: (setting) => {
+      const registry = plugin.claudeModels();
+      let dropdown: DropdownComponent;
+      const fill = (): void => {
+        dropdown.selectEl.empty();
+        for (const model of registry.models()) dropdown.addOption(model.id, model.label);
+        dropdown.setValue(plugin.settings.model);
+      };
+      setting.addDropdown((component) => {
+        dropdown = component;
+        fill();
+        dropdown.onChange(async (value) => {
+          plugin.settings.model = value;
+          await plugin.saveSettings();
+        });
+      });
+      void registry.refresh().then((changed) => { if (changed) fill(); });
+    },
+  };
+}
+
 export function cliModelItem(ctx: ConnectionItemsContext, backend: CliBackend, key: "codexModel" | "opencodeModel"): SettingGroupItem {
   const { plugin } = ctx;
   return {

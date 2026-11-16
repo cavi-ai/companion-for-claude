@@ -11,15 +11,19 @@ import {
   type ExecFilePort,
   type ExecResult,
 } from "../../src/integrations/desktopRuntime";
-import { PROXY_SOURCE } from "../../src/integrations/desktopExtension";
+import { PROXY_SOURCE, vaultConnectionFilePath } from "../../src/integrations/desktopExtension";
 
 class FakeExec implements ExecFilePort {
   readonly calls: Array<{ executable: string; args: string[]; options: ExecFileOptions }> = [];
 
-  constructor(private readonly responses: Map<string, ExecResult | Error | ExecResult[]>) {}
+  constructor(
+    private readonly responses: Map<string, ExecResult | Error | ExecResult[]>,
+    private readonly onRun?: (executable: string, args: string[], options: ExecFileOptions) => void,
+  ) {}
 
   async run(executable: string, args: string[], options: ExecFileOptions): Promise<ExecResult> {
     this.calls.push({ executable, args, options });
+    this.onRun?.(executable, args, options);
     const configured = this.responses.get([executable, ...args].join("\u0000"));
     const response = Array.isArray(configured) ? configured.shift() : configured;
     if (response instanceof Error) throw response;
@@ -64,11 +68,20 @@ class MemoryFs implements DesktopFsPort {
 const ok = (stdout: string): ExecResult => ({ stdout, stderr: "" });
 const key = (executable: string, ...args: string[]): string => [executable, ...args].join("\u0000");
 
+const VAULT = { name: "Notes", path: "/v/Notes" };
+/** obsidian-agent as `claude plugin list --json` reports a project install for VAULT. */
+const vaultPlugins = (enabled: boolean, id = "obsidian-agent@cavi-ai"): string => JSON.stringify([{ id, scope: "project", enabled, projectPath: VAULT.path }]);
+const VAULT_CONNECTION = vaultConnectionFilePath("darwin", "/Users/test", {}, VAULT);
+const SCRIPT = "/Users/test/Library/Application Support/Companion for Claude/server/index.js";
+const VAULT_MCP_JSON = "/v/Notes/.mcp.json";
+const projectMcp = (connectionPath = VAULT_CONNECTION): string => JSON.stringify({ mcpServers: { "obsidian-vault": { type: "stdio", command: "node", args: [SCRIPT, connectionPath], env: {} } } });
+const BRIDGE = { enabled: true, port: 22360, token: "bridge-secret-token" };
+
 const readyResponses = (): Map<string, ExecResult | Error | ExecResult[]> => new Map([
   [key("claude", "--version"), ok("2.1.226 (Claude Code)\n")],
   [key("obsidian", "version"), ok("1.12.7\n")],
   [key("claude", "plugin", "marketplace", "list", "--json"), ok('[{"name":"cavi-ai","repo":"cavi-ai/plugins"}]')],
-  [key("claude", "plugin", "list", "--json"), ok('[{"id":"obsidian-agent@cavi-ai","enabled":true}]')],
+  [key("claude", "plugin", "list", "--json"), ok(vaultPlugins(true))],
 ]);
 
 describe("DesktopRuntime", () => {
@@ -138,9 +151,9 @@ describe("DesktopRuntime", () => {
     expect(stderr.join("")).toBe("warn\n");
   });
 
-  it("inspects Claude Code and Obsidian through bounded fixed commands", async () => {
+  it("inspects Claude Code and Obsidian through bounded fixed commands, asking Claude Code from the vault folder", async () => {
     const exec = new FakeExec(readyResponses());
-    const runtime = new DesktopRuntime({ exec, fs: new MemoryFs(), platform: "darwin", homeDir: "/Users/test" });
+    const runtime = new DesktopRuntime({ exec, fs: new MemoryFs(), platform: "darwin", homeDir: "/Users/test", vault: VAULT });
 
     await expect(runtime.inspectClaudeCode()).resolves.toEqual({
       claude: { available: true, state: "available", version: "2.1.226" },
@@ -148,7 +161,7 @@ describe("DesktopRuntime", () => {
       marketplaceInstalled: true,
       pluginInstalled: true,
       pluginEnabled: true,
-      bridge: { enabled: false, url: "", registered: false, headerValue: "" },
+      bridge: { enabled: false, registered: false },
     });
     expect(exec.calls.map(({ executable, args }) => [executable, args])).toEqual([
       ["claude", ["--version"]],
@@ -157,34 +170,34 @@ describe("DesktopRuntime", () => {
       ["claude", ["plugin", "list", "--json"]],
     ]);
     expect(exec.calls.every(({ options }) => options.timeoutMs === 5_000 && options.maxBytes === 256_000)).toBe(true);
+    expect(exec.calls.slice(2).every(({ options }) => options.cwd === VAULT.path)).toBe(true);
   });
 
-  it("detects an already-registered bridge from claude mcp get's exit code", async () => {
+  it("does not count a user-scope obsidian-agent or another vault's install as this vault's", async () => {
     const responses = readyResponses();
-    responses.set(key("claude", "mcp", "get", "obsidian-vault"), ok("obsidian-vault: registered"));
-    const exec = new FakeExec(responses);
-    const bridge = { enabled: true, url: "http://127.0.0.1:22360/mcp", headerValue: "${OBSIDIAN_COMPANION_MCP_TOKEN}" };
-    const runtime = new DesktopRuntime({ exec, fs: new MemoryFs(), platform: "darwin", homeDir: "/Users/test", bridge });
+    responses.set(key("claude", "plugin", "list", "--json"), ok(JSON.stringify([
+      { id: "obsidian-agent@cavi-ai", scope: "user", enabled: true, projectPath: null },
+      { id: "obsidian-agent@cavi-ai", scope: "project", enabled: true, projectPath: "/v/Other" },
+    ])));
+    const runtime = new DesktopRuntime({ exec: new FakeExec(responses), fs: new MemoryFs(), platform: "darwin", homeDir: "/Users/test", vault: VAULT });
 
-    await expect(runtime.inspectClaudeCode()).resolves.toMatchObject({
-      bridge: { enabled: true, url: bridge.url, headerValue: bridge.headerValue, registered: true },
-    });
-    expect(exec.calls.map(({ executable, args }) => [executable, args])).toContainEqual(["claude", ["mcp", "get", "obsidian-vault"]]);
+    await expect(runtime.inspectClaudeCode()).resolves.toMatchObject({ pluginInstalled: false, pluginEnabled: false });
   });
 
-  it("reports an unregistered bridge when claude mcp get exits non-zero", async () => {
-    const responses = readyResponses();
-    responses.set(key("claude", "mcp", "get", "obsidian-vault"), new ExecFailure("No MCP server found with name: obsidian-vault"));
-    const exec = new FakeExec(responses);
-    const bridge = { enabled: true, url: "http://127.0.0.1:22360/mcp", headerValue: "secret" };
-    const runtime = new DesktopRuntime({ exec, fs: new MemoryFs(), platform: "darwin", homeDir: "/Users/test", bridge });
+  it("reads the bridge registration from the vault's .mcp.json, and only this vault's connector counts", async () => {
+    const fs = new MemoryFs();
+    const runtime = new DesktopRuntime({ exec: new FakeExec(readyResponses()), fs, platform: "darwin", homeDir: "/Users/test", bridge: BRIDGE, vault: VAULT });
 
     await expect(runtime.inspectClaudeCode()).resolves.toMatchObject({ bridge: { enabled: true, registered: false } });
+    fs.files.set(VAULT_MCP_JSON, projectMcp("/elsewhere/bridge.json"));
+    await expect(runtime.inspectClaudeCode()).resolves.toMatchObject({ bridge: { enabled: true, registered: false } });
+    fs.files.set(VAULT_MCP_JSON, projectMcp());
+    await expect(runtime.inspectClaudeCode()).resolves.toMatchObject({ bridge: { enabled: true, registered: true } });
   });
 
-  it("skips the mcp get probe entirely while the bridge is disabled", async () => {
+  it("runs no mcp command while inspecting", async () => {
     const exec = new FakeExec(readyResponses());
-    const runtime = new DesktopRuntime({ exec, fs: new MemoryFs(), platform: "darwin", homeDir: "/Users/test" });
+    const runtime = new DesktopRuntime({ exec, fs: new MemoryFs(), platform: "darwin", homeDir: "/Users/test", bridge: BRIDGE, vault: VAULT });
 
     await runtime.inspectClaudeCode();
     expect(exec.calls.some(({ args }) => args[0] === "mcp")).toBe(false);
@@ -195,8 +208,8 @@ describe("DesktopRuntime", () => {
     // A local directory marketplace named `cavi` is not the published catalog:
     // counting it skips `marketplace add`, and the install that follows fails.
     responses.set(key("claude", "plugin", "marketplace", "list", "--json"), ok('[{"name":"cavi"},{"name":"claude-plugins-official","repo":"anthropics/claude-plugins-official"}]'));
-    responses.set(key("claude", "plugin", "list", "--json"), ok('[{"id":"obsidian-agent@cavi","enabled":true}]'));
-    const runtime = new DesktopRuntime({ exec: new FakeExec(responses), fs: new MemoryFs(), platform: "darwin", homeDir: "/Users/test" });
+    responses.set(key("claude", "plugin", "list", "--json"), ok(vaultPlugins(true, "obsidian-agent@cavi")));
+    const runtime = new DesktopRuntime({ exec: new FakeExec(responses), fs: new MemoryFs(), platform: "darwin", homeDir: "/Users/test", vault: VAULT });
 
     await expect(runtime.inspectClaudeCode()).resolves.toMatchObject({
       marketplaceInstalled: false,
@@ -239,9 +252,9 @@ describe("DesktopRuntime", () => {
     responses.set(key("obsidian", "version"), new Error("ENOENT"));
     responses.set(key("/usr/local/bin/obsidian", "version"), ok("1.12.7\n"));
     responses.set(key("/Users/test/.local/bin/claude", "plugin", "marketplace", "list", "--json"), ok('[{"name":"cavi","repo":"cavi-ai/plugins"}]'));
-    responses.set(key("/Users/test/.local/bin/claude", "plugin", "list", "--json"), ok('[{"id":"obsidian-agent@cavi-ai","enabled":true}]'));
+    responses.set(key("/Users/test/.local/bin/claude", "plugin", "list", "--json"), ok(vaultPlugins(true)));
     const exec = new FakeExec(responses);
-    const runtime = new DesktopRuntime({ exec, fs: new MemoryFs(), platform: "darwin", homeDir: "/Users/test" });
+    const runtime = new DesktopRuntime({ exec, fs: new MemoryFs(), platform: "darwin", homeDir: "/Users/test", vault: VAULT });
 
     await expect(runtime.inspectClaudeCode()).resolves.toMatchObject({
       claude: { available: true },
@@ -252,57 +265,64 @@ describe("DesktopRuntime", () => {
     expect(exec.calls.map(({ executable }) => executable)).toContain("/usr/local/bin/obsidian");
   });
 
-  it("enables an installed but disabled obsidian-agent before reporting ready", async () => {
+  it("enables an installed but disabled obsidian-agent in the vault before reporting ready", async () => {
     const responses = readyResponses();
-    responses.set(key("claude", "plugin", "list", "--json"), [
-      ok('[{"id":"obsidian-agent@cavi-ai","enabled":false}]'),
-      ok('[{"id":"obsidian-agent@cavi-ai","enabled":true}]'),
-    ]);
-    responses.set(key("claude", "plugin", "enable", "obsidian-agent@cavi-ai", "--scope", "user"), ok("enabled"));
+    responses.set(key("claude", "plugin", "list", "--json"), [ok(vaultPlugins(false)), ok(vaultPlugins(true))]);
+    responses.set(key("claude", "plugin", "enable", "obsidian-agent@cavi-ai", "--scope", "project"), ok("enabled"));
     const exec = new FakeExec(responses);
-    const runtime = new DesktopRuntime({ exec, fs: new MemoryFs(), platform: "darwin", homeDir: "/Users/test" });
+    const runtime = new DesktopRuntime({ exec, fs: new MemoryFs(), platform: "darwin", homeDir: "/Users/test", vault: VAULT });
 
     const result = await runtime.setupClaudeCode();
-    expect(exec.calls.some(({ args }) => args.join(" ") === "plugin enable obsidian-agent@cavi-ai --scope user")).toBe(true);
+    const enable = exec.calls.find(({ args }) => args.join(" ") === "plugin enable obsidian-agent@cavi-ai --scope project");
+    expect(enable?.options.cwd).toBe(VAULT.path);
     expect(result.pluginEnabled).toBe(true);
   });
 
-  it("executes missing setup stages in order and re-inspects the result", async () => {
+  it("executes missing setup stages in order in the vault and re-inspects the result", async () => {
     const responses = readyResponses();
     responses.set(key("claude", "plugin", "marketplace", "list", "--json"), [ok("[]"), ok('[{"name":"cavi-ai","repo":"cavi-ai/plugins"}]')]);
-    responses.set(key("claude", "plugin", "list", "--json"), [ok("[]"), ok('[{"id":"obsidian-agent@cavi-ai","enabled":true}]')]);
-    responses.set(key("claude", "plugin", "marketplace", "add", "cavi-ai/plugins"), ok("added"));
-    responses.set(key("claude", "plugin", "install", "obsidian-agent@cavi-ai", "--scope", "user"), ok("installed"));
+    responses.set(key("claude", "plugin", "list", "--json"), [ok("[]"), ok(vaultPlugins(true))]);
+    responses.set(key("claude", "plugin", "marketplace", "add", "cavi-ai/plugins", "--scope", "project"), ok("added"));
+    responses.set(key("claude", "plugin", "install", "obsidian-agent@cavi-ai", "--scope", "project"), ok("installed"));
+    const exec = new FakeExec(responses);
+    const runtime = new DesktopRuntime({ exec, fs: new MemoryFs(), platform: "darwin", homeDir: "/Users/test", vault: VAULT });
+
+    const result = await runtime.setupClaudeCode();
+    expect(exec.calls.slice(4, 6).map(({ executable, args, options }) => [executable, args, options.cwd])).toEqual([
+      ["claude", ["plugin", "marketplace", "add", "cavi-ai/plugins", "--scope", "project"], VAULT.path],
+      ["claude", ["plugin", "install", "obsidian-agent@cavi-ai", "--scope", "project"], VAULT.path],
+    ]);
+    expect(result.claude.available).toBe(true);
+  });
+
+  it("refuses setup without a vault folder and runs nothing", async () => {
+    const responses = readyResponses();
+    responses.set(key("claude", "plugin", "list", "--json"), ok("[]"));
     const exec = new FakeExec(responses);
     const runtime = new DesktopRuntime({ exec, fs: new MemoryFs(), platform: "darwin", homeDir: "/Users/test" });
 
-    const result = await runtime.setupClaudeCode();
-    expect(exec.calls.slice(4, 6).map(({ executable, args }) => [executable, args])).toEqual([
-      ["claude", ["plugin", "marketplace", "add", "cavi-ai/plugins"]],
-      ["claude", ["plugin", "install", "obsidian-agent@cavi-ai", "--scope", "user"]],
-    ]);
-    expect(result.claude.available).toBe(true);
+    await expect(runtime.setupClaudeCode()).rejects.toThrow("no folder on disk");
+    expect(exec.calls.some(({ args }) => ["add", "install", "enable"].includes(args[1] ?? "") || args[2] === "add")).toBe(false);
   });
 
   it("stops setup after the first failed stage and redacts its error", async () => {
     const responses = readyResponses();
     responses.set(key("claude", "plugin", "marketplace", "list", "--json"), ok("[]"));
     responses.set(key("claude", "plugin", "list", "--json"), ok("[]"));
-    responses.set(key("claude", "plugin", "marketplace", "add", "cavi-ai/plugins"), new Error("Authorization: Bearer private-token"));
+    responses.set(key("claude", "plugin", "marketplace", "add", "cavi-ai/plugins", "--scope", "project"), new Error("Authorization: Bearer private-token"));
     const exec = new FakeExec(responses);
-    const runtime = new DesktopRuntime({ exec, fs: new MemoryFs(), platform: "darwin", homeDir: "/Users/test" });
+    const runtime = new DesktopRuntime({ exec, fs: new MemoryFs(), platform: "darwin", homeDir: "/Users/test", vault: VAULT });
 
     await expect(runtime.setupClaudeCode()).rejects.toThrow("Add the CAVI marketplace");
     expect(exec.calls.some(({ args }) => args.includes("obsidian-agent@cavi-ai"))).toBe(false);
   });
 
+  const MCP_ADD = ["mcp", "add", "--scope", "project", "obsidian-vault", "--", "node", SCRIPT, VAULT_CONNECTION];
+
   it("connects Companion's vault tools during setup and redacts the token on failure", async () => {
     const responses = readyResponses();
-    const addArgs = ["mcp", "add", "--scope", "user", "--transport", "http", "obsidian-vault", "http://127.0.0.1:22360/mcp", "--header", "Authorization: Bearer bridge-secret-token"];
-    responses.set(key("claude", ...addArgs), new Error(`Command failed: claude ${addArgs.join(" ")}`));
-    const exec = new FakeExec(responses);
-    const bridge = { enabled: true, url: "http://127.0.0.1:22360/mcp", headerValue: "bridge-secret-token" };
-    const runtime = new DesktopRuntime({ exec, fs: new MemoryFs(), platform: "darwin", homeDir: "/Users/test", bridge });
+    responses.set(key("claude", ...MCP_ADD), new Error("Command failed: token bridge-secret-token rejected"));
+    const runtime = new DesktopRuntime({ exec: new FakeExec(responses), fs: new MemoryFs(), platform: "darwin", homeDir: "/Users/test", bridge: BRIDGE, vault: VAULT });
 
     const failure = await runtime.setupClaudeCode().catch((cause: Error) => cause);
     expect(failure).toBeInstanceOf(Error);
@@ -310,20 +330,22 @@ describe("DesktopRuntime", () => {
     expect((failure as Error).message).not.toContain("bridge-secret-token");
   });
 
-  it("registers Companion's vault tools once obsidian-agent is already ready", async () => {
+  it("registers Companion's vault tools in the vault's .mcp.json through this vault's connection file", async () => {
     const responses = readyResponses();
-    responses.set(key("claude", "mcp", "get", "obsidian-vault"), [
-      new ExecFailure("No MCP server found with name: obsidian-vault"),
-      ok("obsidian-vault: registered"),
-    ]);
-    responses.set(key("claude", "mcp", "add", "--scope", "user", "--transport", "http", "obsidian-vault", "http://127.0.0.1:22360/mcp", "--header", "Authorization: Bearer secret"), ok("added"));
-    const exec = new FakeExec(responses);
-    const bridge = { enabled: true, url: "http://127.0.0.1:22360/mcp", headerValue: "secret" };
-    const runtime = new DesktopRuntime({ exec, fs: new MemoryFs(), platform: "darwin", homeDir: "/Users/test", bridge });
+    responses.set(key("claude", ...MCP_ADD), ok("added"));
+    const fs = new MemoryFs();
+    // Claude Code writes the project entry into the vault's .mcp.json.
+    const exec = new FakeExec(responses, (_executable, args) => { if (args[0] === "mcp" && args[1] === "add") fs.files.set(VAULT_MCP_JSON, projectMcp()); });
+    const runtime = new DesktopRuntime({ exec, fs, platform: "darwin", homeDir: "/Users/test", bridge: BRIDGE, vault: VAULT });
 
     const result = await runtime.setupClaudeCode();
     expect(result.bridge.registered).toBe(true);
-    expect(exec.calls.some(({ args }) => args.join(" ") === "mcp add --scope user --transport http obsidian-vault http://127.0.0.1:22360/mcp --header Authorization: Bearer secret")).toBe(true);
+    const add = exec.calls.find(({ args }) => args[0] === "mcp");
+    expect(add?.args).toEqual(MCP_ADD);
+    expect(add?.options.cwd).toBe(VAULT.path);
+    expect(add?.args.join(" ")).not.toContain(BRIDGE.token);
+    expect(JSON.parse(fs.files.get(VAULT_CONNECTION)!)).toEqual({ url: "http://127.0.0.1:22360/mcp", token: BRIDGE.token, vault: "Notes", vaultPath: "/v/Notes" });
+    expect(fs.files.get(SCRIPT)).toBe(PROXY_SOURCE);
   });
 
   const DESKTOP_CONFIG = "/Users/test/Library/Application Support/Claude/claude_desktop_config.json";
@@ -408,18 +430,29 @@ describe("DesktopRuntime", () => {
     expect(fresh.files.has(CONNECTOR_SCRIPT)).toBe(false);
   });
 
+  it("keeps this vault's own connection file on the bridge's new port and token too", async () => {
+    const fs = new MemoryFs();
+    fs.files.set(VAULT_CONNECTION, JSON.stringify({ url: "http://127.0.0.1:22360/mcp", token: "old", vault: "Notes", vaultPath: "/v/Notes" }));
+    const runtime = desktopRuntime(fs, async () => undefined);
+    expect(await runtime.refreshConnection({ port: 22361, token: "new", vault: VAULT })).toBe(true);
+    expect(JSON.parse(fs.files.get(VAULT_CONNECTION)!)).toEqual({ url: "http://127.0.0.1:22361/mcp", token: "new", vault: "Notes", vaultPath: "/v/Notes" });
+    expect(fs.files.has(CONNECTION_FILE)).toBe(false);
+  });
+
   describe("agent CLIs", () => {
-    const vault = { name: "Notes", path: "/v/Notes" };
-    const installed = (registered: { codex: boolean; agy: boolean }) => new Map<string, ExecResult | Error | ExecResult[]>([
+    const vault = VAULT;
+    const CODEX_CONFIG = "/v/Notes/.codex/config.toml";
+    const AGY_CONFIG = "/v/Notes/.agents/mcp_config.json";
+    const installed = () => new Map<string, ExecResult | Error | ExecResult[]>([
       [key("codex", "--version"), ok("codex-cli 0.162.1\n")],
       [key("agy", "--version"), ok("1.4.3\n")],
-      [key("codex", "mcp", "get", "obsidian-vault"), registered.codex ? ok("obsidian-vault\n  enabled: true\n") : new ExecFailure("No MCP server named 'obsidian-vault' found.")],
-      [key("agy", "mcp", "list"), ok(registered.agy ? "NAME            TYPE   STATUS   COMMAND/URL\nobsidian-vault  stdio  enabled  node /x/index.js\n" : "No MCP servers configured.\n")],
     ]);
-    const hostRuntime = (exec: FakeExec, fs = new MemoryFs()) => new DesktopRuntime({ exec, fs, platform: "darwin", homeDir: "/Users/test" });
+    const hostRuntime = (exec: FakeExec, fs = new MemoryFs()) => new DesktopRuntime({ exec, fs, platform: "darwin", homeDir: "/Users/test", vault });
 
-    it("reports each CLI's version and whether obsidian-vault is registered with it", async () => {
-      expect(await hostRuntime(new FakeExec(installed({ codex: true, agy: false }))).inspectCliHosts()).toEqual([
+    it("reports each CLI's version and whether this vault's config registers obsidian-vault", async () => {
+      const fs = new MemoryFs();
+      fs.files.set(CODEX_CONFIG, `[mcp_servers.obsidian-vault]\ncommand = "node"\nargs = [${JSON.stringify(SCRIPT)}, ${JSON.stringify(VAULT_CONNECTION)}]\n`);
+      expect(await hostRuntime(new FakeExec(installed()), fs).inspectCliHosts()).toEqual([
         { host: "codex", probe: { available: true, state: "available", version: "0.162.1" }, registered: true },
         { host: "agy", probe: { available: true, state: "available", version: "1.4.3" }, registered: false },
       ]);
@@ -427,33 +460,33 @@ describe("DesktopRuntime", () => {
         .toEqual([["codex", "missing", false], ["agy", "missing", false]]);
     });
 
-    it("writes the connection file and connector, registers it with the CLI's own mcp add, and checks the CLI lists it", async () => {
-      const responses = installed({ codex: false, agy: false });
-      responses.set(key("agy", "mcp", "list"), [ok("No MCP servers configured.\n"), ok("obsidian-vault  stdio  enabled  node /x/index.js\n")]);
-      responses.set(key("agy", "mcp", "add", "obsidian-vault", "node", CONNECTOR_SCRIPT), ok('Added MCP server "obsidian-vault" (stdio)\n'));
-      const exec = new FakeExec(responses);
+    it("writes this vault's connection file, the connector, and obsidian-vault in the vault's Antigravity config", async () => {
+      const exec = new FakeExec(installed());
       const fs = new MemoryFs();
       const result = await hostRuntime(exec, fs).connectCliHost("agy", { port: 22360, token: "bridge-token", vault });
       expect(result).toEqual({ host: "agy", probe: { available: true, state: "available", version: "1.4.3" }, registered: true });
-      expect(JSON.parse(fs.files.get(CONNECTION_FILE)!)).toEqual({ url: "http://127.0.0.1:22360/mcp", token: "bridge-token", vault: "Notes", vaultPath: "/v/Notes" });
+      expect(JSON.parse(fs.files.get(VAULT_CONNECTION)!)).toEqual({ url: "http://127.0.0.1:22360/mcp", token: "bridge-token", vault: "Notes", vaultPath: "/v/Notes" });
       expect(fs.files.get(CONNECTOR_SCRIPT)).toBe(PROXY_SOURCE);
-      expect(exec.calls.map(({ args }) => args.join(" "))).toContain(`mcp add obsidian-vault node ${CONNECTOR_SCRIPT}`);
-      expect(exec.calls.flatMap(({ args }) => args).join(" ")).not.toContain("bridge-token");
+      expect(JSON.parse(fs.files.get(AGY_CONFIG)!)).toEqual({ mcpServers: { "obsidian-vault": { command: "node", args: [SCRIPT, VAULT_CONNECTION] } } });
+      expect(fs.files.get(AGY_CONFIG)).not.toContain("bridge-token");
+      expect(fs.files.has(CONNECTION_FILE)).toBe(false);
+      expect(exec.calls.map(({ args }) => args.join(" "))).toEqual(["--version", "--version"]);
     });
 
-    it("registers Codex through `codex mcp add <name> -- node <script>`", async () => {
-      const responses = installed({ codex: false, agy: false });
-      responses.set(key("codex", "mcp", "get", "obsidian-vault"), [new ExecFailure("not found"), ok("obsidian-vault\n")]);
-      responses.set(key("codex", "mcp", "add", "obsidian-vault", "--", "node", CONNECTOR_SCRIPT), ok("Added global MCP server 'obsidian-vault'.\n"));
-      const result = await hostRuntime(new FakeExec(responses)).connectCliHost("codex", { port: 22360, token: "t", vault });
+    it("writes obsidian-vault into the vault's .codex/config.toml", async () => {
+      const fs = new MemoryFs();
+      const result = await hostRuntime(new FakeExec(installed()), fs).connectCliHost("codex", { port: 22360, token: "t", vault });
       expect(result.registered).toBe(true);
+      expect(fs.files.get(CODEX_CONFIG)).toBe(`[mcp_servers.obsidian-vault]\ncommand = "node"\nargs = [${JSON.stringify(SCRIPT)}, ${JSON.stringify(VAULT_CONNECTION)}]\n`);
     });
 
-    it("says what to install when the CLI is missing, and reports a registration the CLI does not list", async () => {
+    it("says what to install when the CLI is missing, and leaves a config it cannot read untouched", async () => {
       await expect(hostRuntime(new FakeExec(new Map())).connectCliHost("codex", { port: 1, token: "t", vault })).rejects.toThrow("Codex was not found");
-      const responses = installed({ codex: false, agy: false });
-      responses.set(key("agy", "mcp", "add", "obsidian-vault", "node", CONNECTOR_SCRIPT), ok("Added\n"));
-      await expect(hostRuntime(new FakeExec(responses)).connectCliHost("agy", { port: 1, token: "t", vault })).rejects.toThrow("did not list obsidian-vault");
+      const fs = new MemoryFs();
+      fs.files.set(AGY_CONFIG, "{ broken");
+      await expect(hostRuntime(new FakeExec(installed()), fs).connectCliHost("agy", { port: 1, token: "t", vault })).rejects.toThrow("is not valid JSON");
+      expect(fs.files.get(AGY_CONFIG)).toBe("{ broken");
+      expect(fs.files.has(VAULT_CONNECTION)).toBe(false);
     });
   });
 

@@ -102,6 +102,7 @@ function rig() {
     cliTurnRunner: m.cliTurnRunner,
     registerEvent: m.registerEvent,
     registerInterval: m.registerInterval,
+    claudeModels: () => ({ models: () => [{ id: "m", label: "M" }] }),
     desktopIntegrations: () => ({ open: m.open }),
     views: () => ({ activateView: m.activateView, syncInboxBadge: m.syncInboxBadge }),
     shell: () => ({
@@ -231,6 +232,7 @@ describe("buildResearch", () => {
     expect(call("research", "settings")).toBe(h.settings);
     expect(call("research", "activity")).toBe(h.activity);
     expect(call("research", "router")).toBe("router");
+    expect(call("research", "claudeModels")).toEqual([{ id: "m", label: "M" }]);
     expect(d.build).toBe(build);
     expect(await call("research", "activateView")).toBe("activated");
     expect(m.activateView).toHaveBeenCalledTimes(1);

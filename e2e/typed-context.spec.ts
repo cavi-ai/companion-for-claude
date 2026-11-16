@@ -23,6 +23,7 @@ test("a vault-search match pulls in its typed relation target through Obsidian's
     settingsOverride: { agentModeEnabled: false, context: { activeNote: false, selection: false, linkedNotes: false, searchVault: true } },
   });
   await page.evaluate(() => (window as unknown as { app: PageApp }).app.commands.executeCommandById("claude-companion:seed-ontology"));
+  await expect(page.locator(".cc-companion-notice").filter({ hasText: "Ontology: seeded" })).toBeVisible({ timeout: 15_000 });
   await expect.poll(() => page.evaluate(() => {
     const app = (window as unknown as { app: PageApp }).app;
     return Boolean(app.vault.getAbstractFileByPath("Ontology/person.md") && app.vault.getAbstractFileByPath("Ontology/project.md"));

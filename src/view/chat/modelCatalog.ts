@@ -4,7 +4,8 @@ import { mergeDetectedModels } from "../../providers/localModels";
 import { chatBackendForRuntime } from "../../providers/runtimeBackend";
 import type { CliBackendId } from "../../providers/router";
 import type { CliModel } from "../../cli/modelDiscovery";
-import type { PluginSettings } from "../../types";
+import type { ClaudeModel, PluginSettings } from "../../types";
+import type { ClaudeModelRegistry } from "../../claude/modelRegistry";
 import { cliModelChoices } from "../cliModelChoices";
 import type { ComposerHost } from "./hosts";
 
@@ -32,14 +33,15 @@ export function selectedModelValue(settings: PluginSettings, claudeModel: string
 /** One route-explicit catalog for both the header picker and composer select. */
 export function modelCatalog(input: {
   settings: PluginSettings; claudeModel: string; isMobile: boolean;
-  availableCli?: CliBackendId[]; detected?: ModelDiscovery;
+  availableCli?: CliBackendId[]; detected?: ModelDiscovery; claudeModels?: ClaudeModel[];
 }): ModelChoiceGroup[] {
   const { settings, claudeModel, isMobile } = input;
   const detected = input.detected ?? {};
-  const claude = new Map(CLAUDE_MODELS.map(model => [model.id, model.label]));
+  const models = input.claudeModels ?? CLAUDE_MODELS;
+  const claude = new Map(models.map(model => [model.id, model.label]));
   const configured = resolveModelId(settings.model, settings.customModel);
-  if (configured && !claude.has(configured)) claude.set(configured, modelLabel(configured));
-  if (claudeModel && !claude.has(claudeModel)) claude.set(claudeModel, modelLabel(claudeModel));
+  if (configured && !claude.has(configured)) claude.set(configured, modelLabel(configured, models));
+  if (claudeModel && !claude.has(claudeModel)) claude.set(claudeModel, modelLabel(claudeModel, models));
   const group = (backend: ModelChoiceGroup["backend"], choices: ModelChoice[]): ModelChoiceGroup => ({ backend, label: MODEL_BACKEND_LABELS[backend], choices });
   const claudeChoices = (backend: "auto" | "claude" | "claude-cli"): ModelChoice[] => [...claude].map(([id, label]) => ({ value: `${backend}:${id}`, label }));
   const groups = [group("auto", claudeChoices("auto")), group("claude", claudeChoices("claude"))];
@@ -69,7 +71,12 @@ export class ModelCatalogSource {
   private disposed = false;
   private generation = 0;
 
-  constructor(private plugin: Pick<ComposerHost, "router" | "settings">, private claudeModel: () => string, private isMobile: boolean) {}
+  constructor(
+    private plugin: Pick<ComposerHost, "router" | "settings">,
+    private claudeModel: () => string,
+    private isMobile: boolean,
+    private claudeModels?: Pick<ClaudeModelRegistry, "models" | "refresh">,
+  ) {}
 
   selected(): string { return selectedModelValue(this.plugin.settings, this.claudeModel(), this.isMobile); }
 
@@ -78,7 +85,7 @@ export class ModelCatalogSource {
     const availableCli = ([
       ["claude-cli", router.claudeCli], ["codex-cli", router.codexCli], ["opencode-cli", router.opencodeCli],
     ] as const).filter(([, provider]) => provider?.available?.()).map(([id]) => id);
-    return modelCatalog({ settings: this.plugin.settings, claudeModel: this.claudeModel(), isMobile: this.isMobile, availableCli, detected: this.detected });
+    return modelCatalog({ settings: this.plugin.settings, claudeModel: this.claudeModel(), isMobile: this.isMobile, availableCli, detected: this.detected, ...(this.claudeModels ? { claudeModels: this.claudeModels.models() } : {}) });
   }
 
   async refresh(update: (groups: ModelChoiceGroup[]) => void, failed?: () => void): Promise<void> {
@@ -95,6 +102,12 @@ export class ModelCatalogSource {
         } catch { if (!this.disposed && generation === this.generation) failed?.(); }
       })());
     };
+    const claudeModels = this.claudeModels;
+    if (claudeModels) {
+      jobs.push(claudeModels.refresh().then(changed => {
+        if (changed && !this.disposed && generation === this.generation) update(this.snapshot());
+      }));
+    }
     if (router.ollama?.listModels) load("ollama", () => router.ollama.listModels());
     if (this.plugin.settings.openaiCompatHost.trim() && router.openaiCompat?.listModels) load("endpoint", () => router.openaiCompat.listModels());
     if (!this.isMobile) {

@@ -87,6 +87,12 @@ Configured Ollama and compatible endpoints include their discovered models, and
 the current configured model remains selectable. Wide panes repeat these choices
 in the composer.
 
+With an API key or OAuth token and the Claude API or Auto backend, the Claude
+choices also include the models the Models API (`GET /v1/models`) reports for
+that credential, listed after the built-in ones, newest first. The list loads
+once per credential and follows the base-URL override. Without a credential, on
+the Claude Code backend, or when the request fails, the built-in list is shown.
+
 **Custom model id** in provider settings selects a model not in the built-in
 Claude list, such as a gateway-specific name. Selecting a model from another
 backend changes the chat route as well as the model.

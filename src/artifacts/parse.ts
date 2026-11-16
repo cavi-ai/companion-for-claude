@@ -79,13 +79,13 @@ export function validateArtifactInteractivity(html: string): InteractivityReport
   const called = new Set<string>();
   // Pull each handler attribute's value, then find every `name(` call inside it.
   const handlerRe = /\bon\w+\s*=\s*(?:"([^"]*)"|'([^']*)')/g;
-  const callRe = /(?<![.\w$])([A-Za-z_$][\w$]*)\s*\(/g;
+  const callRe = /(^|[^.\w$])([A-Za-z_$][\w$]*)\s*\(/g;
   let m: RegExpExecArray | null;
   while ((m = handlerRe.exec(html)) !== null) {
     const body = m[1] ?? m[2] ?? "";
     let c: RegExpExecArray | null;
     while ((c = callRe.exec(body)) !== null) {
-      const fn = c[1];
+      const fn = c[2];
       if (fn && !INLINE_HANDLER_BUILTINS.has(fn)) called.add(fn);
     }
   }

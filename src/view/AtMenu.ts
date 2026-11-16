@@ -40,8 +40,7 @@ export class AtMenu {
     private items: () => AtItem[],
     private onChoose: (item: AtItem) => void,
   ) {
-    this.el = parent.createDiv({ cls: "cc-slash-menu cc-at-menu" });
-    this.el.setCssStyles({ display: "none" });
+    this.el = parent.createDiv({ cls: "cc-slash-menu cc-at-menu is-hidden" });
     this.listEl = this.el.createDiv({ cls: "cc-slash-list" });
   }
 
@@ -57,14 +56,14 @@ export class AtMenu {
     }
     this.selected = 0;
     this.open = true;
-    this.el.setCssStyles({ display: "" });
+    this.el.removeClass("is-hidden");
     this.render();
   }
 
   hide(): void {
-    if (!this.open && this.el.style.display === "none") return;
+    if (!this.open) return;
     this.open = false;
-    this.el.setCssStyles({ display: "none" });
+    this.el.addClass("is-hidden");
     this.listEl.empty();
   }
 

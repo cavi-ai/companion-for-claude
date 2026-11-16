@@ -90,11 +90,9 @@ export class Composer {
     // Desktop: the context manager leads the composer; mobile mounts it in the toolbar under the input.
     if (!mobile) this.contextManager = new ComposerContextManager(composer, this.deps);
     // The active chat project's pill (same pill style as a folder attachment).
-    this.projectPillEl = composer.createDiv({ cls: "cc-ctx-pill cc-ctx-project" });
-    this.projectPillEl.setCssStyles({ display: "none" });
+    this.projectPillEl = composer.createDiv({ cls: "cc-ctx-pill cc-ctx-project is-hidden" });
     // The "attach this page?" offer for URLs in the composer.
-    this.pageOfferEl = composer.createDiv({ cls: "cc-page-offer" });
-    this.pageOfferEl.setCssStyles({ display: "none" });
+    this.pageOfferEl = composer.createDiv({ cls: "cc-page-offer is-hidden" });
 
     // Palettes anchored above the input (built before the textarea so they sit
     // above it in flow; CSS positions them absolutely).
@@ -241,7 +239,7 @@ export class Composer {
   setProjectPill(project: ChatProject | null): void {
     if (!this.projectPillEl) return;
     if (!project) {
-      this.projectPillEl.setCssStyles({ display: "none" });
+      this.projectPillEl.addClass("is-hidden");
       return;
     }
     this.projectPillEl.empty();
@@ -252,7 +250,7 @@ export class Composer {
       attr: { type: "button", "aria-label": `Remove project ${project.name}` },
     });
     remove.addEventListener("click", () => this.deps.chooseProject(null));
-    this.projectPillEl.setCssStyles({ display: "" });
+    this.projectPillEl.removeClass("is-hidden");
   }
 
   /** Candidate sources for the "#" menu: research claims only. */
@@ -320,7 +318,7 @@ export class Composer {
    */
   syncPageOffer(): void {
     if (!this.pageOfferEl) return;
-    const hide = () => this.pageOfferEl.setCssStyles({ display: "none" });
+    const hide = () => this.pageOfferEl.addClass("is-hidden");
     if (this.chat.streaming || !this.plugin.captureWebPage()) return hide();
     const url = detectPageUrl(this.inputEl.value);
     if (!url || url === this.dismissedPageUrl || this.attachedPages.some((p) => p.url === url)) return hide();
@@ -334,14 +332,14 @@ export class Composer {
       this.dismissedPageUrl = url;
       hide();
     });
-    this.pageOfferEl.setCssStyles({ display: "" });
+    this.pageOfferEl.removeClass("is-hidden");
   }
 
   /** Capture a URL into an attached page. Errors land on the pill, not the chat. */
   private async attachPage(url: string): Promise<void> {
     const capture = this.plugin.captureWebPage();
     if (!capture) return;
-    this.pageOfferEl.setCssStyles({ display: "none" });
+    this.pageOfferEl.addClass("is-hidden");
     if (this.attachedPages.some((p) => p.url === url)) return;
     const page: AttachedPage = { url, markdown: "" };
     this.attachedPages.push(page);
@@ -475,7 +473,7 @@ export class Composer {
     const modelWrap = this.controlsEl.createDiv({ cls: "cc-ctl cc-ctl-model" });
     const select = modelWrap.createEl("select", { cls: "cc-ctl-select", attr: { "aria-label": "Model" } });
     this.modelCatalog?.dispose();
-    const catalog = new ModelCatalogSource(this.plugin, () => this.controls.model, Platform.isMobile);
+    const catalog = new ModelCatalogSource(this.plugin, () => this.controls.model, Platform.isMobile, this.plugin.claudeModels());
     this.modelCatalog = catalog;
     reconcileModelOptions(select, catalog.snapshot(), catalog.selected());
     select.addEventListener("change", () => void this.deps.onModelSelect(select.value));
@@ -636,11 +634,11 @@ export class Composer {
   autosizeInput(): void {
     const el = this.inputEl;
     if (!el) return;
-    el.setCssStyles({ height: "auto" });
+    el.setCssProps({ height: "" });
     // Phone: ~6 rows then internal scroll, so the composer never eats the
     // reading surface; desktop gets ~8 rows.
     const max = Platform.isMobile ? 132 : 200;
-    el.setCssStyles({ height: `${Math.min(el.scrollHeight, max)}px` });
+    el.setCssProps({ height: `${Math.min(el.scrollHeight, max)}px` });
   }
 
   /** Open/refresh/close the slash palette based on the current input. */

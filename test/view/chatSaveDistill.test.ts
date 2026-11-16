@@ -6,6 +6,7 @@ import { DEFAULT_SETTINGS } from "../../src/types";
 import { ChatView } from "../../src/view/ChatView";
 import type { CompanionChromeDependencies } from "../../src/view/companionChrome";
 import { conversationFakes } from "../fakes/conversations";
+import { curatedModels } from "../fakes/curatedModels";
 
 const memoryFake = { captureConversation: vi.fn(async () => undefined) };
 
@@ -18,7 +19,7 @@ function plugin(overrides: Record<string, unknown> = {}, fakes = conversationFak
   return {
     app,
     settings: fakes.settings,
-    router: () => ({
+    claudeModels: curatedModels, router: () => ({
       chatBackend: "claude",
       anthropic: { hasCredentials: () => true },
       claudeCli: { hasCredentials: () => false },
