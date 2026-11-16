@@ -1,46 +1,20 @@
 # Companion for Claude
 
-Cowork with Claude inside your [Obsidian](https://obsidian.md) vault. Companion
-brings vault-aware chat, reviewable agent work, interactive artifacts, and an
-evidence-backed research workflow into Obsidian while your notes remain the
-source of truth.
+Bring your notes, sources and AI into the same workspace.
+
+Companion helps you research, write and create inside [Obsidian](https://obsidian.md).
+Find relevant notes and PDF passages, develop a source-linked argument, turn it
+into a draft or interactive artifact, and review edits before they change your notes.
 
 [![CI](https://github.com/cavi-ai/claude-obsidian/actions/workflows/obsidian-plugin-ci.yml/badge.svg)](https://github.com/cavi-ai/claude-obsidian/actions/workflows/obsidian-plugin-ci.yml)
-[![Obsidian downloads](https://img.shields.io/badge/dynamic/json?logo=obsidian&color=%23483699&label=downloads&query=%24%5B%22claude-companion%22%5D.downloads&url=https%3A%2F%2Fraw.githubusercontent.com%2Fobsidianmd%2Fobsidian-releases%2Fmaster%2Fcommunity-plugin-stats.json)](https://obsidian.md/plugins?id=claude-companion)
+[![Obsidian plugin downloads, all time](https://img.shields.io/badge/dynamic/json?logo=obsidian&color=%23483699&label=Obsidian%20downloads&query=%24%5B%22claude-companion%22%5D.downloads&url=https%3A%2F%2Fraw.githubusercontent.com%2Fobsidianmd%2Fobsidian-releases%2Fmaster%2Fcommunity-plugin-stats.json)](https://obsidian.md/plugins?id=claude-companion)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
+![Your vault has a research partner. A scholarly owl studies connected notes through an enormous magnifying glass, beside a yellow cavi-ai pencil.](assets/companion-hero.png)
 
 [**Install from the Obsidian community store**](https://obsidian.md/plugins?id=claude-companion)
 · [Getting started](guides/getting-started.md)
-· [All guides](https://github.com/cavi-ai/claude-obsidian/blob/60d4dbf0da2979ba4881b1ea989c36ca1de1c79a/README.md#guides)
-
-![Example note-edit review with two change checkboxes and an Apply selected button](assets/diff-review.png)
-
-The review image shows an example note; use the separate sample below to try it yourself.
-
-## Try one note edit you control
-
-Create a sample project note:
-
-```markdown
-# Reading list
-Goal: Build a personal reading list.
-Constraint: Keep it single-user; do not add account registration.
-Next step: Choose the smallest useful first screen.
-```
-
-After [setup](guides/getting-started.md), open the note and enable the **Note**
-context chip. Select **Act** and keep **Allow write tools** enabled. Ask:
-
-> Propose a clearer next step for this project. Keep its constraints unchanged
-> and show the note edit for review.
-
-Review the proposed hunks. Accept a useful change and reject any change to your
-meaning, then inspect the note: did the next step improve while the constraint
-stayed intact? The model may propose one hunk or several; rejecting the entire
-proposal is a valid outcome.
-
-Model access is separate. Attached context is sent through the backend you
-select. See [edit review and guardrails](guides/agent-mode.md).
+· [Research Desk](guides/research-workbench.md)
 
 ## Install
 
@@ -54,7 +28,29 @@ select. See [edit review and guardrails](guides/agent-mode.md).
 
 [Walk through setup and the first useful workflows →](guides/getting-started.md)
 
-## What Companion adds to Obsidian
+## Put your notes to work
+
+- **Find the passage you remember, even when you forget the words.** Combine
+  keyword and on-device semantic search across notes and page-located PDF passages.
+- **Keep the argument connected to its sources.** Research Desk brings sources,
+  evidence, claims, outlines and drafts into one project. The records remain
+  ordinary Markdown notes in your vault.
+- **Make more than another chat reply.** Create interactive HTML artifacts,
+  native Canvas files and Obsidian Bases alongside your notes.
+- **Keep the final word.** Review proposed note edits and accept or reject
+  individual changes before applying them.
+
+After [setup](guides/getting-started.md), open a project note, enable the **Note**
+context chip and choose **Act**. Start with a question worth answering:
+
+> Find the notes and PDF passages that support or challenge this idea.
+> Give me a source-linked outline before drafting.
+
+[Open Research Desk →](guides/research-workbench.md)
+
+![Note-edit review with individual changes and an Apply selected button](assets/diff-review.png)
+
+## A workspace that stays with you
 
 - **Vault-aware chat** with the active note, selection, links, search results,
   notes a typed search result relates to, folders, PDFs, images, and pasted
@@ -62,13 +58,9 @@ select. See [edit review and guardrails](guides/agent-mode.md).
   your configured Obsidian attachment folder.
 - **Agent mode** that can search, read, and follow links while showing every tool
   call; writes ask for confirmation unless you grant access for the session.
-- **Reviewable edits** with per-hunk acceptance before a note changes.
-- **Research Desk** for sources, evidence, claims, outlines,
-  drafts, and deterministic assurance checks.
-- **Interactive `claude-html` artifacts**, native Canvas files, and Obsidian
-  Bases generated from your vault.
-- **On-device semantic search** on desktop and mobile, including page-located
-  PDF chunks.
+- **Your choice of connection**: installed desktop agents, direct API access or
+  local models. Optional on-device GPU chat runs inside Obsidian on supported
+  hardware; see [local model options](guides/local-models.md).
 - **Durable conversations** that survive restarts. An interrupted model turn
   returns as stopped work with a **Retry** action.
 - **Multiple chat tabs**, each with its own conversation, via the "New chat tab" command.
@@ -79,8 +71,7 @@ select. See [edit review and guardrails](guides/agent-mode.md).
 - **Optional integrations**: a loopback MCP bridge for live-vault tools, and an
   MCP client for servers you explicitly configure.
 
-The product overview stays in the [repository README](https://github.com/cavi-ai/claude-obsidian/blob/60d4dbf0da2979ba4881b1ea989c36ca1de1c79a/README.md). Detailed
-behavior and setup live in the guides:
+Detailed behavior and setup live in the guides:
 
 - [Agent mode, edits, and guardrails](guides/agent-mode.md)
 - [Research Desk](guides/research-workbench.md)
