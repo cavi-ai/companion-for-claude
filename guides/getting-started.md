@@ -79,7 +79,7 @@ under *Settings → Companion for Claude → Chat & models → Prompts & context
 
 ### Review a note change
 
-Try the [sample-note exercise](../README.md#try-one-note-edit-you-control):
+Try the [sample-note exercise](https://github.com/cavi-ai/claude-obsidian/blob/92e770e2fd5a12f546fdb185097d99833994a52b/obsidian-plugin/README.md#try-one-note-edit-you-control):
 ask for a clearer next step while preserving a single-user constraint. Inspect
 and accept or reject the proposed changes before checking the saved note.
 [Edit review](agent-mode.md#editing-notes-diffs-not-writes) explains how hunks
