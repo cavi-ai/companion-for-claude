@@ -1,20 +1,22 @@
 # Companion for Claude
 
-Cowork with Claude inside your [Obsidian](https://obsidian.md) vault. Companion
-brings vault-aware chat, reviewable agent work, interactive artifacts, and an
-evidence-backed research workflow into Obsidian while your notes remain the
-source of truth.
-
-[![CI](https://github.com/cavi-ai/claude-obsidian/actions/workflows/obsidian-plugin-ci.yml/badge.svg)](https://github.com/cavi-ai/claude-obsidian/actions/workflows/obsidian-plugin-ci.yml)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-
-[**Install from the Obsidian community store**](https://obsidian.md/plugins?id=claude-companion)
-· [Getting started](guides/getting-started.md)
-· [All guides](https://github.com/cavi-ai/claude-obsidian/blob/c64a96cf171ebe7eab778b951c11811a1b779715/README.md#guides)
+Cowork with Claude inside your [Obsidian](https://obsidian.md) vault.
 
 ![Example note-edit review with two change checkboxes and an Apply selected button](assets/diff-review.png)
 
 The review image shows an example note; use the separate sample below to try it yourself.
+
+[![CI](https://github.com/cavi-ai/claude-obsidian/actions/workflows/obsidian-plugin-ci.yml/badge.svg)](https://github.com/cavi-ai/claude-obsidian/actions/workflows/obsidian-plugin-ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
+Companion
+brings vault-aware chat, reviewable agent work, interactive artifacts, and an
+evidence-backed research workflow into Obsidian while your notes remain the
+source of truth.
+
+[**Install from the Obsidian community store**](https://obsidian.md/plugins?id=claude-companion)
+· [Getting started](guides/getting-started.md)
+· [All guides](https://github.com/cavi-ai/claude-obsidian/blob/c64a96cf171ebe7eab778b951c11811a1b779715/README.md#guides)
 
 ## Try one note edit you control
 
