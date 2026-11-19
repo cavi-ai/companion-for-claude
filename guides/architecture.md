@@ -95,7 +95,7 @@ artifacts, and built-in semantic search run on mobile.
 
 ## Security model
 
-Four boundaries, each documented in [`SECURITY.md`](https://github.com/cavi-ai/claude-obsidian/blob/c64a96cf171ebe7eab778b951c11811a1b779715/SECURITY.md):
+Four boundaries, each documented in [`SECURITY.md`](https://github.com/cavi-ai/claude-obsidian/blob/92e770e2fd5a12f546fdb185097d99833994a52b/SECURITY.md):
 
 **Credentials** use Obsidian's encrypted secret storage and are excluded from
 vault-synced plugin data. The MCP token can also come from
@@ -125,8 +125,8 @@ One standalone Obsidian product plus an optional universal-agent reference:
   workflows use the official Obsidian CLI and do not depend on Companion or MCP.
   Companion-native adaptations live in this repository and use Companion's own
   vault context. The optional MCP bridge is a separate Companion integration.
-- `upstream/html-effectiveness/`, `upstream/obsidian-skills/` — pinned, unmodified submodules. Provenance in [`NOTICE`](https://github.com/cavi-ai/claude-obsidian/blob/c64a96cf171ebe7eab778b951c11811a1b779715/NOTICE).
+- `upstream/html-effectiveness/`, `upstream/obsidian-skills/` — pinned, unmodified submodules. Provenance in [`NOTICE`](https://github.com/cavi-ai/claude-obsidian/blob/92e770e2fd5a12f546fdb185097d99833994a52b/NOTICE).
 
 Version numbers in `manifest.json`, `versions.json`, and `package.json` must match
 the git tag, and `versions.json` maps version → `minAppVersion`. See
-[`CONTRIBUTING.md`](https://github.com/cavi-ai/claude-obsidian/blob/c64a96cf171ebe7eab778b951c11811a1b779715/CONTRIBUTING.md).
+[`CONTRIBUTING.md`](https://github.com/cavi-ai/claude-obsidian/blob/92e770e2fd5a12f546fdb185097d99833994a52b/CONTRIBUTING.md).
